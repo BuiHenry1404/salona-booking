@@ -1,0 +1,1171 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup UI — App đặt lịch nail–tóc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Bảng màu chính - Soft Warm Rose & Sage (Tương phản ≥ 5.2:1) */
+  --primary:#965C50;          /* Hồng đất ấm */
+  --primary-hover:#7E4A3E;
+  --primary-weak:#F8F3F1;     /* Nền hồng nhạt */
+  --on-primary:#ffffff;
+  
+  --accent:#456A52;           /* Xanh Sage */
+  --accent-hover:#35533F;
+  --accent-weak:#EEF4F0;      /* Nền xanh nhạt */
+  --on-accent:#ffffff;
+
+  --danger:#B84A37;           /* Đỏ gạch ấm */
+  --danger-hover:#9B3B2A;
+  --danger-weak:#FAF0EE;      /* Nền đỏ nhạt */
+  --on-danger:#ffffff;
+
+  --warning:#A14B00;          /* Nhãn Mới */
+  --warning-weak:#FEF3C7;
+
+  /* Màu giao diện nền */
+  --bg-page:#FAF8F5;          /* Màu kem ấm áp dịu mắt cho trang showcase */
+  --bg-phone:#FCFBF9;         /* Nền bên trong điện thoại */
+  --bg:#FCFBF9;
+  --surface:#ffffff;          /* Thẻ card, input, appbar */
+  --fg:#2C2523;               /* Nâu đen đậm */
+  --fg-muted:#6E615D;         /* Chữ phụ */
+  --border:#EFEAE4;           /* Viền mềm mại */
+
+  /* Kích thước & Trải nghiệm */
+  --r:16px;                   /* Bo góc mượt mà */
+  --tap:56px;                 /* Chiều cao vùng chạm tối thiểu */
+  --shadow-sm:0 2px 8px rgba(44,37,35,0.05);
+  --shadow-md:0 8px 24px rgba(44,37,35,0.10);
+
+  --s1:8px; --s2:12px; --s3:16px; --s4:24px; --s5:32px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Be Vietnam Pro',system-ui,sans-serif;background:var(--bg-page);color:var(--fg);
+  font-size:19px;line-height:1.55;-webkit-font-smoothing:antialiased;padding:var(--s4)}
+h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
+.page-head{max-width:1400px;margin:0 auto var(--s5)}
+.page-head p{color:var(--fg-muted);margin-top:var(--s1);max-width:70ch;font-size:18px}
+.legend{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:var(--s3)}
+.chip{background:var(--surface);border:1px solid var(--border);border-radius:999px;
+  padding:6px 14px;font-size:18px;font-weight:500;color:var(--fg);box-shadow:var(--shadow-sm)}
+
+/* Top Tab Switcher */
+.nav-tabs{display:flex;gap:var(--s2);margin-top:var(--s4);background:#EFEAE4;padding:6px;
+  border-radius:14px;width:fit-content;max-width:100%}
+.nav-tab{display:flex;align-items:center;gap:8px;padding:12px 20px;border:none;background:transparent;
+  border-radius:10px;font-family:inherit;font-size:18px;font-weight:600;color:var(--fg-muted);
+  cursor:pointer;transition:all 0.2s ease;min-height:var(--tap)}
+.nav-tab:hover{color:var(--fg);background:rgba(255,255,255,0.5)}
+.nav-tab.active{background:var(--surface);color:var(--primary);box-shadow:var(--shadow-sm);font-weight:700}
+.nav-tab:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+
+.tab-pane{display:block}
+.tab-pane[hidden]{display:none !important}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));
+  gap:var(--s5);max-width:1400px;margin:0 auto;align-items:start}
+.frame-wrap{display:flex;flex-direction:column;gap:var(--s2)}
+.frame-label{font-size:18px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.06em}
+.frame-note{font-size:18px;color:var(--fg-muted);line-height:1.5}
+.phone{width:100%;max-width:390px;background:var(--bg-phone);border:10px solid #2C2523;
+  border-radius:36px;overflow:hidden;box-shadow:var(--shadow-md)}
+.screen{min-height:680px;display:flex;flex-direction:column}
+.appbar{background:var(--surface);border-bottom:1px solid var(--border);
+  padding:var(--s3);font-weight:600;font-size:20px;display:flex;align-items:center;gap:var(--s2)}
+.body{flex:1;padding:var(--s3);display:flex;flex-direction:column;gap:var(--s3);overflow:hidden}
+.btn{min-height:var(--tap);width:100%;border:none;border-radius:var(--r);font-family:inherit;
+  font-size:20px;font-weight:600;cursor:pointer;display:flex;align-items:center;
+  justify-content:center;gap:10px;transition:transform 0.1s ease, filter 0.18s ease}
+.btn:hover{filter:brightness(.94)}
+.btn:active{transform:scale(0.97)}
+.btn:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+.btn-primary{background:var(--primary);color:var(--on-primary)}
+.btn-danger{background:var(--danger);color:var(--on-danger)}
+.btn-accent{background:var(--accent);color:var(--on-accent)}
+.btn-ghost{background:var(--surface);color:var(--primary);border:2px solid var(--primary)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-weight:600;font-size:18px}
+.field input{min-height:var(--tap);border:2px solid var(--border);border-radius:var(--r);
+  padding:0 var(--s3);font-family:inherit;font-size:20px;background:var(--surface);color:var(--fg)}
+.field input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-weak)}
+.link{color:var(--primary);font-weight:600;text-align:center;text-decoration:underline;
+  min-height:var(--tap);display:flex;align-items:center;justify-content:center;font-size:18px}
+.status{display:flex;align-items:center;gap:var(--s2);border-radius:var(--r);
+  padding:var(--s3);border:2px solid}
+.status--free{background:var(--accent-weak);border-color:var(--accent);color:var(--accent)}
+.status--busy{background:var(--danger-weak);border-color:var(--danger);color:var(--danger)}
+.status b{display:block;font-size:19px;font-weight:700}
+.status span{display:block;font-size:18px;color:var(--fg-muted);font-weight:500}
+.dot{width:16px;height:16px;border-radius:50%;flex:none}
+.chat{flex:1;display:flex;flex-direction:column;gap:var(--s2);overflow:hidden}
+.msg{max-width:86%;padding:var(--s2) var(--s3);border-radius:18px;font-size:18px;line-height:1.5}
+.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px}
+.msg--me{background:var(--primary);color:var(--on-primary);align-self:flex-end;border-bottom-right-radius:6px}
+.composer{display:flex;gap:var(--s1);align-items:center}
+.composer input{flex:1;min-height:var(--tap);border:2px solid var(--border);border-radius:999px;
+  padding:0 var(--s3);font-family:inherit;font-size:18px;background:var(--surface);color:var(--fg)}
+.icon-btn{width:var(--tap);height:var(--tap);flex:none;border-radius:50%;border:none;
+  background:var(--primary);color:var(--on-primary);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);
+  display:flex;flex-direction:column;gap:var(--s2);box-shadow:var(--shadow-sm)}
+.card h3{font-size:21px;font-weight:700}
+.card .when{font-size:18px;color:var(--fg-muted)}
+.badge{align-self:flex-start;background:var(--accent-weak);color:var(--accent);
+  font-size:18px;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:.04em}
+@keyframes badgePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+.badge--new{background:var(--warning-weak);color:var(--warning);animation:badgePulse 1.8s infinite ease-in-out}
+.bignum{font-size:44px;font-weight:700;letter-spacing:-.03em;line-height:1.1}
+.quick{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
+.quick button{min-height:var(--tap);border-radius:var(--r);border:2px solid var(--primary);
+  background:var(--surface);color:var(--primary);font-family:inherit;font-size:19px;font-weight:600;cursor:pointer}
+.tabbar{display:flex;border-top:1px solid var(--border);background:var(--surface)}
+.tabbar a{flex:1;min-height:64px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px;font-size:18px;font-weight:600;color:var(--fg-muted);text-decoration:none}
+.tabbar a[aria-current]{color:var(--primary)}
+.sheet{background:var(--surface);border:2px solid var(--primary);border-radius:var(--r);
+  padding:var(--s3);display:flex;flex-direction:column;gap:var(--s3)}
+.sheet p{font-size:19px}
+.row{display:flex;gap:var(--s2)}
+.row .btn{width:auto;flex:1}
+.divider{height:1px;background:var(--border);margin:var(--s1) 0}
+.list-item{display:flex;justify-content:space-between;align-items:center;gap:var(--s2);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--s2) var(--s3);min-height:var(--tap);box-shadow:var(--shadow-sm)}
+.list-item b{font-size:18px}
+.list-item span{font-size:18px;color:var(--fg-muted)}
+
+/* Animation & Live Sandbox Helper Styles */
+.dots .dot-bounce {
+  display: inline-block;
+  animation: dotBounce 1.2s infinite ease-in-out;
+}
+.dots .dot-bounce:nth-child(2) { animation-delay: 0.2s; }
+.dots .dot-bounce:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-status-step {
+  font-size: 18px;
+  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-response-text {
+  font-size: 18px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.client-tab-link.active, .admin-tab-link.active {
+  color: var(--primary) !important;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>Mockup UI — App đặt lịch nail–tóc Cô Ba</h1>
+  <p>Năm màn hình theo đúng ràng buộc trong spec. Mọi trạng thái đều diễn đạt bằng <b>chữ</b> chứ không chỉ bằng màu, mỗi màn hình chỉ một hành động chính, không menu ẩn.</p>
+  <div class="legend">
+    <span class="chip">Chữ nền 19px</span>
+    <span class="chip">Nút cao 56px, rộng hết hàng</span>
+    <span class="chip">Be Vietnam Pro (có dấu tiếng Việt)</span>
+    <span class="chip">Tương phản ≥ 5.2:1 — vượt AA</span>
+    <span class="chip">Icon SVG, không emoji</span>
+  </div>
+
+  <nav class="nav-tabs" role="tablist" aria-label="Chế độ xem UI">
+    <button class="nav-tab active" id="tab-btn-showcase" role="tab" onclick="switchTab('showcase')" aria-selected="true" aria-controls="showcase-tab">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Toàn cảnh (Showcase Grid)
+    </button>
+    <button class="nav-tab" id="tab-btn-sandbox" role="tab" onclick="switchTab('sandbox')" aria-selected="false" aria-controls="sandbox-tab">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      Trải nghiệm thực tế (Live Sandbox)
+    </button>
+  </nav>
+</div>
+
+<div id="showcase-tab" class="tab-pane active" role="tabpanel" aria-labelledby="tab-btn-showcase">
+  <div class="grid">
+
+    <!-- 1. ĐĂNG NHẬP -->
+    <div class="frame-wrap">
+      <div class="frame-label">1 · Khách — Đăng nhập</div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Tiệm Nail &amp; Tóc Cô Ba</div>
+        <div class="body">
+          <div class="field">
+            <label for="p">Số điện thoại</label>
+            <input id="p" inputmode="numeric" value="0912 345 678">
+          </div>
+          <div class="field">
+            <label for="pw">Mật khẩu</label>
+            <input id="pw" type="password" value="••••••">
+          </div>
+          <button class="btn btn-primary">Đăng nhập</button>
+          <a class="link" href="#">Quên mật khẩu</a>
+          <div style="flex:1"></div>
+          <p style="font-size:18px;color:var(--fg-muted);text-align:center">
+            Chưa có tài khoản? Gọi tiệm<br><b style="color:var(--primary);font-size:19px">0901 234 567</b>
+          </p>
+        </div>
+      </div></div>
+      <p class="frame-note">Chỉ hai ô và một nút. Không có đăng ký tự do — spec quy định admin cấp tài khoản, nên thay bằng số điện thoại tiệm.</p>
+    </div>
+
+    <!-- 2. CHAT -->
+    <div class="frame-wrap">
+      <div class="frame-label">2 · Khách — Chat (màn hình chính)</div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Đặt lịch</div>
+        <div class="body">
+          <div class="status status--busy">
+            <span class="dot" style="background:var(--danger)"></span>
+            <span>
+              <b>Chủ tiệm đang bận</b>
+              <span>Khoảng 30 phút nữa xong</span>
+            </span>
+          </div>
+          <div class="chat">
+            <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
+            <div class="msg msg--me">mai 3h chiều làm tóc được không con</div>
+            <div class="msg msg--bot">Dạ được ạ. Con đặt <b>Thứ Năm 7/8, 3 giờ chiều, làm tóc</b> — đúng không cô?</div>
+          </div>
+          <div class="row">
+            <button class="btn btn-accent">Đúng rồi</button>
+            <button class="btn btn-ghost">Đổi giờ</button>
+          </div>
+          <div class="composer">
+            <input placeholder="Nhắn cho tiệm…" aria-label="Nhắn tin">
+            <button class="icon-btn" aria-label="Nói bằng giọng nói">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+            </button>
+          </div>
+        </div>
+        <nav class="tabbar">
+          <a href="#" aria-current="page"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Đặt lịch</a>
+          <a href="#"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Lịch của tôi</a>
+        </nav>
+      </div></div>
+      <p class="frame-note">Thẻ trạng thái luôn hiện nên phần lớn khách <b>không cần hỏi AI mới biết</b>. Bước xác nhận thành hai nút to thay vì bắt gõ "ừ" — nhanh hơn và không hiểu sai. Nút micro vì gõ phím là rào cản lớn nhất.</p>
+    </div>
+
+    <!-- 3. LỊCH CỦA TÔI -->
+    <div class="frame-wrap">
+      <div class="frame-label">3 · Khách — Lịch của tôi + xác nhận hủy</div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Lịch của tôi</div>
+        <div class="body">
+          <div class="card">
+            <span class="badge">SẮP TỚI</span>
+            <h3>Thứ Năm, 7/8</h3>
+            <div class="when">3:00 chiều · Làm tóc</div>
+            <button class="btn btn-ghost" style="border-color:var(--danger);color:var(--danger)">Hủy lịch này</button>
+          </div>
+          <div class="sheet">
+            <p>Cô có chắc muốn hủy lịch<br><b>3 giờ chiều Thứ Năm 7/8</b> không ạ?</p>
+            <div class="row">
+              <button class="btn btn-danger">Có, hủy</button>
+              <button class="btn btn-ghost">Không</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Thứ Ba, 12/8</h3>
+            <div class="when">9:00 sáng · Làm nail</div>
+            <button class="btn btn-ghost" style="border-color:var(--danger);color:var(--danger)">Hủy lịch này</button>
+          </div>
+        </div>
+        <nav class="tabbar">
+          <a href="#"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Đặt lịch</a>
+          <a href="#" aria-current="page"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Lịch của tôi</a>
+        </nav>
+      </div></div>
+      <p class="frame-note">Xác nhận hủy hiện <b>ngay tại chỗ</b>, không dùng modal — modal che mất ngữ cảnh và người lớn tuổi hay bấm nhầm ra ngoài để đóng.</p>
+    </div>
+
+    <!-- 4. ADMIN DASHBOARD -->
+    <div class="frame-wrap">
+      <div class="frame-label">4 · Chủ tiệm — Bảng điều khiển</div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Hôm nay, Thứ Tư 6/8</div>
+        <div class="body">
+          <div class="status status--free" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <b style="font-size:18px;letter-spacing:.04em">TRẠNG THÁI HIỆN TẠI</b>
+            <span class="bignum" style="color:var(--accent)">Đang rảnh</span>
+          </div>
+          <button class="btn btn-danger" style="min-height:72px;font-size:23px">Tôi đang bận</button>
+          <div class="quick" hidden></div>
+          <div class="divider"></div>
+          <b style="font-size:18px;color:var(--fg-muted);letter-spacing:.04em">LỊCH HÔM NAY · 3 khách</b>
+          <div class="card" style="border-color:var(--warning-weak);background:var(--warning-weak)">
+            <span class="badge badge--new">MỚI</span>
+            <h3>2:00 chiều · Cô Lan</h3>
+            <div class="when">Làm tóc · 0912 345 678</div>
+          </div>
+          <div class="card"><h3>3:30 chiều · Chú Bảy</h3><div class="when">Cắt tóc · 0938 111 222</div></div>
+          <div class="card"><h3>5:00 chiều · Cô Hoa</h3><div class="when">Làm nail · 0977 333 444</div></div>
+        </div>
+        <nav class="tabbar">
+          <a href="#" aria-current="page"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Hôm nay</a>
+          <a href="#"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>Khách hàng</a>
+        </nav>
+      </div></div>
+      <p class="frame-note">Trạng thái viết bằng <b>chữ cỡ 44px</b>, không phải chấm màu. Một hành động chính duy nhất. Lịch mới có nhãn "MỚI" + nền vàng nhạt — hai tín hiệu, không chỉ màu.</p>
+    </div>
+
+    <!-- 5. ADMIN BUSY STATE -->
+    <div class="frame-wrap">
+      <div class="frame-label">5 · Chủ tiệm — Chọn thời gian bận / Khách hàng</div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Hôm nay, Thứ Tư 6/8</div>
+        <div class="body">
+          <div class="status status--busy" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <b style="font-size:18px;letter-spacing:.04em">TRẠNG THÁI HIỆN TẠI</b>
+            <span class="bignum" style="color:var(--danger)">Đang bận</span>
+            <span style="font-size:18px;color:var(--fg-muted);font-weight:500">Còn 27 phút · xong lúc 2:45 chiều</span>
+          </div>
+          <button class="btn btn-accent" style="min-height:72px;font-size:23px">Tôi rảnh rồi</button>
+          <div class="divider"></div>
+          <b style="font-size:18px;color:var(--fg-muted);letter-spacing:.04em">BẤM "TÔI ĐANG BẬN" THÌ HIỆN</b>
+          <div class="quick">
+            <button>15 phút</button><button>30 phút</button>
+            <button>1 tiếng</button><button>2 tiếng</button>
+          </div>
+          <div class="divider"></div>
+          <b style="font-size:18px;color:var(--fg-muted);letter-spacing:.04em">KHÁCH HÀNG</b>
+          <div class="list-item"><span><b>Cô Lan</b><br><span>0912 345 678</span></span>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></div>
+          <div class="list-item"><span><b>Chú Bảy</b><br><span>0938 111 222</span></span>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></div>
+        </div>
+        <nav class="tabbar">
+          <a href="#" aria-current="page"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Hôm nay</a>
+          <a href="#"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>Khách hàng</a>
+        </nav>
+      </div></div>
+      <p class="frame-note">Đang bận thì hiện <b>đếm ngược kèm giờ xong cụ thể</b> — "còn 27 phút" trừu tượng, "xong lúc 2:45" thì kiểm chứng được. Bốn nút chọn nhanh khớp đúng bốn nút trên bot Telegram.</p>
+    </div>
+
+  </div>
+</div>
+
+<div id="sandbox-tab" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-sandbox" hidden>
+  <div class="sandbox-container" id="sandbox-root">
+    <div class="grid">
+
+      <!-- LEFT PHONE: CLIENT APP (INTERACTIVE) -->
+      <div class="frame-wrap">
+        <div class="frame-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Khách — Client App (Tương tác)</span>
+          <span class="badge" id="client-screen-tag">Màn hình: Đăng nhập</span>
+        </div>
+        <div class="phone" id="client-phone">
+
+          <!-- 1. LOGIN SCREEN -->
+          <div class="screen" id="client-screen-login">
+            <div class="appbar">Tiệm Nail &amp; Tóc Cô Ba</div>
+            <div class="body">
+              <div class="field">
+                <label for="client-phone-input">Số điện thoại</label>
+                <input id="client-phone-input" inputmode="numeric" value="0912 345 678">
+              </div>
+              <div class="field">
+                <label for="client-pass-input">Mật khẩu</label>
+                <input id="client-pass-input" type="password" value="••••••">
+              </div>
+              <button class="btn btn-primary" id="btn-client-login" type="button">Đăng nhập</button>
+              <a class="link" href="#" onclick="event.preventDefault(); alert('Vui lòng gọi tiệm 0901 234 567 để cấp/khôi phục mật khẩu.');">Quên mật khẩu</a>
+              <div style="flex:1"></div>
+              <p style="font-size:18px;color:var(--fg-muted);text-align:center">
+                Chưa có tài khoản? Gọi tiệm<br><b style="color:var(--primary);font-size:19px">0901 234 567</b>
+              </p>
+            </div>
+          </div>
+
+          <!-- 2. CHAT SCREEN ("Đặt lịch") -->
+          <div class="screen" id="client-screen-chat" style="display:none;">
+            <div class="appbar">Đặt lịch</div>
+            <div class="body">
+              <div class="status status--free" id="client-status-indicator">
+                <span class="dot" style="background:var(--accent)"></span>
+                <span>
+                  <b>Chủ tiệm đang rảnh</b>
+                  <span>Bấm nhắn tin đặt lịch bên dưới</span>
+                </span>
+              </div>
+              <div class="chat" id="client-chat-messages" style="overflow-y: auto; max-height: 420px; padding-right: 4px;">
+                <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
+              </div>
+              <div class="row" id="client-chat-actions" style="display:none; margin-bottom: 4px;">
+                <button class="btn btn-accent" id="btn-confirm-yes" type="button">Đúng rồi</button>
+                <button class="btn btn-ghost" id="btn-confirm-change" type="button">Đổi giờ</button>
+              </div>
+              <div class="composer">
+                <input id="client-chat-input" placeholder="Nhắn cho tiệm…" aria-label="Nhắn tin">
+                <button class="icon-btn" id="btn-client-mic" aria-label="Nói bằng giọng nói" type="button">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+                </button>
+                <button class="icon-btn" id="btn-client-send" aria-label="Gửi tin nhắn" type="button">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </button>
+              </div>
+            </div>
+            <nav class="tabbar">
+              <a href="#" class="client-tab-link active" id="tab-link-chat" aria-current="page" onclick="switchClientTab('chat'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Đặt lịch
+              </a>
+              <a href="#" class="client-tab-link" id="tab-link-bookings" onclick="switchClientTab('bookings'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Lịch của tôi
+              </a>
+            </nav>
+          </div>
+
+          <!-- 3. MY BOOKINGS SCREEN ("Lịch của tôi") -->
+          <div class="screen" id="client-screen-bookings" style="display:none;">
+            <div class="appbar">Lịch của tôi</div>
+            <div class="body" id="client-bookings-list" style="overflow-y: auto;">
+              <div class="card" id="booking-card-1" data-admin-card-id="admin-booking-card-default">
+                <span class="badge">SẮP TỚI</span>
+                <h3>Hôm nay, Thứ Tư 6/8</h3>
+                <div class="when">2:00 chiều · Làm tóc</div>
+                <div class="booking-action-area">
+                  <button class="btn btn-ghost btn-cancel-trigger" onclick="showCancelConfirmation('booking-card-1', '2:00 chiều Hôm nay')" style="border-color:var(--danger);color:var(--danger)" type="button">Hủy lịch này</button>
+                </div>
+              </div>
+
+              <div class="card" id="booking-card-2">
+                <h3>Thứ Ba, 12/8</h3>
+                <div class="when">9:00 sáng · Làm nail</div>
+                <div class="booking-action-area">
+                  <button class="btn btn-ghost btn-cancel-trigger" onclick="showCancelConfirmation('booking-card-2', '9:00 sáng Thứ Ba 12/8')" style="border-color:var(--danger);color:var(--danger)" type="button">Hủy lịch này</button>
+                </div>
+              </div>
+            </div>
+            <nav class="tabbar">
+              <a href="#" class="client-tab-link" id="tab-link-chat-2" onclick="switchClientTab('chat'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Đặt lịch
+              </a>
+              <a href="#" class="client-tab-link active" id="tab-link-bookings-2" aria-current="page" onclick="switchClientTab('bookings'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Lịch của tôi
+              </a>
+            </nav>
+          </div>
+
+        </div>
+        <p class="frame-note">Bấm "Đăng nhập", gõ tin nhắn hội thoại AI (có hiệu ứng loading & typewriter), chuyển tab và trải nghiệm hủy lịch inline.</p>
+      </div>
+
+      <!-- RIGHT PHONE: ADMIN APP (SHELL FOR TASK 2, INTERACTIVE IN TASK 3) -->
+      <div class="frame-wrap">
+        <div class="frame-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Chủ tiệm — Admin App (Mô phỏng)</span>
+          <span class="badge" id="admin-screen-tag" style="background:var(--accent-weak);color:var(--accent)">Màn hình: Hôm nay</span>
+        </div>
+        <div class="phone" id="admin-phone">
+          <!-- 1. DASHBOARD SCREEN -->
+          <div class="screen" id="admin-screen-dashboard">
+            <div class="appbar">Hôm nay, Thứ Tư 6/8</div>
+            <div class="body" style="overflow-y: auto;">
+              <div class="status status--free" id="admin-status-indicator" style="flex-direction:column;align-items:flex-start;gap:4px">
+                <b style="font-size:18px;letter-spacing:.04em">TRẠNG THÁI HIỆN TẠI</b>
+                <span class="bignum" id="admin-status-text" style="color:var(--accent)">Đang rảnh</span>
+                <span id="admin-status-subtext" style="font-size:18px;color:var(--fg-muted);font-weight:500;display:none;"></span>
+              </div>
+              <button class="btn btn-danger" id="btn-admin-busy-toggle" style="min-height:72px;font-size:23px" type="button">Tôi đang bận</button>
+              <div class="quick" id="admin-quick-durations" style="display:none; margin-top: 8px;">
+                <button type="button" class="btn-quick-duration" data-minutes="15">15 phút</button>
+                <button type="button" class="btn-quick-duration" data-minutes="30">30 phút</button>
+                <button type="button" class="btn-quick-duration" data-minutes="60">1 tiếng</button>
+                <button type="button" class="btn-quick-duration" data-minutes="120">2 tiếng</button>
+              </div>
+              <div class="divider"></div>
+              <b style="font-size:18px;color:var(--fg-muted);letter-spacing:.04em" id="admin-bookings-count">LỊCH HÔM NAY · 3 khách</b>
+              <div id="admin-bookings-list" style="display:flex; flex-direction:column; gap:var(--s2);">
+                <div class="card" id="admin-booking-card-default" style="border-color:var(--warning-weak);background:var(--warning-weak)">
+                  <span class="badge badge--new">MỚI</span>
+                  <h3>2:00 chiều · Cô Lan</h3>
+                  <div class="when">Làm tóc · 0912 345 678</div>
+                </div>
+                <div class="card" id="admin-booking-card-1">
+                  <h3>3:00 chiều · Chú Bảy</h3>
+                  <div class="when">Cắt tóc · 0938 111 222</div>
+                </div>
+                <div class="card" id="admin-booking-card-2">
+                  <h3>5:00 chiều · Cô Hoa</h3>
+                  <div class="when">Làm nail · 0977 333 444</div>
+                </div>
+              </div>
+            </div>
+            <nav class="tabbar">
+              <a href="#" class="admin-tab-link active" id="admin-tab-link-today" aria-current="page" onclick="switchAdminTab('today'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Hôm nay
+              </a>
+              <a href="#" class="admin-tab-link" id="admin-tab-link-clients" onclick="switchAdminTab('clients'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>Khách hàng
+              </a>
+            </nav>
+          </div>
+
+          <!-- 2. CLIENTS LIST SCREEN -->
+          <div class="screen" id="admin-screen-clients" style="display:none;">
+            <div class="appbar">Khách hàng</div>
+            <div class="body" style="overflow-y: auto;">
+              <div class="field">
+                <input id="admin-client-search" placeholder="Tìm theo SĐT..." aria-label="Tìm theo SĐT" style="font-size:18px; min-height:56px;">
+              </div>
+              <div class="row" style="margin-top: 4px;">
+                <button class="btn btn-primary" type="button">Tạo tài khoản</button>
+                <button class="btn btn-ghost" type="button">Đặt hộ khách</button>
+              </div>
+              <div class="divider"></div>
+              <div class="list-item">
+                <span><b>Cô Lan</b><br><span>0912 345 678</span></span>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+              </div>
+              <div class="list-item">
+                <span><b>Chú Bảy</b><br><span>0938 111 222</span></span>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+              </div>
+            </div>
+            <nav class="tabbar">
+              <a href="#" class="admin-tab-link" id="admin-tab-link-today-2" onclick="switchAdminTab('today'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Hôm nay
+              </a>
+              <a href="#" class="admin-tab-link active" id="admin-tab-link-clients-2" aria-current="page" onclick="switchAdminTab('clients'); return false;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>Khách hàng
+              </a>
+            </nav>
+          </div>
+        </div>
+        <p class="frame-note">Bấm "Tôi đang bận" để chọn thời gian bận (kèm đếm ngược trực tiếp), trạng thái và lịch hẹn sẽ đồng bộ thời gian thực với Client App.</p>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function switchTab(tabName) {
+  const showcasePane = document.getElementById('showcase-tab');
+  const sandboxPane = document.getElementById('sandbox-tab');
+  const btnShowcase = document.getElementById('tab-btn-showcase');
+  const btnSandbox = document.getElementById('tab-btn-sandbox');
+
+  if (tabName === 'showcase') {
+    showcasePane.removeAttribute('hidden');
+    showcasePane.classList.add('active');
+    sandboxPane.setAttribute('hidden', '');
+    sandboxPane.classList.remove('active');
+
+    btnShowcase.classList.add('active');
+    btnShowcase.setAttribute('aria-selected', 'true');
+    btnSandbox.classList.remove('active');
+    btnSandbox.setAttribute('aria-selected', 'false');
+  } else if (tabName === 'sandbox') {
+    sandboxPane.removeAttribute('hidden');
+    sandboxPane.classList.add('active');
+    showcasePane.setAttribute('hidden', '');
+    showcasePane.classList.remove('active');
+
+    btnSandbox.classList.add('active');
+    btnSandbox.setAttribute('aria-selected', 'true');
+    btnShowcase.classList.remove('active');
+    btnShowcase.setAttribute('aria-selected', 'false');
+  }
+}
+
+// --- Client App Navigation & Logic ---
+let isAiTyping = false;
+
+function showClientScreen(screenName) {
+  document.getElementById('client-screen-login').style.display = (screenName === 'login') ? 'flex' : 'none';
+  document.getElementById('client-screen-chat').style.display = (screenName === 'chat') ? 'flex' : 'none';
+  document.getElementById('client-screen-bookings').style.display = (screenName === 'bookings') ? 'flex' : 'none';
+
+  const tag = document.getElementById('client-screen-tag');
+  if (tag) {
+    if (screenName === 'login') tag.textContent = 'Màn hình: Đăng nhập';
+    else if (screenName === 'chat') tag.textContent = 'Màn hình: Đặt lịch';
+    else if (screenName === 'bookings') tag.textContent = 'Màn hình: Lịch của tôi';
+  }
+}
+
+function switchClientTab(tabName) {
+  if (tabName === 'chat') {
+    showClientScreen('chat');
+    document.querySelectorAll('.client-tab-link').forEach(el => {
+      if (el.id.includes('chat')) {
+        el.classList.add('active');
+        el.setAttribute('aria-current', 'page');
+      } else {
+        el.classList.remove('active');
+        el.removeAttribute('aria-current');
+      }
+    });
+  } else if (tabName === 'bookings') {
+    showClientScreen('bookings');
+    document.querySelectorAll('.client-tab-link').forEach(el => {
+      if (el.id.includes('bookings')) {
+        el.classList.add('active');
+        el.setAttribute('aria-current', 'page');
+      } else {
+        el.classList.remove('active');
+        el.removeAttribute('aria-current');
+      }
+    });
+  }
+}
+
+function switchAdminTab(tabName) {
+  const dashScreen = document.getElementById('admin-screen-dashboard');
+  const clientsScreen = document.getElementById('admin-screen-clients');
+  const tag = document.getElementById('admin-screen-tag');
+
+  if (tabName === 'today') {
+    if (dashScreen) dashScreen.style.display = 'flex';
+    if (clientsScreen) clientsScreen.style.display = 'none';
+    if (tag) tag.textContent = 'Màn hình: Hôm nay';
+
+    document.querySelectorAll('.admin-tab-link').forEach(el => {
+      if (el.id.includes('today')) {
+        el.classList.add('active');
+        el.setAttribute('aria-current', 'page');
+      } else {
+        el.classList.remove('active');
+        el.removeAttribute('aria-current');
+      }
+    });
+  } else if (tabName === 'clients') {
+    if (dashScreen) dashScreen.style.display = 'none';
+    if (clientsScreen) clientsScreen.style.display = 'flex';
+    if (tag) tag.textContent = 'Màn hình: Khách hàng';
+
+    document.querySelectorAll('.admin-tab-link').forEach(el => {
+      if (el.id.includes('clients')) {
+        el.classList.add('active');
+        el.setAttribute('aria-current', 'page');
+      } else {
+        el.classList.remove('active');
+        el.removeAttribute('aria-current');
+      }
+    });
+  }
+}
+
+// --- Task 3: Admin App Interactive & Synced Real-Time Simulation ---
+let isAdminBusy = false;
+let adminTimerInterval = null;
+let adminBusyEndTime = null;
+
+function initAdminApp() {
+  const busyToggleBtn = document.getElementById('btn-admin-busy-toggle');
+  if (busyToggleBtn) {
+    busyToggleBtn.addEventListener('click', toggleAdminBusyState);
+  }
+
+  const quickBtns = document.querySelectorAll('.btn-quick-duration');
+  quickBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mins = parseInt(btn.getAttribute('data-minutes'), 10);
+      if (mins) startAdminTimer(mins);
+    });
+  });
+
+  syncStatusToClient();
+  updateAdminBookingsCount();
+}
+
+function toggleAdminBusyState() {
+  if (!isAdminBusy) {
+    isAdminBusy = true;
+    showAdminBusyUI();
+    syncStatusToClient();
+  } else {
+    resetAdminToFree();
+  }
+}
+
+function showAdminBusyUI() {
+  const indicator = document.getElementById('admin-status-indicator');
+  const statusText = document.getElementById('admin-status-text');
+  const btn = document.getElementById('btn-admin-busy-toggle');
+  const quickDurations = document.getElementById('admin-quick-durations');
+
+  if (indicator) {
+    indicator.className = 'status status--busy';
+    indicator.style.flexDirection = 'column';
+    indicator.style.alignItems = 'flex-start';
+    indicator.style.gap = '4px';
+  }
+  if (statusText) {
+    statusText.textContent = 'Đang bận';
+    statusText.style.color = 'var(--danger)';
+  }
+  if (btn) {
+    btn.textContent = 'Tôi rảnh rồi';
+    btn.className = 'btn btn-accent';
+    btn.style.minHeight = '72px';
+    btn.style.fontSize = '23px';
+  }
+  if (quickDurations) {
+    quickDurations.style.display = 'grid';
+  }
+}
+
+function startAdminTimer(minutes) {
+  if (adminTimerInterval) clearInterval(adminTimerInterval);
+
+  adminBusyEndTime = Date.now() + minutes * 60 * 1000;
+  
+  const quickDurations = document.getElementById('admin-quick-durations');
+  if (quickDurations) quickDurations.style.display = 'none';
+
+  updateTimerDisplay();
+  adminTimerInterval = setInterval(updateTimerDisplay, 1000);
+}
+
+function formatTimeHHMM(date) {
+  let h = date.getHours();
+  const m = date.getMinutes().toString().padStart(2, '0');
+  const period = h >= 12 ? 'chiều' : 'sáng';
+  const h12 = h % 12 || 12;
+  return `${h12}:${m} ${period}`;
+}
+
+function updateTimerDisplay() {
+  if (!isAdminBusy || !adminBusyEndTime) return;
+
+  const now = Date.now();
+  const diffMs = adminBusyEndTime - now;
+
+  if (diffMs <= 0) {
+    resetAdminToFree();
+    return;
+  }
+
+  const totalSecs = Math.ceil(diffMs / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  const finishStr = formatTimeHHMM(new Date(adminBusyEndTime));
+
+  const secsFormatted = secs.toString().padStart(2, '0');
+  const adminText = `Còn ${mins} phút ${secsFormatted} giây · xong lúc ${finishStr}`;
+  const clientText = `Còn ${mins} phút · xong lúc ${finishStr}`;
+
+  const subtext = document.getElementById('admin-status-subtext');
+  if (subtext) {
+    subtext.textContent = adminText;
+    subtext.style.display = 'block';
+  }
+
+  syncStatusToClient(clientText);
+}
+
+function resetAdminToFree() {
+  if (adminTimerInterval) {
+    clearInterval(adminTimerInterval);
+    adminTimerInterval = null;
+  }
+  adminBusyEndTime = null;
+  isAdminBusy = false;
+
+  const indicator = document.getElementById('admin-status-indicator');
+  const statusText = document.getElementById('admin-status-text');
+  const subtext = document.getElementById('admin-status-subtext');
+  const btn = document.getElementById('btn-admin-busy-toggle');
+  const quickDurations = document.getElementById('admin-quick-durations');
+
+  if (indicator) {
+    indicator.className = 'status status--free';
+    indicator.style.flexDirection = 'column';
+    indicator.style.alignItems = 'flex-start';
+    indicator.style.gap = '4px';
+  }
+  if (statusText) {
+    statusText.textContent = 'Đang rảnh';
+    statusText.style.color = 'var(--accent)';
+  }
+  if (subtext) {
+    subtext.textContent = '';
+    subtext.style.display = 'none';
+  }
+  if (btn) {
+    btn.textContent = 'Tôi đang bận';
+    btn.className = 'btn btn-danger';
+    btn.style.minHeight = '72px';
+    btn.style.fontSize = '23px';
+  }
+  if (quickDurations) {
+    quickDurations.style.display = 'none';
+  }
+
+  syncStatusToClient();
+}
+
+function syncStatusToClient(customBusySubtext) {
+  const clientIndicator = document.getElementById('client-status-indicator');
+  if (!clientIndicator) return;
+
+  if (!isAdminBusy) {
+    clientIndicator.className = 'status status--free';
+    clientIndicator.innerHTML = `
+      <span class="dot" style="background:var(--accent)"></span>
+      <span>
+        <b>Chủ tiệm đang rảnh</b>
+        <span>Bấm nhắn tin đặt lịch bên dưới</span>
+      </span>
+    `;
+  } else {
+    clientIndicator.className = 'status status--busy';
+    const subtextStr = customBusySubtext || 'Khoảng 30 phút nữa xong';
+    clientIndicator.innerHTML = `
+      <span class="dot" style="background:var(--danger)"></span>
+      <span>
+        <b>Chủ tiệm đang bận</b>
+        <span>${subtextStr}</span>
+      </span>
+    `;
+  }
+}
+
+function updateAdminBookingsCount() {
+  const list = document.getElementById('admin-bookings-list');
+  const countEl = document.getElementById('admin-bookings-count');
+  if (list && countEl) {
+    const cards = list.querySelectorAll('.card');
+    countEl.textContent = `LỊCH HÔM NAY · ${cards.length} khách`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initAdminApp();
+
+  const loginBtn = document.getElementById('btn-client-login');
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      showClientScreen('chat');
+    });
+  }
+
+  const sendBtn = document.getElementById('btn-client-send');
+  const micBtn = document.getElementById('btn-client-mic');
+  const chatInput = document.getElementById('client-chat-input');
+
+  if (sendBtn && chatInput) {
+    sendBtn.addEventListener('click', () => handleClientSendMessage());
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleClientSendMessage();
+      }
+    });
+  }
+
+  if (micBtn) {
+    micBtn.addEventListener('click', () => {
+      if (isAiTyping) return;
+      const input = document.getElementById('client-chat-input');
+      if (input) {
+        input.value = "mai 3h chiều làm tóc được không con";
+        setTimeout(() => {
+          handleClientSendMessage();
+        }, 300);
+      }
+    });
+  }
+
+  const confirmYesBtn = document.getElementById('btn-confirm-yes');
+  const confirmChangeBtn = document.getElementById('btn-confirm-change');
+
+  if (confirmYesBtn) {
+    confirmYesBtn.addEventListener('click', () => handleConfirmAction('yes'));
+  }
+  if (confirmChangeBtn) {
+    confirmChangeBtn.addEventListener('click', () => handleConfirmAction('change'));
+  }
+});
+
+function handleClientSendMessage() {
+  if (isAiTyping) return;
+  const input = document.getElementById('client-chat-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  appendUserMessage(text);
+  triggerAiResponseFlow(text);
+}
+
+function appendUserMessage(text) {
+  const chatBox = document.getElementById('client-chat-messages');
+  if (!chatBox) return;
+  const msgEl = document.createElement('div');
+  msgEl.className = 'msg msg--me';
+  msgEl.textContent = text;
+  chatBox.appendChild(msgEl);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function triggerAiResponseFlow(userMsgText) {
+  isAiTyping = true;
+  const chatBox = document.getElementById('client-chat-messages');
+  const actionsRow = document.getElementById('client-chat-actions');
+  if (actionsRow) actionsRow.style.display = 'none';
+
+  // Create Bot message container
+  const botMsg = document.createElement('div');
+  botMsg.className = 'msg msg--bot';
+
+  // State 1: "Con đang đọc ạ…"
+  const statusEl = document.createElement('div');
+  statusEl.className = 'ai-status-step';
+  statusEl.innerHTML = `<span>Con đang đọc ạ…</span> <span class="dots"><span class="dot-bounce">.</span><span class="dot-bounce">.</span><span class="dot-bounce">.</span></span>`;
+  botMsg.appendChild(statusEl);
+
+  chatBox.appendChild(botMsg);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  // State 2: "Đang xem lịch trống…" after 750ms
+  setTimeout(() => {
+    statusEl.innerHTML = `<span>Đang xem lịch trống…</span> <span class="spinner"></span>`;
+    chatBox.scrollTop = chatBox.scrollHeight;
+
+    // State 3: "Đã xem lịch trống" checkmark after 850ms
+    setTimeout(() => {
+      statusEl.style.color = 'var(--accent)';
+      statusEl.style.fontWeight = '600';
+      statusEl.style.marginBottom = '6px';
+      statusEl.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>Đã xem lịch trống</span>
+      `;
+      chatBox.scrollTop = chatBox.scrollHeight;
+
+      // State 4: Typewriter effect response text
+      const textContainer = document.createElement('div');
+      textContainer.className = 'ai-response-text';
+      botMsg.appendChild(textContainer);
+
+      let replyText = "Dạ mai còn trống 3 giờ chiều ạ. Con đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không cô?";
+      let showButtons = true;
+
+      if (userMsgText.toLowerCase().includes('hủy') || userMsgText.toLowerCase().includes('bỏ')) {
+        replyText = "Dạ cô muốn hủy lịch hẹn nào ạ? Cô có thể sang mục 'Lịch của tôi' để hủy trực tiếp nhé ạ.";
+        showButtons = false;
+      }
+
+      runTypewriter(textContainer, replyText, () => {
+        isAiTyping = false;
+        if (showButtons && actionsRow) {
+          actionsRow.style.display = 'flex';
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }
+      });
+
+    }, 850);
+  }, 750);
+}
+
+function runTypewriter(element, fullText, onComplete) {
+  let index = 0;
+  const chatBox = document.getElementById('client-chat-messages');
+
+  function typeNextChar() {
+    if (index < fullText.length) {
+      element.textContent += fullText.charAt(index);
+      index++;
+      if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+      setTimeout(typeNextChar, 25);
+    } else {
+      if (onComplete) onComplete();
+    }
+  }
+  typeNextChar();
+}
+
+function handleConfirmAction(type) {
+  if (isAiTyping) return;
+  const actionsRow = document.getElementById('client-chat-actions');
+  if (actionsRow) actionsRow.style.display = 'none';
+
+  if (type === 'yes') {
+    appendUserMessage("Đúng rồi");
+    isAiTyping = true;
+
+    const chatBox = document.getElementById('client-chat-messages');
+    const botMsg = document.createElement('div');
+    botMsg.className = 'msg msg--bot';
+    chatBox.appendChild(botMsg);
+
+    const replyText = "Dạ con đã ghi nhận lịch hẹn của cô vào Thứ Năm 7/8 lúc 3:00 chiều ạ. Cô có thể xem lại ở mục 'Lịch của tôi'.";
+    runTypewriter(botMsg, replyText, () => {
+      isAiTyping = false;
+      addBookingToMyBookings('Thứ Năm, 7/8', '3:00 chiều · Làm tóc');
+    });
+
+  } else if (type === 'change') {
+    appendUserMessage("Đổi giờ");
+    isAiTyping = true;
+
+    const chatBox = document.getElementById('client-chat-messages');
+    const botMsg = document.createElement('div');
+    botMsg.className = 'msg msg--bot';
+    chatBox.appendChild(botMsg);
+
+    const replyText = "Dạ cô muốn đổi sang giờ nào hay ngày nào khác ạ? (Ví dụ: 4h chiều thứ Sáu)";
+    runTypewriter(botMsg, replyText, () => {
+      isAiTyping = false;
+    });
+  }
+}
+
+function addBookingToMyBookings(dateStr, detailStr) {
+  const bookingsList = document.getElementById('client-bookings-list');
+  if (!bookingsList) return;
+
+  const emptyMsg = document.getElementById('no-bookings-msg');
+  if (emptyMsg) emptyMsg.remove();
+
+  const timestamp = Date.now();
+  const clientCardId = 'booking-card-' + timestamp;
+  const adminCardId = 'admin-booking-card-' + timestamp;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = clientCardId;
+  card.setAttribute('data-admin-card-id', adminCardId);
+  card.innerHTML = `
+    <span class="badge badge--new">MỚI TẠO</span>
+    <h3>${dateStr}</h3>
+    <div class="when">${detailStr}</div>
+    <div class="booking-action-area">
+      <button class="btn btn-ghost btn-cancel-trigger" onclick="showCancelConfirmation('${clientCardId}', '${detailStr} ${dateStr}')" style="border-color:var(--danger);color:var(--danger)" type="button">Hủy lịch này</button>
+    </div>
+  `;
+  bookingsList.prepend(card);
+
+  addBookingToAdminDashboard(adminCardId, dateStr, detailStr);
+}
+
+function addBookingToAdminDashboard(adminCardId, dateStr, detailStr) {
+  const adminList = document.getElementById('admin-bookings-list');
+  if (!adminList) return;
+
+  const timePart = detailStr.split('·')[0] ? detailStr.split('·')[0].trim() : detailStr;
+  const servicePart = detailStr.split('·')[1] ? detailStr.split('·')[1].trim() : detailStr;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = adminCardId;
+  card.style.borderColor = 'var(--warning-weak)';
+  card.style.background = 'var(--warning-weak)';
+  card.innerHTML = `
+    <span class="badge badge--new">MỚI</span>
+    <h3>${timePart} · Cô Lan</h3>
+    <div class="when">${servicePart} · 0912 345 678</div>
+  `;
+  adminList.prepend(card);
+  updateAdminBookingsCount();
+}
+
+function showCancelConfirmation(cardId, bookingDetail) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+
+  const actionArea = card.querySelector('.booking-action-area');
+  if (!actionArea) return;
+
+  actionArea.innerHTML = `
+    <div class="sheet" style="margin-top: var(--s2); border-color: var(--danger);">
+      <p style="font-size:18px; line-height:1.4;">Cô có chắc muốn hủy lịch<br><b>${bookingDetail}</b> không ạ?</p>
+      <div class="row" style="margin-top:var(--s2);">
+        <button class="btn btn-danger" onclick="confirmCancelBooking('${cardId}')" type="button">Có, hủy</button>
+        <button class="btn btn-ghost" onclick="restoreCancelButton('${cardId}', '${bookingDetail}')" type="button">Không</button>
+      </div>
+    </div>
+  `;
+}
+
+function restoreCancelButton(cardId, bookingDetail) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+
+  const actionArea = card.querySelector('.booking-action-area');
+  if (!actionArea) return;
+
+  actionArea.innerHTML = `
+    <button class="btn btn-ghost btn-cancel-trigger" onclick="showCancelConfirmation('${cardId}', '${bookingDetail}')" style="border-color:var(--danger);color:var(--danger)" type="button">Hủy lịch này</button>
+  `;
+}
+
+function confirmCancelBooking(cardId) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+
+  const adminCardId = card.getAttribute('data-admin-card-id') || ('admin-' + cardId);
+
+  card.style.transition = 'all 0.3s ease';
+  card.style.opacity = '0';
+  card.style.transform = 'scale(0.95)';
+
+  const adminCard = document.getElementById(adminCardId);
+  if (adminCard) {
+    adminCard.style.transition = 'all 0.3s ease';
+    adminCard.style.opacity = '0';
+    adminCard.style.transform = 'scale(0.95)';
+    setTimeout(() => {
+      adminCard.remove();
+      updateAdminBookingsCount();
+    }, 300);
+  }
+
+  setTimeout(() => {
+    card.remove();
+    const bookingsList = document.getElementById('client-bookings-list');
+    if (bookingsList && bookingsList.querySelectorAll('.card').length === 0) {
+      bookingsList.innerHTML = `
+        <div id="no-bookings-msg" style="text-align:center; padding:var(--s5); color:var(--fg-muted); font-size:18px;">
+          Cô chưa có lịch hẹn nào.
+        </div>
+      `;
+    }
+  }, 300);
+}
+</script>
+
+</body>
+</html>

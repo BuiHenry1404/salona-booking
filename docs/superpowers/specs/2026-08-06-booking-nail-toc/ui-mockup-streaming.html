@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Streaming &amp; hiển thị gọi tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Bảng màu chính - Soft Warm Rose & Sage (Tương phản ≥ 5.2:1) */
+  --primary: #965C50;          /* Hồng đất ấm */
+  --primary-hover: #7E4A3E;
+  --primary-weak: #F8F3F1;     /* Nền hồng nhạt */
+  --on-primary: #ffffff;
+  
+  --accent: #456A52;           /* Xanh Sage */
+  --accent-hover: #35533F;
+  --accent-weak: #EEF4F0;      /* Nền xanh nhạt */
+  --on-accent: #ffffff;
+
+  --danger: #B84A37;           /* Đỏ gạch ấm */
+  --danger-hover: #9B3B2A;
+  --danger-weak: #FAF0EE;      /* Nền đỏ nhạt */
+  --on-danger: #ffffff;
+
+  --warning: #A14B00;          /* Nhãn Mới / Cảnh báo */
+  --warning-weak: #FEF3C7;
+
+  /* Màu giao diện nền */
+  --bg-page: #FAF8F5;          /* Màu kem ấm áp dịu mắt */
+  --bg-phone: #FCFBF9;         /* Nền bên trong điện thoại */
+  --surface: #ffffff;          /* Thẻ card, input, appbar */
+  --fg: #2C2523;               /* Nâu đen đậm */
+  --fg-muted: #6E615D;         /* Chữ phụ */
+  --border: #EFEAE4;           /* Viền mềm mại */
+
+  /* Kích thước & Trải nghiệm */
+  --r: 16px;                   /* Bo góc mượt mà */
+  --tap: 56px;                 /* Chiều cao vùng chạm tối thiểu */
+  --shadow-sm: 0 2px 8px rgba(44,37,35,0.05);
+  --shadow-md: 0 8px 24px rgba(44,37,35,0.10);
+
+  --s1:8px; --s2:12px; --s3:16px; --s4:24px; --s5:32px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Be Vietnam Pro',system-ui,sans-serif;background:var(--bg-page);color:var(--fg);
+  font-size:19px;line-height:1.55;-webkit-font-smoothing:antialiased;padding:var(--s4)}
+h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
+h2{font-size:22px;font-weight:700;margin-bottom:12px;color:var(--fg)}
+.wrap{max-width:1400px;margin:0 auto}
+.head p{color:var(--fg-muted);margin-top:8px;max-width:75ch;font-size:18px}
+.cols{display:grid;grid-template-columns:minmax(360px,410px) 1fr;gap:32px;margin-top:32px;align-items:start}
+@media(max-width:960px){.cols{grid-template-columns:1fr}}
+.phone{width:100%;max-width:390px;background:var(--bg-phone);border:10px solid #2C2523;
+  border-radius:36px;overflow:hidden;box-shadow:var(--shadow-md)}
+.screen{height:660px;display:flex;flex-direction:column}
+.appbar{background:var(--surface);border-bottom:1px solid var(--border);padding:16px;font-weight:600;font-size:20px;color:var(--fg)}
+.chat{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;background:var(--bg-phone)}
+.msg{max-width:88%;padding:12px 16px;border-radius:18px;font-size:18px;line-height:1.5;word-break:break-word}
+.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px;align-self:flex-start;color:var(--fg);box-shadow:var(--shadow-sm)}
+.msg--me{background:var(--primary);color:#fff;align-self:flex-end;border-bottom-right-radius:6px;box-shadow:var(--shadow-sm)}
+.msg-error-text{color:var(--danger);font-size:18px;font-weight:600;margin-top:6px;display:flex;align-items:center;gap:6px}
+.composer{display:flex;gap:8px;align-items:center;padding:16px;border-top:1px solid var(--border);background:var(--surface)}
+.composer input{flex:1;min-height:var(--tap);border:2px solid var(--border);border-radius:999px;
+  padding:0 18px;font-family:inherit;font-size:18px;color:var(--fg);background:var(--bg-phone);outline:none;transition:border-color .2s}
+.composer input:focus{border-color:var(--primary)}
+.icon-btn{width:var(--tap);height:var(--tap);flex:none;border-radius:50%;border:none;background:var(--primary);
+  color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s, transform .1s}
+.icon-btn:hover{background:var(--primary-hover)}
+.icon-btn:active{transform:scale(0.95)}
+
+/* ---- Trạng thái tiến trình ---- */
+.step{display:flex;align-items:center;gap:10px;align-self:flex-start;max-width:88%;
+  background:var(--surface);border:1px solid var(--border);border-radius:999px;
+  padding:10px 16px;font-size:18px;color:var(--fg-muted);font-weight:500;box-shadow:var(--shadow-sm)}
+.step--done{background:var(--accent-weak);border-color:#A3CBB1;color:var(--accent)}
+.step--error{background:var(--danger-weak);border-color:#F5C6CB;color:var(--danger)}
+.spinner{width:20px;height:20px;flex:none;border:3px solid var(--primary-weak);
+  border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tick{width:20px;height:20px;flex:none;color:var(--accent)}
+.dots span{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--fg-muted);
+  margin-right:4px;animation:bob 1.2s infinite}
+.dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}
+@keyframes bob{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+.caret{display:inline-block;width:3px;height:1.05em;background:var(--primary);
+  vertical-align:-2px;margin-left:2px;animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .spinner{animation:none;border-top-color:var(--primary-weak)}
+  .dots span,.caret{animation:none;opacity:1}
+}
+
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;margin-bottom:24px;box-shadow:var(--shadow-sm)}
+.btn{min-height:var(--tap);padding:0 24px;border:none;border-radius:var(--r);font-family:inherit;
+  font-size:19px;font-weight:600;cursor:pointer;background:var(--primary);color:#fff;display:inline-flex;
+  align-items:center;justify-content:center;gap:8px;transition:background .2s, transform .1s}
+.btn:hover{background:var(--primary-hover)}
+.btn:active{transform:scale(0.97)}
+.btn:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+.btn--secondary{background:var(--primary-weak);color:var(--primary);border:1px solid var(--border)}
+.btn--secondary:hover{background:#EDE4E0}
+
+/* Control Panel styling */
+.control-grid{display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:16px}
+@media(max-width:600px){.control-grid{grid-template-columns:1fr}}
+.sim-input{min-height:var(--tap);border:2px solid var(--border);border-radius:var(--r);
+  padding:0 18px;font-family:inherit;font-size:18px;color:var(--fg);background:var(--bg-phone);outline:none;width:100%}
+.sim-input:focus{border-color:var(--primary)}
+
+.toggle-box{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg-phone);
+  border:1px solid var(--border);border-radius:var(--r);cursor:pointer;user-select:none;min-height:var(--tap)}
+.toggle-box input[type="checkbox"]{width:22px;height:22px;accent-color:var(--danger);cursor:pointer}
+.toggle-label{font-size:18px;font-weight:600;color:var(--fg);cursor:pointer;display:flex;align-items:center;gap:8px}
+
+/* Socket.IO Console Logs Panel */
+.logs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.logs-header h3{font-size:18px;font-weight:700;color:var(--fg)}
+.logs-panel{background:#232120;color:#F0EBE8;font-family:'JetBrains Mono',monospace;font-size:15px;
+  line-height:1.5;padding:16px;border-radius:var(--r);height:260px;overflow-y:auto;border:1px solid #3D3533}
+.log-line{margin-bottom:6px;word-break:break-all}
+.log-time{color:#9E908C;margin-right:8px}
+.log-event{font-weight:600;padding:2px 6px;border-radius:4px;display:inline-block;margin-right:6px}
+.log-event--turn_started{background:#3B3556;color:#C7B8E6}
+.log-event--tool_started{background:#4D3E29;color:#F5D089}
+.log-event--tool_finished{background:#274332;color:#98D9B0}
+.log-event--token{background:#2B3D4A;color:#9BD4F5}
+.log-event--complete{background:#4D2D44;color:#F5B5DF}
+.log-event--error{background:#59221D;color:#FFA8A0}
+.log-json{color:#E6D0C7}
+
+table{width:100%;border-collapse:collapse;font-size:18px}
+th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-weight:700;font-size:18px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted)}
+code{font-family:'JetBrains Mono',monospace;font-size:18px;background:var(--primary-weak);
+  color:var(--primary);padding:3px 8px;border-radius:6px;white-space:nowrap}
+.states{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.state-card{border:1px solid var(--border);border-radius:var(--r);padding:18px;background:var(--bg-phone)}
+.state-card h3{font-size:18px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-muted);margin-bottom:12px}
+.note{font-size:18px;color:var(--fg-muted);margin-top:12px;line-height:1.5}
+.bad{color:var(--danger);font-weight:600}
+.good{color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Streaming &amp; hiển thị “đang gọi tool”</h1>
+    <p>Khách thấy tiến trình bằng tiếng Việt đời thường, không bao giờ thấy tên tool kỹ thuật. Thử nghiệm trực quan với giả lập gửi tin nhắn và ngắt kết nối mạng.</p>
+  </div>
+
+  <div class="cols">
+    <div>
+      <div class="phone"><div class="screen">
+        <div class="appbar">Đặt lịch Tiệm Cô Ba</div>
+        <div class="chat" id="chat" aria-live="polite"></div>
+        <div class="composer">
+          <input id="phone-input" placeholder="Nhắn cho tiệm…" aria-label="Nhắn tin">
+          <button class="icon-btn" id="phone-send-btn" aria-label="Gửi tin nhắn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          </button>
+        </div>
+      </div></div>
+      <button class="btn" id="replay" style="margin-top:16px;width:100%">▶ Chạy lại Kịch Bản Mẫu</button>
+    </div>
+
+    <div>
+      <!-- Bảng điều khiển giả lập & Logs Socket.IO -->
+      <div class="panel">
+        <h2>Bảng Điều Khiển Giả Lập Stream</h2>
+        
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:18px;font-weight:600;margin-bottom:8px;color:var(--fg)">Nhập tin nhắn khách gửi:</label>
+          <div class="control-grid">
+            <input type="text" class="sim-input" id="sim-user-input" placeholder="Ví dụ: Mai 3h chiều làm tóc được không con..." value="Mai 3h chiều làm tóc được không con">
+            <button class="btn" id="sim-send-btn">Gửi tin nhắn</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:20px">
+          <label class="toggle-box">
+            <input type="checkbox" id="sim-network-drop">
+            <span class="toggle-label">⚠️ Giả lập "Mất mạng" (Simulate Network Disconnection)</span>
+          </label>
+          <p class="note" style="margin-top:6px">Khi bật option này, mọi tiến trình gọi tool hoặc stream token sẽ lập tức bị ngắt, giữ nguyên văn bản đã gõ và hiện chữ đỏ thông báo lỗi.</p>
+        </div>
+
+        <div class="logs-header">
+          <h3>Nhật ký sự kiện Socket.IO (Real-time Payload Logs)</h3>
+          <button class="btn btn--secondary" id="clear-logs-btn" style="min-height:var(--tap);padding:0 14px;font-size:18px">Xóa log</button>
+        </div>
+        <div class="logs-panel" id="socket-logs">
+          <div class="log-line" style="color:#9E908C">// Nhật ký các sự kiện Socket.IO streaming sẽ xuất hiện tại đây...</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Bốn trạng thái khách nhìn thấy</h2>
+        <div class="states">
+          <div class="state-card">
+            <h3>1 · Đang hiểu câu hỏi</h3>
+            <div class="step"><span class="dots"><span></span><span></span><span></span></span> Con đang đọc ạ…</div>
+            <p class="note">Hiện ngay khi gửi, trước cả lượt LLM đầu. Lấp khoảng chết 1–2 giây.</p>
+          </div>
+          <div class="state-card">
+            <h3>2 · Đang gọi tool</h3>
+            <div class="step"><span class="spinner"></span> Đang xem lịch trống ngày mai…</div>
+            <p class="note">Mỗi tool có một câu tiếng Việt riêng. <span class="bad">Không</span> hiện <code>find_free_slots</code>.</p>
+          </div>
+          <div class="state-card">
+            <h3>3 · Tool xong</h3>
+            <div class="step step--done">
+              <svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+              Đã xem lịch trống
+            </div>
+            <p class="note">Thu lại thành một dòng, giữ nguyên trên màn hình để khách biết máy đã làm gì.</p>
+          </div>
+          <div class="state-card">
+            <h3>4 · Đang trả lời</h3>
+            <div class="msg msg--bot" style="max-width:100%">Dạ mai còn trống 3 giờ chiều<span class="caret"></span></div>
+            <p class="note">Chữ hiện dần theo token. Con trỏ nhấp nháy cho biết máy còn đang nói.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Câu hiển thị cho từng tool</h2>
+        <table>
+          <thead><tr><th>Tool</th><th>Đang chạy</th><th>Xong</th></tr></thead>
+          <tbody>
+            <tr><td><code>get_shop_status</code></td><td>Đang xem chủ tiệm có rảnh không…</td><td>Đã xem trạng thái tiệm</td></tr>
+            <tr><td><code>find_free_slots</code></td><td>Đang xem lịch trống ngày mai…</td><td>Đã xem lịch trống</td></tr>
+            <tr><td><code>create_appointment</code></td><td>Đang ghi lịch cho cô…</td><td>Đã ghi lịch</td></tr>
+            <tr><td><code>list_my_appointments</code></td><td>Đang xem lịch của cô…</td><td>Đã xem lịch của cô</td></tr>
+            <tr><td><code>cancel_appointment</code></td><td>Đang hủy lịch…</td><td>Đã hủy lịch</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Bảng ánh xạ nằm ở <b>frontend</b>, không phải backend. Backend chỉ gửi tên tool; đổi câu chữ không cần deploy lại API.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Sự kiện Socket.IO cần thêm</h2>
+        <table>
+          <thead><tr><th>Event</th><th>Payload</th><th>Khi nào</th></tr></thead>
+          <tbody>
+            <tr><td><code>turn_started</code></td><td>—</td><td>Nhận tin nhắn, trước lượt LLM đầu</td></tr>
+            <tr><td><code>tool_started</code></td><td><code>{name}</code></td><td>LangGraph phát <code>on_tool_start</code></td></tr>
+            <tr><td><code>tool_finished</code></td><td><code>{name, ok}</code></td><td><code>on_tool_end</code> hoặc lỗi</td></tr>
+            <tr><td><code>token</code></td><td><code>{text}</code></td><td><code>on_chat_model_stream</code> — <b>chỉ node respond</b></td></tr>
+            <tr><td><code>complete</code></td><td><code>{message_id}</code></td><td>Đồ thị chạy xong</td></tr>
+          </tbody>
+        </table>
+        <p class="note"><b>Chỉ stream token của node <code>respond</code>.</b> Token của supervisor là JSON định tuyến — stream ra màn hình khách sẽ thành rác. Lọc bằng <code>tags</code> trong <code>astream_events</code>.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Ba quyết định cần bạn duyệt</h2>
+        <p style="font-size:18px;line-height:1.6">
+          <b>1. Giữ lại dòng tool sau khi xong.</b> Người lớn tuổi hay nghi máy “tự bịa”. Thấy “Đã xem lịch trống” làm câu trả lời đáng tin hơn. Đánh đổi: màn hình dài hơn.<br><br>
+          <b>2. Không có nút “dừng”.</b> Câu trả lời ngắn (1–2 câu), thêm nút dừng là thêm thứ để bấm nhầm.<br><br>
+          <b>3. Mất mạng giữa lúc stream</b> → giữ nguyên phần chữ đã hiện, thêm dòng <span class="bad">“Mất mạng, đang thử lại…”</span> ở dưới. <span class="good">Không</span> xóa chữ đã hiện — người lớn tuổi sẽ tưởng mình làm hỏng.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const socketLogs = document.getElementById('socket-logs');
+const netDropCheckbox = document.getElementById('sim-network-drop');
+const simUserInput = document.getElementById('sim-user-input');
+const simSendBtn = document.getElementById('sim-send-btn');
+const phoneInput = document.getElementById('phone-input');
+const phoneSendBtn = document.getElementById('phone-send-btn');
+const replayBtn = document.getElementById('replay');
+const clearLogsBtn = document.getElementById('clear-logs-btn');
+
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = ms => new Promise(r => setTimeout(r, reduce ? Math.min(ms,120) : ms));
+
+const TICK = `<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+
+let isSimulating = false;
+let currentRunId = 0;
+
+const toolMap = {
+  get_shop_status: { running: 'Đang xem chủ tiệm có rảnh không…', done: 'Đã xem trạng thái tiệm' },
+  find_free_slots: { running: 'Đang xem lịch trống ngày mai…', done: 'Đã xem lịch trống' },
+  create_appointment: { running: 'Đang ghi lịch cho cô…', done: 'Đã ghi lịch' },
+  list_my_appointments: { running: 'Đang xem lịch của cô…', done: 'Đã xem lịch của cô' },
+  cancel_appointment: { running: 'Đang hủy lịch…', done: 'Đã hủy lịch' }
+};
+
+function logSocketEvent(event, payload) {
+  const time = new Date().toLocaleTimeString('vi-VN', { hour12: false });
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  
+  let jsonStr = JSON.stringify(payload);
+  line.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-event log-event--${event}">${event}</span> <span class="log-json">${jsonStr}</span>`;
+  
+  socketLogs.appendChild(line);
+  socketLogs.scrollTop = socketLogs.scrollHeight;
+}
+
+function clearLogs() {
+  socketLogs.innerHTML = '<div class="log-line" style="color:#9E908C">// Nhật ký đã được xóa...</div>';
+}
+
+clearLogsBtn.addEventListener('click', clearLogs);
+
+function el(cls, html){ 
+  const d = document.createElement('div'); 
+  d.className = cls; 
+  d.innerHTML = html; 
+  chat.appendChild(d); 
+  chat.scrollTop = chat.scrollHeight; 
+  return d; 
+}
+
+function isNetworkDropped() {
+  return netDropCheckbox.checked;
+}
+
+function selectToolForText(text) {
+  const t = text.toLowerCase();
+  if (t.includes('rảnh') || t.includes('mở cửa') || t.includes('trạng thái')) return 'get_shop_status';
+  if (t.includes('đặt') || t.includes('ghi lịch') || t.includes('chốt') || t.includes('đăng ký')) return 'create_appointment';
+  if (t.includes('hủy') || t.includes('bỏ')) return 'cancel_appointment';
+  if (t.includes('danh sách') || t.includes('lịch của tôi') || t.includes('lịch đã đặt')) return 'list_my_appointments';
+  return 'find_free_slots';
+}
+
+function generateBotResponseText(tool, text) {
+  const t = text.toLowerCase();
+  if (tool === 'create_appointment') {
+    return 'Xong rồi ạ. Con đã ghi lịch hẹn cho cô rồi nhé. Hẹn gặp cô ạ!';
+  } else if (tool === 'cancel_appointment') {
+    return 'Dạ con đã hủy lịch hẹn giúp cô rồi ạ. Cô cần hỗ trợ gì thêm không ạ?';
+  } else if (tool === 'get_shop_status') {
+    return 'Dạ tiệm đang mở cửa và rảnh tay ạ. Cô ghé tiệm lúc nào cũng được nha!';
+  } else if (tool === 'list_my_appointments') {
+    return 'Dạ cô đang có 1 lịch hẹn Thợ Cát - Tóc nữ vào 3h chiều mai ạ.';
+  } else {
+    return 'Dạ mai còn trống 3 giờ chiều ạ. Con đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không cô?';
+  }
+}
+
+async function simulateSingleTurn(userText, runId) {
+  if (runId !== currentRunId) return false;
+
+  el('msg msg--me', userText);
+  await wait(300);
+
+  // 1. Turn Started
+  logSocketEvent('turn_started', {});
+  if (isNetworkDropped()) {
+    handleNetworkErrorInChat();
+    return false;
+  }
+
+  const thinking = el('step', '<span class="dots"><span></span><span></span><span></span></span> Con đang đọc ạ…');
+  await wait(900);
+  if (runId !== currentRunId) return false;
+
+  if (isNetworkDropped()) {
+    thinking.remove();
+    handleNetworkErrorInChat();
+    return false;
+  }
+  thinking.remove();
+
+  // 2. Tool execution
+  const toolName = selectToolForText(userText);
+  const toolInfo = toolMap[toolName];
+
+  logSocketEvent('tool_started', { name: toolName });
+  const toolStep = el('step', `<span class="spinner"></span> ${toolInfo.running}`);
+  
+  // Wait with live check for network drop
+  for (let i = 0; i < 12; i++) {
+    await wait(100);
+    if (runId !== currentRunId) return false;
+    if (isNetworkDropped()) {
+      toolStep.className = 'step step--error';
+      toolStep.innerHTML = '⚠️ Ngắt kết nối';
+      handleNetworkErrorInChat();
+      return false;
+    }
+  }
+
+  logSocketEvent('tool_finished', { name: toolName, ok: true });
+  toolStep.className = 'step step--done';
+  toolStep.innerHTML = TICK + ' ' + toolInfo.done;
+  await wait(350);
+  if (runId !== currentRunId) return false;
+
+  // 3. Token Stream
+  const botMessage = el('msg msg--bot', '<span class="caret"></span>');
+  const responseText = generateBotResponseText(toolName, userText);
+  const words = responseText.split(' ');
+
+  for (let i = 0; i < words.length; i++) {
+    if (runId !== currentRunId) return false;
+
+    if (isNetworkDropped()) {
+      botMessage.innerHTML = words.slice(0, i).join(' ') + ' <span class="caret"></span>';
+      handleNetworkErrorInChat(botMessage);
+      return false;
+    }
+
+    const currentChunk = words.slice(0, i + 1).join(' ');
+    botMessage.innerHTML = currentChunk + '<span class="caret"></span>';
+    logSocketEvent('token', { text: words[i] });
+    chat.scrollTop = chat.scrollHeight;
+
+    await wait(65);
+  }
+
+  botMessage.innerHTML = responseText;
+  await wait(200);
+
+  // 4. Complete
+  logSocketEvent('complete', { message_id: 'msg_' + Math.floor(Math.random()*1000000) });
+  return true;
+}
+
+function handleNetworkErrorInChat(targetMsgNode) {
+  logSocketEvent('error', { message: 'Mất mạng, đang thử lại...' });
+  const errDiv = document.createElement('div');
+  errDiv.className = 'msg-error-text';
+  errDiv.innerHTML = `⚠️ Mất mạng, đang thử lại...`;
+  
+  if (targetMsgNode) {
+    targetMsgNode.appendChild(errDiv);
+  } else {
+    chat.appendChild(errDiv);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function handleUserSend() {
+  const text = simUserInput.value.trim() || phoneInput.value.trim();
+  if (!text) return;
+
+  currentRunId++;
+  const runId = currentRunId;
+  isSimulating = true;
+
+  simUserInput.value = '';
+  phoneInput.value = '';
+
+  await simulateSingleTurn(text, runId);
+  isSimulating = false;
+}
+
+async function runFullScriptSequence() {
+  currentRunId++;
+  const runId = currentRunId;
+  isSimulating = true;
+
+  chat.innerHTML = '';
+  clearLogs();
+
+  el('msg msg--bot', 'Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?');
+  await wait(500);
+
+  if (runId !== currentRunId) return;
+  const ok1 = await simulateSingleTurn('mai 3h chiều làm tóc được không con', runId);
+  if (!ok1) { isSimulating = false; return; }
+
+  await wait(600);
+  if (runId !== currentRunId) return;
+
+  const ok2 = await simulateSingleTurn('ừ đúng rồi', runId);
+  isSimulating = false;
+}
+
+simSendBtn.addEventListener('click', handleUserSend);
+phoneSendBtn.addEventListener('click', handleUserSend);
+
+simUserInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleUserSend(); });
+phoneInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleUserSend(); });
+
+replayBtn.addEventListener('click', runFullScriptSequence);
+
+// Run default sequence on page load
+runFullScriptSequence();
+</script>
+</body>
+</html>
