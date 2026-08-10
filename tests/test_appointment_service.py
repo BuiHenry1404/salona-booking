@@ -118,10 +118,21 @@ async def test_free_slots_stay_inside_shop_hours(test_db, future_day):
 
 
 async def test_free_slots_exclude_booked_times(test_db, future_day):
+    """A 60-min booking at 08:00 must black out 08:00, 08:15, 08:30 and 08:45.
+    A later hour (09:00) must still be offered, and the list must not be empty."""
     svc = AppointmentService(test_db)
     await svc.create(make_user(), future_local(8), note=None)
     slots = await svc.find_free_slots(future_day)
-    assert future_local(8) not in [s.astimezone(TZ) for s in slots]
+    local_slots = [s.astimezone(TZ) for s in slots]
+    # All four sub-slots of the booked hour must be absent
+    assert future_local(8, 0) not in local_slots
+    assert future_local(8, 15) not in local_slots
+    assert future_local(8, 30) not in local_slots
+    assert future_local(8, 45) not in local_slots
+    # A genuinely free slot later in the day must be offered
+    assert future_local(9, 0) in local_slots
+    # The overall list must be non-empty
+    assert slots
 
 
 async def test_free_slots_for_a_past_day_are_empty(test_db):

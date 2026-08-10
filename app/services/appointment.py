@@ -73,10 +73,13 @@ class AppointmentService:
         """Các mốc còn trống trong ngày: nằm trong giờ mở cửa, không trùng lịch
         đã có, và không ở quá khứ."""
         start, end = local_day_bounds(day)
-        taken = {
-            appt.start_at.replace(tzinfo=start.tzinfo)
-            for appt in await self.repo.booked_between(start, end)
-        }
+        tz = start.tzinfo
+        taken: set = set()
+        for appt in await self.repo.booked_between(start, end):
+            appt_start = appt.start_at.replace(tzinfo=tz)
+            steps = appt.duration_minutes // SLOT_MINUTES
+            for i in range(steps):
+                taken.add(appt_start + timedelta(minutes=SLOT_MINUTES * i))
         duration = settings.booking_slot_minutes
         now = now_utc()
 
