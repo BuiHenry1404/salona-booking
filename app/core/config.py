@@ -5,60 +5,63 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Application
-    app_name: str = "chatbot-api"
-    env: Literal["dev", "stg", "prod"] = "dev"
-    debug: bool = False
-    
+    app_name: str
+    env: Literal["dev", "stg", "prod"]
+    debug: bool
+
     # Database
     mongo_uri: AnyUrl
-    mongo_db_name: str = "chatbot_db"
-    
+    mongo_db_name: str
+
     # Security
     jwt_secret: SecretStr
-    jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 30
+    jwt_algorithm: str
+    jwt_expire_minutes: int
     api_key: SecretStr
-    
+
     # CORS
-    allowed_origins: Union[str, list[str]] = "http://localhost:3000"
-    
+    allowed_origins: Union[str, list[str]]
+
     # Logging
-    log_level: str = "INFO"
-    
+    log_level: str
+
     # LLM Configuration
-    llm_provider: Literal["openai", "azure", "anthropic", "gemini"] = "azure"
-    
+    llm_provider: Literal["openai", "azure", "anthropic", "gemini"]
+
     # Azure OpenAI
     azure_openai_api_key: Optional[SecretStr] = None
     azure_openai_endpoint: Optional[str] = None
     azure_openai_deployment: Optional[str] = None
-    azure_openai_model: str = "gpt-4.1-nano"
-    azure_openai_api_version: str = "2025-04-01-preview"
-    
+    azure_openai_model: str
+    azure_openai_api_version: str
+
     # OpenAI
     openai_api_key: Optional[SecretStr] = None
-    openai_model: str = "gpt-4.1-nano"
-    
+    openai_model: str
+
     # Anthropic
     anthropic_api_key: Optional[SecretStr] = None
-    anthropic_model: str = "claude-sonnet-4-20250514"
-    
+    anthropic_model: str
+
     # Gemini
     gemini_api_key: Optional[SecretStr] = None
-    gemini_model: str = "gemini-2.5-flash-lite"
-    
+    gemini_model: str
+
     # Booking
-    booking_slot_minutes: int = 60
-    timezone: str = "Asia/Ho_Chi_Minh"
+    booking_slot_minutes: int
+    timezone: str
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.
     # Bắt buộc có giá trị thật trước khi chạy production.
-    shop_phone: str = ""
+    shop_phone: str
 
     # Postgres (memory ngữ nghĩa — dùng ở Plan 2)
     postgres_uri: Optional[str] = None
-    embedding_dims: int = 1536
-    azure_openai_embedding_model: str = "text-embedding-3-small"
+    # CẢNH BÁO: hai giá trị dưới phải khớp nhau.
+    # Lệch số chiều thì pgvector IM LẶNG nuốt lỗi ghi — không có đường migrate,
+    # phải xóa volume và tạo lại dữ liệu.
+    embedding_dims: int
+    azure_openai_embedding_model: str
     # Trên Azure, tên deployment do người tạo đặt và thường KHÁC tên model.
     # Để trống thì lấy tên model làm tên deployment.
     azure_openai_embedding_deployment: Optional[str] = None
@@ -70,7 +73,7 @@ class Settings(BaseSettings):
 
     # Telegram — để trống thì không chạy bot
     telegram_bot_token: Optional[SecretStr] = None
-    telegram_admin_chat_ids: str = ""
+    telegram_admin_chat_ids: str
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
@@ -80,11 +83,11 @@ class Settings(BaseSettings):
             origins = [origin.strip() for origin in v.split(",") if origin.strip()]
             return origins
         return v if isinstance(v, list) else [str(v)]
-    
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False
     }
 
 
-settings = Settings() 
+settings = Settings()
