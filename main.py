@@ -7,7 +7,7 @@ import structlog
 
 from app.core.config import settings
 from app.core.logging import configure_logging
-from app.api.v1.routers import health, auth, conversations, tasks, chat
+from app.api.v1.routers import health, auth, conversations, tasks
 from app.services.socketio_service import SocketIOService
 from app.infrastructure.database import create_mongodb_connection
 from app.infrastructure.llm import initialize_llm_clients
@@ -134,7 +134,6 @@ app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")
 
 # Mount static files for the test client
 app.mount("/static", StaticFiles(directory="static"), name="static")

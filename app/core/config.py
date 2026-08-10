@@ -47,9 +47,31 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[SecretStr] = None
     gemini_model: str = "gemini-2.5-flash-lite"
     
-    # YouTube
-    youtube_api_key: Optional[SecretStr] = None
-    
+    # Booking
+    booking_slot_minutes: int = 60
+    timezone: str = "Asia/Ho_Chi_Minh"
+
+    # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.
+    # Bắt buộc có giá trị thật trước khi chạy production.
+    shop_phone: str = ""
+
+    # Postgres (memory ngữ nghĩa — dùng ở Plan 2)
+    postgres_uri: Optional[str] = None
+    embedding_dims: int = 1536
+    azure_openai_embedding_model: str = "text-embedding-3-small"
+    # Trên Azure, tên deployment do người tạo đặt và thường KHÁC tên model.
+    # Để trống thì lấy tên model làm tên deployment.
+    azure_openai_embedding_deployment: Optional[str] = None
+
+    # Langfuse — để trống thì tắt trace
+    langfuse_public_key: Optional[SecretStr] = None
+    langfuse_secret_key: Optional[SecretStr] = None
+    langfuse_host: Optional[str] = None
+
+    # Telegram — để trống thì không chạy bot
+    telegram_bot_token: Optional[SecretStr] = None
+    telegram_admin_chat_ids: str = ""
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

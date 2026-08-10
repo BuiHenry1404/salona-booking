@@ -41,5 +41,17 @@ services:
     depends_on:
       - mongo
 
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=salon
+      - POSTGRES_PASSWORD=salon
+      - POSTGRES_DB=salon_memory
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
 volumes:
-  mongo_data: 
+  mongo_data:
+  pg_data: 

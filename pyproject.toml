@@ -23,9 +23,6 @@ dependencies = [
     "httpx>=0.25.2",
     "email-validator>=2.1.0",
     "python-socketio[asyncio]>=5.13.0",
-    "autogen-agentchat>=0.2.40",
-    "autogen-ext[azure,openai]>=0.0.1",
-    "google-api-python-client>=2.155.0",
 ]
 requires-python = ">=3.9"
 
