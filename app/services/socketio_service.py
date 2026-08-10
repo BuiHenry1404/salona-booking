@@ -205,6 +205,12 @@ class SocketIOService:
         @self.sio.event
         async def soulcare_chat(sid, data):
             """Handle soulcare team chat messages."""
+            user_id = self.user_sessions.get(sid)
+            if not user_id:
+                await self.sio.emit('error', {
+                    'message': 'Not authenticated'
+                }, room=sid)
+                return
             # TODO(Plan 2 task 10): triển khai agent soulcare thật.
             # Agent AI chưa sẵn sàng — thông báo cho client biết.
             await self.sio.emit('conversation', {

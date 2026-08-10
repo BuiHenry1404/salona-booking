@@ -36,5 +36,8 @@ pre-commit==3.6.0
 bandit==1.7.5
 pip-audit==2.6.1
 
+# Real-time
+python-socketio[asyncio]>=5.13.0
+
 # Logging
-structlog==23.2.0 
+structlog==23.2.0
