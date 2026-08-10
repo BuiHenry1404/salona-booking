@@ -18,12 +18,8 @@ async def register(
     user_data: UserCreate,
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """Register a new user account."""
-    auth_service = AuthService(db)
-    user = await auth_service.register_user(user_data)
-    user_data = user.model_dump(mode="json")
-    user_data["id"] = str(user_data["id"])
-    return UserResponse(**user_data)
+    # TODO(task 11): rewrite for phone-based auth
+    raise NotImplementedError
 
 
 @router.post("/login", response_model=Token, summary="Login user")
@@ -31,23 +27,8 @@ async def login(
     login_data: LoginRequest,
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """Login user and return access token."""
-    auth_service = AuthService(db)
-    user = await auth_service.authenticate_user(login_data.username, login_data.password)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=settings.jwt_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": str(user.id)}, expires_delta=access_token_expires
-    )
-    
-    return Token(access_token=access_token)
+    # TODO(task 11): rewrite for phone-based auth
+    raise NotImplementedError
 
 
 @router.post("/token", response_model=Token, summary="OAuth2 compatible login")
@@ -55,23 +36,8 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """OAuth2 compatible token endpoint."""
-    auth_service = AuthService(db)
-    user = await auth_service.authenticate_user(form_data.username, form_data.password)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=settings.jwt_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": str(user.id)}, expires_delta=access_token_expires
-    )
-    
-    return Token(access_token=access_token)
+    # TODO(task 11): rewrite for phone-based auth
+    raise NotImplementedError
 
 
 @router.get("/me", response_model=UserResponse, summary="Get current user")
