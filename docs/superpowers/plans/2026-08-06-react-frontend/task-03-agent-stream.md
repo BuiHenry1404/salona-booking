@@ -3,17 +3,114 @@
 > Thuộc plan [Frontend React](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
 **Files:**
-- Create: `frontend/src/lib/toolLabels.ts`, `frontend/src/lib/toolLabels.test.ts`, `frontend/src/lib/socket.ts`, `frontend/src/hooks/useAgentStream.ts`, `frontend/src/hooks/useAgentStream.test.ts`, `frontend/src/hooks/useShopStatus.ts`
+- Create: `frontend/src/lib/viDate.ts`, `frontend/src/lib/viDate.test.ts`, `frontend/src/hooks/useShopStatus.test.ts`, `frontend/src/lib/toolLabels.ts`, `frontend/src/lib/toolLabels.test.ts`, `frontend/src/lib/socket.ts`, `frontend/src/hooks/useAgentStream.ts`, `frontend/src/hooks/useAgentStream.test.ts`, `frontend/src/hooks/useShopStatus.ts`
 
 **Interfaces:**
 - Consumes: sự kiện Socket.IO của Plan 2 task 10 — `turn_started`, `tool_started`, `tool_finished`, `token`, `complete`, `error`, `shop_status_changed`, `appointment_created`
 - Produces:
+  - `formatViDateTime(iso) -> "Thứ Năm, 7/8 — 3:00 chiều"`, `formatViTime(iso) -> "3:00 chiều"`
   - `toolLabel(name) -> { running: string; done: string }`
   - `acquireSocket(token) -> Socket` / `releaseSocket()` — một kết nối dùng chung, đếm tham chiếu
   - `useAgentStream() -> { messages, steps, phase, connected, offline, failed, send }` — tin nhắn gõ lúc mất mạng được xếp hàng và tự gửi lại khi nối lại
   - `useShopStatus() -> { status, loading, apply }`
 
-- [ ] **Step 1: Viết test cho bảng ánh xạ (sẽ fail)**
+- [ ] **Step 1: Viết test định dạng ngày giờ (sẽ fail)**
+
+Tạo `frontend/src/lib/viDate.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { formatViDateTime, formatViTime } from "./viDate";
+
+/* Giờ Việt Nam là UTC+7 và không có DST, nên tính ngược từ UTC là an toàn. */
+
+describe("formatViDateTime", () => {
+  it("3 giờ chiều thứ Sáu 7/8/2026", () => {
+    expect(formatViDateTime("2026-08-07T08:00:00Z")).toBe("Thứ Sáu, 7/8 — 3:00 chiều");
+  });
+
+  it("buổi sáng gọi là sáng", () => {
+    expect(formatViDateTime("2026-08-07T02:30:00Z")).toBe("Thứ Sáu, 7/8 — 9:30 sáng");
+  });
+
+  it("sau 6 giờ chiều gọi là tối", () => {
+    expect(formatViDateTime("2026-08-07T12:00:00Z")).toBe("Thứ Sáu, 7/8 — 7:00 tối");
+  });
+
+  it("12 giờ trưa KHÔNG được thành 0 giờ", () => {
+    expect(formatViDateTime("2026-08-07T05:00:00Z")).toContain("12:00 chiều");
+  });
+
+  it("Chủ Nhật không gọi là Thứ Tám", () => {
+    expect(formatViDateTime("2026-08-09T08:00:00Z")).toContain("Chủ Nhật");
+  });
+
+  it("formatViTime chỉ trả phần giờ", () => {
+    expect(formatViTime("2026-08-07T08:00:00Z")).toBe("3:00 chiều");
+  });
+});
+```
+
+- [ ] **Step 2: Chạy test để xác nhận fail**
+
+Run: `cd frontend && npm test`
+Expected: FAIL — không tìm thấy `./viDate`
+
+- [ ] **Step 3: Viết `frontend/src/lib/viDate.ts`**
+
+```ts
+const WEEKDAYS = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
+
+/**
+ * Ép về giờ Việt Nam thay vì dùng giờ máy: khách có thể đang ở nước ngoài gọi
+ * về đặt lịch cho hôm sau, mà lịch thì luôn theo giờ tiệm.
+ */
+function vnParts(iso: string) {
+  const date = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    weekday: "short",
+    day: "numeric",
+    month: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday")),
+    day: Number(get("day")),
+    month: Number(get("month")),
+    hour: Number(get("hour")) % 24, // Intl trả "24" cho nửa đêm ở một số runtime
+    minute: get("minute"),
+  };
+}
+
+/** "3:00 chiều" — cách người Việt lớn tuổi thực sự nói giờ, không phải "15:00". */
+export function formatViTime(iso: string): string {
+  const { hour, minute } = vnParts(iso);
+  let period: string;
+  let display: number;
+  if (hour < 12) {
+    period = "sáng";
+    display = hour === 0 ? 12 : hour;
+  } else if (hour < 18) {
+    period = "chiều";
+    display = hour === 12 ? 12 : hour - 12;
+  } else {
+    period = "tối";
+    display = hour - 12;
+  }
+  return `${display}:${minute} ${period}`;
+}
+
+export function formatViDateTime(iso: string): string {
+  const { weekday, day, month } = vnParts(iso);
+  return `${WEEKDAYS[weekday]}, ${day}/${month} — ${formatViTime(iso)}`;
+}
+```
+
+- [ ] **Step 4: Viết test cho bảng ánh xạ (sẽ fail)**
 
 Tạo `frontend/src/lib/toolLabels.test.ts`:
 
@@ -25,11 +122,11 @@ describe("toolLabel", () => {
   it("dịch đủ sáu tool trong spec", () => {
     expect(Object.keys(TOOL_LABELS).sort()).toEqual([
       "cancel_appointment",
-      "create_appointment",
       "find_free_slots",
       "get_shop_status",
       "list_my_appointments",
       "parse_time",
+      "propose_appointment",
     ]);
   });
 
@@ -62,12 +159,12 @@ describe("toolLabel", () => {
 });
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [ ] **Step 5: Chạy test để xác nhận fail**
 
 Run: `cd frontend && npm test`
 Expected: FAIL — không tìm thấy `./toolLabels`
 
-- [ ] **Step 3: Viết `frontend/src/lib/toolLabels.ts`**
+- [ ] **Step 6: Viết `frontend/src/lib/toolLabels.ts`**
 
 ```ts
 export interface ToolLabel {
@@ -88,7 +185,8 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
   // máy đang làm việc với cái lịch.
   parse_time: { running: "Đang xem lịch…", done: "Đã xem lịch" },
   find_free_slots: { running: "Đang xem lịch trống…", done: "Đã xem lịch trống" },
-  create_appointment: { running: "Đang ghi lịch cho cô…", done: "Đã ghi lịch" },
+  // Agent không ghi lịch trực tiếp — nó giữ chỗ rồi hỏi khách xác nhận.
+  propose_appointment: { running: "Đang giữ chỗ cho cô…", done: "Đã giữ chỗ" },
   list_my_appointments: { running: "Đang xem lịch của cô…", done: "Đã xem lịch của cô" },
   cancel_appointment: { running: "Đang hủy lịch…", done: "Đã hủy lịch" },
 };
@@ -102,7 +200,7 @@ export function toolLabel(name: string): ToolLabel {
 }
 ```
 
-- [ ] **Step 4: Viết `frontend/src/lib/socket.ts`**
+- [ ] **Step 7: Viết `frontend/src/lib/socket.ts`**
 
 ```ts
 import { io } from "socket.io-client";
@@ -150,7 +248,7 @@ export function releaseSocket(): void {
 export type { Socket };
 ```
 
-- [ ] **Step 5: Viết test cho hook (sẽ fail)**
+- [ ] **Step 8: Viết test cho hook (sẽ fail)**
 
 Tạo `frontend/src/hooks/useAgentStream.test.ts`:
 
@@ -284,7 +382,7 @@ describe("useAgentStream", () => {
 
   it("complete dọn tiến trình tool và về trạng thái nghỉ", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("tool_started", { name: "create_appointment" }));
+    act(() => socket.fire("tool_started", { name: "propose_appointment" }));
     act(() => socket.fire("token", { text: "Xong ạ" }));
     act(() => socket.fire("complete", { answer: "Xong ạ" }));
 
@@ -351,12 +449,12 @@ describe("useAgentStream", () => {
 });
 ```
 
-- [ ] **Step 6: Chạy test để xác nhận fail**
+- [ ] **Step 9: Chạy test để xác nhận fail**
 
 Run: `cd frontend && npm test`
 Expected: FAIL — không tìm thấy `./useAgentStream`
 
-- [ ] **Step 7: Viết `frontend/src/hooks/useAgentStream.ts`**
+- [ ] **Step 10: Viết `frontend/src/hooks/useAgentStream.ts`**
 
 ```ts
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -551,10 +649,10 @@ export function useAgentStream() {
 }
 ```
 
-- [ ] **Step 8: Viết `frontend/src/hooks/useShopStatus.ts`**
+- [ ] **Step 11: Viết `frontend/src/hooks/useShopStatus.ts`**
 
 ```ts
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { ShopStatus } from "../lib/api";
 import { acquireSocket, releaseSocket } from "../lib/socket";
@@ -565,6 +663,10 @@ import { useAuth } from "../auth/AuthContext";
  * (broadcast tới MỌI user) cập nhật — nhờ vậy phần lớn khách biết tiệm bận hay
  * rảnh mà không cần hỏi AI.
  *
+ * `minutes_left` KHÔNG bao giờ được hiển thị. Màn hình chỉ nói giờ xong cụ thể
+ * (`busy_until`). Trường này chỉ dùng để hẹn giờ lật thẻ, vì nó là một khoảng
+ * nên không dính lệch đồng hồ máy khách.
+ *
  * Dùng chung socket với `useAgentStream`: màn hình chủ tiệm cũng dùng hook này
  * mà không có khung chat, còn màn hình chat thì dùng cả hai.
  */
@@ -573,31 +675,58 @@ export function useShopStatus() {
   const [status, setStatus] = useState<ShopStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const receive = useCallback((next: ShopStatus) => setStatus(next), []);
+
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
 
     api
       .get<ShopStatus>("/api/v1/shop/status")
-      .then((s) => !cancelled && setStatus(s))
+      .then((s) => !cancelled && receive(s))
       .catch(() => undefined)
       .finally(() => !cancelled && setLoading(false));
 
     const socket = acquireSocket(token);
-    const onChanged = (data: ShopStatus) => setStatus(data);
-    socket.on("shop_status_changed", onChanged);
+    socket.on("shop_status_changed", receive);
 
     return () => {
       cancelled = true;
-      socket.off("shop_status_changed", onChanged);
+      socket.off("shop_status_changed", receive);
       releaseSocket();
     };
-  }, [token]);
+  }, [token, receive]);
+
+  // Backend KHÔNG có timer nào phát sự kiện lúc `busy_until` hết hạn — nó chỉ
+  // tính lại khi có ai đó gọi `get_status()`. Thiếu chỗ này thì hết giờ bận,
+  // thẻ vẫn hiện "đang bận" cho tới khi khách tải lại trang.
+  //
+  // MỘT `setTimeout` duy nhất, không phải đồng hồ đếm từng phút: màn hình chỉ
+  // hiện giờ xong, nên giữa hai mốc chẳng có gì để vẽ lại.
+  //
+  // Hẹn theo `minutes_left` (một KHOẢNG) chứ không theo `busy_until` trừ đi
+  // `Date.now()` (hai MỐC): điện thoại của người lớn tuổi lệch giờ là chuyện
+  // thường, mà khoảng thì miễn nhiễm với lệch đồng hồ.
+  useEffect(() => {
+    if (!status?.is_busy || status.minutes_left == null) return;
+
+    const id = setTimeout(() => {
+      // Đổi thẻ ngay cho khách thấy, rồi hỏi lại server một lần để xác nhận —
+      // phòng khi có sự kiện rơi mất lúc mạng chập chờn.
+      setStatus((prev) => (prev ? { ...prev, is_busy: false, busy_until: null } : prev));
+      api.get<ShopStatus>("/api/v1/shop/status").then(receive).catch(() => undefined);
+    }, status.minutes_left * 60_000);
+
+    // Dọn khi trạng thái đổi — chủ tiệm bấm bận thêm lần nữa thì hẹn giờ cũ
+    // phải bị hủy, nếu không nó lật thẻ sang rảnh giữa chừng.
+    return () => clearTimeout(id);
+  }, [status?.is_busy, status?.busy_until, status?.minutes_left, receive]);
 
   // `apply` cho chỗ nào vừa gọi API đổi trạng thái và đã cầm sẵn kết quả thật
   // từ server (`POST /shop/busy` trả về `ShopStatusResponse`). Không phải đoán
   // trước — chỉ là dùng câu trả lời có sẵn thay vì ngồi chờ broadcast vọng về.
-  return { status, loading, apply: setStatus };
+  // Đi qua `receive` để đồng hồ đếm ngược được gieo lại từ đầu.
+  return { status, loading, apply: receive };
 }
 ```
 
@@ -607,12 +736,107 @@ broadcast không bao giờ tới — chủ tiệm bấm "Tôi đang bận" mà m
 máy hỏng và bấm lại mấy lần. Có `apply`, máy vừa bấm cập nhật ngay bằng phản hồi HTTP;
 broadcast vẫn giữ nguyên vai trò đồng bộ sang các máy khác.
 
-- [ ] **Step 9: Chạy test để xác nhận pass**
+- [ ] **Step 12: Viết test cho đồng hồ đếm ngược**
+
+Tạo `frontend/src/hooks/useShopStatus.test.ts`:
+
+```ts
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useShopStatus } from "./useShopStatus";
+
+const socket = { on: vi.fn(), off: vi.fn() };
+
+vi.mock("../lib/socket", () => ({
+  acquireSocket: () => socket,
+  releaseSocket: () => undefined,
+}));
+vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ token: "tok" }) }));
+
+function mockStatus(body: unknown) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => body }),
+  );
+}
+
+beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+describe("useShopStatus", () => {
+  it("chưa tới giờ thì giữ nguyên đang bận", async () => {
+    mockStatus({ is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 });
+    const { result } = renderHook(() => useShopStatus());
+    await waitFor(() => expect(result.current.status?.is_busy).toBe(true));
+
+    await act(async () => {
+      vi.advanceTimersByTime(29 * 60_000);
+    });
+    expect(result.current.status?.is_busy).toBe(true);
+    expect(result.current.status?.busy_until).toBe("2026-08-07T08:30:00Z");
+  });
+
+  it("TỚI GIỜ THÌ TỰ ĐỔI SANG RẢNH — backend không có timer nào báo", async () => {
+    mockStatus({ is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 });
+    const { result } = renderHook(() => useShopStatus());
+    await waitFor(() => expect(result.current.status?.is_busy).toBe(true));
+
+    await act(async () => {
+      vi.advanceTimersByTime(31 * 60_000);
+    });
+    expect(result.current.status?.is_busy).toBe(false);
+  });
+
+  it("đồng hồ máy sai giờ không ảnh hưởng — hẹn theo khoảng, không theo mốc", async () => {
+    vi.setSystemTime(new Date("2019-01-01T00:00:00Z"));  // máy lệch 7 năm
+    mockStatus({ is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 });
+    const { result } = renderHook(() => useShopStatus());
+    await waitFor(() => expect(result.current.status?.is_busy).toBe(true));
+
+    await act(async () => {
+      vi.advanceTimersByTime(29 * 60_000);
+    });
+    expect(result.current.status?.is_busy).toBe(true);    // chưa tới giờ
+
+    await act(async () => {
+      vi.advanceTimersByTime(2 * 60_000);
+    });
+    expect(result.current.status?.is_busy).toBe(false);   // đúng 30 phút sau
+  });
+
+  it("bấm bận thêm lần nữa thì HỦY hẹn giờ cũ", async () => {
+    mockStatus({ is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 });
+    const { result } = renderHook(() => useShopStatus());
+    await waitFor(() => expect(result.current.status?.is_busy).toBe(true));
+
+    await act(async () => {
+      vi.advanceTimersByTime(25 * 60_000);
+    });
+
+    // Chủ tiệm bấm bận thêm 60 phút nữa.
+    const onChanged = socket.on.mock.calls.find(([e]) => e === "shop_status_changed")[1];
+    await act(async () => {
+      onChanged({ is_busy: true, busy_until: "2026-08-07T09:30:00Z", minutes_left: 60 });
+      vi.advanceTimersByTime(10 * 60_000);
+    });
+
+    // Hẹn giờ cũ đáng lẽ đã nổ ở phút thứ 30. Không hủy thì thẻ lật sang rảnh
+    // giữa lúc chủ tiệm vẫn đang bận.
+    expect(result.current.status?.is_busy).toBe(true);
+    expect(result.current.status?.busy_until).toBe("2026-08-07T09:30:00Z");
+  });
+});
+```
+
+- [ ] **Step 13: Chạy test để xác nhận pass**
 
 Run: `cd frontend && npm test`
-Expected: PASS (20 passed) — quan trọng nhất là `MẤT MẠNG GIỮA CHỪNG KHÔNG ĐƯỢC XÓA CHỮ ĐÃ HIỆN`, `có mạng lại thì tự gửi nốt hàng đợi` và `tool lạ thì hiện câu chung`
+Expected: PASS (44 passed) — quan trọng nhất là `HẾT GIỜ THÌ TỰ ĐỔI SANG RẢNH`, `MẤT MẠNG GIỮA CHỪNG KHÔNG ĐƯỢC XÓA CHỮ ĐÃ HIỆN`, `có mạng lại thì tự gửi nốt hàng đợi` và `tool lạ thì hiện câu chung`
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
 git add frontend/src/lib frontend/src/hooks

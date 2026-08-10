@@ -82,12 +82,22 @@ def test_block_wins_over_contradicting_memory():
     assert "tin phần" in block.lower() or "ưu tiên" in block.lower()
 
 
-def test_busy_status_is_written_in_words():
+def test_busy_status_gives_a_finish_TIME_not_a_countdown():
+    """AI sẽ nhắc lại câu này cho khách, và nó nằm lại trong lịch sử chat.
+    "Còn 30 phút" đọc lại sau một tiếng là sai hẳn."""
     block = build_context_block(
-        a_user(), ShopStatusView(is_busy=True, minutes_left=30), [], []
+        a_user(),
+        ShopStatusView(
+            is_busy=True,
+            busy_until=datetime(2026, 8, 7, 15, 30, tzinfo=TZ),
+            minutes_left=30,
+        ),
+        [], [],
+        now=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
     )
     assert "bận" in block.lower()
-    assert "30" in block
+    assert "3:30 chiều" in block
+    assert "30 phút" not in block
 
 
 def test_free_status_is_written_in_words():
@@ -212,7 +222,9 @@ def build_context_block(
     ]
 
     if status.is_busy:
-        lines.append(f"Chủ tiệm: đang bận, còn khoảng {status.minutes_left} phút nữa xong.")
+        # Mốc giờ, không phải khoảng. Khối này đi vào prompt và AI sẽ nhắc lại
+        # cho khách; "còn 30 phút" nằm lại trong lịch sử chat là sai vĩnh viễn.
+        lines.append(f"Chủ tiệm: đang bận, xong lúc {format_vi_datetime(status.busy_until)}.")
     else:
         lines.append("Chủ tiệm: đang rảnh.")
 

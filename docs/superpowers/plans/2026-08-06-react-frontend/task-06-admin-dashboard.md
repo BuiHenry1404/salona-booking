@@ -7,7 +7,7 @@
 - Modify: `frontend/src/App.tsx`
 
 **Interfaces:**
-- Consumes: `api`, `ShopStatus`, `AppointmentResponse` (task 2), `useShopStatus` (task 3), `AppointmentCard` (task 5)
+- Consumes: `api`, `ShopStatus`, `AppointmentResponse` (task 2), `useShopStatus`, `formatViTime` (task 3), `AppointmentCard` (task 5)
 - Produces:
   - `useAdminFeed(day) -> { appointments, newIds, error, reload }` — nghe `appointment_created`
   - `<BusySwitch status onApplied />`
@@ -128,13 +128,43 @@ describe("AdminDashboard", () => {
     );
   });
 
-  it("đang bận thì hiện đếm ngược BẰNG CHỮ và nút 'Tôi rảnh rồi'", () => {
+  it("đang bận thì hiện GIỜ XONG và nút 'Tôi rảnh rồi'", () => {
+    // 09:00 UTC = 4:00 chiều giờ Việt Nam.
     shop.status = { is_busy: true, busy_until: "2026-08-07T09:00:00Z", minutes_left: 25 };
     renderScreen();
 
     expect(screen.getByText(/đang bận/i)).toBeInTheDocument();
-    expect(screen.getByText(/25 phút/)).toBeInTheDocument();
+    expect(screen.getByText(/4:00 chiều/)).toBeInTheDocument();
+    expect(screen.queryByText(/25 phút/)).not.toBeInTheDocument();   // không đếm ngược
     expect(screen.getByRole("button", { name: /tôi rảnh rồi/i })).toBeInTheDocument();
+  });
+
+  it("bấm 15 phút thì server quy ra một mốc giờ cụ thể", async () => {
+    // Nút chọn thời lượng chỉ là ĐẦU VÀO. `set_busy(minutes)` ở backend tính
+    // `busy_until = now + minutes` rồi trả về mốc đó; từ giây tiếp theo mọi
+    // màn hình chỉ làm việc với mốc, không ai giữ lại con số 15 nữa.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          is_busy: true,
+          busy_until: "2026-08-07T09:00:00Z",
+          minutes_left: 15,
+        }),
+      }),
+    );
+    renderScreen();
+
+    await userEvent.click(screen.getByRole("button", { name: /tôi đang bận/i }));
+    await userEvent.click(screen.getByRole("button", { name: "15 phút" }));
+
+    await waitFor(() =>
+      expect(shop.apply).toHaveBeenCalledWith(
+        expect.objectContaining({ busy_until: "2026-08-07T09:00:00Z" }),
+      ),
+    );
   });
 
   it("bấm 'Tôi rảnh rồi' gọi đúng endpoint", async () => {
@@ -263,6 +293,7 @@ import { useEffect, useState } from "react";
 import { Button } from "./Button";
 import { api } from "../lib/api";
 import type { ShopStatus } from "../lib/api";
+import { formatViTime } from "../lib/viDate";
 import "./BusySwitch.css";
 
 const DURATIONS: Array<{ label: string; minutes: number }> = [
@@ -314,8 +345,13 @@ export function BusySwitch({
     return (
       <section className="switch switch--busy">
         <p className="switch__state">Đang bận</p>
-        {status.minutes_left != null && (
-          <p className="switch__count">Còn khoảng {status.minutes_left} phút</p>
+        {/* Giống hệt thẻ bên máy khách: một con số duy nhất là giờ xong.
+            Chủ tiệm liếc màn hình giữa lúc đang làm tóc — "3:30 chiều" đối
+            chiếu thẳng với đồng hồ treo tường. */}
+        {status.busy_until && (
+          <p className="switch__count">
+            Xong lúc <strong>{formatViTime(status.busy_until)}</strong>
+          </p>
         )}
         {error && <p role="alert" className="alert alert--danger">{error}</p>}
         <Button variant="accent" loading={busy} onClick={() => call("/api/v1/shop/free")}>
@@ -478,7 +514,7 @@ import { AdminDashboard } from "./screens/AdminDashboard";
 - [ ] **Step 7: Chạy test để xác nhận pass**
 
 Run: `cd frontend && npm test`
-Expected: PASS (49 passed) — quan trọng nhất là `chọn 1 tiếng gửi đúng 60 phút` và `KHÔNG chờ broadcast`
+Expected: PASS (76 passed) — quan trọng nhất là `chọn 1 tiếng gửi đúng 60 phút` và `KHÔNG chờ broadcast`
 
 - [ ] **Step 8: Kiểm tay realtime hai máy**
 

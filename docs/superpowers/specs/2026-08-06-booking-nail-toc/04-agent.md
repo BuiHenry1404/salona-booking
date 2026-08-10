@@ -5,31 +5,41 @@
 ```
 input → load_context (không LLM)
           nạp song song: hồ sơ user, lịch sử chat theo ngân sách token,
-          lịch sắp tới, trạng thái tiệm, recall() từ Mem0
+          lịch sắp tới, trạng thái tiệm, pending_confirmation, recall() từ Mem0
         ↓
-        supervisor (LLM) — phân loại ý định, định tuyến
-        ├→ refuse        — ngoài chủ đề: từ chối lịch sự, hướng về đặt lịch
-        ├→ StatusAgent   — bận/rảnh, còn bao lâu
-        └→ BookingAgent  — giờ trống, đặt, hủy, xem lịch của tôi
+        route_from_state (không LLM)
+        ├→ CÓ pending_confirmation ──→ confirm — "ừ" đi thẳng vào thực thi,
+        │                                        BỎ QUA supervisor, tốn 0 lượt LLM
+        └→ không có ──────────────────→ supervisor (LLM) — phân loại ý định
+                                         ├→ refuse       — ngoài chủ đề, từ chối lịch sự
+                                         ├→ StatusAgent  — bận/rảnh, mấy giờ xong
+                                         └→ BookingAgent — giờ trống, giữ chỗ, hủy,
+                                                           xem lịch của tôi
         ↓
-        respond — gộp câu trả lời cuối
+        mỗi nhánh tự sinh `answer` rồi kết thúc — không có node gộp riêng
         ↓
         save_memory (background, sau khi user đã nhận trả lời)
           → remember() qua Mem0
 ```
 
+Đường đi khách cảm nhận được là **2 lượt LLM** (supervisor + subagent). Lượt xác nhận đi nhánh `confirm` nên tốn **0 lượt**.
+
 ## State
 
-Một `TypedDict` chứa `messages`, `user_id`, `user_profile`, `shop_status`, `upcoming_appointments`, `recalled_memories`, `pending_confirmation`, `route`, `tool_results`. Mọi node đọc và ghi state, không có biến toàn cục, nên từng node kiểm thử độc lập được.
+`GraphState` là một `TypedDict` chứa `messages`, `user_id`, `context_block`, `recalled`, `pending_confirmation`, `route`, `answer`.
+
+Hồ sơ user, trạng thái tiệm và lịch sắp tới **không** nằm riêng trong state — chúng đã được `load_context` gộp thành `context_block`, một chuỗi dựng bằng code. Giữ chúng thành trường riêng nghĩa là mỗi node phải tự biết cách diễn đạt chúng thành lời, và sớm muộn hai node sẽ diễn đạt khác nhau.
+
+Mọi node đọc và ghi qua state, không có biến toàn cục, nên từng node kiểm thử độc lập được.
 
 ## Tool
 
 | Tool | Agent | Việc |
 |---|---|---|
-| `get_shop_status()` | Status | Đọc `shop_status`, tính "còn khoảng N phút" |
+| `get_shop_status()` | Status | Đọc `shop_status`, trả mốc giờ xong (không phải "còn N phút") |
 | `parse_time(text)` | Booking | Quy "mai 3h chiều" ra ISO, hoặc nói rõ còn thiếu gì — xem [thiết kế riêng](../2026-08-08-vi-time-parser-design.md) |
 | `find_free_slots(date)` | Booking | Các mốc 15 phút còn trống, trong `shop_hours`, không ở quá khứ |
-| `create_appointment(start_at, note)` | Booking | Gọi service, bắt lỗi trùng, gợi ý giờ khác |
+| `propose_appointment(start_at, note)` | Booking | Kiểm giờ còn trống, **lưu `pending_confirmation` vào Mongo**, chưa ghi lịch |
 | `list_my_appointments()` | Booking | Lịch sắp tới của chính user, kèm ID |
 | `cancel_appointment(id)` | Booking | Chỉ hủy được lịch của chính mình |
 
@@ -61,14 +71,14 @@ Ba tầng tách bạch. Điểm cốt lõi: **"nhớ user là ai" và "nhớ ng�
 Bạn đang nói chuyện với: Nguyễn Thị Lan (0912345678).
 Xưng hô: gọi "cô Lan", tự xưng "con".
 Lịch sắp tới: Thứ Năm 7/8, 3:00 chiều — làm tóc.
-Chủ tiệm: đang bận, còn khoảng 30 phút.
+Chủ tiệm: đang bận, xong lúc 3:30 chiều.
 ```
 
 Khối này không bao giờ do LLM sinh ra. Mem0 chỉ được bổ sung sở thích và ngữ cảnh, không được ghi đè danh tính. Prompt nói rõ: memory mâu thuẫn với khối bối cảnh thì tin khối bối cảnh.
 
 ## Bố cục prompt: xếp theo độ ổn định
 
-Khối bối cảnh **không đặt trong system prompt**, dù trực giác đầu tiên là làm vậy. Lý do là prompt caching hoạt động theo **tiền tố chung dài nhất**: khối bối cảnh đổi mỗi lượt ("còn 30 phút" → "còn 25 phút"), nên đặt nó ở đầu sẽ làm mọi lượt chat khác nhau ngay từ token đầu tiên và **cache không bao giờ trúng**. Toàn bộ prompt bị tính giá đầy đủ mỗi lần.
+Khối bối cảnh **không đặt trong system prompt**, dù trực giác đầu tiên là làm vậy. Lý do là prompt caching hoạt động theo **tiền tố chung dài nhất**: khối bối cảnh đổi mỗi lượt (dòng "Bây giờ là…" nhích theo từng phút), nên đặt nó ở đầu sẽ làm mọi lượt chat khác nhau ngay từ token đầu tiên và **cache không bao giờ trúng**. Toàn bộ prompt bị tính giá đầy đủ mỗi lần.
 
 Nguyên tắc: **ổn định nhất đứng trước, hay đổi nhất đứng sau.**
 
@@ -97,10 +107,18 @@ Lịch sử hội thoại đi vào **mảng `messages` thật**, không nhồi t
 
 Giải bằng cơ chế tất định, không dựa vào AI:
 
-- `create_appointment` nhận thêm **khóa idempotency** dựng từ `(user_id, start_at)`. Gọi lại hai lần cùng tham số thì lần thứ hai trả về chính lịch đã tạo thay vì tạo mới. Unique index trên `slot_keys` đã chặn ở tầng DB; khóa idempotency giúp trả lời đúng thay vì báo trùng cho chính khách vừa đặt.
-- State mang cờ `pending_confirmation`. Khi AI đã hỏi "3h chiều Thứ Năm đúng không cô?" thì cờ được bật kèm thông tin lịch. Lượt sau, câu trả lời "ừ", "đúng rồi", "ok" đi thẳng vào nhánh thực thi chứ không quay lại supervisor hỏi lại từ đầu. Đây là chỗ vòng lặp xác nhận hay xảy ra nhất.
+- `AppointmentService.create` nhận thêm **khóa idempotency** dựng từ `(user_id, start_at)`. Gọi lại hai lần cùng tham số thì lần thứ hai trả về chính lịch đã tạo thay vì tạo mới. Unique index trên `slot_keys` đã chặn ở tầng DB; khóa idempotency giúp trả lời đúng thay vì báo trùng cho chính khách vừa đặt.
+- **Agent không có tool nào ghi lịch.** Bộ tool của BookingAgent là `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`. Lịch chỉ được tạo ở node `confirm`, sau khi khách đồng ý.
 
-  Cờ này phải sống **giữa** hai lượt chat, trong khi state của LangGraph chỉ sống trong một lần chạy. Nên nó được lưu vào chính document `conversations` trong Mongo (`pending_confirmation: {start_at, note, asked_at}`), `load_context` nạp lên và `respond` ghi xuống. Cờ hết hạn sau 10 phút — quá đó thì khách nói "ừ" cũng phải hỏi lại, vì nhiều khả năng họ đang nói về chuyện khác.
+  Đây là ràng buộc cấu trúc thay cho lời dặn trong prompt. Quy tắc "luôn nhắc lại ngày giờ cho khách xác nhận rồi mới ghi" nếu chỉ nằm trong prompt thì model bỏ qua lúc nào không biết; bỏ hẳn tool đi thì nó **không có đường nào** ghi thẳng.
+
+- **`propose_appointment` là chỗ cờ `pending_confirmation` được bật.** Nó kiểm giờ còn trống (một lần gọi `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và giờ đã có người), rồi ghi `{start_at, note, asked_at}` vào document `conversations`. Kiểm **trước** khi hỏi khách, vì hỏi "3 giờ chiều đúng không cô?" rồi mới báo giờ đó có người là bắt khách chọn lại hai lần.
+
+  Lượt sau, `load_context` nạp cờ lên, `route_from_state` thấy có cờ thì đi thẳng node `confirm`, bỏ qua supervisor. Câu "ừ", "đúng rồi", "ok" vì thế tốn **0 lượt LLM**. `confirm` xóa cờ rồi gọi service. Cờ hết hạn sau 10 phút — quá đó thì khách nói "ừ" cũng phải hỏi lại, vì nhiều khả năng họ đang nói về chuyện khác.
+
+  **Giá trị đem đi ghi lịch đọc từ Mongo, không phải từ chuỗi model gõ lại.** Đây mới là lý do chính của cả cơ chế. Nếu để model tự chuyển chuỗi ISO từ lượt này sang lượt sau, nó chép sai `15:00` thành `5:00` là không có gì phát hiện được — `create` chỉ thấy một thời điểm hợp lệ. Cho thời gian đi qua model đúng **một** lần (lúc nhắc lại cho khách nghe) rồi lấy giá trị tất định từ DB.
+
+**Về số lần ghi Mongo.** Lượt giữ chỗ và lượt xác nhận mỗi lượt ghi 3 lần lên cùng một document (2 lần `append` tin nhắn + 1 lần đặt/xóa cờ). Đã cân nhắc gộp thành một `update_one` và **quyết định không làm**: với tiệm cỡ 50 lượt chat mỗi ngày thì tổng cộng khoảng 350 lần ghi/ngày trên một document nhỏ — không đáng để đổi lấy việc `propose_appointment` phải ghi vào state qua closure rồi mới persist cuối lượt, vì tool có tác dụng phụ ẩn khó đọc hơn hẳn gọi thẳng `set_pending`. Nếu về sau độ trễ thành vấn đề thật thì chỗ gộp rẻ nhất là hai lời gọi `append` trong `run_turn`.
 
 ## Streaming và hiển thị gọi tool
 
@@ -118,11 +136,13 @@ Nguồn sự kiện là `graph.astream_events(...)` của LangGraph.
 | `appointment_created` | `{appointment}` | phòng của admin | Đẩy lịch mới lên đầu màn hình lịch hôm nay |
 | `shop_status_changed` | `{is_busy, busy_until}` | **broadcast tới mọi user đang online** | Cập nhật thẻ trạng thái tiệm mà không cần tải lại |
 
-**Chỉ stream token của node `respond`.** Token của supervisor là JSON định tuyến — phát thẳng ra màn hình khách sẽ thành rác chạy ngang. Lọc bằng `tags` gắn cho model của từng node khi dựng graph, và chỉ chuyển tiếp `on_chat_model_stream` mang tag `respond`.
+**Chỉ stream token mang tag `respond`.** Tag đó gắn cho model của hai subagent (Status và Booking) — nơi sinh câu trả lời cuối cùng cho khách. Supervisor mang tag `supervisor`, parser thời gian mang `timeparse`; token của chúng là JSON, phát ra màn hình sẽ thành rác chạy ngang. Bộ dịch sự kiện chỉ chuyển tiếp `on_chat_model_stream` mang tag `respond`.
 
 **Tên tool không bao giờ tới mắt khách.** Backend gửi tên tool thô (`find_free_slots`); frontend ánh xạ sang câu tiếng Việt. Bảng ánh xạ nằm ở frontend để đổi câu chữ không phải deploy lại API — xem [05-frontend.md](05-frontend.md).
 
-`shop_status_changed` là thứ làm cho thẻ trạng thái ở [màn hình chat](05-frontend.md) thật sự realtime. Phát ra khi admin bấm bận/rảnh — **từ web app hay từ bot Telegram đều phải phát** — và khi `busy_until` hết hạn.
+`shop_status_changed` là thứ làm cho thẻ trạng thái ở [màn hình chat](05-frontend.md) thật sự realtime. Phát ra khi admin bấm bận/rảnh — **từ web app hay từ bot Telegram đều phải phát**.
+
+**Lúc `busy_until` hết hạn thì KHÔNG phát sự kiện nào.** Backend không có timer; hết hạn chỉ được tính lại khi có ai gọi `get_status()`. Frontend tự đếm ngược và tự đổi thẻ — xem [05-frontend.md](05-frontend.md). Đây là lựa chọn có chủ ý: một timer phía server sẽ chết khi restart, phát trùng khi chạy nhiều worker, và phải nhớ hủy mỗi khi trạng thái đổi — ba chỗ hỏng mới để đổi lấy đúng thứ mà client cho không.
 
 Socket.IO và Telegram là hai kênh của cùng một việc "báo cho chủ tiệm", nên cả hai đi qua một chỗ tỏa tin duy nhất là `app/services/notifications.py` (xem [06-telegram.md](06-telegram.md)).
 

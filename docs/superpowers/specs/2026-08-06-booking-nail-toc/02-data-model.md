@@ -47,7 +47,7 @@ busy_until   datetime, nullable
 updated_at   datetime
 ```
 
-AI diễn giải: `is_busy = false` → chủ tiệm đang rảnh. `is_busy = true` → đang bận, còn khoảng `busy_until - now` phút. Nếu `now > busy_until` thì coi như rảnh mà không cần admin bấm lại — đây là cách hiện thực yêu cầu "hết giờ tự về Rảnh".
+AI diễn giải: `is_busy = false` → chủ tiệm đang rảnh. `is_busy = true` → đang bận, **xong lúc `busy_until`** — nói mốc giờ chứ không nói "còn N phút", vì câu trả lời nằm lại trong lịch sử chat và sẽ sai ngay sau đó. Nếu `now > busy_until` thì coi như rảnh mà không cần admin bấm lại — đây là cách hiện thực yêu cầu "hết giờ tự về Rảnh".
 
 **`conversations`** / **`messages`** — tái dùng model có sẵn, chuyển `task` thành lịch sử chat.
 

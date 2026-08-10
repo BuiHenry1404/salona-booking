@@ -58,9 +58,12 @@ h2{font-size:22px;font-weight:700;margin-bottom:12px;color:var(--fg)}
 .screen{height:660px;display:flex;flex-direction:column}
 .appbar{background:var(--surface);border-bottom:1px solid var(--border);padding:16px;font-weight:600;font-size:20px;color:var(--fg)}
 .chat{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;background:var(--bg-phone)}
-.msg{max-width:88%;padding:12px 16px;border-radius:18px;font-size:18px;line-height:1.5;word-break:break-word}
-.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px;align-self:flex-start;color:var(--fg);box-shadow:var(--shadow-sm)}
-.msg--me{background:var(--primary);color:#fff;align-self:flex-end;border-bottom-right-radius:6px;box-shadow:var(--shadow-sm)}
+.msg-row{display:flex;align-items:flex-end;gap:8px;width:100%;max-width:100%}
+.msg-row--me{justify-content:flex-end}
+.msg-row .avatar{width:44px;height:44px;border-radius:50%;flex:none;border:1.5px solid var(--border);object-fit:cover;background:var(--surface)}
+.msg{padding:12px 16px;border-radius:18px;font-size:18px;line-height:1.5;word-break:break-word;max-width:80%}
+.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px;align-self:flex-start;color:var(--fg);box-shadow:var(--shadow-sm);margin:0}
+.msg--me{background:var(--primary);color:#fff;align-self:flex-end;border-bottom-right-radius:6px;box-shadow:var(--shadow-sm);margin:0}
 .msg-error-text{color:var(--danger);font-size:18px;font-weight:600;margin-top:6px;display:flex;align-items:center;gap:6px}
 .composer{display:flex;gap:8px;align-items:center;padding:16px;border-top:1px solid var(--border);background:var(--surface)}
 .composer input{flex:1;min-height:var(--tap);border:2px solid var(--border);border-radius:999px;
@@ -154,7 +157,22 @@ code{font-family:'JetBrains Mono',monospace;font-size:18px;background:var(--prim
   <div class="cols">
     <div>
       <div class="phone"><div class="screen">
-        <div class="appbar">Đặt lịch Tiệm Cô Ba</div>
+        <div class="appbar" style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+          <span>Đặt lịch Tiệm Cô Ba</span>
+          <span class="badge" style="display:flex; align-items:center; gap:6px; background:var(--primary-weak); color:var(--primary); font-size:18px; padding:6px 12px; border-radius:999px; font-weight:600; border:1px solid var(--border);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none;">
+              <path d="M12 2v6" stroke="#965C50" opacity="0.6"/>
+              <path d="M12 16v6" stroke="#456A52" opacity="0.6"/>
+              <path d="M5 12h14" stroke="#965C50" opacity="0.4"/>
+              <path d="M12 8L5 12l7 4 7-4-7-4z" stroke="#965C50" stroke-width="1.5"/>
+              <circle cx="12" cy="8" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+              <circle cx="5" cy="12" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+              <circle cx="19" cy="12" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+              <circle cx="12" cy="16" r="3" fill="#FAF8F5" stroke="#456A52" stroke-width="2.5"/>
+            </svg>
+            Salona
+          </span>
+        </div>
         <div class="chat" id="chat" aria-live="polite"></div>
         <div class="composer">
           <input id="phone-input" placeholder="Nhắn cho tiệm…" aria-label="Nhắn tin">
@@ -316,7 +334,25 @@ function el(cls, html){
   const d = document.createElement('div'); 
   d.className = cls; 
   d.innerHTML = html; 
-  chat.appendChild(d); 
+  
+  if (cls.includes('msg')) {
+    const row = document.createElement('div');
+    row.className = cls.includes('msg--me') ? 'msg-row msg-row--me' : 'msg-row';
+    
+    if (cls.includes('msg--bot')) {
+      const avatarImg = document.createElement('img');
+      avatarImg.className = 'avatar';
+      avatarImg.src = 'ai-avatar.png';
+      avatarImg.alt = 'Avatar Salona';
+      row.appendChild(avatarImg);
+    }
+    
+    row.appendChild(d);
+    chat.appendChild(row);
+  } else {
+    chat.appendChild(d);
+  }
+  
   chat.scrollTop = chat.scrollHeight; 
   return d; 
 }

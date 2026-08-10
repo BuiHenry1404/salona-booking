@@ -3,113 +3,16 @@
 > Thuộc plan [Frontend React](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
 **Files:**
-- Create: `frontend/src/lib/viDate.ts`, `frontend/src/lib/viDate.test.ts`, `frontend/src/components/AppointmentCard.tsx`, `frontend/src/components/AppointmentCard.css`, `frontend/src/screens/MyAppointmentsScreen.tsx`, `frontend/src/screens/MyAppointmentsScreen.test.tsx`
+- Create: `frontend/src/components/AppointmentCard.tsx`, `frontend/src/components/AppointmentCard.css`, `frontend/src/screens/MyAppointmentsScreen.tsx`, `frontend/src/screens/MyAppointmentsScreen.test.tsx`
 - Modify: `frontend/src/App.tsx`
 
 **Interfaces:**
-- Consumes: `api`, `AppointmentResponse` (task 2), `Button` (task 1), `BottomNav` (task 4)
+- Consumes: `api`, `AppointmentResponse` (task 2), `formatViDateTime` (task 3), `Button` (task 1), `BottomNav` (task 4)
 - Produces:
-  - `formatViDateTime(iso) -> "Thứ Năm, 7/8 — 3:00 chiều"`
   - `<AppointmentCard appointment onCancel? />`
   - `<MyAppointmentsScreen />` tại route `/lich-cua-toi`
 
-- [ ] **Step 1: Viết test định dạng ngày giờ (sẽ fail)**
-
-Tạo `frontend/src/lib/viDate.test.ts`:
-
-```ts
-import { describe, expect, it } from "vitest";
-import { formatViDateTime, formatViTime } from "./viDate";
-
-/* Giờ Việt Nam là UTC+7 và không có DST, nên tính ngược từ UTC là an toàn. */
-
-describe("formatViDateTime", () => {
-  it("3 giờ chiều thứ Sáu 7/8/2026", () => {
-    expect(formatViDateTime("2026-08-07T08:00:00Z")).toBe("Thứ Sáu, 7/8 — 3:00 chiều");
-  });
-
-  it("buổi sáng gọi là sáng", () => {
-    expect(formatViDateTime("2026-08-07T02:30:00Z")).toBe("Thứ Sáu, 7/8 — 9:30 sáng");
-  });
-
-  it("sau 6 giờ chiều gọi là tối", () => {
-    expect(formatViDateTime("2026-08-07T12:00:00Z")).toBe("Thứ Sáu, 7/8 — 7:00 tối");
-  });
-
-  it("12 giờ trưa KHÔNG được thành 0 giờ", () => {
-    expect(formatViDateTime("2026-08-07T05:00:00Z")).toContain("12:00 chiều");
-  });
-
-  it("Chủ Nhật không gọi là Thứ Tám", () => {
-    expect(formatViDateTime("2026-08-09T08:00:00Z")).toContain("Chủ Nhật");
-  });
-
-  it("formatViTime chỉ trả phần giờ", () => {
-    expect(formatViTime("2026-08-07T08:00:00Z")).toBe("3:00 chiều");
-  });
-});
-```
-
-- [ ] **Step 2: Chạy test để xác nhận fail**
-
-Run: `cd frontend && npm test`
-Expected: FAIL — không tìm thấy `./viDate`
-
-- [ ] **Step 3: Viết `frontend/src/lib/viDate.ts`**
-
-```ts
-const WEEKDAYS = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
-
-/**
- * Ép về giờ Việt Nam thay vì dùng giờ máy: khách có thể đang ở nước ngoài gọi
- * về đặt lịch cho hôm sau, mà lịch thì luôn theo giờ tiệm.
- */
-function vnParts(iso: string) {
-  const date = new Date(iso);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    weekday: "short",
-    day: "numeric",
-    month: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return {
-    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday")),
-    day: Number(get("day")),
-    month: Number(get("month")),
-    hour: Number(get("hour")) % 24, // Intl trả "24" cho nửa đêm ở một số runtime
-    minute: get("minute"),
-  };
-}
-
-/** "3:00 chiều" — cách người Việt lớn tuổi thực sự nói giờ, không phải "15:00". */
-export function formatViTime(iso: string): string {
-  const { hour, minute } = vnParts(iso);
-  let period: string;
-  let display: number;
-  if (hour < 12) {
-    period = "sáng";
-    display = hour === 0 ? 12 : hour;
-  } else if (hour < 18) {
-    period = "chiều";
-    display = hour === 12 ? 12 : hour - 12;
-  } else {
-    period = "tối";
-    display = hour - 12;
-  }
-  return `${display}:${minute} ${period}`;
-}
-
-export function formatViDateTime(iso: string): string {
-  const { weekday, day, month } = vnParts(iso);
-  return `${WEEKDAYS[weekday]}, ${day}/${month} — ${formatViTime(iso)}`;
-}
-```
-
-- [ ] **Step 4: Viết test màn hình (sẽ fail)**
+- [ ] **Step 1: Viết test màn hình (sẽ fail)**
 
 Tạo `frontend/src/screens/MyAppointmentsScreen.test.tsx`:
 
@@ -226,12 +129,12 @@ describe("MyAppointmentsScreen", () => {
 });
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận fail**
+- [ ] **Step 2: Chạy test để xác nhận fail**
 
 Run: `cd frontend && npm test`
 Expected: FAIL — không tìm thấy `./MyAppointmentsScreen`
 
-- [ ] **Step 6: Viết `frontend/src/components/AppointmentCard.tsx`**
+- [ ] **Step 3: Viết `frontend/src/components/AppointmentCard.tsx`**
 
 ```tsx
 import { useState } from "react";
@@ -330,7 +233,7 @@ Tạo `frontend/src/components/AppointmentCard.css`:
 .appt > .btn { margin-top: var(--s3); }
 ```
 
-- [ ] **Step 7: Viết `frontend/src/screens/MyAppointmentsScreen.tsx`**
+- [ ] **Step 4: Viết `frontend/src/screens/MyAppointmentsScreen.tsx`**
 
 ```tsx
 import { useCallback, useEffect, useState } from "react";
@@ -404,7 +307,7 @@ export function MyAppointmentsScreen() {
 }
 ```
 
-- [ ] **Step 8: Nối route**
+- [ ] **Step 5: Nối route**
 
 Trong `frontend/src/App.tsx`:
 
@@ -423,12 +326,12 @@ import { MyAppointmentsScreen } from "./screens/MyAppointmentsScreen";
           />
 ```
 
-- [ ] **Step 9: Chạy test để xác nhận pass**
+- [ ] **Step 6: Chạy test để xác nhận pass**
 
 Run: `cd frontend && npm test`
-Expected: PASS (39 passed) — quan trọng nhất là `HỦY PHẢI QUA MỘT BƯỚC XÁC NHẬN`
+Expected: PASS (65 passed) — quan trọng nhất là `HỦY PHẢI QUA MỘT BƯỚC XÁC NHẬN`
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add frontend

@@ -104,9 +104,12 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
 .status span{display:block;font-size:18px;color:var(--fg-muted);font-weight:500}
 .dot{width:16px;height:16px;border-radius:50%;flex:none}
 .chat{flex:1;display:flex;flex-direction:column;gap:var(--s2);overflow:hidden}
-.msg{max-width:86%;padding:var(--s2) var(--s3);border-radius:18px;font-size:18px;line-height:1.5}
-.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px}
-.msg--me{background:var(--primary);color:var(--on-primary);align-self:flex-end;border-bottom-right-radius:6px}
+.msg-row{display:flex;align-items:flex-end;gap:8px;width:100%;max-width:100%}
+.msg-row--me{justify-content:flex-end}
+.msg-row .avatar{width:44px;height:44px;border-radius:50%;flex:none;border:1.5px solid var(--border);object-fit:cover;background:var(--surface)}
+.msg{padding:var(--s2) var(--s3);border-radius:18px;font-size:18px;line-height:1.5;max-width:80%}
+.msg--bot{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:6px;align-self:flex-start}
+.msg--me{background:var(--primary);color:var(--on-primary);border-bottom-right-radius:6px;align-self:flex-end}
 .composer{display:flex;gap:var(--s1);align-items:center}
 .composer input{flex:1;min-height:var(--tap);border:2px solid var(--border);border-radius:999px;
   padding:0 var(--s3);font-family:inherit;font-size:18px;background:var(--surface);color:var(--fg)}
@@ -183,7 +186,7 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
   font-size: 18px;
   line-height: 1.5;
   margin-top: 4px;
-}
+}tôi 
 
 .client-tab-link.active, .admin-tab-link.active {
   color: var(--primary) !important;
@@ -256,13 +259,21 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
             <span class="dot" style="background:var(--danger)"></span>
             <span>
               <b>Chủ tiệm đang bận</b>
-              <span>Khoảng 30 phút nữa xong</span>
+              <span>Xong lúc 3:30 chiều</span>
             </span>
           </div>
           <div class="chat">
-            <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
-            <div class="msg msg--me">mai 3h chiều làm tóc được không con</div>
-            <div class="msg msg--bot">Dạ được ạ. Con đặt <b>Thứ Năm 7/8, 3 giờ chiều, làm tóc</b> — đúng không cô?</div>
+            <div class="msg-row">
+              <img class="avatar" src="ai-avatar.png" alt="Avatar Salona">
+              <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
+            </div>
+            <div class="msg-row msg-row--me">
+              <div class="msg msg--me">mai 3h chiều làm tóc được không con</div>
+            </div>
+            <div class="msg-row">
+              <img class="avatar" src="ai-avatar.png" alt="Avatar Salona">
+              <div class="msg msg--bot">Dạ được ạ. Con đặt <b>Thứ Năm 7/8, 3 giờ chiều, làm tóc</b> — đúng không cô?</div>
+            </div>
           </div>
           <div class="row">
             <button class="btn btn-accent">Đúng rồi</button>
@@ -355,7 +366,7 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
           <div class="status status--busy" style="flex-direction:column;align-items:flex-start;gap:4px">
             <b style="font-size:18px;letter-spacing:.04em">TRẠNG THÁI HIỆN TẠI</b>
             <span class="bignum" style="color:var(--danger)">Đang bận</span>
-            <span style="font-size:18px;color:var(--fg-muted);font-weight:500">Còn 27 phút · xong lúc 2:45 chiều</span>
+            <span style="font-size:18px;color:var(--fg-muted);font-weight:500">Xong lúc 2:45 chiều</span>
           </div>
           <button class="btn btn-accent" style="min-height:72px;font-size:23px">Tôi rảnh rồi</button>
           <div class="divider"></div>
@@ -376,7 +387,7 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
           <a href="#"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>Khách hàng</a>
         </nav>
       </div></div>
-      <p class="frame-note">Đang bận thì hiện <b>đếm ngược kèm giờ xong cụ thể</b> — "còn 27 phút" trừu tượng, "xong lúc 2:45" thì kiểm chứng được. Bốn nút chọn nhanh khớp đúng bốn nút trên bot Telegram.</p>
+      <p class="frame-note">Đang bận thì hiện <b>đúng một mốc giờ xong</b>, không đếm ngược. "Còn 27 phút" sai ngay sau khi hiện ra và bắt người già tính nhẩm; "xong lúc 2:45 chiều" đối chiếu thẳng với đồng hồ treo tường và không bao giờ cũ. Bốn nút chọn nhanh chỉ là <b>đầu vào</b> — server quy ngay ra mốc giờ, khớp đúng bốn nút trên bot Telegram.</p>
     </div>
 
   </div>
@@ -417,7 +428,22 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
 
           <!-- 2. CHAT SCREEN ("Đặt lịch") -->
           <div class="screen" id="client-screen-chat" style="display:none;">
-            <div class="appbar">Đặt lịch</div>
+            <div class="appbar" style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+              <span>Đặt lịch</span>
+              <span class="badge" style="display:flex; align-items:center; gap:6px; background:var(--primary-weak); color:var(--primary); font-size:18px; padding:6px 12px; border-radius:999px; font-weight:600; border:1px solid var(--border);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none;">
+                  <path d="M12 2v6" stroke="#965C50" opacity="0.6"/>
+                  <path d="M12 16v6" stroke="#456A52" opacity="0.6"/>
+                  <path d="M5 12h14" stroke="#965C50" opacity="0.4"/>
+                  <path d="M12 8L5 12l7 4 7-4-7-4z" stroke="#965C50" stroke-width="1.5"/>
+                  <circle cx="12" cy="8" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+                  <circle cx="5" cy="12" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+                  <circle cx="19" cy="12" r="3" fill="#FAF8F5" stroke="#965C50" stroke-width="2.5"/>
+                  <circle cx="12" cy="16" r="3" fill="#FAF8F5" stroke="#456A52" stroke-width="2.5"/>
+                </svg>
+                Salona
+              </span>
+            </div>
             <div class="body">
               <div class="status status--free" id="client-status-indicator">
                 <span class="dot" style="background:var(--accent)"></span>
@@ -427,7 +453,10 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
                 </span>
               </div>
               <div class="chat" id="client-chat-messages" style="overflow-y: auto; max-height: 420px; padding-right: 4px;">
-                <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
+                <div class="msg-row">
+                  <img class="avatar" src="ai-avatar.png" alt="Avatar Salona">
+                  <div class="msg msg--bot">Dạ con chào cô Lan ạ. Cô cần đặt lịch ngày nào ạ?</div>
+                </div>
               </div>
               <div class="row" id="client-chat-actions" style="display:none; margin-bottom: 4px;">
                 <button class="btn btn-accent" id="btn-confirm-yes" type="button">Đúng rồi</button>
@@ -570,7 +599,7 @@ h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
             </nav>
           </div>
         </div>
-        <p class="frame-note">Bấm "Tôi đang bận" để chọn thời gian bận (kèm đếm ngược trực tiếp), trạng thái và lịch hẹn sẽ đồng bộ thời gian thực với Client App.</p>
+        <p class="frame-note">Bấm "Tôi đang bận" rồi chọn thời lượng — server quy ngay ra <b>một mốc giờ xong</b>, và cả hai màn hình chỉ hiển thị mốc đó. Trạng thái và lịch hẹn đồng bộ thời gian thực với Client App.</p>
       </div>
 
     </div>
@@ -754,7 +783,8 @@ function startAdminTimer(minutes) {
   if (quickDurations) quickDurations.style.display = 'none';
 
   updateTimerDisplay();
-  adminTimerInterval = setInterval(updateTimerDisplay, 1000);
+  // Không còn đếm giây — chỉ cần biết lúc nào hết giờ để lật thẻ.
+  adminTimerInterval = setInterval(updateTimerDisplay, 5000);
 }
 
 function formatTimeHHMM(date) {
@@ -776,14 +806,11 @@ function updateTimerDisplay() {
     return;
   }
 
-  const totalSecs = Math.ceil(diffMs / 1000);
-  const mins = Math.floor(totalSecs / 60);
-  const secs = totalSecs % 60;
+  // MỘT mốc giờ, không đếm ngược. Nút 15/30/60/120 chỉ là đầu vào; từ đây
+  // trở đi cả hai màn hình chỉ làm việc với thời điểm kết thúc.
   const finishStr = formatTimeHHMM(new Date(adminBusyEndTime));
-
-  const secsFormatted = secs.toString().padStart(2, '0');
-  const adminText = `Còn ${mins} phút ${secsFormatted} giây · xong lúc ${finishStr}`;
-  const clientText = `Còn ${mins} phút · xong lúc ${finishStr}`;
+  const adminText = `Xong lúc ${finishStr}`;
+  const clientText = `Xong lúc ${finishStr}`;
 
   const subtext = document.getElementById('admin-status-subtext');
   if (subtext) {
@@ -850,7 +877,7 @@ function syncStatusToClient(customBusySubtext) {
     `;
   } else {
     clientIndicator.className = 'status status--busy';
-    const subtextStr = customBusySubtext || 'Khoảng 30 phút nữa xong';
+    const subtextStr = customBusySubtext || 'Xong lúc 3:30 chiều';
     clientIndicator.innerHTML = `
       <span class="dot" style="background:var(--danger)"></span>
       <span>
@@ -933,10 +960,13 @@ function handleClientSendMessage() {
 function appendUserMessage(text) {
   const chatBox = document.getElementById('client-chat-messages');
   if (!chatBox) return;
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-row--me';
   const msgEl = document.createElement('div');
   msgEl.className = 'msg msg--me';
   msgEl.textContent = text;
-  chatBox.appendChild(msgEl);
+  row.appendChild(msgEl);
+  chatBox.appendChild(row);
   chatBox.scrollTop = chatBox.scrollHeight;
 }
 
@@ -946,9 +976,19 @@ function triggerAiResponseFlow(userMsgText) {
   const actionsRow = document.getElementById('client-chat-actions');
   if (actionsRow) actionsRow.style.display = 'none';
 
-  // Create Bot message container
+  // Create Bot message row wrapper
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+
+  const avatarImg = document.createElement('img');
+  avatarImg.className = 'avatar';
+  avatarImg.src = 'ai-avatar.png';
+  avatarImg.alt = 'Avatar Salona';
+  row.appendChild(avatarImg);
+
   const botMsg = document.createElement('div');
   botMsg.className = 'msg msg--bot';
+  row.appendChild(botMsg);
 
   // State 1: "Con đang đọc ạ…"
   const statusEl = document.createElement('div');
@@ -956,7 +996,7 @@ function triggerAiResponseFlow(userMsgText) {
   statusEl.innerHTML = `<span>Con đang đọc ạ…</span> <span class="dots"><span class="dot-bounce">.</span><span class="dot-bounce">.</span><span class="dot-bounce">.</span></span>`;
   botMsg.appendChild(statusEl);
 
-  chatBox.appendChild(botMsg);
+  chatBox.appendChild(row);
   chatBox.scrollTop = chatBox.scrollHeight;
 
   // State 2: "Đang xem lịch trống…" after 750ms
@@ -1027,9 +1067,19 @@ function handleConfirmAction(type) {
     isAiTyping = true;
 
     const chatBox = document.getElementById('client-chat-messages');
+    const row = document.createElement('div');
+    row.className = 'msg-row';
+
+    const avatarImg = document.createElement('img');
+    avatarImg.className = 'avatar';
+    avatarImg.src = 'ai-avatar.png';
+    avatarImg.alt = 'Avatar Salona';
+    row.appendChild(avatarImg);
+
     const botMsg = document.createElement('div');
     botMsg.className = 'msg msg--bot';
-    chatBox.appendChild(botMsg);
+    row.appendChild(botMsg);
+    chatBox.appendChild(row);
 
     const replyText = "Dạ con đã ghi nhận lịch hẹn của cô vào Thứ Năm 7/8 lúc 3:00 chiều ạ. Cô có thể xem lại ở mục 'Lịch của tôi'.";
     runTypewriter(botMsg, replyText, () => {
@@ -1042,9 +1092,19 @@ function handleConfirmAction(type) {
     isAiTyping = true;
 
     const chatBox = document.getElementById('client-chat-messages');
+    const row = document.createElement('div');
+    row.className = 'msg-row';
+
+    const avatarImg = document.createElement('img');
+    avatarImg.className = 'avatar';
+    avatarImg.src = 'ai-avatar.png';
+    avatarImg.alt = 'Avatar Salona';
+    row.appendChild(avatarImg);
+
     const botMsg = document.createElement('div');
     botMsg.className = 'msg msg--bot';
-    chatBox.appendChild(botMsg);
+    row.appendChild(botMsg);
+    chatBox.appendChild(row);
 
     const replyText = "Dạ cô muốn đổi sang giờ nào hay ngày nào khác ạ? (Ví dụ: 4h chiều thứ Sáu)";
     runTypewriter(botMsg, replyText, () => {

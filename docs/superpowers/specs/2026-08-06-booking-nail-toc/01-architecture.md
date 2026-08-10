@@ -222,7 +222,7 @@ sequenceDiagram
     Note over K,AZ: Lượt 2 — thực thi
     K->>API: "ừ"
     API->>G: state có pending_confirmation
-    G->>S: create_appointment — bỏ qua supervisor
+    G->>S: AppointmentService.create — bỏ qua supervisor
     S->>M: insert — unique partial index chặn trùng nguyên tử
     M-->>S: OK
     S->>S: notifications.appointment_created

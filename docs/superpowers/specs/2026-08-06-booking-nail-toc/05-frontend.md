@@ -8,7 +8,29 @@
 
 **Đăng nhập** — hai ô (SĐT, mật khẩu), một nút "Đăng nhập", một link chữ to "Quên mật khẩu".
 
-**Chat** — màn hình chính, mở app là vào thẳng. Trên cùng là thẻ trạng thái tiệm luôn hiển thị: "Chủ tiệm đang rảnh" hoặc "Đang bận, khoảng 30 phút nữa xong", cập nhật realtime qua Socket.IO. Nhờ vậy phần lớn khách không cần hỏi AI mới biết; hỏi AI là đường dự phòng chứ không phải đường duy nhất. Dưới là khung chat với bong bóng chữ to. Ô nhập có nút micro dùng Web Speech API vì gõ phím là rào cản lớn nhất với người lớn tuổi; trình duyệt không hỗ trợ thì ẩn nút.
+**Chat** — màn hình chính, mở app là vào thẳng. Trên cùng là thẻ trạng thái tiệm luôn hiển thị: "Chủ tiệm đang rảnh" hoặc "Chủ tiệm đang bận — xong lúc 3:30 chiều", cập nhật realtime qua Socket.IO.
+
+### Thời gian bận: một mốc, không phải một khoảng
+
+Chủ tiệm bấm 15 / 30 / 60 / 120 phút. **Đó là đầu vào, không phải thứ đem hiển thị.** `set_busy(minutes)` quy ngay ra `busy_until = bây giờ + minutes` và lưu mốc đó; từ giây tiếp theo, mọi màn hình chỉ làm việc với mốc.
+
+Giao diện **không đếm ngược ở đâu cả** — không "còn 30 phút", không "sắp xong rồi". Chỉ một dòng: *Xong lúc 3:30 chiều*. Áp cho thẻ khách, bảng chủ tiệm, và câu trả lời của AI.
+
+Ba lý do:
+
+- **Không cũ đi.** Người lớn tuổi hay mở màn hình rồi để đó, quay lại sau. "Còn 30 phút" sai ngay sau khi hiện ra; "3:30 chiều" thì vẫn đúng. Với câu trả lời của AI còn nặng hơn — nó nằm lại trong lịch sử chat, đọc lại sau một tiếng là sai hẳn.
+- **Không phải tính nhẩm.** Mốc đối chiếu thẳng với đồng hồ treo tường.
+- **Không dính lệch đồng hồ.** Hiển thị chỉ là định dạng `busy_until` server gửi xuống, không đụng tới giờ máy khách.
+
+**Hết giờ bận do client tự lật.** Backend không có timer nào phát sự kiện lúc `busy_until` hết hạn — nó chỉ tính lại khi có ai gọi `get_status()`. Frontend đặt **một** `setTimeout` hẹn đúng `minutes_left` phút; tới giờ thì đổi thẻ sang "đang rảnh" rồi hỏi lại server một lần để xác nhận. Hẹn theo `minutes_left` (một khoảng) chứ không theo `busy_until` trừ đi giờ máy (hai mốc) — điện thoại người lớn tuổi lệch giờ là chuyện thường. Chủ tiệm bấm bận thêm lần nữa thì hẹn giờ cũ phải bị hủy.
+
+`minutes_left` vì thế vẫn có trong API nhưng **chỉ để hẹn giờ**, không bao giờ đem hiển thị.
+
+Thẻ trạng thái luôn nằm đó nên phần lớn khách biết tiệm bận hay rảnh mà không cần hỏi AI — hỏi AI là đường dự phòng chứ không phải đường duy nhất.
+
+### Khung chat
+
+Bong bóng chữ to. Ô nhập có nút micro dùng Web Speech API vì gõ phím là rào cản lớn nhất với người lớn tuổi; trình duyệt không hỗ trợ thì ẩn nút.
 
 **Lịch của tôi** — danh sách thẻ lớn dạng "Thứ Năm, 7/8 — 3:00 chiều — làm tóc", kèm nút "Hủy lịch". Hủy phải qua một bước xác nhận.
 
@@ -28,7 +50,7 @@ Bốn trạng thái nối tiếp trong khung chat, xem mockup [`ui-mockup-stream
 | `get_shop_status` | Đang xem chủ tiệm có rảnh không… | Đã xem trạng thái tiệm |
 | `parse_time` | Đang xem lịch… | Đã xem lịch |
 | `find_free_slots` | Đang xem lịch trống… | Đã xem lịch trống |
-| `create_appointment` | Đang ghi lịch cho cô… | Đã ghi lịch |
+| `propose_appointment` | Đang giữ chỗ cho cô… | Đã giữ chỗ |
 | `list_my_appointments` | Đang xem lịch của cô… | Đã xem lịch của cô |
 | `cancel_appointment` | Đang hủy lịch… | Đã hủy lịch |
 
@@ -42,7 +64,7 @@ Mọi hiệu ứng nhấp nháy và xoay đều phải tắt khi `prefers-reduce
 
 ## Phía chủ tiệm
 
-**Bảng điều khiển** — nửa trên là một nút khổng lồ chuyển trạng thái. Có thêm một link nhỏ vào phần sửa giờ mở cửa (`shop_hours`), ít dùng nên không chiếm chỗ. Đang rảnh thì bấm "Tôi đang bận", hiện 4 nút chọn nhanh 15 phút / 30 phút / 1 tiếng / 2 tiếng. Đang bận thì hiện đồng hồ đếm ngược và nút "Tôi rảnh rồi". Nửa dưới là lịch hôm nay dạng thẻ lớn xếp theo giờ; lịch mới được Socket.IO đẩy lên đầu kèm nhãn "MỚI".
+**Bảng điều khiển** — nửa trên là một nút khổng lồ chuyển trạng thái. Có thêm một link nhỏ vào phần sửa giờ mở cửa (`shop_hours`), ít dùng nên không chiếm chỗ. Đang rảnh thì bấm "Tôi đang bận", hiện 4 nút chọn nhanh 15 phút / 30 phút / 1 tiếng / 2 tiếng. Đang bận thì hiện giờ xong ("Xong lúc 3:30 chiều") và nút "Tôi rảnh rồi" — không đếm ngược, giống hệt thẻ bên máy khách. Nửa dưới là lịch hôm nay dạng thẻ lớn xếp theo giờ; lịch mới được Socket.IO đẩy lên đầu kèm nhãn "MỚI".
 
 **Khách hàng** — danh sách khách, ô tìm theo SĐT, nút "Tạo tài khoản" (admin cấp SĐT và mật khẩu ban đầu) và nút đặt lịch hộ khi khách gọi điện.
 

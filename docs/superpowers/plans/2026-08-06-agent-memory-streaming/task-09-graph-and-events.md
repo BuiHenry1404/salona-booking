@@ -79,8 +79,8 @@ def test_tool_end_becomes_tool_finished_ok():
 
 
 def test_tool_error_becomes_tool_finished_not_ok():
-    events = translate_langchain_event(lc_event("on_tool_error", node_name="create_appointment"))
-    assert events[0].data == {"name": "create_appointment", "ok": False}
+    events = translate_langchain_event(lc_event("on_tool_error", node_name="propose_appointment"))
+    assert events[0].data == {"name": "propose_appointment", "ok": False}
 
 
 def test_unrelated_events_produce_nothing():

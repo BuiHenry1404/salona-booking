@@ -18,9 +18,10 @@ Spec: [`04-agent.md`](../../specs/2026-08-06-booking-nail-toc/04-agent.md) · L�
 
 - **AI chỉ để đặt lịch.** Thực thi bằng ba lớp: nhánh `refuse` tường minh trong đồ thị; mỗi subagent chỉ được cấp đúng bộ tool của nó; `user_id` bơm từ JWT chứ không đọc từ nội dung tin nhắn.
 - **Tool không truy vấn DB.** Mọi tool gọi service của Plan 1. Logic chặn trùng giờ chỉ tồn tại một chỗ.
+- **Không có tool nào ghi lịch.** Agent chỉ `propose_appointment` (giữ chỗ + đặt cờ `pending_confirmation`); lịch được tạo ở node `confirm` sau khi khách đồng ý. Quy tắc "xác nhận trước khi ghi" là ràng buộc cấu trúc, không phải lời dặn trong prompt.
 - **Tên gọi khách không bao giờ đến từ memory ngữ nghĩa.** Danh tính đi thẳng từ JWT vào khối bối cảnh dựng bằng code. Prompt nói rõ: memory mâu thuẫn với khối bối cảnh thì tin khối bối cảnh.
 - **Bố cục prompt xếp theo độ ổn định:** System (tĩnh, được cache) → Messages (lịch sử) → Message (khối bối cảnh + memory, đổi mỗi lượt) → Message (tin mới). Không nhét khối bối cảnh vào system prompt.
-- **Chỉ stream token của node `respond`.** Token của supervisor là JSON định tuyến; lọt ra màn hình là rác.
+- **Chỉ stream token mang tag `respond`** — tag gắn cho model của hai subagent, nơi sinh câu trả lời cuối. Token của supervisor và của parser thời gian là JSON; lọt ra màn hình là rác.
 - **Fail-soft cho memory và trace.** `recall` lỗi hoặc quá 2 giây thì trả rỗng. Langfuse lỗi thì nuốt. Không thứ nào được làm hỏng một lượt chat.
 - **Mọi tích hợp ngoài tắt được bằng cách bỏ trống biến env.** Thiếu `POSTGRES_URI` thì memory tắt, thiếu `LANGFUSE_*` thì không trace, app vẫn chạy.
 - **Python 3.11+.**
@@ -45,13 +46,14 @@ Task 3 độc lập với task 1–2 — chạy song song được. Task 5 giờ
 
 Đánh số `4b` thay vì chèn `5` rồi dồn cả loạt: task 5–10 được tham chiếu chéo ở nhiều chỗ, đổi số là phải sửa hết và dễ sót.
 
-## Năm chỗ dễ sai nhất
+## Sáu chỗ dễ sai nhất
 
-1. **Stream nhầm token của supervisor — hoặc của parser.** Gắn `tags=["respond"]` cho model của node `respond` và chỉ chuyển tiếp `on_chat_model_stream` mang tag đó. Model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, nếu không khách sẽ thấy `{"start_at": "2026-08-...` chạy ngang giữa cuộc trò chuyện. Test ở task 4b và task 9.
+1. **Stream nhầm token của supervisor — hoặc của parser.** Gắn `tags=["respond"]` cho model của hai subagent và chỉ chuyển tiếp `on_chat_model_stream` mang tag đó. Model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, nếu không khách sẽ thấy `{"start_at": "2026-08-...` chạy ngang giữa cuộc trò chuyện. Test ở task 4b và task 9.
 2. **Số chiều embedding lệch.** pgvector **im lặng** nuốt lỗi ghi — API trả về thành công kèm memory ID nhưng không lưu gì. Kiểm tra lúc khởi động (task 2).
 3. **Memory rò giữa các user.** Mọi lời gọi Mem0 phải truyền `user_id`. Test cô lập A/B là bắt buộc (task 2).
 4. **Mem0 có thể chỉ có API đồng bộ.** Adapter chạy nó trong threadpool; đừng gọi thẳng trong event loop (task 2).
-5. **Nới regex của parser thời gian.** Nó chỉ được trả lời khi câu khớp trọn vẹn; thiếu ngày hoặc thiếu giờ là nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — mà LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` ở task 4b canh chỗ này.
+5. **Tự thêm lại tool ghi lịch.** Nếu thấy "agent không đặt được lịch trong một lượt" mà thêm `create_appointment` vào bộ tool thì hỏng cả hai lớp bảo vệ: khách mất bước xác nhận, và chuỗi ISO quay lại đi vòng qua model. Test `test_there_is_NO_tool_that_writes_an_appointment` ở task 5 canh chỗ này.
+6. **Nới regex của parser thời gian.** Nó chỉ được trả lời khi câu khớp trọn vẹn; thiếu ngày hoặc thiếu giờ là nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — mà LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` ở task 4b canh chỗ này.
 
 ## Kiểm tra sau khi xong
 
@@ -59,4 +61,9 @@ Task 3 độc lập với task 1–2 — chạy song song được. Task 5 giờ
 pytest -v
 ```
 
-Và kiểm tay: mở `static/socketio_test.html` (hoặc client tạm), đăng nhập, gõ "mai 3h chiều làm tóc được không con" — phải thấy lần lượt `turn_started` → `tool_started` → `tool_finished` → nhiều `token` → `complete`, và lịch xuất hiện trong `GET /api/v1/appointments/mine`. Gõ "cháu bán bảo hiểm không" phải bị `refuse` từ chối lịch sự.
+Và kiểm tay: mở `static/socketio_test.html` (hoặc client tạm), đăng nhập rồi làm đủ **hai lượt**:
+
+1. Gõ `"mai 3h chiều làm tóc được không con"` — phải thấy lần lượt `turn_started` → `tool_started`/`tool_finished` cho `parse_time` rồi `propose_appointment` → nhiều `token` → `complete`. AI phải **hỏi lại xác nhận**, và `GET /api/v1/appointments/mine` lúc này vẫn **rỗng**.
+2. Gõ `"ừ"` — lịch mới xuất hiện trong `GET /api/v1/appointments/mine`. Lượt này **không được** có sự kiện `tool_started` nào và phải trả lời gần như tức thì: nó đi nhánh `confirm`, không gọi LLM.
+
+Gõ `"cháu bán bảo hiểm không"` phải bị `refuse` từ chối lịch sự.

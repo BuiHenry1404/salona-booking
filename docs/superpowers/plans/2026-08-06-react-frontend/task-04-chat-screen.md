@@ -71,11 +71,38 @@ describe("ChatScreen", () => {
     expect(screen.getByText(/đang rảnh/i)).toBeInTheDocument();
   });
 
-  it("đang bận thì hiện luôn còn bao nhiêu phút", () => {
+  it("đang bận thì hiện GIỜ XONG cụ thể", () => {
+    // 08:30 UTC = 3:30 chiều giờ Việt Nam.
     shop.status = { is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 };
     renderChat();
+
     expect(screen.getByText(/đang bận/i)).toBeInTheDocument();
-    expect(screen.getByText(/30 phút/)).toBeInTheDocument();
+    expect(screen.getByText(/3:30 chiều/)).toBeInTheDocument();
+  });
+
+  it("TUYỆT ĐỐI KHÔNG đếm ngược trên màn hình", () => {
+    // "Còn 30 phút" sai ngay sau khi hiện ra, mà người lớn tuổi hay để màn hình
+    // đó rồi quay lại sau. `minutes_left` chỉ dùng để hẹn giờ lật thẻ.
+    shop.status = { is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 };
+    renderChat();
+
+    expect(screen.queryByText(/30 phút/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/còn .* phút/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/nữa xong/i)).not.toBeInTheDocument();
+  });
+
+  it("giờ xong KHÔNG phụ thuộc đồng hồ máy khách", () => {
+    // Điện thoại của người lớn tuổi lệch giờ là chuyện thường, có máy lệch cả
+    // năm. `formatViTime` chỉ định dạng mốc server gửi xuống, không đụng
+    // `Date.now()` — nên giờ hiện ra phải giống hệt dù đồng hồ máy sai.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2019-01-01T00:00:00Z"));
+
+    shop.status = { is_busy: true, busy_until: "2026-08-07T08:30:00Z", minutes_left: 30 };
+    renderChat();
+    expect(screen.getByText(/3:30 chiều/)).toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 
   it("gửi tin nhắn rồi xóa sạch ô nhập", async () => {
@@ -182,6 +209,7 @@ Expected: FAIL — không tìm thấy `./ChatScreen`
 
 ```tsx
 import type { ShopStatus } from "../lib/api";
+import { formatViTime } from "../lib/viDate";
 import "./ShopStatusCard.css";
 
 /**
@@ -204,8 +232,18 @@ export function ShopStatusCard({ status, loading }: { status: ShopStatus | null;
         <strong className="shopcard__title">
           {busy ? "Chủ tiệm đang bận" : "Chủ tiệm đang rảnh"}
         </strong>
-        {busy && status.minutes_left != null && (
-          <p className="shopcard__sub">Khoảng {status.minutes_left} phút nữa xong ạ</p>
+        {busy && status.busy_until && (
+          // MỘT con số duy nhất: giờ xong. Không đếm ngược, không "còn N phút".
+          //
+          // "3:30 chiều" đối chiếu thẳng với đồng hồ treo tường, không bắt người
+          // già tính nhẩm, và KHÔNG BAO GIỜ CŨ ĐI — nhìn lại màn hình sau 20
+          // phút thì nó vẫn đúng, còn "còn 30 phút" thì đã sai.
+          //
+          // `formatViTime` chỉ định dạng mốc server gửi xuống, không đụng
+          // `Date.now()`, nên máy khách sai giờ cũng hiện đúng.
+          <p className="shopcard__sub">
+            Xong lúc <strong>{formatViTime(status.busy_until)}</strong>
+          </p>
         )}
       </div>
     </div>
@@ -232,7 +270,8 @@ Tạo `frontend/src/components/ShopStatusCard.css`:
 .shopcard--busy  { background: var(--color-warn-weak); border-color: #b45309; }
 .shopcard--busy  .shopcard__dot { background: #b45309; }
 .shopcard__title { font-size: 21px; }
-.shopcard__sub { font-size: 18px; color: var(--color-fg-muted); }
+.shopcard__sub { font-size: 19px; color: var(--color-fg); }
+.shopcard__count { color: var(--color-fg-muted); }
 .shopcard--loading { color: var(--color-fg-muted); }
 ```
 
@@ -645,7 +684,7 @@ import { ChatScreen } from "./screens/ChatScreen";
 - [ ] **Step 10: Chạy test để xác nhận pass**
 
 Run: `cd frontend && npm test`
-Expected: PASS (30 passed)
+Expected: PASS (59 passed)
 
 - [ ] **Step 11: Kiểm tay bốn trạng thái**
 

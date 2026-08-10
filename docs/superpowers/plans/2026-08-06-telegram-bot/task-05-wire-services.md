@@ -159,7 +159,9 @@ class TelegramNotifier:
 
     async def shop_status_changed(self, status: ShopStatusView) -> None:
         if status.is_busy:
-            await self._broadcast(f"Đã chuyển sang Đang bận, còn {status.minutes_left} phút.")
+            await self._broadcast(
+                f"Đã chuyển sang Đang bận, xong lúc {format_vi_datetime(status.busy_until)}."
+            )
         else:
             await self._broadcast("Đã chuyển sang Đang rảnh.")
 ```

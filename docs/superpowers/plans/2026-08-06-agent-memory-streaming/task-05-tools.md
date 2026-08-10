@@ -6,11 +6,12 @@
 - Create: `app/agents/booking_graph/tools.py`, `tests/test_tools.py`
 
 **Interfaces:**
-- Consumes: `AppointmentService`, `ShopService` (Plan 1), `format_vi_datetime` (task 4), `parse_vi_time` (task 4b)
+- Consumes: `AppointmentService`, `ShopService` (Plan 1), `ConversationService` (task 3), `format_vi_datetime` (task 4), `parse_vi_time` (task 4b)
 - Produces:
   - `make_status_tools(db, user) -> list[BaseTool]` — 1 tool
   - `make_booking_tools(db, user) -> list[BaseTool]` — 5 tool
-  - Tên tool: `get_shop_status`, `parse_time`, `find_free_slots`, `create_appointment`, `list_my_appointments`, `cancel_appointment`
+  - Tên tool: `get_shop_status`, `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`
+  - **Không có tool ghi lịch.** Lịch chỉ được tạo ở node `confirm` (task 8), sau khi khách đồng ý.
 
 - [ ] **Step 1: Viết test (sẽ fail)**
 
@@ -46,9 +47,21 @@ async def test_tool_names_are_exactly_as_specified(test_db):
     user = await a_user(test_db)
     assert [t.name for t in make_status_tools(test_db, user)] == ["get_shop_status"]
     assert sorted(t.name for t in make_booking_tools(test_db, user)) == [
-        "cancel_appointment", "create_appointment", "find_free_slots",
-        "list_my_appointments", "parse_time",
+        "cancel_appointment", "find_free_slots", "list_my_appointments",
+        "parse_time", "propose_appointment",
     ]
+
+
+async def test_there_is_NO_tool_that_writes_an_appointment(test_db):
+    """Ràng buộc cấu trúc, không phải lời dặn trong prompt.
+
+    Spec bắt "luôn nhắc lại ngày giờ cho khách xác nhận rồi mới ghi". Cách duy
+    nhất khiến điều đó luôn đúng là không cấp cho model tool nào ghi được lịch —
+    chỉ node `confirm` mới gọi service, sau khi khách đã đồng ý.
+    """
+    user = await a_user(test_db)
+    names = {t.name for t in make_booking_tools(test_db, user)}
+    assert "create_appointment" not in names
 
 
 async def test_shop_status_reads_free(test_db):
@@ -57,24 +70,87 @@ async def test_shop_status_reads_free(test_db):
     assert "rảnh" in (await tool.ainvoke({})).lower()
 
 
-async def test_shop_status_reads_busy_with_minutes(test_db):
+async def test_shop_status_reads_busy_with_finish_time(test_db):
+    """Giờ xong là thông tin chính. Mốc cố định thì không cũ đi, còn "còn 30
+    phút" thì sai ngay sau đó — mà khách hay đọc lại tin nhắn cũ."""
     from app.services.shop import ShopService
 
     user = await a_user(test_db)
     await ShopService(test_db).set_busy(30)
     tool = by_name(make_status_tools(test_db, user), "get_shop_status")
     result = await tool.ainvoke({})
-    assert "bận" in result.lower() and "30" in result
+
+    assert "bận" in result.lower()
+    assert "xong lúc" in result.lower()
+    # KHÔNG được nói "còn 30 phút": câu này nằm lại trong lịch sử chat, đọc lại
+    # sau một tiếng là sai hẳn.
+    assert "30 phút" not in result
 
 
-async def test_create_then_list_then_cancel(test_db):
+async def test_propose_stores_the_time_in_mongo_not_in_the_prompt(test_db):
+    """ĐÂY LÀ ĐIỂM MẤU CHỐT của cả cơ chế.
+
+    Giờ đã parse được cất vào `conversations`, nên lượt sau node `confirm` đọc
+    lại từ DB. Nếu không có bước này, giá trị duy nhất còn tồn tại là chuỗi ISO
+    nằm trong context của model — và model chép sai 15:00 thành 5:00 thì không
+    gì phát hiện được.
+    """
+    from app.services.conversation import ConversationService
+
+    user = await a_user(test_db)
+    start = tomorrow_at(15)
+
+    result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
+        {"start_at": start.isoformat(), "note": "làm tóc"}
+    )
+    assert "giữ chỗ" in result.lower()
+
+    pending = await ConversationService(test_db).get_pending(str(user.id))
+    assert pending["start_at"] == start.isoformat()
+    assert pending["note"] == "làm tóc"
+
+
+async def test_propose_does_NOT_create_the_appointment(test_db):
+    """Giữ chỗ khác với ghi lịch. Khách chưa đồng ý thì chưa có lịch nào."""
+    user = await a_user(test_db)
+    await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
+        {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}
+    )
+
+    from app.services.appointment import AppointmentService
+    assert await AppointmentService(test_db).upcoming_for(user) == []
+
+
+async def test_propose_checks_availability_BEFORE_asking_the_customer(test_db):
+    """Hỏi "3 giờ chiều đúng không cô?" rồi mới báo giờ đó có người là bắt khách
+    chọn lại hai lần."""
+    owner = await a_user(test_db)
+    other = await a_user(test_db, phone="0938111222", name="Cô Hoa")
+
+    from app.services.appointment import AppointmentService
+    await AppointmentService(test_db).create(owner, tomorrow_at(16), note=None)
+
+    result = await by_name(make_booking_tools(test_db, other), "propose_appointment").ainvoke(
+        {"start_at": tomorrow_at(16).isoformat(), "note": None}
+    )
+    assert "không đặt được" in result.lower()
+    assert "còn trống" in result.lower()   # phải gợi ý giờ khác, không bỏ lửng
+
+
+async def test_propose_rejects_a_time_outside_opening_hours(test_db):
+    user = await a_user(test_db)
+    result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
+        {"start_at": tomorrow_at(3).isoformat(), "note": None}   # 3 giờ sáng
+    )
+    assert "không đặt được" in result.lower()
+
+
+async def test_list_then_cancel(test_db):
     user = await a_user(test_db)
     tools = make_booking_tools(test_db, user)
 
-    created = await by_name(tools, "create_appointment").ainvoke(
-        {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}
-    )
-    assert "làm tóc" in created
+    from app.services.appointment import AppointmentService
+    await AppointmentService(test_db).create(user, tomorrow_at(15), note="làm tóc")
 
     listed = await by_name(tools, "list_my_appointments").ainvoke({})
     assert "làm tóc" in listed
@@ -86,27 +162,14 @@ async def test_create_then_list_then_cancel(test_db):
     assert "chưa có lịch" in (await by_name(tools, "list_my_appointments").ainvoke({})).lower()
 
 
-async def test_create_at_a_taken_time_returns_a_friendly_message(test_db):
-    owner = await a_user(test_db)
-    other = await a_user(test_db, phone="0938111222", name="Cô Hoa")
-
-    await by_name(make_booking_tools(test_db, owner), "create_appointment").ainvoke(
-        {"start_at": tomorrow_at(16).isoformat(), "note": None}
-    )
-    result = await by_name(make_booking_tools(test_db, other), "create_appointment").ainvoke(
-        {"start_at": tomorrow_at(16).isoformat(), "note": None}
-    )
-    assert "có người" in result.lower()
-
-
 async def test_tool_cannot_touch_another_users_appointment(test_db):
     """user_id đóng kín trong closure, không phải tham số — AI không thể bị dụ."""
     owner = await a_user(test_db)
     intruder = await a_user(test_db, phone="0938111222", name="Người lạ")
 
-    await by_name(make_booking_tools(test_db, owner), "create_appointment").ainvoke(
-        {"start_at": tomorrow_at(17).isoformat(), "note": None}
-    )
+    from app.services.appointment import AppointmentService
+    await AppointmentService(test_db).create(owner, tomorrow_at(17), note=None)
+
     listed = await by_name(make_booking_tools(test_db, owner), "list_my_appointments").ainvoke({})
     appointment_id = listed.split("[id:")[1].split("]")[0].strip()
 
@@ -129,16 +192,16 @@ async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):
     user = await a_user(test_db)
     naive = tomorrow_at(15).replace(tzinfo=None).isoformat()  # "2026-...T15:00:00"
 
-    result = await by_name(make_booking_tools(test_db, user), "create_appointment").ainvoke(
+    result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": naive, "note": "làm tóc"}
     )
-    assert "đã ghi lịch" in result.lower()
+    assert "giữ chỗ" in result.lower()
     assert "3:00 chiều" in result   # 15h giờ Việt Nam, không bị lệch 7 tiếng
 
 
 async def test_rubbish_time_string_gets_a_polite_answer_not_a_crash(test_db):
     user = await a_user(test_db)
-    result = await by_name(make_booking_tools(test_db, user), "create_appointment").ainvoke(
+    result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": "mai 3 giờ chiều", "note": None}
     )
     assert "không hợp lệ" in result.lower()
@@ -146,7 +209,7 @@ async def test_rubbish_time_string_gets_a_polite_answer_not_a_crash(test_db):
 
 async def test_parse_time_returns_json_the_agent_can_hand_straight_on(test_db):
     """Trả JSON chứ không trả câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
-    để chuyển thẳng sang create_appointment, không được diễn giải lại."""
+    để chuyển thẳng sang propose_appointment, không được diễn giải lại."""
     import json
 
     user = await a_user(test_db)
@@ -201,17 +264,18 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.context import format_vi_datetime
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
-from app.core.clock import TZ, now_utc
+from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError
 from app.models.user import User
 from app.services.appointment import AppointmentService
+from app.services.conversation import ConversationService
 from app.services.shop import ShopService
 
 
 def _parse_local(value: str) -> datetime:
     """Đọc chuỗi ISO và LUÔN trả về datetime có múi giờ.
 
-    Lớp chốt trong `timeparse` đã gắn múi giờ, nhưng `create_appointment` vẫn
+    Lớp chốt trong `timeparse` đã gắn múi giờ, nhưng `propose_appointment` vẫn
     nhận chuỗi từ model — nó có thể bỏ qua `parse_time` rồi tự dựng ISO. Thiếu
     offset thì `fromisoformat` cho datetime naive, đem so với `now_utc()`
     tz-aware là TypeError, mà tool chỉ bắt ValueError và AppError.
@@ -227,11 +291,15 @@ def make_status_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def get_shop_status() -> str:
-        """Xem chủ tiệm đang bận hay đang rảnh, và nếu bận thì còn bao lâu nữa xong."""
+        """Xem chủ tiệm đang bận hay đang rảnh, và nếu bận thì mấy giờ xong."""
         status = await shop.get_status()
         if not status.is_busy:
             return "Chủ tiệm đang rảnh."
-        return f"Chủ tiệm đang bận, còn khoảng {status.minutes_left} phút nữa xong."
+        # Nói MỘT mốc giờ, không nói "còn N phút" — giống hệt thẻ trạng thái
+        # trên giao diện. Nói hai kiểu ở hai chỗ là khách tưởng hai thông tin
+        # khác nhau. Và câu trả lời của AI còn nằm lại trong lịch sử chat: "còn
+        # 30 phút" đọc lại sau một tiếng là sai hẳn, "3:30 chiều" thì vẫn đúng.
+        return f"Chủ tiệm đang bận, xong lúc {format_vi_datetime(status.busy_until)}."
 
     return [get_shop_status]
 
@@ -243,16 +311,17 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     người khác, kể cả khi khách gõ "hủy lịch của bà Lan".
     """
     service = AppointmentService(db)
+    conversations = ConversationService(db)
 
     @tool
     async def parse_time(text: str) -> str:
         """Quy câu nói về thời gian của khách ra ngày giờ chuẩn.
-        Gọi tool này TRƯỚC find_free_slots và create_appointment, mỗi khi khách
+        Gọi tool này TRƯỚC find_free_slots và propose_appointment, mỗi khi khách
         nhắc tới thời gian. Không tự tính ngày.
         Ví dụ text: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai"."""
         parsed: ParsedTime = await parse_vi_time(text, now_utc())
         # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
-        # để chuyển thẳng sang create_appointment, không được diễn giải lại.
+        # để chuyển thẳng sang propose_appointment, không được diễn giải lại.
         return parsed.model_dump_json(
             include={"start_at", "partial_date", "missing"}, exclude_none=False
         )
@@ -270,18 +339,38 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
 
     @tool
-    async def create_appointment(start_at: str, note: Optional[str] = None) -> str:
-        """Ghi lịch hẹn cho khách. `start_at` dạng ISO 8601, ví dụ 2026-08-08T15:00:00.
-        Ngày phải tính từ mốc "Bây giờ là..." trong phần bối cảnh, không được đoán.
-        Chỉ gọi sau khi khách đã xác nhận rõ ngày giờ."""
+    async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
+        """Giữ chỗ tạm thời và chuẩn bị câu hỏi xác nhận cho khách.
+        `start_at` dạng ISO 8601, lấy NGUYÊN từ kết quả parse_time.
+        Gọi tool này rồi hỏi khách xác nhận. KHÔNG có tool nào ghi lịch trực tiếp —
+        lịch chỉ được ghi khi khách trả lời đồng ý ở lượt sau."""
         try:
-            appt = await service.create(user, _parse_local(start_at), note)
+            start = _parse_local(start_at)
         except ValueError:
             return "Thời gian không hợp lệ."
-        except AppError as exc:
-            return exc.message
-        note_text = f", {appt.note}" if appt.note else ""
-        return f"Đã ghi lịch {format_vi_datetime(appt.start_at)}{note_text}."
+
+        # Kiểm trước khi hỏi khách. Hỏi "3 giờ chiều đúng không cô?" rồi mới báo
+        # giờ đó có người là bắt khách chọn lại hai lần.
+        # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
+        # giờ đã có người — một truy vấn thay cho bốn lần kiểm tay.
+        free = await service.find_free_slots(to_local(start).date())
+        if start not in free:
+            if not free:
+                return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
+            goi_y = ", ".join(format_vi_datetime(s) for s in free[:3])
+            return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {goi_y}."
+
+        # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
+        # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
+        # thể chép sai giờ giữa hai lượt.
+        await conversations.set_pending(
+            str(user.id), {"start_at": start.isoformat(), "note": note}
+        )
+        note_text = f", {note}" if note else ""
+        return (
+            f"Đã giữ chỗ {format_vi_datetime(start)}{note_text}. "
+            "Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận."
+        )
 
     @tool
     async def list_my_appointments() -> str:
@@ -309,7 +398,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     return [
         parse_time,
         find_free_slots,
-        create_appointment,
+        propose_appointment,
         list_my_appointments,
         cancel_appointment,
     ]
@@ -318,7 +407,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 - [ ] **Step 4: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_tools.py -v`
-Expected: PASS (12 passed) — quan trọng nhất là `test_tool_cannot_touch_another_users_appointment` và `test_parse_time_says_what_is_missing_instead_of_guessing`
+Expected: PASS (16 passed) — quan trọng nhất là `test_there_is_NO_tool_that_writes_an_appointment` và `test_propose_stores_the_time_in_mongo_not_in_the_prompt`
 
 - [ ] **Step 5: Commit**
 

@@ -25,7 +25,7 @@ Bước xác nhận trước khi ghi lịch là quan trọng nhất trong bảng
 
 Ba tầng. Không tầng nào cần LLM thật, trừ tầng cuối.
 
-**Unit — tầng service.** Quan trọng nhất, hoàn toàn không có AI. Chặn trùng giờ, bao gồm một test hai request đồng thời bằng `asyncio.gather` để chứng minh unique index thật sự chặn. Lượng tử hóa slot. Chuẩn hóa SĐT với đủ biến thể. Logic `busy_until` hết hạn tự về rảnh. Rate limit đổi mật khẩu. Quyền hủy lịch chỉ của chính mình. Khóa idempotency: gọi `create_appointment` hai lần cùng tham số chỉ sinh ra một lịch. `find_free_slots` không bao giờ trả mốc ngoài `shop_hours`, rơi vào `closed_days`, hoặc ở quá khứ.
+**Unit — tầng service.** Quan trọng nhất, hoàn toàn không có AI. Chặn trùng giờ, bao gồm một test hai request đồng thời bằng `asyncio.gather` để chứng minh unique index thật sự chặn. Lượng tử hóa slot. Chuẩn hóa SĐT với đủ biến thể. Logic `busy_until` hết hạn tự về rảnh. Rate limit đổi mật khẩu. Quyền hủy lịch chỉ của chính mình. Khóa idempotency: gọi `AppointmentService.create` hai lần cùng tham số chỉ sinh ra một lịch. `find_free_slots` không bao giờ trả mốc ngoài `shop_hours`, rơi vào `closed_days`, hoặc ở quá khứ.
 
 Hai test bắt buộc cho partial index, vì đây là chỗ đã từng thiết kế sai: **hủy hai lịch liên tiếp không được ném lỗi trùng khóa** (đúng cái bug mảng rỗng ở [02-data-model.md](02-data-model.md#chặn-trùng-giờ)), và **hủy xong thì đặt lại đúng khung giờ đó phải thành công**.
 
@@ -33,7 +33,7 @@ Hai test bắt buộc cho partial index, vì đây là chỗ đã từng thiết
 
 **Tầng agent với LLM giả lập.** Mỗi node LangGraph test riêng bằng state dựng sẵn: supervisor định tuyến đúng nhánh, `refuse` chặn câu ngoài chủ đề, tool không nhận `user_id` từ nội dung tin nhắn, và `pending_confirmation` khiến câu "ừ" đi thẳng vào nhánh thực thi thay vì quay lại supervisor.
 
-**Tầng Telegram — tất định, không cần LLM.** Update từ chat_id lạ bị bỏ qua và không sinh phản hồi nào. Bấm "Tôi đang bận 30 phút" ghi đúng `busy_until` **và** phát `shop_status_changed` qua Socket.IO. Telegram lỗi thì `create_appointment` vẫn thành công.
+**Tầng Telegram — tất định, không cần LLM.** Update từ chat_id lạ bị bỏ qua và không sinh phản hồi nào. Bấm "Tôi đang bận 30 phút" ghi đúng `busy_until` **và** phát `shop_status_changed` qua Socket.IO. Telegram lỗi thì việc đặt lịch vẫn thành công.
 
 **Integration đầu-cuối, có LLM thật.** Chạy tay hoặc trong một job CI riêng. Bộ khoảng 15 câu tiếng Việt đời thường: "mai 3h chiều làm tóc được không con", "chú có rảnh giờ không", "hủy giùm cô cái lịch mai", "cháu bán bảo hiểm không". Kiểm tra kết quả cuối cùng chứ không so từng chữ.
 

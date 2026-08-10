@@ -58,6 +58,32 @@ def a_state(user, text, pending):
             "context_block": "", "recalled": [], "pending_confirmation": pending}
 
 
+async def test_propose_then_yes_books_the_time_from_MONGO(test_db):
+    """Test nối hai đầu: `propose_appointment` ghi cờ, `confirm` đọc lại.
+
+    Điểm quan trọng: giá trị đem đi ghi lịch lấy từ Mongo, KHÔNG phải từ chuỗi
+    model gõ lại ở lượt sau. Model chép sai 15:00 thành 5:00 cũng không ảnh
+    hưởng, vì nó không còn được chạm vào con số đó nữa.
+    """
+    from app.agents.booking_graph.tools import make_booking_tools
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    start = tomorrow_at(15)
+
+    tools = make_booking_tools(test_db, user)
+    propose = next(t for t in tools if t.name == "propose_appointment")
+    await propose.ainvoke({"start_at": start.isoformat(), "note": "làm tóc"})
+
+    pending = await ConversationService(test_db).get_pending(str(user.id))
+    result = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
+
+    assert "xong" in result["answer"].lower()
+    booked = await AppointmentService(test_db).upcoming_for(user)
+    assert len(booked) == 1
+    assert booked[0].start_at.astimezone(TZ) == start
+    assert booked[0].note == "làm tóc"
+
+
 async def test_yes_creates_the_appointment(test_db):
     user = await _setup(test_db)
     pending = await ConversationService(test_db).get_pending(str(user.id))
@@ -194,7 +220,7 @@ async def save_memory(db: AsyncIOMotorDatabase, user_id: str, question: str, ans
 - [ ] **Step 4: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_confirm.py -v`
-Expected: PASS (17 passed — 13 tham số hóa + 4 test tích hợp)
+Expected: PASS (18 passed — 13 tham số hóa + 5 test tích hợp) — quan trọng nhất là `test_propose_then_yes_books_the_time_from_MONGO`
 
 - [ ] **Step 5: Commit**
 
