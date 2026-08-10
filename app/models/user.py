@@ -1,36 +1,39 @@
-from typing import Optional
-from pydantic import EmailStr, Field, ConfigDict
+from typing import Literal, Optional
+
+from pydantic import ConfigDict, Field
+
 from app.models.base import BaseDocument
+
+Role = Literal["user", "admin"]
 
 
 class User(BaseDocument):
-    """User model."""
-    
+    """Khách hoặc chủ tiệm. Định danh bằng số điện thoại, không dùng email."""
+
     model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
         json_schema_extra={
             "example": {
-                "email": "user@example.com",
-                "username": "johndoe",
-                "full_name": "John Doe",
+                "phone": "0912345678",
+                "full_name": "Nguyễn Thị Lan",
+                "role": "user",
                 "is_active": True,
-                "is_superuser": False
             }
-        }
+        },
     )
-    
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
-    full_name: Optional[str] = None
+
+    phone: str = Field(..., min_length=10, max_length=10)
     hashed_password: str
+    full_name: Optional[str] = None
+    role: Role = "user"
     is_active: bool = True
-    is_superuser: bool = False
 
 
 class CurrentUser(BaseDocument):
-    """Current authenticated user (without sensitive fields)."""
-    
-    email: EmailStr
-    username: str
+    """User đã xác thực, không mang trường nhạy cảm."""
+
+    phone: str
     full_name: Optional[str] = None
+    role: Role
     is_active: bool
-    is_superuser: bool 

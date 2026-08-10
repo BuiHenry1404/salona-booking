@@ -34,7 +34,10 @@ async def lifespan(app: FastAPI):
         app.state.mongo = mongo_db.get_client()
         app.state.db = mongo_db.get_database()
         app.state.settings = settings
-        
+
+        from app.infrastructure.database import ensure_indexes
+        await ensure_indexes(app.state.db)
+
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
         
     except Exception as e:

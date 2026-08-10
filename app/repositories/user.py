@@ -1,46 +1,42 @@
-from typing import Optional
+from typing import List, Optional
+
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.models.user import User
+
+from app.core.phone import InvalidPhoneError, normalize_phone
+from app.models.user import Role, User
 from app.repositories.base import BaseRepository
 
 
 class UserRepository(BaseRepository[User]):
-    """User repository for database operations."""
-    
     def __init__(self, db: AsyncIOMotorDatabase):
         super().__init__(db, User, "users")
-    
-    async def get_by_email(self, email: str) -> Optional[User]:
-        """Get user by email address."""
-        return await self.find_one({"email": email})
-    
-    async def get_by_username(self, username: str) -> Optional[User]:
-        """Get user by username."""
-        return await self.find_one({"username": username})
-    
-    async def get_by_email_or_username(self, identifier: str) -> Optional[User]:
-        """Get user by email or username."""
-        return await self.find_one({
-            "$or": [
-                {"email": identifier},
-                {"username": identifier}
-            ]
+
+    async def get_by_phone(self, phone: str) -> Optional[User]:
+        try:
+            normalised = normalize_phone(phone)
+        except InvalidPhoneError:
+            return None
+        doc = await self.collection.find_one({"phone": normalised})
+        return User(**doc) if doc else None
+
+    async def create_user(
+        self, phone: str, hashed_password: str, full_name: Optional[str], role: Role = "user"
+    ) -> User:
+        return await self.create({
+            "phone": normalize_phone(phone),
+            "hashed_password": hashed_password,
+            "full_name": full_name,
+            "role": role,
+            "is_active": True,
         })
-    
-    async def email_exists(self, email: str) -> bool:
-        """Check if email already exists."""
-        return await self.exists({"email": email})
-    
-    async def username_exists(self, username: str) -> bool:
-        """Check if username already exists."""
-        return await self.exists({"username": username})
-    
-    async def create_indexes(self):
-        """Create database indexes for optimal performance."""
-        # Unique indexes
-        await self.collection.create_index("email", unique=True)
-        await self.collection.create_index("username", unique=True)
-        
-        # Regular indexes
-        await self.collection.create_index("is_active")
-        await self.collection.create_index("created_at") 
+
+    async def set_password(self, user_id: str, hashed_password: str) -> bool:
+        result = await self.collection.update_one(
+            {"_id": ObjectId(user_id)}, {"$set": {"hashed_password": hashed_password}}
+        )
+        return result.matched_count == 1
+
+    async def list_all(self) -> List[User]:
+        docs = await self.collection.find().sort("full_name", 1).to_list(length=500)
+        return [User(**d) for d in docs]

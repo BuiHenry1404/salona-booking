@@ -81,6 +81,28 @@ class MongoDatabase:
             logger.warning("Failed to create some database indexes", error=str(e))
 
 
+async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
+    """Tạo mọi index. Gọi lúc khởi động app và trong fixture test.
+
+    Index trên slot_keys BẮT BUỘC là partial lọc status="booked".
+    Không được dùng sparse: MongoDB đánh index mảng rỗng thành undefined, nên
+    lịch bị hủy thứ hai sẽ ném E11000 dup key: { : undefined }.
+    """
+    await db["users"].create_index("phone", unique=True)
+
+    await db["appointments"].create_index(
+        "slot_keys",
+        unique=True,
+        partialFilterExpression={"status": "booked"},
+        name="uniq_active_slot_keys",
+    )
+    await db["appointments"].create_index("start_at")
+    await db["appointments"].create_index([("user_id", 1), ("start_at", 1)])
+
+    await db["rate_limits"].create_index("expires_at", expireAfterSeconds=0)
+    await db["rate_limits"].create_index([("key", 1), ("created_at", 1)])
+
+
 async def create_mongodb_connection(uri: str = None, db_name: str = None) -> MongoDatabase:
     """Create and initialize a MongoDB connection."""
     uri = uri or str(settings.mongo_uri)
