@@ -1,0 +1,39 @@
+from datetime import datetime, timedelta, timezone
+
+from app.core.errors import AppError
+
+SLOT_MINUTES = 15
+_KEY_FORMAT = "%Y-%m-%dT%H:%M"
+
+
+class MisalignedSlotError(AppError):
+    message = "Giờ đặt phải rơi đúng mốc 15 phút"
+
+
+def quantize(dt: datetime) -> datetime:
+    """Làm tròn xuống mốc 15 phút gần nhất."""
+    dt = dt.astimezone(timezone.utc)
+    return dt.replace(minute=dt.minute - dt.minute % SLOT_MINUTES, second=0, microsecond=0)
+
+
+def slot_keys_for(start_at: datetime, duration_minutes: int) -> list[str]:
+    """Các mốc 15 phút mà một lịch chiếm.
+
+    Đây là thứ được đặt unique partial index — MongoDB áp unique cho từng phần tử
+    mảng xuyên document, nên hai lịch chồng giờ bị chính DB từ chối, nguyên tử,
+    không cần transaction.
+    """
+    if start_at.tzinfo is None:
+        raise MisalignedSlotError("Thiếu múi giờ")
+
+    start = start_at.astimezone(timezone.utc)
+    if start.minute % SLOT_MINUTES or start.second or start.microsecond:
+        raise MisalignedSlotError()
+    if duration_minutes <= 0 or duration_minutes % SLOT_MINUTES:
+        raise MisalignedSlotError("Thời lượng phải là bội số 15 phút")
+
+    count = duration_minutes // SLOT_MINUTES
+    return [
+        (start + timedelta(minutes=SLOT_MINUTES * i)).strftime(_KEY_FORMAT)
+        for i in range(count)
+    ]
