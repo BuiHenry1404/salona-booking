@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from main import app
 from app.core.config import settings
 from app.api.deps import get_db
+from app.infrastructure.database import ensure_indexes
 
 pytest_plugins = ("pytest_asyncio",)
 
@@ -51,9 +52,6 @@ async def async_client(test_app):
     """Create async test client."""
     async with AsyncClient(app=test_app, base_url="http://test") as ac:
         yield ac
-
-
-from app.infrastructure.database import ensure_indexes
 
 
 @pytest_asyncio.fixture(autouse=True)

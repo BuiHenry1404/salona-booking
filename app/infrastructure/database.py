@@ -55,31 +55,6 @@ class MongoDatabase:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self.client
     
-    async def create_indexes(self) -> None:
-        """Create MongoDB indexes for all collections."""
-        if self.database is None:
-            logger.warning("Database not available for index creation")
-            return
-        
-        try:
-            # Import repositories here to avoid circular imports
-            from app.repositories.user import UserRepository
-            from app.repositories.conversation import ConversationRepository
-            from app.repositories.task import TaskRepository
-            
-            # Create repository instances and indexes
-            user_repo = UserRepository(self.database)
-            conversation_repo = ConversationRepository(self.database)
-            task_repo = TaskRepository(self.database)
-            
-            await user_repo.create_indexes()
-            await conversation_repo.create_indexes()
-            await task_repo.create_indexes()
-            
-            logger.info("Database indexes created successfully")
-        except Exception as e:
-            logger.warning("Failed to create some database indexes", error=str(e))
-
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     """Tạo mọi index. Gọi lúc khởi động app và trong fixture test.
@@ -114,9 +89,6 @@ async def create_mongodb_connection(uri: str = None, db_name: str = None) -> Mon
     # Test connection
     if not await mongo_db.ping():
         raise RuntimeError("Failed to establish MongoDB connection")
-    
-    # Create indexes
-    await mongo_db.create_indexes()
-    
+
     return mongo_db
 
