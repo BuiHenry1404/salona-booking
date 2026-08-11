@@ -176,3 +176,21 @@ async def test_datetimes_read_back_from_mongo_keep_their_timezone(test_db):
     [read_back] = await svc.upcoming_for(user)
     assert read_back.start_at.tzinfo is not None
     assert read_back.start_at == future_local(15)
+
+
+async def test_cancelling_twice_reports_not_found_the_second_time(test_db):
+    """repo.cancel lọc status="booked" trong câu update, nên lần hủy thứ hai
+    không đổi gì. Bỏ qua giá trị trả về là báo thành công cho việc chưa làm."""
+    svc = AppointmentService(test_db)
+    user = make_user()
+    appt = await svc.create(user, future_local(15), note=None)
+    await svc.cancel(user, str(appt.id))
+    with pytest.raises(NotFoundError):
+        await svc.cancel(user, str(appt.id))
+
+
+async def test_created_at_is_timezone_aware(test_db):
+    """BaseRepository.create dùng now_utc(), không phải datetime.utcnow() naive."""
+    svc = AppointmentService(test_db)
+    appt = await svc.create(make_user(), future_local(16), note=None)
+    assert appt.created_at.tzinfo is not None

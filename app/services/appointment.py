@@ -71,7 +71,12 @@ class AppointmentService:
             raise NotFoundError("Không tìm thấy lịch này")
         if appt.user_id != str(user.id) and user.role != "admin":
             raise ForbiddenError("Chỉ hủy được lịch của chính mình")
-        await self.repo.cancel(appointment_id)
+
+        # repo.cancel lọc status="booked" ngay trong câu update, nên nếu lịch bị
+        # hủy xen vào giữa get_by_id và update_one thì không có gì đổi. Bỏ qua
+        # giá trị trả về là báo "đã hủy" cho một thao tác chưa hủy được gì.
+        if not await self.repo.cancel(appointment_id):
+            raise NotFoundError("Không tìm thấy lịch này")
 
     async def upcoming_for(self, user: User) -> List[Appointment]:
         return await self.repo.upcoming_for_user(str(user.id), now=now_utc())

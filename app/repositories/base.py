@@ -1,8 +1,8 @@
 from typing import Dict, List, Optional, Type, TypeVar, Generic
-from datetime import datetime
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection
 from pymongo import ReturnDocument
+from app.core.clock import now_utc
 from app.models.base import BaseDocument
 
 T = TypeVar('T', bound=BaseDocument)
@@ -18,7 +18,7 @@ class BaseRepository(Generic[T]):
     
     async def create(self, data: Dict) -> T:
         """Create a new document."""
-        now = datetime.utcnow()
+        now = now_utc()
         data.update({
             "created_at": now,
             "updated_at": now
@@ -43,7 +43,7 @@ class BaseRepository(Generic[T]):
         if not ObjectId.is_valid(doc_id):
             return None
         
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = now_utc()
         
         doc = await self.collection.find_one_and_update(
             {"_id": ObjectId(doc_id)},
@@ -102,7 +102,7 @@ class BaseRepository(Generic[T]):
     
     async def bulk_create(self, data_list: List[Dict]) -> List[T]:
         """Create multiple documents."""
-        now = datetime.utcnow()
+        now = now_utc()
         for data in data_list:
             data.update({
                 "created_at": now,

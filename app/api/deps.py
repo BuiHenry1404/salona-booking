@@ -6,8 +6,9 @@ from app.models.user import User
 from app.services.auth import AuthService
 from app.infrastructure.llm import LLMManager
 
+# Một instance duy nhất: mỗi HTTPBearer() sinh thêm một ô "Authorize" trong
+# Swagger, hai ô giống hệt nhau thì người dùng không biết điền vào đâu.
 security = HTTPBearer()
-_bearer = HTTPBearer()
 
 
 def get_db(request: Request) -> AsyncIOMotorDatabase:
@@ -40,7 +41,7 @@ def get_autogen_llm_client(request: Request):
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> User:
     try:
