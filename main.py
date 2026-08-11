@@ -1,13 +1,15 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
+from pymongo.errors import PyMongoError
 import structlog
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.logging import configure_logging
-from app.api.v1.routers import health, auth, conversations, tasks
+from app.api.v1.routers import api_router
 from app.services.socketio_service import SocketIOService
 from app.infrastructure.database import create_mongodb_connection
 from app.infrastructure.llm import initialize_llm_clients
@@ -109,6 +111,35 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    """Người dùng không bao giờ thấy lỗi kỹ thuật — mọi lỗi thành một câu tiếng Việt."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(PyMongoError)
+async def mongo_error_handler(request: Request, exc: PyMongoError):
+    """Mongo chết → 503 kèm SĐT tiệm. Traceback chỉ vào log, không ra màn hình.
+
+    `PyMongoError` là lớp cha của `ServerSelectionTimeoutError`, `AutoReconnect`
+    và `NetworkTimeout` — bắt lớp cha để không phải liệt kê thiếu.
+
+    Cạm bẫy: `DuplicateKeyError` cũng là lớp con của `PyMongoError`. Repository
+    đã bắt nó và đổi thành `SlotTakenError`, nên trùng giờ vẫn ra 409. Chỗ ghi
+    Mongo mới nào quên bắt sẽ khiến khách thấy "máy của tiệm đang hỏng" trong
+    khi thật ra chỉ là trùng giờ.
+    """
+    logger.exception("mongo_unavailable", path=request.url.path)
+    phone = settings.shop_phone or "tiệm"
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": f"Máy của tiệm đang hỏng ạ. Cô chú gọi giúp con số {phone} nhé.",
+            "shop_phone": settings.shop_phone,
+        },
+    )
+
+
 # Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -133,10 +164,7 @@ async def log_requests(request: Request, call_next):
 
 
 # Include routers
-app.include_router(health.router, prefix="/api/v1")
-app.include_router(auth.router, prefix="/api/v1")
-app.include_router(conversations.router, prefix="/api/v1")
-app.include_router(tasks.router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api/v1")
 
 # Mount static files for the test client
 app.mount("/static", StaticFiles(directory="static"), name="static")

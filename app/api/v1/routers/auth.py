@@ -1,48 +1,60 @@
-from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.api.deps import get_db, get_current_active_user
-from app.api.v1.schemas import Token, UserCreate, UserResponse, LoginRequest
-from app.core.config import settings
-from app.core.security import create_access_token, verify_password, get_password_hash
-from app.models.user import CurrentUser
+
+from app.api.deps import get_current_user, get_db, require_admin
+from app.api.v1.schemas import (CreateUserRequest, LoginRequest,
+                                ResetPasswordRequest, TokenResponse,
+                                UserResponse)
+from app.core.security import create_access_token
+from app.models.user import User
 from app.repositories.user import UserRepository
 from app.services.auth import AuthService
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserResponse, status_code=201, summary="Register new user")
-async def register(
-    user_data: UserCreate,
-    db: AsyncIOMotorDatabase = Depends(get_db)
+def _to_response(user: User) -> UserResponse:
+    return UserResponse(
+        id=str(user.id), phone=user.phone, full_name=user.full_name,
+        role=user.role, is_active=user.is_active,
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(payload: LoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
+    user = await AuthService(db).authenticate(payload.phone, payload.password)
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Số điện thoại hoặc mật khẩu không đúng")
+    return TokenResponse(access_token=create_access_token({"sub": str(user.id)}), role=user.role)
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(
+    payload: ResetPasswordRequest, request: Request, db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    # TODO(task 11): rewrite for phone-based auth
-    raise NotImplementedError
+    ip = request.client.host if request.client else "unknown"
+    await AuthService(db).reset_password(payload.phone, payload.new_password, ip=ip)
 
 
-@router.post("/login", response_model=Token, summary="Login user")
-async def login(
-    login_data: LoginRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db)
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    payload: CreateUserRequest,
+    _: User = Depends(require_admin),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    # TODO(task 11): rewrite for phone-based auth
-    raise NotImplementedError
+    user = await AuthService(db).create_user(
+        payload.phone, payload.password, payload.full_name, payload.role
+    )
+    return _to_response(user)
 
 
-@router.post("/token", response_model=Token, summary="OAuth2 compatible login")
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncIOMotorDatabase = Depends(get_db)
+@router.get("/users", response_model=list[UserResponse])
+async def list_users(
+    _: User = Depends(require_admin), db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    # TODO(task 11): rewrite for phone-based auth
-    raise NotImplementedError
+    return [_to_response(u) for u in await UserRepository(db).list_all()]
 
 
-@router.get("/me", response_model=UserResponse, summary="Get current user")
-async def read_users_me(
-    current_user: CurrentUser = Depends(get_current_active_user)
-):
-    """Get current authenticated user information."""
-    return UserResponse(**current_user.model_dump()) 
+@router.get("/me", response_model=UserResponse)
+async def me(user: User = Depends(get_current_user)):
+    return _to_response(user)
