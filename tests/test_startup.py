@@ -25,3 +25,30 @@ def test_app_starts_without_ai_credentials(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code == 200
     assert app.state.llm_manager is None
+
+
+def test_readiness_returns_503_when_mongo_is_unreachable():
+    """Probe phải fail bằng STATUS CODE. Trả 200 kèm "not ready" trong body thì
+    k8s/LB vẫn đẩy traffic vào instance hỏng — đúng kịch bản mongod chết sau
+    khi app đã khởi động."""
+    from pymongo.errors import ServerSelectionTimeoutError
+
+    from app.api.deps import get_db
+
+    class _DeadDb:
+        async def command(self, *_args, **_kwargs):
+            raise ServerSelectionTimeoutError("no primary available")
+
+    app.dependency_overrides[get_db] = lambda: _DeadDb()
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/health/ready")
+        assert resp.status_code == 503
+        assert "ServerSelection" not in resp.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_readiness_returns_200_when_mongo_is_up():
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health/ready").status_code == 200
