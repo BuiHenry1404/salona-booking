@@ -28,6 +28,15 @@ services:
       - mongo_data:/data/db
     environment:
       - MONGO_INITDB_DATABASE=chatbot_db
+    # Mặc định của Docker là 1024, quá thấp so với mức 64000 MongoDB khuyến nghị.
+    # WiredTiger giữ một file cho mỗi collection và mỗi index; bộ test drop rồi
+    # tạo lại index sau từng test nên chạm trần rất nhanh. Hết fd thì
+    # __posix_directory_sync trả EMFILE -> WT_PANIC -> mongod abort (exit 14),
+    # và mọi test sau đó fail bằng ServerSelectionTimeoutError.
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
 
   mongo-express:
     image: mongo-express:1.0.0
