@@ -39,3 +39,26 @@ async def test_attempts_outside_the_window_do_not_count(test_db):
         for _ in range(5)
     ])
     await svc.check_and_hit("phone:0912345678", limit=5, window_seconds=3600)
+
+
+async def test_a_concurrent_burst_cannot_slip_past_the_limit(test_db):
+    """Giữa count_documents và insert_one có một await, nên toàn bộ request
+    đang chờ đều đọc thấy count cũ và cùng lọt qua. Uvicorn chạy 1 worker
+    nhưng là async — đúng điều kiện để xảy ra chuyện đó.
+
+    Đây là hàng rào duy nhất chặn script đổi mật khẩu hàng loạt (key theo IP),
+    nên vỡ ở đây là vỡ đúng chỗ quan trọng.
+    """
+    import asyncio
+
+    svc = RateLimitService(test_db)
+
+    async def attempt():
+        try:
+            await svc.check_and_hit("pwreset:ip:1.2.3.4", limit=5, window_seconds=3600)
+            return True
+        except RateLimitedError:
+            return False
+
+    results = await asyncio.gather(*[attempt() for _ in range(20)])
+    assert sum(results) <= 5, f"{sum(results)}/20 lọt qua giới hạn 5"
