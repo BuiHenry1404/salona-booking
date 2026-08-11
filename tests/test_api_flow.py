@@ -135,3 +135,30 @@ async def test_mongo_down_returns_503_with_shop_phone(async_client, user_headers
     assert "0287654321" in body["detail"]
     assert body["shop_phone"] == "0287654321"
     assert "ServerSelection" not in body["detail"]
+
+
+async def test_creating_a_duplicate_phone_returns_409_not_503(async_client, admin_headers):
+    """DuplicateKeyError là con của PyMongoError; lọt ra thì khách bị báo
+    'máy của tiệm đang hỏng' cho một lỗi nhập liệu bình thường."""
+    payload = {"phone": "0999888777", "password": "abcd", "full_name": "Khách mới"}
+    first = await async_client.post("/api/v1/auth/users", json=payload, headers=admin_headers)
+    assert first.status_code == 201
+
+    again = await async_client.post("/api/v1/auth/users", json=payload, headers=admin_headers)
+    assert again.status_code == 409
+    assert "tài khoản" in again.json()["detail"]
+
+
+async def test_listed_appointments_keep_their_utc_offset(async_client, user_headers):
+    """POST và GET phải trả cùng một dạng. Thiếu offset thì new Date() ở trình
+    duyệt hiểu là giờ địa phương và hiện lệch 7 tiếng."""
+    created = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(14), "note": None},
+        headers=user_headers,
+    )
+    assert created.status_code == 201, created.text
+
+    [listed] = (await async_client.get("/api/v1/appointments/mine", headers=user_headers)).json()
+    assert listed["start_at"] == created.json()["start_at"]
+    assert listed["start_at"].endswith("+00:00") or listed["start_at"].endswith("Z")

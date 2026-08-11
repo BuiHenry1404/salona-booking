@@ -2,7 +2,7 @@ from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import AppError, NotFoundError, PhoneTakenError
 from app.core.logging import get_logger
 from app.core.phone import normalize_phone
 from app.core.security import get_password_hash, verify_password
@@ -35,7 +35,7 @@ class AuthService:
         """Chỉ admin gọi. Không có đăng ký tự do."""
         normalised = normalize_phone(phone)
         if await self.user_repo.get_by_phone(normalised):
-            raise AppError("Số điện thoại này đã có tài khoản")
+            raise PhoneTakenError()
         return await self.user_repo.create_user(
             phone=normalised,
             hashed_password=get_password_hash(password),

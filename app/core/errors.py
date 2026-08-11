@@ -15,6 +15,11 @@ class SlotTakenError(AppError):
     message = "Giờ đó đã có người đặt"
 
 
+class PhoneTakenError(AppError):
+    status_code = 409
+    message = "Số điện thoại này đã có tài khoản"
+
+
 class OutsideShopHoursError(AppError):
     message = "Giờ đó tiệm không mở cửa"
 

@@ -19,7 +19,7 @@ TEST_DB_NAME = "chatbot_test_db"
 @pytest_asyncio.fixture
 async def test_db():
     """Fresh Motor connection per test — avoids event-loop mismatch with pytest-asyncio 0.23."""
-    client = AsyncIOMotorClient(TEST_MONGO_URI)
+    client = AsyncIOMotorClient(TEST_MONGO_URI, tz_aware=True)
     db = client[TEST_DB_NAME]
     yield db
     client.close()

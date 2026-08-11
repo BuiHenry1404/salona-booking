@@ -2,7 +2,9 @@ from typing import List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
+from app.core.errors import PhoneTakenError
 from app.core.phone import InvalidPhoneError, normalize_phone
 from app.models.user import Role, User
 from app.repositories.base import BaseRepository
@@ -23,13 +25,23 @@ class UserRepository(BaseRepository[User]):
     async def create_user(
         self, phone: str, hashed_password: str, full_name: Optional[str], role: Role = "user"
     ) -> User:
-        return await self.create({
-            "phone": normalize_phone(phone),
-            "hashed_password": hashed_password,
-            "full_name": full_name,
-            "role": role,
-            "is_active": True,
-        })
+        """DuplicateKeyError phải được dịch ngay tại đây.
+
+        Nó là lớp con của PyMongoError, mà handler PyMongoError trả 503 "máy của
+        tiệm đang hỏng". Để lọt ra thì admin tạo trùng SĐT sẽ bị báo hỏng máy
+        thay vì "số này đã có tài khoản". Kiểm tra trước khi ghi ở service
+        không đủ: hai admin bấm cùng lúc vẫn qua được cửa đó.
+        """
+        try:
+            return await self.create({
+                "phone": normalize_phone(phone),
+                "hashed_password": hashed_password,
+                "full_name": full_name,
+                "role": role,
+                "is_active": True,
+            })
+        except DuplicateKeyError:
+            raise PhoneTakenError()
 
     async def set_password(self, user_id: str, hashed_password: str) -> bool:
         result = await self.collection.update_one(

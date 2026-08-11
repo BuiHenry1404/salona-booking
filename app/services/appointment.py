@@ -6,12 +6,13 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.clock import local_day_bounds, now_utc
 from app.core.config import settings
 from app.core.errors import (ForbiddenError, NotFoundError,
-                             OutsideShopHoursError, PastTimeError)
-from app.core.slots import SLOT_MINUTES, quantize
+                             OutsideShopHoursError, PastTimeError,
+                             SlotTakenError)
+from app.core.slots import SLOT_MINUTES, quantize, slot_keys_for
 from app.models.appointment import Appointment, CreatedVia
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
-from app.services.shop import ShopService
+from app.services.shop import ShopService, fits_before_closing
 
 class AppointmentService:
     """Toàn bộ nghiệp vụ đặt lịch. Tool của agent, handler Telegram và REST cho
@@ -31,9 +32,10 @@ class AppointmentService:
         start = quantize(start_at)
         now = now_utc()
 
+        duration = settings.booking_slot_minutes
         if start < now:
             raise PastTimeError()
-        if not await self.shop.is_open_at(start):
+        if not fits_before_closing(await self.shop.get_hours(), start, duration):
             raise OutsideShopHoursError()
 
         user_id = str(user.id)
@@ -44,15 +46,24 @@ class AppointmentService:
         if existing:
             return existing
 
-        return await self.repo.insert_booked(
-            user_id=user_id,
-            user_name=user.full_name,
-            phone=user.phone,
-            start_at=start,
-            duration_minutes=settings.booking_slot_minutes,
-            note=note,
-            created_via=created_via,
-        )
+        try:
+            return await self.repo.insert_booked(
+                user_id=user_id,
+                user_name=user.full_name,
+                phone=user.phone,
+                start_at=start,
+                duration_minutes=duration,
+                note=note,
+                created_via=created_via,
+            )
+        except SlotTakenError:
+            # Index đã chặn xong, việc còn lại chỉ là nói cho đúng người. Lịch
+            # 60 phút lúc 9:00 của chính khách làm 9:15 bị trùng: bảo "đã có
+            # người đặt" thì khách tưởng người lạ giành mất giờ của mình.
+            clash = await self.repo.find_conflicting(slot_keys_for(start, duration))
+            if clash and clash.user_id == user_id:
+                raise SlotTakenError("Giờ này trùng với lịch bạn đã đặt rồi")
+            raise
 
     async def cancel(self, user: User, appointment_id: str) -> None:
         appt = await self.repo.get_by_id(appointment_id)
@@ -73,20 +84,19 @@ class AppointmentService:
         """Các mốc còn trống trong ngày: nằm trong giờ mở cửa, không trùng lịch
         đã có, và không ở quá khứ."""
         start, end = local_day_bounds(day)
-        tz = start.tzinfo
         taken: set = set()
         for appt in await self.repo.booked_between(start, end):
-            appt_start = appt.start_at.replace(tzinfo=tz)
             steps = appt.duration_minutes // SLOT_MINUTES
             for i in range(steps):
-                taken.add(appt_start + timedelta(minutes=SLOT_MINUTES * i))
+                taken.add(appt.start_at + timedelta(minutes=SLOT_MINUTES * i))
         duration = settings.booking_slot_minutes
         now = now_utc()
+        hours = await self.shop.get_hours()  # lấy một lần, không hỏi lại mỗi mốc
 
         free: List[datetime] = []
         cursor = start
         while cursor < end and len(free) < limit:
-            if cursor >= now and cursor not in taken and await self.shop.is_open_at(cursor):
+            if cursor >= now and fits_before_closing(hours, cursor, duration):
                 if not self._overlaps(cursor, duration, taken):
                     free.append(cursor)
             cursor += timedelta(minutes=SLOT_MINUTES)

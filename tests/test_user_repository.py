@@ -1,6 +1,5 @@
 import pytest
-from pymongo.errors import DuplicateKeyError
-
+from app.core.errors import PhoneTakenError
 from app.repositories.user import UserRepository
 
 pytestmark = pytest.mark.asyncio
@@ -20,7 +19,9 @@ async def test_create_and_fetch_by_phone(test_db):
 async def test_phone_is_unique(test_db):
     repo = UserRepository(test_db)
     await repo.create_user(phone="0912345678", hashed_password="h", full_name="A", role="user")
-    with pytest.raises(DuplicateKeyError):
+    # Không để DuplicateKeyError lọt ra: nó là PyMongoError nên handler sẽ trả
+    # 503 "máy của tiệm đang hỏng" cho một lỗi nhập liệu bình thường.
+    with pytest.raises(PhoneTakenError):
         await repo.create_user(phone="0912345678", hashed_password="h", full_name="B", role="user")
 
 

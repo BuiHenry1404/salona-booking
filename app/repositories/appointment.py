@@ -48,6 +48,14 @@ class AppointmentRepository(BaseRepository[Appointment]):
         )
         return Appointment(**doc) if doc else None
 
+    async def find_conflicting(self, slot_keys: List[str]) -> Optional[Appointment]:
+        """Lịch đang chiếm một trong các mốc này. Chỉ dùng để soạn thông báo lỗi
+        sau khi index đã từ chối — KHÔNG phải hàng rào chống trùng."""
+        doc = await self.collection.find_one(
+            {"slot_keys": {"$in": slot_keys}, "status": "booked"}
+        )
+        return Appointment(**doc) if doc else None
+
     async def cancel(self, appointment_id: str) -> bool:
         """Chỉ đổi status. Document tự rơi khỏi partial index nên slot được giải
         phóng ngay, còn slot_keys giữ nguyên để tra cứu lịch sử."""

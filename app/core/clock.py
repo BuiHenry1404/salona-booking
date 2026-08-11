@@ -11,6 +11,17 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def ensure_aware(dt: datetime) -> datetime:
+    """Gắn múi giờ Việt Nam cho datetime thiếu tzinfo.
+
+    Client gửi "2026-08-13T15:00:00" không kèm offset là chuyện thường. Nếu để
+    nguyên rồi gọi .astimezone(), Python lấy múi giờ của MÁY CHỦ: cùng một
+    request sẽ thành 15:00 trên máy dev (giờ VN) nhưng 22:00 trong container
+    (giờ UTC). Diễn giải phải tường minh và nằm ở đây, không rải ra nơi khác.
+    """
+    return dt.replace(tzinfo=TZ) if dt.tzinfo is None else dt
+
+
 def to_local(dt: datetime) -> datetime:
     """Đổi sang giờ Việt Nam để hiển thị hoặc diễn giải ngôn ngữ tự nhiên."""
     return dt.astimezone(TZ)

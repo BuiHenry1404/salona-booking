@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from app.core.clock import ensure_aware
 from app.core.errors import AppError
 
 SLOT_MINUTES = 15
@@ -12,7 +13,7 @@ class MisalignedSlotError(AppError):
 
 def quantize(dt: datetime) -> datetime:
     """Làm tròn xuống mốc 15 phút gần nhất."""
-    dt = dt.astimezone(timezone.utc)
+    dt = ensure_aware(dt).astimezone(timezone.utc)
     return dt.replace(minute=dt.minute - dt.minute % SLOT_MINUTES, second=0, microsecond=0)
 
 

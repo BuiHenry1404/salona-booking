@@ -46,41 +46,42 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to initialize database", error=str(e))
         raise
     
-    # Initialize LLM clients
+    # Initialize LLM clients.
+    # KHÔNG fail-hard: đặt lịch là chức năng cốt lõi và không cần LLM. Chỉ Mongo
+    # chết mới được chặn khởi động. Thiếu key AI thì tiệm vẫn nhận lịch qua REST
+    # được, chỉ mất phần trợ lý — nên chỉ ghi log và chạy tiếp.
+    app.state.llm_manager = None
     try:
-        # Store LLM manager in app state for dependency injection
         app.state.llm_manager = await initialize_llm_clients()
-        
     except Exception as e:
-        logger.error("Failed to initialize LLM clients", error=str(e))
-        raise
-    
-    # Initialize Socket.IO service
+        logger.warning("LLM clients unavailable, continuing without AI", error=str(e))
+
+    # Initialize Socket.IO service (cũng không fail-hard, cùng lý do)
+    app.state.socketio_service = None
     try:
         app.state.socketio_service = SocketIOService(app.state.db, app.state.llm_manager)
         logger.info("Socket.IO service initialized")
-        
+
         # Mount Socket.IO application
         socketio_asgi = app.state.socketio_service.get_asgi_app()
         app.mount("/socket.io", socketio_asgi)
         logger.info("Socket.IO mounted at /socket.io")
-        
+
     except Exception as e:
-        logger.error("Failed to initialize Socket.IO service", error=str(e))
-        raise
-    
+        logger.warning("Socket.IO unavailable, continuing without realtime", error=str(e))
+
     yield
     
     # Shutdown
     logger.info("Shutting down application")
     
     # Cleanup Socket.IO connections
-    if hasattr(app.state, 'socketio_service'):
+    if getattr(app.state, 'socketio_service', None):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
-    
+
     # Shutdown LLM clients
-    if hasattr(app.state, 'llm_manager'):
+    if getattr(app.state, 'llm_manager', None):
         await app.state.llm_manager.shutdown()
         logger.info("LLM clients closed")
     

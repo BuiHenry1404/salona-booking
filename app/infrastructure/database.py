@@ -18,7 +18,10 @@ class MongoDatabase:
     async def connect(self) -> None:
         """Establish MongoDB connection."""
         try:
-            self.client = AsyncIOMotorClient(self.uri)
+            # tz_aware=True: BSON chỉ lưu UTC không kèm offset, mặc định Motor
+            # trả datetime naive. Lịch đọc lại từ DB mà mất tzinfo thì trình
+            # duyệt hiểu là giờ địa phương và hiện lệch 7 tiếng.
+            self.client = AsyncIOMotorClient(self.uri, tz_aware=True)
             self.database = self.client[self.db_name]
             logger.info("MongoDB client created", db_name=self.db_name)
         except Exception as e:

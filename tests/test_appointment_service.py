@@ -138,3 +138,41 @@ async def test_free_slots_exclude_booked_times(test_db, future_day):
 async def test_free_slots_for_a_past_day_are_empty(test_db):
     svc = AppointmentService(test_db)
     assert await svc.find_free_slots(date(2020, 1, 1)) == []
+
+
+async def test_booking_cannot_run_past_closing_time(test_db):
+    """Chỉ xét mốc bắt đầu là chưa đủ: lịch 60 phút lúc 18:45 kéo đến 19:45,
+    trong khi tiệm đóng cửa 19:00."""
+    svc = AppointmentService(test_db)
+    with pytest.raises(OutsideShopHoursError):
+        await svc.create(make_user(), future_local(18, 45), note=None)
+
+
+async def test_free_slots_never_offer_a_slot_that_runs_past_closing(test_db, future_day):
+    svc = AppointmentService(test_db)
+    slots = await svc.find_free_slots(future_day, limit=100)
+    assert slots, "phải còn chỗ trống trong ngày trống"
+    duration = timedelta(minutes=60)
+    close = datetime(2099, 8, 7, 19, 0, tzinfo=TZ)
+    assert max(slots) + duration <= close
+
+
+async def test_own_overlapping_booking_says_so_instead_of_blaming_a_stranger(test_db):
+    """Khách có lịch 08:00 (60 phút) rồi xin thêm 08:15 phải được nói là trùng
+    lịch của CHÍNH MÌNH, chứ không phải 'giờ đó đã có người đặt'."""
+    svc = AppointmentService(test_db)
+    user = make_user()
+    await svc.create(user, future_local(9), note=None)
+    with pytest.raises(SlotTakenError) as caught:
+        await svc.create(user, future_local(9, 15), note=None)
+    assert "chính" in caught.value.message.lower() or "bạn" in caught.value.message.lower()
+
+
+async def test_datetimes_read_back_from_mongo_keep_their_timezone(test_db):
+    """Motor mặc định trả datetime naive; mất tzinfo là trình duyệt hiện lệch 7 tiếng."""
+    svc = AppointmentService(test_db)
+    user = make_user()
+    await svc.create(user, future_local(15), note=None)
+    [read_back] = await svc.upcoming_for(user)
+    assert read_back.start_at.tzinfo is not None
+    assert read_back.start_at == future_local(15)

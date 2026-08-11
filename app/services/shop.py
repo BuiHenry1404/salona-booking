@@ -34,9 +34,6 @@ class ShopService:
         if not doc.get("is_busy") or busy_until is None:
             return ShopStatusView(is_busy=False)
 
-        if busy_until.tzinfo is None:
-            busy_until = busy_until.replace(tzinfo=now_utc().tzinfo)
-
         remaining = (busy_until - now_utc()).total_seconds()
         if remaining <= 0:
             return ShopStatusView(is_busy=False)
@@ -65,16 +62,35 @@ class ShopService:
         return await self.get_status()
 
     async def is_open_at(self, dt: datetime) -> bool:
-        hours = await self.get_hours()
-        local = to_local(dt)
+        return is_within(await self.get_hours(), dt)
 
-        # Python: Monday=0 ... Sunday=6. Quy ước của ta: Sunday=0 ... Saturday=6.
-        weekday = (local.weekday() + 1) % 7
-        if weekday in hours.closed_days:
-            return False
 
-        minutes = local.hour * 60 + local.minute
-        return _to_minutes(hours.open_time) <= minutes < _to_minutes(hours.close_time)
+def is_within(hours: ShopHours, dt: datetime) -> bool:
+    """Phép tính thuần, không chạm DB.
+
+    Tách khỏi is_open_at để nơi cần kiểm tra nhiều mốc trong một ngày (tìm slot
+    trống) lấy giờ mở cửa đúng MỘT lần thay vì mỗi mốc một truy vấn.
+    """
+    local = to_local(dt)
+
+    # Python: Monday=0 ... Sunday=6. Quy ước của ta: Sunday=0 ... Saturday=6.
+    weekday = (local.weekday() + 1) % 7
+    if weekday in hours.closed_days:
+        return False
+
+    minutes = local.hour * 60 + local.minute
+    return _to_minutes(hours.open_time) <= minutes < _to_minutes(hours.close_time)
+
+
+def fits_before_closing(hours: ShopHours, start: datetime, duration_minutes: int) -> bool:
+    """Cả ca làm phải nằm trong giờ mở cửa, không chỉ mốc bắt đầu.
+
+    Chỉ xét mốc bắt đầu thì lịch 60 phút đặt lúc 18:45 vẫn lọt, bắt thợ làm đến
+    19:45 trong khi tiệm đóng cửa 19:00 — và chính máy sẽ là bên gợi ý giờ đó.
+    Mốc cuối cùng bị chiếm là start + duration - 1 slot.
+    """
+    last = start + timedelta(minutes=duration_minutes - 1)
+    return is_within(hours, start) and is_within(hours, last)
 
 
 def _to_minutes(hhmm: str) -> int:

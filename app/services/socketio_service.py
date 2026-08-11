@@ -64,15 +64,15 @@ class SocketIOService:
                     # Join user-specific room
                     await self.sio.enter_room(sid, room_name)
                     
-                    logger.info(f"User {user.username} connected with session {sid}")
-                    
+                    logger.info(f"User {user.phone} connected with session {sid}")
+
                     # Send connection success
                     await self.sio.emit('connected', {
                         'message': 'Successfully connected',
                         'user': {
                             'id': str(user.id),
-                            'username': user.username,
-                            'email': user.email
+                            'phone': user.phone,
+                            'full_name': user.full_name
                         }
                     }, room=sid)
                     
