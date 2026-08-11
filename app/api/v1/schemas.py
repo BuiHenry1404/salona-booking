@@ -1,10 +1,80 @@
 from datetime import datetime
-from typing import List, Optional, Literal
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from app.models.base import PyObjectId
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
-# User schemas
+class LoginRequest(BaseModel):
+    phone: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: Literal["user", "admin"]
+
+
+class CreateUserRequest(BaseModel):
+    phone: str
+    password: str = Field(..., min_length=4)
+    full_name: Optional[str] = None
+    role: Literal["user", "admin"] = "user"
+
+
+class ResetPasswordRequest(BaseModel):
+    phone: str
+    new_password: str = Field(..., min_length=4)
+
+
+class UserResponse(BaseModel):
+    id: str
+    phone: str
+    full_name: Optional[str] = None
+    role: Literal["user", "admin"]
+    is_active: bool
+
+
+class AppointmentCreateRequest(BaseModel):
+    start_at: datetime
+    note: Optional[str] = None
+
+
+class AppointmentResponse(BaseModel):
+    id: str
+    start_at: datetime
+    duration_minutes: int
+    note: Optional[str] = None
+    status: Literal["booked", "cancelled"]
+    user_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class ShopStatusResponse(BaseModel):
+    is_busy: bool
+    busy_until: Optional[datetime] = None
+    minutes_left: Optional[int] = None
+
+
+class SetBusyRequest(BaseModel):
+    minutes: int = Field(..., ge=5, le=480)
+
+
+class ShopHoursRequest(BaseModel):
+    open_time: str = "08:00"
+    close_time: str = "19:00"
+    closed_days: List[int] = Field(default_factory=list)
+
+
+class FreeSlotsResponse(BaseModel):
+    slots: List[datetime]
+
+
+# ---------------------------------------------------------------------------
+# Legacy schemas — still used by pre-task-11 routers; retained so `import main`
+# continues to work. Task 11 will remove these when it rewrites the routers.
+# ---------------------------------------------------------------------------
+
 class UserCreate(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
@@ -12,31 +82,6 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6)
 
 
-class UserUpdate(BaseModel):
-    full_name: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class UserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: str
-    email: EmailStr
-    username: str
-    full_name: Optional[str] = None
-    is_active: bool
-    is_superuser: bool
-    created_at: datetime
-
-
-class UserList(BaseModel):
-    users: List[UserResponse]
-    total: int
-    skip: int
-    limit: int
-
-
-# Auth schemas
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -46,12 +91,6 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-# Conversation schemas
 class ConversationCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
@@ -67,7 +106,7 @@ class ConversationUpdate(BaseModel):
 
 class ConversationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     user_id: str
     title: str
@@ -86,25 +125,18 @@ class ConversationList(BaseModel):
     limit: int
 
 
-# Task schemas
-class ChatMessageCreate(BaseModel):
-    role: Literal["user", "assistant", "system"]
-    content: str = Field(..., min_length=1)
-    metadata: dict = Field(default_factory=dict)
-
-
 class ChatMessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     role: Literal["user", "assistant", "system"]
     content: str
     metadata: dict
-    timestamp: float  # Unix timestamp
+    timestamp: float
 
 
 class TaskCreate(BaseModel):
-    conversation_id: Optional[str] = None  # If None, a new conversation will be created
+    conversation_id: Optional[str] = None
     user_message: str = Field(..., min_length=1)
     category: Optional[str] = Field(None, max_length=50)
     tags: List[str] = Field(default_factory=list)
@@ -126,7 +158,7 @@ class TaskUpdate(BaseModel):
 
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     conversation_id: str
     user_id: str
@@ -152,12 +184,11 @@ class TaskList(BaseModel):
 
 
 class AddMessageToTask(BaseModel):
-    role: Literal["assistant", "system"]  # Only allow non-user messages to be added
+    role: Literal["assistant", "system"]
     content: str = Field(..., min_length=1)
     metadata: dict = Field(default_factory=dict)
 
 
-# Chat interaction schemas
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     conversation_id: Optional[str] = None
@@ -166,15 +197,14 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     task_id: str
     conversation_id: str
     user_message: ChatMessageResponse
     assistant_responses: List[ChatMessageResponse] = Field(default_factory=list)
 
 
-# Health check schema
 class HealthResponse(BaseModel):
     status: str
     timestamp: datetime
-    version: str = "1.0.0" 
+    version: str = "1.0.0"

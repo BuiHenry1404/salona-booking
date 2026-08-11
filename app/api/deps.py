@@ -1,13 +1,13 @@
-from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.security import verify_token, verify_api_key
-from app.models.user import CurrentUser
-from app.repositories.user import UserRepository
+from app.models.user import User
+from app.services.auth import AuthService
 from app.infrastructure.llm import LLMManager
 
 security = HTTPBearer()
+_bearer = HTTPBearer()
 
 
 def get_db(request: Request) -> AsyncIOMotorDatabase:
@@ -40,57 +40,36 @@ def get_autogen_llm_client(request: Request):
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncIOMotorDatabase = Depends(get_db)
-) -> CurrentUser:
-    """Get current authenticated user from JWT token."""
-    token = credentials.credentials
-    payload = verify_token(token)
-    
-    user_id: str = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials"
-        )
-    
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_id(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found"
-        )
-    
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
-    
-    return CurrentUser(**user.model_dump())
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> User:
+    try:
+        payload = verify_token(credentials.credentials)
+        user_id = payload.get("sub")
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Phiên đăng nhập đã hết hạn")
+
+    user = await AuthService(db).get_user_by_id(user_id) if user_id else None
+    if not user or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Phiên đăng nhập đã hết hạn")
+    return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Chặn ở backend, không chỉ ẩn trên React."""
+    if user.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Không có quyền")
+    return user
 
 
 async def get_current_active_user(
-    current_user: CurrentUser = Depends(get_current_user)
-) -> CurrentUser:
+    current_user: User = Depends(get_current_user)
+) -> User:
     """Get current active user."""
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
-        )
-    return current_user
-
-
-async def get_current_superuser(
-    current_user: CurrentUser = Depends(get_current_user)
-) -> CurrentUser:
-    """Get current superuser."""
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
         )
     return current_user
 
