@@ -7,7 +7,11 @@ class InvalidPhoneError(AppError):
     message = "Số điện thoại không hợp lệ"
 
 
-_VALID = re.compile(r"^0\d{9}$")
+# Chỉ nhận di động Việt Nam: đầu số 03, 05, 07, 08, 09 (quyết định của chủ dự
+# án — tiệm không nhận số bàn). ^0\d{9}$ lỏng hơn nhưng cho lọt "0000000000" và
+# "0123456789"; chủ tiệm gõ nhầm số của khách thì hệ thống vẫn tạo tài khoản,
+# và sai sót chỉ lộ ra lúc khách không đăng nhập được — tức là đã quá muộn.
+_VALID = re.compile(r"^0[35789]\d{8}$")
 
 
 def normalize_phone(raw: str) -> str:
