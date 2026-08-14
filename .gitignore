@@ -133,3 +133,9 @@ logs/
 # Temporary files
 *.tmp
 *.temp 
+# Ảnh gốc do trình sinh ảnh xuất ra (2048px, 6MB mỗi file). Bản dùng thật là
+# ai-avatar.png 176px — hiển thị ở 44px nên không cần hơn. Giữ bản gốc trên máy
+# để sau này cần xuất lại cỡ khác, nhưng đừng đưa vào lịch sử git.
+# (Quy tắc này trước nằm ở .gitignore của repo agentbox, chuyển sang khi tách repo.)
+**/Gemini_Generated_Image_*.png
+**/ai-avatar.jpg
