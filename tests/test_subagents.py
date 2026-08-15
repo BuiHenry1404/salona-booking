@@ -1,21 +1,3 @@
-# Task 7 · Hai subagent chuyên trách
-
-> Thuộc plan [Agent, memory và streaming](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
-
-**Files:**
-- Create: `app/agents/booking_graph/agents.py`, `tests/test_subagents.py`
-
-**Interfaces:**
-- Consumes: `make_status_tools`, `make_booking_tools` (task 5), `STATUS_PROMPT`, `BOOKING_PROMPT` (task 6), `build_chat_model` (task 1), `GraphState` (task 4)
-- Produces:
-  - `make_subagent_node(prompt: str, tools: list[BaseTool], tag: str) -> Callable[[GraphState], Awaitable[dict]]`
-  - `MAX_TOOL_ROUNDS: int = 4`
-
-- [ ] **Step 1: Viết test (sẽ fail)**
-
-Tạo `tests/test_subagents.py`:
-
-```python
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
@@ -69,7 +51,6 @@ def a_state(text="mai còn trống không con"):
         "messages": [HumanMessage(content=text)],
         "user_id": "u1",
         "context_block": "Bạn đang nói chuyện với: Cô Lan (0912345678).",
-        "recalled": [],
     }
 
 
@@ -134,91 +115,3 @@ async def test_unknown_tool_name_does_not_crash(patch_model):
     patch_model([bad, AIMessage(content="Dạ con xin lỗi ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
     assert (await node(a_state()))["answer"] == "Dạ con xin lỗi ạ."
-```
-
-- [ ] **Step 2: Chạy test để xác nhận fail**
-
-Run: `pytest tests/test_subagents.py -v`
-Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.agents'`
-
-- [ ] **Step 3: Viết `app/agents/booking_graph/agents.py`**
-
-```python
-from typing import Awaitable, Callable, List
-
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import BaseTool
-
-from app.agents.booking_graph.state import GraphState
-from app.agents.llm import build_chat_model
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
-
-MAX_TOOL_ROUNDS = 4
-FALLBACK_ANSWER = "Dạ con chưa tra được, cô chú gọi trực tiếp cho tiệm giúp con nhé ạ."
-
-
-def make_subagent_node(
-    prompt: str, tools: List[BaseTool], tag: str
-) -> Callable[[GraphState], Awaitable[dict]]:
-    """Một node LangGraph chạy vòng lặp gọi tool rồi trả lời.
-
-    `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ node sinh câu trả
-    lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn hình.
-    """
-    by_name = {t.name: t for t in tools}
-
-    async def node(state: GraphState) -> dict:
-        model = build_chat_model(tags=[tag], temperature=0.2).bind_tools(tools)
-
-        # Bố cục theo độ ổn định: system (tĩnh, được cache) → lịch sử →
-        # khối bối cảnh (đổi mỗi lượt) đặt sát cuối, ngay trước câu hỏi mới.
-        messages = [
-            SystemMessage(content=prompt),
-            *state["messages"],
-            HumanMessage(content=state.get("context_block", "")),
-        ]
-
-        for _ in range(MAX_TOOL_ROUNDS):
-            # Gửi một bản chụp: `messages` còn bị nối thêm ngay sau đây, mà
-            # LangChain giữ nguyên tham chiếu — trace và test sẽ thấy một danh
-            # sách khác với thứ thật sự gửi đi ở lượt đó.
-            reply = await model.ainvoke(list(messages))
-            messages.append(reply)
-
-            calls = getattr(reply, "tool_calls", None)
-            if not calls:
-                return {"answer": reply.content or FALLBACK_ANSWER}
-
-            for call in calls:
-                tool = by_name.get(call["name"])
-                if tool is None:
-                    output = f"Không có tool tên {call['name']}."
-                    logger.warning("unknown_tool_requested", extra={"name": call["name"]})
-                else:
-                    try:
-                        output = await tool.ainvoke(call["args"])
-                    except Exception as exc:
-                        logger.warning("tool_failed",
-                                       extra={"name": call["name"], "error": str(exc)})
-                        output = "Tra cứu không được, thử lại giúp con ạ."
-                messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
-
-        logger.warning("tool_loop_exhausted", extra={"tag": tag})
-        return {"answer": FALLBACK_ANSWER}
-
-    return node
-```
-
-- [ ] **Step 4: Chạy test để xác nhận pass**
-
-Run: `pytest tests/test_subagents.py -v`
-Expected: PASS (7 passed)
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add app/agents/booking_graph/agents.py tests/test_subagents.py
-git commit -m "feat: subagent node with bounded tool loop and stability-ordered prompt"
-```
