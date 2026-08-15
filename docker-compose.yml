@@ -5,17 +5,15 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - MONGO_URI=mongodb://mongo:27017
-      - MONGO_DB_NAME=chatbot_db
-      - JWT_SECRET=development-secret-key-change-in-production
-      - API_KEY=development-api-key
-      - ENV=dev
-      - DEBUG=true
     depends_on:
       - mongo
     volumes:
       - .:/app
+      # Settings CHỈ đọc file, không đọc biến môi trường (xem
+      # app/core/config.py). Nên khác biệt của container phải đi bằng file này
+      # chứ không phải khối `environment:` — khối đó giờ không có tác dụng gì.
+      # Mount ra ngoài /app để nó không xuất hiện trên máy dev qua volume `.`.
+      - ./.env.docker:/run/config/env.docker:ro
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   mongo:

@@ -23,7 +23,9 @@ Ba mặt tiếp xúc:
 - `AZURE_OPENAI_ENDPOINT` phải là URL **gốc** của resource, không kèm `/openai/v1`. `AzureChatOpenAI` tự nối `/openai/deployments/<deployment>/chat/completions`; thêm đuôi vào là Azure trả `404 Resource not found`.
 - `AZURE_OPENAI_DEPLOYMENT` là tên **deployment**, không phải tên model — và Settings không đọc biến `AZURE_OPENAI_DEPLOYMENT_NAME` mà nhiều máy export sẵn. Để trống thì code lấy tạm `AZURE_OPENAI_MODEL` và cũng ra 404.
 
-Biến môi trường của shell **thắng** file `.env`, nên sửa `.env` mà shell còn biến cũ thì không thấy tác dụng.
+**Cấu hình chỉ đến từ file, không đến từ biến môi trường.** `Settings.settings_customise_sources` bỏ hẳn nguồn env (`app/core/config.py`). Mặc định của pydantic-settings ngược lại — biến môi trường thắng file — và đúng chỗ đó đã ngốn thời gian: máy dev export sẵn `AZURE_OPENAI_*` từ dự án khác nên sửa `.env` không thấy tác dụng gì, mà cũng không có lỗi nào để lần ra. Test `test_shell_environment_cannot_override_the_env_file` chốt lại.
+
+Hệ quả: `docker run -e` và biến của CI **không** còn đặt được cấu hình. Khác biệt của container đi bằng `.env.docker` — compose mount nó vào `/run/config/env.docker`, file này đọc sau `.env` nên thắng, và chỉ chứa những khoá thật sự khác (hiện chỉ có `MONGO_URI`). Khối `environment:` trong docker-compose đã bỏ vì nay vô tác dụng.
 
 ## Tài liệu
 

@@ -1,6 +1,10 @@
 from typing import Literal, Union, Optional
 from pydantic import SecretStr, field_validator, AnyUrl
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+# File override chỉ tồn tại bên trong container — docker-compose mount vào đây.
+# Trên máy dev không có file này nên pydantic bỏ qua, không lỗi.
+DOCKER_ENV_FILE = "/run/config/env.docker"
 
 
 class Settings(BaseSettings):
@@ -80,10 +84,35 @@ class Settings(BaseSettings):
             return origins
         return v if isinstance(v, list) else [str(v)]
 
+    # Hai file, file sau thắng file trước. `.env` là cấu hình gốc;
+    # `DOCKER_ENV_FILE` chỉ đè vài khoá khác biệt khi chạy trong container
+    # (host của Mongo chẳng hạn), nên không phải chép cả file làm hai bản.
     model_config = {
-        "env_file": ".env",
+        "env_file": (".env", DOCKER_ENV_FILE),
         "case_sensitive": False
     }
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Cấu hình CHỈ đến từ file .env — biến môi trường của shell bị bỏ qua.
+
+        Mặc định của pydantic-settings là biến môi trường thắng file. Trên máy
+        dev, biến `AZURE_OPENAI_*` được export sẵn ở shell (từ dự án khác) đã
+        âm thầm đè lên `.env`: sửa file không thấy tác dụng gì, mà cũng không
+        có lỗi nào để lần ra. Một nguồn cấu hình thì đọc file là biết đang
+        chạy với gì.
+
+        Đánh đổi: không còn đặt cấu hình bằng `docker run -e` hay biến của CI
+        được nữa. Chỗ nào cần khác `.env` thì ghi vào `DOCKER_ENV_FILE`.
+        """
+        return (init_settings, dotenv_settings)
 
 
 settings = Settings()
