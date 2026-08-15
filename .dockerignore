@@ -1,0 +1,42 @@
+# Dockerfile dùng `COPY . .` nên mọi thứ không loại ở đây đều nằm trong image.
+# Hai thứ nguy hiểm nhất là .env (khoá Azure, JWT_SECRET) và .git (toàn bộ lịch
+# sử, kể cả file đã xoá).
+
+# Bí mật
+# .env.docker cũng không cần: compose mount nó vào /run/config lúc chạy.
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Môi trường Python cục bộ
+.venv
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Test và tài liệu — không cần để chạy app
+tests/
+docs/
+*.md
+!README.md
+
+# Ảnh mockup nặng và file tạm
+*.png
+*.jpg
+*.jpeg
+.DS_Store
+
+# Compose không dùng trong image
+docker-compose*.yml
+Dockerfile
