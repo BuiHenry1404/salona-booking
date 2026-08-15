@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     # Booking
     booking_slot_minutes: int
+    booking_max_per_hour: int
     timezone: str
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.

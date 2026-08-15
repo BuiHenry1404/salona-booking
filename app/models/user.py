@@ -28,6 +28,10 @@ class User(BaseDocument):
     full_name: Optional[str] = None
     role: Role = "user"
     is_active: bool = True
+    # Tăng mỗi lần đổi mật khẩu. Token mang `tv` khác giá trị này bị từ chối,
+    # nếu không nạn nhân đổi lại mật khẩu mà token của kẻ chiếm vẫn sống tới
+    # hết JWT_EXPIRE_MINUTES.
+    token_version: int = 0
 
 
 class CurrentUser(BaseDocument):

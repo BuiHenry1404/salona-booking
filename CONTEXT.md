@@ -191,11 +191,15 @@ Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không ch�
 
 **Đã vá — rate limit đăng nhập.** `POST /auth/login` sai quá `LOGIN_MAX_ATTEMPTS` (mặc định 10) trong `LOGIN_WINDOW_SECONDS` (900) thì khoá tạm, đếm theo cả SĐT lẫn IP. Điểm cốt lõi: **kiểm hạn mức TRƯỚC khi so mật khẩu**. Chỉ đếm sau mỗi lần sai thì mật khẩu vẫn được kiểm ở mọi lần thử — kẻ dò nhận 429 thay vì 401, nhưng lần đoán trúng vẫn lấy được token. `RateLimitService` vì thế tách làm `check()` (đếm, không ghi) và `hit()` (ghi, không đếm); `reset-password` giữ nguyên `check_and_hit`. Lần đăng nhập đúng không tốn hạn mức. SĐT sai định dạng vẫn tính vào hạn mức theo IP, nếu không đổi SĐT mỗi lần là thoát.
 
-**Còn nợ, theo thứ tự nên làm:**
+**Đã vá — thu hồi token khi đổi mật khẩu.** `User.token_version` tăng mỗi lần `set_password`; token mang `tv` khác giá trị hiện tại bị từ chối. Dùng **số đếm chứ không dùng mốc thời gian**: `iat` của JWT chỉ có độ phân giải giây, nên đổi mật khẩu và phát token trong cùng một giây là không phân biệt được — hoặc token cũ sống sót, hoặc người vừa đổi mật khẩu bị đá ra ngay. So sánh số nguyên thì không có vùng mờ. Mọi chỗ phát token phải đi qua `create_access_token_for(user)`.
 
-1. **Đổi mật khẩu không thu hồi token đang sống.** Đã kiểm: token lấy trước khi đổi vẫn dùng được sau đó, tối đa 30 phút. (`is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu.)
-2. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm.
-3. **`POST /appointments` chưa có hạn mức** (spec định 20/giờ theo `user_id`) — chống spam đặt lịch.
+**Đã vá — hạn mức đặt lịch.** 20 lịch/giờ theo `user_id` (`BOOKING_MAX_PER_HOUR`). Đặt **sau** nhánh idempotency, nên lượt gọi lặp lại trả về lịch cũ không bị tính là lần đặt mới.
+
+**Cố ý KHÔNG vá — `reset-password` phân biệt 204 / 404.** Đúng là nó cho phép dò xem SĐT nào có tài khoản. Cách vá thường thấy là luôn trả 204, nhưng ở luồng này thì **hại nhiều hơn lợi**: endpoint không gửi mã xác thực mà **đổi mật khẩu ngay**, nên 204 cho một SĐT không tồn tại nghĩa là nói với khách "đổi xong rồi" trong khi không có gì đổi cả — rồi họ không đăng nhập được và không hiểu vì sao. Với khách lớn tuổi, đó là thiệt hại chắc chắn đổi lấy một rủi ro nhỏ đã bị rate limit 5 lần/giờ chặn. Luôn-trả-204 chỉ hợp với luồng "đã gửi mã cho bạn", không hợp với luồng "đã đổi xong".
+
+**Còn nợ:**
+
+- `JWT_EXPIRE_MINUTES=30` và chưa có refresh token — xem mục "Chưa có" ở trên.
 
 **Đã kiểm và không có vấn đề:** NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 

@@ -53,6 +53,13 @@ async def get_current_user(
     user = await AuthService(db).get_user_by_id(user_id) if user_id else None
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Phiên đăng nhập đã hết hạn")
+
+    # Đổi mật khẩu thu hồi mọi token phát trước đó. Không có bước này thì nạn
+    # nhân bị chiếm tài khoản, đổi lại mật khẩu, mà token của kẻ chiếm vẫn dùng
+    # được tới hết JWT_EXPIRE_MINUTES.
+    if payload.get("tv", 0) != user.token_version:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Phiên đăng nhập đã hết hạn")
+
     return user
 
 

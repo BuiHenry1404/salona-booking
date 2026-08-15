@@ -44,8 +44,10 @@ class UserRepository(BaseRepository[User]):
             raise PhoneTakenError()
 
     async def set_password(self, user_id: str, hashed_password: str) -> bool:
+        """Tăng `token_version` cùng lúc để thu hồi mọi token đã phát trước đó."""
         result = await self.collection.update_one(
-            {"_id": ObjectId(user_id)}, {"$set": {"hashed_password": hashed_password}}
+            {"_id": ObjectId(user_id)},
+            {"$set": {"hashed_password": hashed_password}, "$inc": {"token_version": 1}},
         )
         return result.matched_count == 1
 

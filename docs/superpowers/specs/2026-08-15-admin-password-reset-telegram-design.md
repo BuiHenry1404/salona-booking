@@ -68,7 +68,7 @@ Gộp vào bản này vì cùng sửa `auth.py` và `AuthService`, cùng thêm k
 |---|---|---|---|
 | `POST /auth/login` | 10 lần **sai** / 15 phút | SĐT + IP | ✅ đã làm |
 | `POST /auth/reset-password` | 5 / giờ | SĐT + IP | ✅ đã có từ trước |
-| `POST /appointments` | 20 / giờ | `user_id` | ⬜ chưa |
+| `POST /appointments` | 20 / giờ | `user_id` | ✅ đã làm |
 
 Bỏ Zalo làm phần này **quan trọng hơn**, không phải ít đi: khách không có OTP, nên rate limit là lớp bảo vệ duy nhất còn lại cho tài khoản của họ. Trước bản vá, `POST /auth/login` không có giới hạn nào — đã kiểm, 25 lần sai liên tiếp đều trả 401. Nay: 10 lần 401 rồi 429, và mật khẩu đúng cũng bị từ chối khi đã khoá.
 
@@ -117,8 +117,8 @@ Ca thứ hai quan trọng ngang ca đầu: nó chốt rằng bản vá **chỉ**
 
 ## Việc còn để ngỏ
 
-- **Đổi mật khẩu không thu hồi token cũ đang sống** (tối đa 30 phút). `is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu, ví dụ lưu `password_changed_at` rồi so với `iat` của token.
-- **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm. Bản này không xử vì luồng khách giữ nguyên; muốn xử thì luôn trả 204.
+- ~~Đổi mật khẩu không thu hồi token cũ~~ — đã vá bằng `token_version`, xem `CONTEXT.md`.
+- **`reset-password` phân biệt 204 / 404** — đã cân nhắc và **cố ý giữ nguyên**; lý do trong `CONTEXT.md`.
 - **Mật khẩu tối thiểu 4 ký tự** (`schemas.py`). Nên nâng, nhưng phải cân với ràng buộc người dùng lớn tuổi.
 - Throttle toàn cục chống flood theo IP → Plan 5, chi tiết trong `CONTEXT.md`.
 

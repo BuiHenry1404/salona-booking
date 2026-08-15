@@ -4,7 +4,7 @@ import pytest
 
 from app.core.errors import (ForbiddenError, NotFoundError,
                              OutsideShopHoursError, PastTimeError,
-                             SlotTakenError)
+                             RateLimitedError, SlotTakenError)
 from app.core.clock import TZ
 from app.models.user import User
 from app.services.appointment import AppointmentService
@@ -194,3 +194,43 @@ async def test_created_at_is_timezone_aware(test_db):
     svc = AppointmentService(test_db)
     appt = await svc.create(make_user(), future_local(16), note=None)
     assert appt.created_at.tzinfo is not None
+
+
+def _nth_free_slot(i: int) -> datetime:
+    """Mốc thứ i không chồng lịch nào khác.
+
+    Mỗi lịch dài 60 phút và tiệm mở 08:00-19:00, nên một ngày chỉ chứa được 11
+    lịch liền nhau — 20 lịch phải trải sang ngày thứ hai.
+    """
+    return future_local(8 + i % 10) + timedelta(days=i // 10)
+
+
+async def test_booking_quota_blocks_the_twenty_first_in_an_hour(test_db):
+    svc = AppointmentService(test_db)
+    user = make_user()
+    for i in range(20):
+        await svc.create(user, _nth_free_slot(i), note=None)
+
+    with pytest.raises(RateLimitedError):
+        await svc.create(user, _nth_free_slot(20), note=None)
+
+
+async def test_booking_quota_is_per_user(test_db):
+    svc = AppointmentService(test_db)
+    heavy, light = make_user(), make_user(phone="0987654321", name="Cô Hoa")
+    for i in range(20):
+        await svc.create(heavy, _nth_free_slot(i), note=None)
+
+    appt = await svc.create(light, _nth_free_slot(20), note=None)
+    assert appt.status == "booked"
+
+
+async def test_a_repeated_identical_booking_does_not_consume_the_quota(test_db):
+    """Nhánh idempotency trả về lịch cũ, nên không được tính là lần đặt mới."""
+    svc = AppointmentService(test_db)
+    user = make_user()
+    for _ in range(30):
+        await svc.create(user, _nth_free_slot(0), note=None)
+
+    appt = await svc.create(user, _nth_free_slot(1), note=None)
+    assert appt.status == "booked"

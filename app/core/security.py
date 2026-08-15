@@ -26,6 +26,17 @@ def create_access_token(data: dict[str, Any], expires_delta: Optional[timedelta]
     return encoded_jwt
 
 
+def create_access_token_for(user) -> str:
+    """Token luôn mang `tv` — số phiên bản mật khẩu hiện tại của user.
+
+    Dùng số đếm chứ không dùng mốc thời gian: `iat` của JWT chỉ có độ phân giải
+    giây, nên đổi mật khẩu và phát token trong cùng một giây là không phân biệt
+    được — hoặc token cũ sống sót, hoặc người vừa đổi mật khẩu bị đá ra ngay.
+    So sánh số nguyên thì không có vùng mờ nào.
+    """
+    return create_access_token({"sub": str(user.id), "tv": user.token_version})
+
+
 def verify_token(token: str) -> dict[str, Any]:
     """Verify and decode JWT token."""
     try:

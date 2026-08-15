@@ -5,7 +5,7 @@ from app.api.deps import get_current_user, get_db, require_admin
 from app.api.v1.schemas import (CreateUserRequest, LoginRequest,
                                 ResetPasswordRequest, TokenResponse,
                                 UserResponse)
-from app.core.security import create_access_token
+from app.core.security import create_access_token_for
 from app.models.user import User
 from app.repositories.user import UserRepository
 from app.services.auth import AuthService
@@ -28,7 +28,7 @@ async def login(
     user = await AuthService(db).authenticate(payload.phone, payload.password, ip=ip)
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Số điện thoại hoặc mật khẩu không đúng")
-    return TokenResponse(access_token=create_access_token({"sub": str(user.id)}), role=user.role)
+    return TokenResponse(access_token=create_access_token_for(user), role=user.role)
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)

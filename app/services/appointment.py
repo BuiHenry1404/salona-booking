@@ -12,6 +12,7 @@ from app.core.slots import SLOT_MINUTES, quantize, slot_keys_for
 from app.models.appointment import Appointment, CreatedVia
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
+from app.services.rate_limit import RateLimitService
 from app.services.shop import ShopService, fits_before_closing
 
 class AppointmentService:
@@ -21,6 +22,7 @@ class AppointmentService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.repo = AppointmentRepository(db)
         self.shop = ShopService(db)
+        self.rate_limit = RateLimitService(db)
 
     async def create(
         self,
@@ -45,6 +47,12 @@ class AppointmentService:
         existing = await self.repo.find_active_at(user_id, start)
         if existing:
             return existing
+
+        # Hạn mức đặt SAU nhánh idempotency: lượt gọi lặp lại trả về lịch cũ
+        # thì không được tính là một lần đặt mới.
+        await self.rate_limit.check_and_hit(
+            f"booking:user:{user_id}", settings.booking_max_per_hour, 3600
+        )
 
         try:
             return await self.repo.insert_booked(
