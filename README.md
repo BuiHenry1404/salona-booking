@@ -1,6 +1,7 @@
 # App đặt lịch nail–tóc
 
 Thiết kế: [`docs/superpowers/specs/2026-08-06-booking-nail-toc/`](docs/superpowers/specs/2026-08-06-booking-nail-toc/README.md)
+Chạy và dùng: [`RUNBOOK.md`](RUNBOOK.md) — có sẵn tài khoản test, cấu hình Azure, Langfuse.
 
 ## Chạy local
 

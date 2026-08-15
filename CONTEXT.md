@@ -33,6 +33,9 @@ Hệ quả: `docker run -e` và biến của CI **không** còn đặt được 
 
 ## Tài liệu
 
+Thao tác hằng ngày — dựng môi trường, tài khoản test, chạy chat, Langfuse — nằm ở
+[`RUNBOOK.md`](RUNBOOK.md). File này chỉ giữ phần *tại sao*.
+
 ```
 docs/superpowers/
   specs/2026-08-06-booking-nail-toc/     ← spec chính, 8 file
