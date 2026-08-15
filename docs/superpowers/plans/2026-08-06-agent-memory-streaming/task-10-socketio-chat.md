@@ -226,7 +226,15 @@ class SocketIOService:
 
     async def emit_to_admins(self, event: str, data: dict) -> None:
         await self.sio.emit(event, data, room="admins")
+
+    def get_asgi_app(self):
+        """App ASGI để main.py mount vào /socket.io."""
+        return socketio.ASGIApp(self.sio)
 ```
+
+`main.py` dựng service bằng `SocketIOService(db, llm_manager)` — bỏ tham số thứ
+hai đi, agent tự lấy model qua `build_chat_model`, không còn dùng `LLMManager`
+của template nữa.
 
 - [ ] **Step 5: Cập nhật trang test tay**
 
