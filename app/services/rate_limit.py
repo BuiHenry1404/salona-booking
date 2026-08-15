@@ -16,6 +16,33 @@ class RateLimitService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["rate_limits"]
 
+    async def hit(self, key: str, window_seconds: int = 3600) -> None:
+        """Ghi một dấu, không kiểm gì."""
+        now = now_utc()
+        await self.collection.insert_one({
+            "key": key,
+            "created_at": now,
+            "expires_at": now + timedelta(seconds=window_seconds),
+        })
+
+    async def _count(self, key: str, window_seconds: int) -> int:
+        window_start = now_utc() - timedelta(seconds=window_seconds)
+        return await self.collection.count_documents(
+            {"key": key, "created_at": {"$gte": window_start}}
+        )
+
+    async def check(self, key: str, limit: int, window_seconds: int) -> None:
+        """Kiểm mà KHÔNG ghi dấu — dùng cho đăng nhập.
+
+        Đăng nhập phải chặn TRƯỚC khi so mật khẩu. Nếu chỉ đếm sau mỗi lần sai
+        thì mật khẩu vẫn được kiểm ở mọi lần thử: kẻ dò nhận 429 thay vì 401,
+        nhưng lần đoán trúng vẫn lấy được token. Ngược lại, lần đăng nhập đúng
+        không được tính vào hạn mức, nếu không người dùng thật đăng nhập nhiều
+        lần trong ngày sẽ tự khoá mình.
+        """
+        if await self._count(key, window_seconds) >= limit:
+            raise RateLimitedError()
+
     async def check_and_hit(self, key: str, limit: int = 5, window_seconds: int = 3600) -> None:
         """Ghi TRƯỚC rồi mới đếm — thứ tự này là cố ý.
 
@@ -30,17 +57,6 @@ class RateLimitService:
         burst sẽ khoá luôn người dùng thật đến hết cửa sổ. Với chức năng đổi
         mật khẩu thì chặn nhầm an toàn hơn cho lọt.
         """
-        now = now_utc()
-        window_start = now - timedelta(seconds=window_seconds)
-
-        await self.collection.insert_one({
-            "key": key,
-            "created_at": now,
-            "expires_at": now + timedelta(seconds=window_seconds),
-        })
-
-        recent = await self.collection.count_documents(
-            {"key": key, "created_at": {"$gte": window_start}}
-        )
-        if recent > limit:
+        await self.hit(key, window_seconds)
+        if await self._count(key, window_seconds) > limit:
             raise RateLimitedError()

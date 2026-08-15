@@ -38,6 +38,33 @@ async def test_login_with_wrong_password_returns_401(async_client, user_headers)
     assert resp.status_code == 401
 
 
+async def test_repeated_wrong_passwords_end_in_429_not_401(async_client, user_headers):
+    """Chốt phần đấu dây: service ném RateLimitedError, handler dịch thành 429."""
+    for _ in range(10):
+        resp = await async_client.post(
+            "/api/v1/auth/login", json={"phone": "0912345678", "password": "sai"}
+        )
+        assert resp.status_code == 401
+
+    resp = await async_client.post(
+        "/api/v1/auth/login", json={"phone": "0912345678", "password": "sai"}
+    )
+    assert resp.status_code == 429
+    assert "Thử lại quá nhiều lần" in resp.json()["detail"]
+
+
+async def test_lockout_also_refuses_the_correct_password(async_client, user_headers):
+    for _ in range(10):
+        await async_client.post(
+            "/api/v1/auth/login", json={"phone": "0912345678", "password": "sai"}
+        )
+
+    resp = await async_client.post(
+        "/api/v1/auth/login", json={"phone": "0912345678", "password": "matkhau123"}
+    )
+    assert resp.status_code == 429
+
+
 async def test_normal_user_cannot_create_accounts(async_client, user_headers):
     resp = await async_client.post(
         "/api/v1/auth/users",

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str
     jwt_expire_minutes: int
     api_key: SecretStr
+    login_max_attempts: int
+    login_window_seconds: int
 
     # CORS
     allowed_origins: Union[str, list[str]]

@@ -4,7 +4,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.errors import AppError, NotFoundError, PhoneTakenError
 from app.core.logging import get_logger
-from app.core.phone import normalize_phone
+from app.core.config import settings
+from app.core.phone import InvalidPhoneError, normalize_phone
 from app.core.security import get_password_hash, verify_password
 from app.models.user import Role, User
 from app.repositories.user import UserRepository
@@ -21,13 +22,33 @@ class AuthService:
         self.user_repo = UserRepository(db)
         self.rate_limit = RateLimitService(db)
 
-    async def authenticate(self, phone: str, password: str) -> Optional[User]:
+    async def authenticate(self, phone: str, password: str, ip: str) -> Optional[User]:
+        """Trả về `None` nếu sai, ném `RateLimitedError` nếu đã bị khoá tạm.
+
+        Kiểm hạn mức TRƯỚC khi so mật khẩu, và chỉ ghi dấu khi sai — xem
+        `RateLimitService.check`.
+
+        SĐT không đúng định dạng vẫn tính vào hạn mức theo IP, nếu không kẻ dò
+        chỉ cần đổi SĐT mỗi lần là thoát giới hạn.
+        """
+        keys = [f"login:ip:{ip}"]
+        try:
+            keys.append(f"login:phone:{normalize_phone(phone)}")
+        except InvalidPhoneError:
+            pass
+
+        for key in keys:
+            await self.rate_limit.check(
+                key, settings.login_max_attempts, settings.login_window_seconds
+            )
+
         user = await self.user_repo.get_by_phone(phone)
-        if not user or not user.is_active:
-            return None
-        if not verify_password(password, user.hashed_password):
-            return None
-        return user
+        if user and user.is_active and verify_password(password, user.hashed_password):
+            return user
+
+        for key in keys:
+            await self.rate_limit.hit(key, settings.login_window_seconds)
+        return None
 
     async def create_user(
         self, phone: str, password: str, full_name: Optional[str], role: Role = "user"

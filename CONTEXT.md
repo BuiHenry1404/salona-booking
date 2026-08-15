@@ -189,11 +189,13 @@ Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không ch�
 
 **Riêng admin thì không.** `AuthService.reset_password` không nhìn `role`, nên quyết định trên đang tự động áp cả cho chủ tiệm — mà chiếm admin là lộ SĐT toàn bộ khách, huỷ mọi lịch, đổi giờ mở cửa, và khoá chính chủ tiệm ra ngoài. SĐT chủ tiệm thì dán trên biển hiệu. Vá bằng cách chặn `role == "admin"` khỏi luồng công khai, cho admin đường khôi phục qua bot Telegram — spec `2026-08-15-admin-password-reset-telegram-design.md`, **hoãn tới sau Plan 3** vì cần bot tồn tại trước.
 
+**Đã vá — rate limit đăng nhập.** `POST /auth/login` sai quá `LOGIN_MAX_ATTEMPTS` (mặc định 10) trong `LOGIN_WINDOW_SECONDS` (900) thì khoá tạm, đếm theo cả SĐT lẫn IP. Điểm cốt lõi: **kiểm hạn mức TRƯỚC khi so mật khẩu**. Chỉ đếm sau mỗi lần sai thì mật khẩu vẫn được kiểm ở mọi lần thử — kẻ dò nhận 429 thay vì 401, nhưng lần đoán trúng vẫn lấy được token. `RateLimitService` vì thế tách làm `check()` (đếm, không ghi) và `hit()` (ghi, không đếm); `reset-password` giữ nguyên `check_and_hit`. Lần đăng nhập đúng không tốn hạn mức. SĐT sai định dạng vẫn tính vào hạn mức theo IP, nếu không đổi SĐT mỗi lần là thoát.
+
 **Còn nợ, theo thứ tự nên làm:**
 
-1. **`POST /auth/login` không có giới hạn nào.** Đã kiểm: 25 lần sai liên tiếp đều trả 401. Cộng với mật khẩu tối thiểu 4 ký tự và SĐT là định danh (không gian hẹp, đầu số đoán được) thì dò mật khẩu khả thi. Vì đã bỏ OTP nên đây là **lớp bảo vệ duy nhất** cho tài khoản khách. Không phụ thuộc Telegram, tách ra làm sớm được — và nên, vì nó nằm ở tầng `services/` mà Plan 2/3/4 đều bọc mỏng bên ngoài.
-2. **Đổi mật khẩu không thu hồi token đang sống.** Đã kiểm: token lấy trước khi đổi vẫn dùng được sau đó, tối đa 30 phút. (`is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu.)
-3. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm.
+1. **Đổi mật khẩu không thu hồi token đang sống.** Đã kiểm: token lấy trước khi đổi vẫn dùng được sau đó, tối đa 30 phút. (`is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu.)
+2. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm.
+3. **`POST /appointments` chưa có hạn mức** (spec định 20/giờ theo `user_id`) — chống spam đặt lịch.
 
 **Đã kiểm và không có vấn đề:** NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 
@@ -225,4 +227,4 @@ Việc tiếp theo, theo thứ tự:
 2. **Plan 3** (Telegram) — `plans/2026-08-06-telegram-bot/`. Chạy song song Plan 4 được.
 3. **Đặt lại mật khẩu admin** — spec `specs/2026-08-15-admin-password-reset-telegram-design.md`, sau Plan 3.
 
-Chen ngang lúc nào cũng được, không phụ thuộc gì: **rate limit cho `POST /auth/login`** — vài chục dòng, xem mục "Bảo mật".
+Rate limit đăng nhập đã xong. Xem mục "Bảo mật" cho phần còn nợ.

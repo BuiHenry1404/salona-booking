@@ -62,3 +62,24 @@ async def test_a_concurrent_burst_cannot_slip_past_the_limit(test_db):
 
     results = await asyncio.gather(*[attempt() for _ in range(20)])
     assert sum(results) <= 5, f"{sum(results)}/20 lọt qua giới hạn 5"
+
+
+async def test_check_raises_once_the_limit_is_already_reached(test_db):
+    svc = RateLimitService(test_db)
+    for _ in range(3):
+        await svc.hit("login:phone:0912345678", window_seconds=900)
+
+    await svc.check("login:phone:0912345678", limit=4, window_seconds=900)
+
+    with pytest.raises(RateLimitedError):
+        await svc.check("login:phone:0912345678", limit=3, window_seconds=900)
+
+
+async def test_check_does_not_record_a_hit_of_its_own(test_db):
+    svc = RateLimitService(test_db)
+    await svc.hit("login:ip:1.2.3.4", window_seconds=900)
+
+    for _ in range(10):
+        await svc.check("login:ip:1.2.3.4", limit=2, window_seconds=900)
+
+    assert await test_db["rate_limits"].count_documents({"key": "login:ip:1.2.3.4"}) == 1

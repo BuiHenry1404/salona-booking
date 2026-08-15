@@ -1,6 +1,6 @@
 # Đặt lại mật khẩu admin qua Telegram
 
-**Trạng thái: hoãn, làm sau Plan 3.** Xem mục "Khi nào làm" ở cuối.
+**Trạng thái: phần rate limit đăng nhập ĐÃ LÀM (2026-08-15). Phần còn lại hoãn tới sau Plan 3** — xem mục "Khi nào làm" ở cuối.
 
 ## Vì sao làm
 
@@ -64,17 +64,25 @@ Hai chi tiết:
 
 Gộp vào bản này vì cùng sửa `auth.py` và `AuthService`, cùng thêm khoá vào `RateLimitService` đã có. Tách ra là đụng cùng file hai lần.
 
-| Endpoint | Giới hạn | Khoá |
-|---|---|---|
-| `POST /auth/login` | 10 lần **sai** / 15 phút | SĐT + IP |
-| `POST /auth/reset-password` | 5 / giờ | SĐT + IP (đã có) |
-| `POST /appointments` | 20 / giờ | `user_id` |
+| Endpoint | Giới hạn | Khoá | |
+|---|---|---|---|
+| `POST /auth/login` | 10 lần **sai** / 15 phút | SĐT + IP | ✅ đã làm |
+| `POST /auth/reset-password` | 5 / giờ | SĐT + IP | ✅ đã có từ trước |
+| `POST /appointments` | 20 / giờ | `user_id` | ⬜ chưa |
 
-Bỏ Zalo làm phần này **quan trọng hơn**, không phải ít đi: khách không có OTP, nên rate limit là lớp bảo vệ duy nhất còn lại cho tài khoản của họ. Hiện `POST /auth/login` **không có giới hạn nào** — đã kiểm, 25 lần sai liên tiếp đều trả 401.
+Bỏ Zalo làm phần này **quan trọng hơn**, không phải ít đi: khách không có OTP, nên rate limit là lớp bảo vệ duy nhất còn lại cho tài khoản của họ. Trước bản vá, `POST /auth/login` không có giới hạn nào — đã kiểm, 25 lần sai liên tiếp đều trả 401. Nay: 10 lần 401 rồi 429, và mật khẩu đúng cũng bị từ chối khi đã khoá.
 
 Ba chỗ dễ làm sai:
 
-**Login chỉ đếm lần sai.** Gọi `check_and_hit` *sau* khi `verify_password` thất bại, không phải đầu hàm. Khác `reset-password` (đếm mọi lần gọi) — ở đó chặn nhầm còn an toàn hơn cho lọt, còn ở login thì đếm cả lần đúng nghĩa là người dùng thật đăng nhập nhiều lần trong ngày sẽ tự khoá mình.
+**Login: kiểm trước, ghi dấu sau.** `RateLimitService` tách làm hai — `check()` đếm mà không ghi, `hit()` ghi mà không đếm.
+
+Thứ tự bắt buộc là `check` → so mật khẩu → `hit` nếu sai.
+
+Bản nháp đầu của spec này ghi "gọi `check_and_hit` sau khi `verify_password` thất bại" — **sai**. Làm vậy thì mật khẩu vẫn được kiểm ở mọi lần thử: kẻ dò nhận 429 thay vì 401, nhưng lần đoán trúng vẫn lấy được token. Kiểm trước thì khoá rồi là mật khẩu đúng cũng bị từ chối, đúng ý nghĩa của một lần khoá tạm.
+
+Chỉ ghi dấu khi sai, vì đếm cả lần đúng nghĩa là người dùng thật đăng nhập nhiều lần trong ngày sẽ tự khoá mình. `reset-password` giữ nguyên `check_and_hit` (đếm mọi lần gọi) — ở đó chặn nhầm còn an toàn hơn cho lọt.
+
+**SĐT sai định dạng vẫn tính vào hạn mức theo IP.** Không thì kẻ dò chỉ cần đổi SĐT mỗi lần là thoát giới hạn.
 
 **Chuẩn hoá SĐT trước khi làm khoá.** Không thì `0912345678` và `+84912345678` thành hai bucket riêng và đi vòng được qua giới hạn.
 

@@ -21,8 +21,11 @@ def _to_response(user: User) -> UserResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    user = await AuthService(db).authenticate(payload.phone, payload.password)
+async def login(
+    payload: LoginRequest, request: Request, db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    ip = request.client.host if request.client else "unknown"
+    user = await AuthService(db).authenticate(payload.phone, payload.password, ip=ip)
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Số điện thoại hoặc mật khẩu không đúng")
     return TokenResponse(access_token=create_access_token({"sub": str(user.id)}), role=user.role)
