@@ -29,7 +29,7 @@ Làm tuần tự. Cột "Cần trước" là task mà file này dùng lại inte
 
 | # | Task | Sản phẩm | Cần trước |
 |---|---|---|---|
-| 1 | [Dọn dẹp và cấu hình](task-01-cleanup-and-config.md) | Gỡ AutoGen, thêm setting mới, `AppError`, Postgres trong compose | — |
+| 1 | [Dọn dẹp và cấu hình](task-01-cleanup-and-config.md) | Gỡ AutoGen, thêm setting mới, `AppError` | — |
 | 2 | [Chuẩn hóa SĐT](task-02-phone.md) | `normalize_phone()` — hàm thuần, không DB | 1 |
 | 3 | [Đồng hồ và slot](task-03-clock-and-slots.md) | `clock.py`, `slots.py` — hàm thuần, không DB | 1 |
 | 4 | [Model và repo User](task-04-user-model.md) | User theo SĐT, `ensure_indexes()` | 2 |

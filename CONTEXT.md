@@ -59,7 +59,7 @@ Plan 3 và Plan 4 độc lập nhau, chạy song song được sau Plan 2.
 | Frontend | React + Vite + TypeScript | |
 | Framework agent | **LangGraph**, không phải AutoGen | Cần subagent và định tuyến tường minh |
 | LLM & embedding | Azure OpenAI, `text-embedding-3-small` (1536 chiều) | |
-| Memory ngữ nghĩa | **Mem0 + Postgres/pgvector** | Mongo giữ dữ liệu app, pgvector giữ vector |
+| Memory ngữ nghĩa | **Không dùng** — chỉ 2 tầng, cả hai trên Mongo | Agent chỉ trả lời tiệm bận/rảnh và đặt lịch — hai câu hỏi về **trạng thái hiện tại**, không cần biết khách từng nói gì tháng trước. Danh tính đã có từ JWT (tầng 1), chống lặp đã có từ lịch sử hội thoại (tầng 2). Tầng 3 không thêm gì cho hai nhiệm vụ đó mà mang theo rủi ro rò dữ liệu giữa các khách. Ba điều kiện mở lại ghi ở mục dưới |
 | Quan sát | Langfuse Cloud | Self-host v3 cần ClickHouse + Redis + MinIO, quá nặng |
 | Kênh cho chủ tiệm | **Telegram**, không phải Zalo OA | Bot API miễn phí, không có khung 48h tính phí, không cần giấy phép kinh doanh |
 | Khôi phục mật khẩu admin | **Qua bot Telegram**, không phải OTP | Đã cân nhắc Zalo ZNS và SMS rồi loại: cả hai đòi giấy phép kinh doanh và nhiều hạ tầng (xoay vòng token, duyệt mẫu tin) cho một rủi ro vốn đã chấp nhận. Dòng trên **không có ngoại lệ**: Zalo OA không dùng ở đâu cả. Spec `2026-08-15-admin-password-reset-telegram-design.md` |
@@ -70,9 +70,9 @@ Plan 3 và Plan 4 độc lập nhau, chạy song song được sau Plan 2.
 | Ghi lịch | **Agent không có tool ghi lịch** — chỉ `propose_appointment` giữ chỗ, node `confirm` mới tạo | Quy tắc "xác nhận trước khi ghi" thành ràng buộc cấu trúc, và giá trị đem ghi lấy từ DB chứ không phải chuỗi model gõ lại |
 | Số lần ghi Mongo | **Không gộp** — chấp nhận 3 `update_one` ở lượt giữ chỗ / xác nhận | ~350 lần ghi/ngày trên một document nhỏ. Gộp được nhưng phải cho tool ghi vào state qua closure — tác dụng phụ ẩn, khó đọc hơn `set_pending`. Cần tối ưu thì gộp hai `append` trong `run_turn` trước |
 
-## Mười sáu cái bẫy — đã trả giá để tìm ra
+## Mười ba cái bẫy — đã trả giá để tìm ra
 
-Cả 16 đã được vá trong plan. Đừng "sửa lại cho gọn" mà làm hỏng.
+Cả 13 đã được vá trong plan. Đừng "sửa lại cho gọn" mà làm hỏng.
 
 ### Dữ liệu
 
@@ -87,51 +87,56 @@ MongoDB đánh chỉ mục mảng rỗng thành `undefined`. Nếu hủy lịch 
 
 **2. `DuplicateKeyError` là lớp con của `PyMongoError`.** Repository phải bắt nó và đổi thành `SlotTakenError` trước khi tới handler `PyMongoError`, nếu không khách trùng giờ sẽ thấy "máy của tiệm đang hỏng".
 
-### Mem0
-
-**3. `search()` đã đổi API.** Đúng: `search(query, filters={"user_id": uid}, top_k=n)`. Gọi kiểu cũ (`user_id=`, `limit=`) ném `ValueError`, mà adapter fail-soft nuốt hết → memory chết im lặng, log chỉ một dòng warning.
-
-**4. `embedding_dims` phải khai ở CẢ HAI chỗ** — `embedder.config.embedding_dims` và `vector_store.config.embedding_model_dims`, và phải bằng nhau. Lệch thì pgvector **im lặng** nuốt lỗi ghi: API trả về thành công kèm memory ID nhưng không lưu gì, không migrate tại chỗ được.
-
-**5. Trên Azure, `model` là TÊN DEPLOYMENT** chứ không phải tên model. Lệch tên → 404 `DeploymentNotFound`, thông báo lỗi không chỉ ra chỗ sai.
-
 ### Langfuse
 
-**6. v3 đổi hoàn toàn cách truyền credential.** `CallbackHandler()` **không nhận tham số nào**; credential đặt ở `Langfuse(public_key=..., secret_key=..., host=...)` khởi tạo một lần. Truyền vào handler là `TypeError` → bị nuốt → không trace gì cả.
+**3. v3 đổi hoàn toàn cách truyền credential.** `CallbackHandler()` **không nhận tham số nào**; credential đặt ở `Langfuse(public_key=..., secret_key=..., host=...)` khởi tạo một lần. Truyền vào handler là `TypeError` → bị nuốt → không trace gì cả.
 
-**7. Danh tính đi qua metadata, không qua handler.** `config={"metadata": {"langfuse_user_id": ..., "langfuse_session_id": ...}}`. Sai tên khóa thì trace vẫn lên nhưng mất đường lần ngược về khách.
+**4. Danh tính đi qua metadata, không qua handler.** `config={"metadata": {"langfuse_user_id": ..., "langfuse_session_id": ...}}`. Sai tên khóa thì trace vẫn lên nhưng mất đường lần ngược về khách.
 
 ### Agent và streaming
 
-**8. Khối bối cảnh PHẢI nói hôm nay là ngày nào.** Không có mốc thì "mai 3h chiều" là câu không giải được; model suy từ dữ liệu huấn luyện và đặt lịch lệch cả năm — mà `2025-08-08` vẫn là chuỗi ISO hợp lệ nên không gì chặn được. Dòng đó đứng **đầu** khối.
+**5. Khối bối cảnh PHẢI nói hôm nay là ngày nào.** Không có mốc thì "mai 3h chiều" là câu không giải được; model suy từ dữ liệu huấn luyện và đặt lịch lệch cả năm — mà `2025-08-08` vẫn là chuỗi ISO hợp lệ nên không gì chặn được. Dòng đó đứng **đầu** khối.
 
-**9. Agent KHÔNG có tool ghi lịch.** Bộ tool là `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment` — không có `create_appointment`. `propose_appointment` kiểm giờ còn trống rồi lưu `pending_confirmation` vào Mongo; lịch chỉ được tạo ở node `confirm` sau khi khách đồng ý. Làm vậy vì hai lý do: quy tắc "luôn xác nhận trước khi ghi" thành ràng buộc cấu trúc thay vì lời dặn trong prompt; và giá trị đem đi ghi lịch đọc từ DB chứ không phải từ chuỗi ISO model gõ lại — model chép sai 15:00 thành 5:00 cũng không tới được database.
+**6. Agent KHÔNG có tool ghi lịch.** Bộ tool là `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment` — không có `create_appointment`. `propose_appointment` kiểm giờ còn trống rồi lưu `pending_confirmation` vào Mongo; lịch chỉ được tạo ở node `confirm` sau khi khách đồng ý. Làm vậy vì hai lý do: quy tắc "luôn xác nhận trước khi ghi" thành ràng buộc cấu trúc thay vì lời dặn trong prompt; và giá trị đem đi ghi lịch đọc từ DB chứ không phải từ chuỗi ISO model gõ lại — model chép sai 15:00 thành 5:00 cũng không tới được database.
 
-**10. Chỉ stream token mang tag `respond`.** Token của supervisor là JSON định tuyến. Model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, nếu không khách thấy `{"start_at": "2026-08-...` chạy ngang màn hình.
+**7. Chỉ stream token mang tag `respond`.** Token của supervisor là JSON định tuyến. Model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, nếu không khách thấy `{"start_at": "2026-08-...` chạy ngang màn hình.
 
-**11. Khối bối cảnh KHÔNG nằm trong system prompt.** Prompt cache ăn theo tiền tố chung dài nhất; khối này đổi mỗi lượt nên đặt đầu là cache không bao giờ trúng. Thứ tự: System (tĩnh) → Messages (lịch sử) → Message (bối cảnh + memory) → Message (tin mới).
+**8. Khối bối cảnh KHÔNG nằm trong system prompt.** Prompt cache ăn theo tiền tố chung dài nhất; khối này đổi mỗi lượt nên đặt đầu là cache không bao giờ trúng. Thứ tự: System (tĩnh) → Messages (lịch sử) → Message (bối cảnh + memory) → Message (tin mới).
 
-**12. Đừng nới regex của parser thời gian.** Nó chỉ trả lời khi câu khớp trọn vẹn (có ngày VÀ có giờ xác định); thiếu gì cũng nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` canh chỗ này.
+**9. Đừng nới regex của parser thời gian.** Nó chỉ trả lời khi câu khớp trọn vẹn (có ngày VÀ có giờ xác định); thiếu gì cũng nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` canh chỗ này.
 
 ### Telegram
 
-**13. Trả `answerCallbackQuery` TRƯỚC khi làm việc.** Callback query hết hạn sau 10 giây; tỏa tin qua Socket.IO + Telegram mất vài vòng HTTP. Chậm là nút quay mãi và chủ tiệm bấm lại → đặt bận hai lần.
+**10. Trả `answerCallbackQuery` TRƯỚC khi làm việc.** Callback query hết hạn sau 10 giây; tỏa tin qua Socket.IO + Telegram mất vài vòng HTTP. Chậm là nút quay mãi và chủ tiệm bấm lại → đặt bận hai lần.
 
-**14. `get_updates` phải NÉM lỗi ra ngoài** (khác `send_message` nuốt lỗi). Nuốt ở đây thì mạng đứt trông giống hệt "không có tin mới", và nhánh lùi 5 giây thành code chết.
+**11. `get_updates` phải NÉM lỗi ra ngoài** (khác `send_message` nuốt lỗi). Nuốt ở đây thì mạng đứt trông giống hệt "không có tin mới", và nhánh lùi 5 giây thành code chết.
 
 ### Frontend
 
-**15. Hết giờ bận KHÔNG có sự kiện nào từ server.** Backend không có timer; `busy_until` chỉ được tính lại khi có ai gọi `get_status()`. Không xử ở client thì hết giờ bận, thẻ vẫn hiện "đang bận" cho tới khi khách tải lại trang. `useShopStatus` đặt **một** `setTimeout` hẹn đúng `minutes_left` phút, tới giờ thì lật thẻ rồi hỏi lại server một lần. Hẹn theo `minutes_left` (một **khoảng**) chứ không theo `busy_until` trừ `Date.now()` (hai **mốc**) — máy khách lệch giờ là chuyện thường, có máy lệch cả năm. Trạng thái đổi thì phải `clearTimeout` hẹn cũ, nếu không nó lật thẻ giữa lúc chủ tiệm vẫn đang bận.
+**12. Hết giờ bận KHÔNG có sự kiện nào từ server.** Backend không có timer; `busy_until` chỉ được tính lại khi có ai gọi `get_status()`. Không xử ở client thì hết giờ bận, thẻ vẫn hiện "đang bận" cho tới khi khách tải lại trang. `useShopStatus` đặt **một** `setTimeout` hẹn đúng `minutes_left` phút, tới giờ thì lật thẻ rồi hỏi lại server một lần. Hẹn theo `minutes_left` (một **khoảng**) chứ không theo `busy_until` trừ `Date.now()` (hai **mốc**) — máy khách lệch giờ là chuyện thường, có máy lệch cả năm. Trạng thái đổi thì phải `clearTimeout` hẹn cũ, nếu không nó lật thẻ giữa lúc chủ tiệm vẫn đang bận.
 
-**16. `socket.io-client` gộp kết nối theo URL.** Hai hook cùng gọi `io(BASE)` nhận về **cùng một** socket; hook nào unmount trước sẽ `disconnect()` cái mà hook kia đang dùng. Dùng `acquireSocket()` / `releaseSocket()` đếm tham chiếu, và mỗi hook tự `socket.off()` handler của mình.
+**13. `socket.io-client` gộp kết nối theo URL.** Hai hook cùng gọi `io(BASE)` nhận về **cùng một** socket; hook nào unmount trước sẽ `disconnect()` cái mà hook kia đang dùng. Dùng `acquireSocket()` / `releaseSocket()` đếm tham chiếu, và mỗi hook tự `socket.off()` handler của mình.
 
-## Giới hạn đã biết — cố ý chưa làm
+## Memory: vì sao chỉ hai tầng — và ba điều kiện mở lại
 
-**Chi phí memory vô hình trong trace Langfuse.** Mem0 gọi LLM bằng client riêng, **không đi qua LangChain**, nên callback handler của LangGraph không thấy lượt trích xuất của nó. Trace sẽ thiếu đúng phần chi phí đó.
+Agent chỉ làm hai việc: trả lời tiệm bận/rảnh, và đặt lịch. Cả hai là câu hỏi về **trạng thái hiện tại**, đọc thẳng từ `ShopService` / `AppointmentService`. Không tool nào trong sáu tool nhận sở thích khách làm đầu vào.
 
-Spec đã cân nhắc và chấp nhận ở giai đoạn đầu (`04-agent.md:130`) — *"chấp nhận được ở giai đoạn đầu, nhưng phải biết là mình đang không nhìn thấy nó"*. Muốn đo thì bọc `remember()` trong một span Langfuse tường minh ở `app/memory/adapter.py`, khoảng 8 dòng, nhớ fail-soft như phần còn lại của adapter.
+| Tầng | Nguồn | Chống được gì |
+|---|---|---|
+| 1. Danh tính | JWT + `users` trong Mongo | Gọi nhầm tên, hỏi lại tên/SĐT |
+| 2. Lịch sử hội thoại | `messages` trong Mongo, cắt theo ngân sách token | Lặp lại, hỏi lại thứ vừa nói |
 
-Đây là **quyết định**, không phải sót. Đừng coi là bug rồi tự vá mà không hỏi.
+Tầng 3 (ngữ nghĩa, vector) **đã bỏ**. Nó chỉ phục vụ việc nhớ ngữ cảnh tự do qua nhiều tháng — mà `plans/.../task-03-conversation.md` đã tính: khách đặt lịch vài tuần một lần nên cửa sổ trượt 1.500 token của tầng 2 **tự nó đã phủ được vài tháng**. Đổi lại, tầng 3 mang theo một container Postgres, hai thư viện, ba trong số các cạm bẫy đắt nhất của dự án, và một kho memory dùng chung mà quên truyền `user_id` một chỗ là ký ức khách này lộ sang khách khác.
+
+Chống lặp **không** phải việc của tầng 3: Mem0 lưu sự kiện đã trích xuất chứ không lưu nguyên văn lượt trước, và truy hồi của nó là xác suất. Lặp lại là do lịch sử bị cắt giữa cặp hỏi–đáp, do prompt không dặn, hoặc do model quá nhỏ — thứ tự đó cũng là thứ tự cần kiểm khi gặp lỗi.
+
+**Ba điều kiện để mở lại** (theo lối đã dùng cho Redis):
+
+1. Phạm vi agent mở rộng sang tư vấn dịch vụ — dị ứng, kiểu tóc, sở thích thợ — chứ không chỉ bận/rảnh và đặt lịch.
+2. Đã chạy thật, đọc log hội thoại, và **quan sát được** ca cụ thể mà nhớ ngữ cảnh tự do sẽ cứu được cuộc trò chuyện.
+3. Có Postgres trong hạ tầng vì lý do khác, không phải dựng riêng cho memory.
+
+Cắm lại rẻ vì tầng 2 lưu đủ tin nhắn trong Mongo ngay từ đầu — chạy `remember()` ngược trên lịch sử cũ là dựng lại được memory cho khách quen.
 
 ## Ràng buộc giao diện — không được phá
 
@@ -158,16 +163,15 @@ Bốn plan chỉ lo *phần mềm chạy đúng*. Phần vận hành chưa có t
 3. **Mongo mở cổng `27017:27017` ra host, không auth.**
 4. **`docker-compose.yml` hardcode `JWT_SECRET` và `API_KEY` bản dev**, và hai giá trị này **ghi đè `.env`** — biến môi trường thắng dotenv. Ai đọc repo cũng ký được token admin. Cần `docker-compose.prod.yml` riêng, đọc secret từ `.env` của server. Mục 2, 3, 4 nên gộp làm một việc: tách file compose dev khỏi prod.
 5. **`HEALTHCHECK` trong Dockerfile chạy `import requests`, mà `requests` không có trong `requirements.txt`** → container luôn `unhealthy`.
-6. **`docker-compose.yml` thiếu Postgres/pgvector** mà Plan 2 cần.
-7. **Không có `restart: unless-stopped`** → máy reboot là app không tự lên.
-8. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
-9. **Không có CI.** Không có `.github/`; bốn plan đầy test mà không ai chạy tự động.
-10. **Thiếu `.dockerignore`** → `COPY . .` đưa cả `.env` và `.git` vào layer của image.
+6. **Không có `restart: unless-stopped`** → máy reboot là app không tự lên.
+7. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
+8. **Không có CI.** Không có `.github/`; bốn plan đầy test mà không ai chạy tự động.
+9. **Thiếu `.dockerignore`** → `COPY . .` đưa cả `.env` và `.git` vào layer của image.
 
 **Đáng sửa, chưa chặn đường:**
 
 - `JWT_EXPIRE_MINUTES=30` — bắt khách lớn tuổi đăng nhập lại mỗi nửa tiếng là họ bỏ app. Chưa có refresh token. Cần quyết lại con số.
-- **Throttle toàn cục chống flood** — giới hạn request mỗi IP cho *mọi* endpoint, đếm trong RAM (token bucket), không chạm Mongo. Cố ý để tới Plan 5 vì nó phụ thuộc mục 8 (chưa có proxy), vì nginx có thể làm tốt hơn tầng ứng dụng, và vì bật sớm thì bộ test e2e sẽ đỏ vì 429 chứ không phải vì code sai. Kèm theo:
+- **Throttle toàn cục chống flood** — giới hạn request mỗi IP cho *mọi* endpoint, đếm trong RAM (token bucket), không chạm Mongo. Cố ý để tới Plan 5 vì nó phụ thuộc mục 7 (chưa có proxy), vì nginx có thể làm tốt hơn tầng ứng dụng, và vì bật sớm thì bộ test e2e sẽ đỏ vì 429 chứ không phải vì code sai. Kèm theo:
   - Hàm lấy IP dùng chung, đọc `X-Forwarded-For` **chỉ khi** `TRUST_PROXY_HEADERS=true`, lấy phần tử thứ `TRUSTED_PROXY_COUNT + 1` từ phải sang — phần bên trái do client tự gửi nên giả mạo được. Tin header này khi chưa có proxy thật là tự vô hiệu hoá rate limit. Hàm này thay `request.client.host` ở `auth.py` và middleware log, chỗ mà sau proxy luôn ra IP proxy nên không lần ra được ai.
   - Miễn trừ `/api/v1/health/*`: Docker `HEALTHCHECK` gọi mỗi 30 giây, để nó ăn quota thì lúc bị flood health check trượt và Docker tự giết container. Phải sửa mục 5 trước thì phần này mới kiểm chứng được.
   - Bucket trong RAM phải được dọn định kỳ, nếu không đổi IP liên tục là làm app phình bộ nhớ tới chết.
@@ -217,7 +221,7 @@ Chưa có tài khoản nào trong DB và **không có đăng ký tự do** — u
 
 Việc tiếp theo, theo thứ tự:
 
-1. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Cần thêm Postgres/pgvector vào compose trước.
+1. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Task 2 (memory adapter) đã bỏ cùng Mem0.
 2. **Plan 3** (Telegram) — `plans/2026-08-06-telegram-bot/`. Chạy song song Plan 4 được.
 3. **Đặt lại mật khẩu admin** — spec `specs/2026-08-15-admin-password-reset-telegram-design.md`, sau Plan 3.
 

@@ -7,7 +7,7 @@ Spec bao bốn hệ con. Mỗi hệ con là một plan riêng, chạy xong là c
 | # | Plan | Sản phẩm khi xong | Phụ thuộc |
 |---|---|---|---|
 | 1 | [Nền tảng backend](2026-08-06-backend-foundation/README.md) | API đầy đủ: đăng nhập SĐT, đặt/hủy lịch có chặn trùng nguyên tử, trạng thái bận/rảnh, giờ mở cửa. **Không có AI** — test bằng pytest và Swagger | Không |
-| 2 | [Agent + memory + streaming](2026-08-06-agent-memory-streaming/README.md) | Chat đặt lịch qua LangGraph, Mem0/pgvector, Langfuse, streaming token + sự kiện tool qua Socket.IO | Plan 1 |
+| 2 | [Agent + memory + streaming](2026-08-06-agent-memory-streaming/README.md) | Chat đặt lịch qua LangGraph, Langfuse, streaming token + sự kiện tool qua Socket.IO | Plan 1 |
 | 3 | [Bot Telegram](2026-08-06-telegram-bot/README.md) | Chủ tiệm nhận báo lịch mới, tra cứu, đổi bận/rảnh bằng nút bấm | Plan 1 |
 | 4 | [Frontend React](2026-08-06-react-frontend/README.md) | Năm màn hình, hiển thị streaming và trạng thái gọi tool | Plan 1 + 2 (realtime cần thêm Plan 3) |
 

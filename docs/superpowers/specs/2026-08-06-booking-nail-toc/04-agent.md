@@ -5,7 +5,7 @@
 ```
 input → load_context (không LLM)
           nạp song song: hồ sơ user, lịch sử chat theo ngân sách token,
-          lịch sắp tới, trạng thái tiệm, pending_confirmation, recall() từ Mem0
+          lịch sắp tới, trạng thái tiệm, pending_confirmation
         ↓
         route_from_state (không LLM)
         ├→ CÓ pending_confirmation ──→ confirm — "ừ" đi thẳng vào thực thi,
@@ -17,16 +17,13 @@ input → load_context (không LLM)
                                                            xem lịch của tôi
         ↓
         mỗi nhánh tự sinh `answer` rồi kết thúc — không có node gộp riêng
-        ↓
-        save_memory (background, sau khi user đã nhận trả lời)
-          → remember() qua Mem0
 ```
 
 Đường đi khách cảm nhận được là **2 lượt LLM** (supervisor + subagent). Lượt xác nhận đi nhánh `confirm` nên tốn **0 lượt**.
 
 ## State
 
-`GraphState` là một `TypedDict` chứa `messages`, `user_id`, `context_block`, `recalled`, `pending_confirmation`, `route`, `answer`.
+`GraphState` là một `TypedDict` chứa `messages`, `user_id`, `context_block`, `pending_confirmation`, `route`, `answer`.
 
 Hồ sơ user, trạng thái tiệm và lịch sắp tới **không** nằm riêng trong state — chúng đã được `load_context` gộp thành `context_block`, một chuỗi dựng bằng code. Giữ chúng thành trường riêng nghĩa là mỗi node phải tự biết cách diễn đạt chúng thành lời, và sớm muộn hai node sẽ diễn đạt khác nhau.
 
@@ -57,15 +54,16 @@ Thực thi bằng ba lớp chồng nhau, không dựa vào riêng prompt:
 
 ## Memory
 
-Ba tầng tách bạch. Điểm cốt lõi: **"nhớ user là ai" và "nhớ ngữ cảnh cũ" là hai việc khác nhau và phải đi hai đường khác nhau.** Gộp chung là nguồn gốc của lỗi gọi nhầm tên.
+Hai tầng tách bạch. Điểm cốt lõi: **"nhớ user là ai" và "nhớ đã nói gì" là hai việc khác nhau và phải đi hai đường khác nhau.** Gộp chung là nguồn gốc của lỗi gọi nhầm tên.
 
 | Tầng | Nguồn | Chống được gì | Tính chất |
 |---|---|---|---|
 | 1. Danh tính | JWT + `users` trong Mongo | Gọi nhầm tên, hỏi lại tên/SĐT | Tất định, luôn đúng |
 | 2. Lịch sử hội thoại | `messages` trong Mongo, cắt theo ngân sách token | Lặp trong cùng phiên, hỏi lại thứ vừa nói | Tất định, theo thứ tự |
-| 3. Ngữ nghĩa | Mem0 + pgvector | Lặp qua nhiều ngày, mất ngữ cảnh cũ | Xác suất, có thể sai |
 
-**Tên gọi không bao giờ đến từ tầng 3.** Vector search là truy hồi xác suất — nó có thể trả về "cô Lan thích đặt buổi sáng" trong khi người đang đăng nhập là cô Hoa. Nên danh tính đi thẳng từ JWT vào một khối bối cảnh dựng bằng code:
+**Không có tầng ngữ nghĩa.** Đã cân nhắc Mem0 + pgvector rồi bỏ: agent chỉ trả lời tiệm bận/rảnh và đặt lịch — hai câu hỏi về trạng thái hiện tại — nên không tool nào cần biết sở thích khách. Cửa sổ trượt 1.500 token của tầng 2 tự nó đã phủ vài tháng với tần suất đặt lịch vài tuần một lần. Lý do đầy đủ và ba điều kiện mở lại: `CONTEXT.md`.
+
+Danh tính đi thẳng từ JWT vào một khối bối cảnh dựng bằng code:
 
 ```
 Bạn đang nói chuyện với: Nguyễn Thị Lan (0912345678).
@@ -74,7 +72,7 @@ Lịch sắp tới: Thứ Năm 7/8, 3:00 chiều — làm tóc.
 Chủ tiệm: đang bận, xong lúc 3:30 chiều.
 ```
 
-Khối này không bao giờ do LLM sinh ra. Mem0 chỉ được bổ sung sở thích và ngữ cảnh, không được ghi đè danh tính. Prompt nói rõ: memory mâu thuẫn với khối bối cảnh thì tin khối bối cảnh.
+Khối này không bao giờ do LLM sinh ra.
 
 ## Bố cục prompt: xếp theo độ ổn định
 
@@ -85,7 +83,7 @@ Nguyên tắc: **ổn định nhất đứng trước, hay đổi nhất đứng
 ```
 [System]   hướng dẫn tĩnh + schema tool     ← không đổi giữa các lượt, được cache
 [Messages] lịch sử hội thoại                 ← chỉ thêm vào đuôi, tiền tố vẫn ổn định
-[Message]  khối bối cảnh + memory Mem0       ← đổi mỗi lượt, đặt sát cuối
+[Message]  khối bối cảnh                     ← đổi mỗi lượt, đặt sát cuối
 [Message]  tin nhắn mới của khách
 ```
 
@@ -95,11 +93,7 @@ Lịch sử hội thoại đi vào **mảng `messages` thật**, không nhồi t
 
 **Cắt lịch sử theo ngân sách token, không theo số lượt.** Một khách nói dài dòng chiếm gấp nhiều lần một khách nói cộc lốc, nên đếm lượt là sai đơn vị. Lấy ngược từ tin mới nhất cho tới khi chạm trần **1.500 token**, và luôn giữ trọn cặp hỏi–đáp chứ không cắt giữa chừng.
 
-**Đọc.** `load_context` gọi `recall(user_id, câu hỏi hiện tại, limit=5)`, chạy song song với các truy vấn Mongo nên không cộng thêm độ trễ.
-
-**Ghi.** `save_memory` gọi `remember(user_id, lượt vừa rồi)` như background task sau khi user đã nhận câu trả lời. Mem0 tự lo trích xuất, khử trùng lặp và quyết định thêm/cập nhật/xóa, nên lượt LLM nội bộ của nó **không cộng vào thời gian chờ**. Đường đi mà khách cảm nhận vẫn là 2 lượt LLM.
-
-**Adapter async.** Mem0 có thể chỉ có API đồng bộ — tài liệu không xác nhận lớp async. Adapter mặc định chạy Mem0 trong threadpool bằng `asyncio.to_thread`; nếu lúc triển khai xác nhận có API async thì đổi ruột adapter, bên ngoài không bị ảnh hưởng.
+**Chống lặp là việc của tầng 2, không phải của memory ngữ nghĩa.** Điều kiện đủ: lịch sử tới tay subagent **giữ trọn cặp hỏi–đáp**. Cắt giữa cặp thì model thấy câu hỏi mà không thấy câu nó đã trả lời, và nói lại từ đầu. Khi gặp lỗi lặp, kiểm theo thứ tự: lịch sử có đủ và đúng cặp chưa → prompt đã dặn chưa → model có quá nhỏ không.
 
 **Fail-soft.** `recall` lỗi hoặc quá 2 giây thì trả mảng rỗng, chat chạy bình thường, ghi log cảnh báo. `remember` lỗi thì chỉ ghi log — nó chạy nền, không ai đang chờ.
 
@@ -150,15 +144,13 @@ Socket.IO và Telegram là hai kênh của cùng một việc "báo cho chủ ti
 
 Gắn Langfuse callback handler vào LangGraph để mỗi lượt chat sinh ra một trace lồng nhau: node, lượt gọi LLM, tool call, độ trễ, token, chi phí. Trace mang `user_id` và `conversation_id` để lần ngược từ một lịch sai về đúng cuộc hội thoại sinh ra nó.
 
-Lưu ý: Mem0 dùng LLM client riêng, **không đi qua LangChain**, nên callback handler của LangGraph không tự thấy lượt gọi trích xuất của nó. Muốn đo chi phí thật của memory thì adapter phải tự bọc `remember()` trong một span Langfuse tường minh. Nếu không làm, chi phí memory sẽ vô hình trong trace — chấp nhận được ở giai đoạn đầu, nhưng phải biết là mình đang không nhìn thấy nó.
-
 Ba thứ cần theo dõi thường xuyên: tỷ lệ đi vào nhánh `refuse` (cao bất thường nghĩa là supervisor chặn nhầm câu hợp lệ), độ trễ đầu-cuối (ngưỡng chú ý: 5 giây), và tỷ lệ lỗi tool.
 
 Langfuse chỉ được bật khi có key trong env. Thiếu key thì app chạy bình thường không trace, và Langfuse lỗi không bao giờ làm hỏng một lượt chat.
 
 ## Chi phí và tốc độ
 
-Đường đi thường gặp là 2 lượt LLM (supervisor + subagent), cộng 1 lượt nền do Mem0 gọi khi trích xuất. Với người lớn tuổi đang chờ trả lời, đây là con số cần giữ.
+Đường đi thường gặp là 2 lượt LLM (supervisor + subagent). Với người lớn tuổi đang chờ trả lời, đây là con số cần giữ.
 
 Ngân sách token input sau khi áp bố cục ở trên:
 

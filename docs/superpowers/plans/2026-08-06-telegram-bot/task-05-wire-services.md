@@ -301,7 +301,7 @@ Expected: PASS toàn bộ
 Tạo bot qua @BotFather, lấy chat_id theo hướng dẫn trong README, điền `.env`, rồi:
 
 ```bash
-docker compose up -d mongo postgres
+docker compose up -d mongo
 uvicorn main:app --reload
 ```
 

@@ -1,4 +1,4 @@
-# Task 8 · Nhánh xác nhận và ghi memory nền
+# Task 8 · Nhánh xác nhận
 
 > Thuộc plan [Agent, memory và streaming](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
@@ -6,11 +6,10 @@
 - Create: `app/agents/booking_graph/confirm.py`, `tests/test_confirm.py`
 
 **Interfaces:**
-- Consumes: `AppointmentService` (Plan 1), `ConversationService` (task 3), `remember` (task 2), `format_vi_datetime` (task 4)
+- Consumes: `AppointmentService` (Plan 1), `ConversationService` (task 3), `format_vi_datetime` (task 4)
 - Produces:
   - `is_affirmative(text: str) -> bool`
   - `make_confirm_node(db, user) -> Callable[[GraphState], Awaitable[dict]]`
-  - `save_memory(db, user_id: str, question: str, answer: str) -> None`
 
 - [ ] **Step 1: Viết test (sẽ fail)**
 
@@ -55,7 +54,7 @@ async def _setup(db):
 
 def a_state(user, text, pending):
     return {"messages": [HumanMessage(content=text)], "user_id": str(user.id),
-            "context_block": "", "recalled": [], "pending_confirmation": pending}
+            "context_block": "", "pending_confirmation": pending}
 
 
 async def test_propose_then_yes_books_the_time_from_MONGO(test_db):
@@ -206,15 +205,6 @@ def make_confirm_node(
         return {"answer": f"Xong rồi ạ. Hẹn gặp cô chú {format_vi_datetime(appointment.start_at)} nhé."}
 
     return node
-
-
-async def save_memory(db: AsyncIOMotorDatabase, user_id: str, question: str, answer: str) -> None:
-    """Chạy nền sau khi khách đã nhận câu trả lời, nên lượt LLM trích xuất nội bộ
-    của Mem0 không cộng vào thời gian chờ."""
-    await remember(user_id, [
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": answer},
-    ])
 ```
 
 - [ ] **Step 4: Chạy test để xác nhận pass**

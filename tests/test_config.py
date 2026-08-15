@@ -9,8 +9,3 @@ def test_booking_defaults():
 def test_optional_integrations_default_to_none():
     assert settings.telegram_bot_token is None
     assert settings.langfuse_public_key is None
-    assert settings.postgres_uri is None
-
-
-def test_embedding_dims_default():
-    assert settings.embedding_dims == 1536

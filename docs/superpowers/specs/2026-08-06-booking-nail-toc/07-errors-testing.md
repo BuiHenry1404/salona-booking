@@ -8,8 +8,6 @@ Nguyên tắc: người dùng không bao giờ thấy lỗi kỹ thuật. Mọi 
 |---|---|
 | Trùng giờ (unique index từ chối) | Không phải lỗi. Service bắt, AI trả lời "Giờ đó có người rồi ạ, 3h30 hoặc 4h được không cô?" kèm 2 giờ trống gần nhất |
 | LLM lỗi hoặc timeout | "Máy đang bận chút xíu, cô nhắn lại giúp con nhé", hiện nút gọi điện cho tiệm |
-| pgvector hoặc Mem0 chết | Fail-soft. `recall` trả rỗng, chat chạy bình thường, ghi log cảnh báo |
-| Số chiều embedding lệch | App phát hiện lúc khởi động và log lỗi rõ ràng, thay vì để ghi memory hỏng âm thầm |
 | AI gọi tool đặt lịch hai lần | Khóa idempotency trả về chính lịch đã tạo, không tạo trùng |
 | Mongo chết | Fail-hard. Trả 503, màn hình hiện số điện thoại tiệm |
 | AI hiểu sai giờ | Trước khi ghi, AI luôn nhắc lại để xác nhận: "Con đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không cô?" Chỉ ghi sau khi user xác nhận |
@@ -29,7 +27,7 @@ Ba tầng. Không tầng nào cần LLM thật, trừ tầng cuối.
 
 Hai test bắt buộc cho partial index, vì đây là chỗ đã từng thiết kế sai: **hủy hai lịch liên tiếp không được ném lỗi trùng khóa** (đúng cái bug mảng rỗng ở [02-data-model.md](02-data-model.md#chặn-trùng-giờ)), và **hủy xong thì đặt lại đúng khung giờ đó phải thành công**.
 
-**Tầng memory với Mem0 giả lập.** `recall` chỉ trả memory của đúng `user_id`; `recall` quá 2 giây thì trả rỗng; `remember` nuốt lỗi và không ném ra ngoài. Test quan trọng nhất, hoàn toàn không cần LLM: **memory của user A không bao giờ lọt sang user B**. Thêm một test cho khối bối cảnh — dựng state có memory chứa tên sai, khẳng định prompt vẫn mang tên lấy từ `users`.
+**Khối bối cảnh.** Dựng hoàn toàn bằng code từ `users` và `appointments`, không lượt LLM nào tham gia — nên test được không cần mạng. Khẳng định tên và SĐT trong khối luôn khớp bản ghi trong `users`.
 
 **Tầng agent với LLM giả lập.** Mỗi node LangGraph test riêng bằng state dựng sẵn: supervisor định tuyến đúng nhánh, `refuse` chặn câu ngoài chủ đề, tool không nhận `user_id` từ nội dung tin nhắn, và `pending_confirmation` khiến câu "ừ" đi thẳng vào nhánh thực thi thay vì quay lại supervisor.
 

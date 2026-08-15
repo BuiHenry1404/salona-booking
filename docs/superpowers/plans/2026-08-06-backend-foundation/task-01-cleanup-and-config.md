@@ -2,6 +2,8 @@
 
 > Thuộc plan [Nền tảng backend](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
+> **Đã lỗi thời một phần (2026-08-15).** Các setting `postgres_uri`, `embedding_dims`, `azure_openai_embedding_model`, `azure_openai_embedding_deployment` và service `postgres` trong compose **đã bị gỡ** cùng quyết định bỏ Mem0. Đừng thêm lại khi đọc file này. Xem `CONTEXT.md` mục "Memory: vì sao chỉ hai tầng".
+
 **Files:**
 - Delete: `app/agents/soulcare_team.py`, `tests/test_youtube_search.py`, `test_pydantic_fix.py`, `create_test_user.py`
 - Modify: `app/core/config.py`, `requirements.txt`, `docker-compose.yml`, `.env.example`

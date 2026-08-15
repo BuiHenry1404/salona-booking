@@ -11,7 +11,7 @@ Tài liệu được tách thành nhiều file để mỗi phần đọc trọn 
 | File | Nội dung | Đọc khi làm |
 |---|---|---|
 | [01-architecture.md](01-architecture.md) | Ngăn xếp, năm tầng, hạ tầng, 4 sơ đồ | Bất kỳ phần nào — đọc trước tiên |
-| [02-data-model.md](02-data-model.md) | Collection Mongo, chặn trùng giờ, pgvector, múi giờ | Model, repository, migration |
+| [02-data-model.md](02-data-model.md) | Collection Mongo, chặn trùng giờ, múi giờ | Model, repository, migration |
 | [03-auth.md](03-auth.md) | Đăng nhập SĐT, quên mật khẩu, rate limit, phân quyền | Auth service, router |
 | [04-agent.md](04-agent.md) | LangGraph, tool, memory, bố cục prompt, Langfuse | Agent, memory adapter |
 | [05-frontend.md](05-frontend.md) | Năm màn hình React và nguyên tắc UI | Frontend |
@@ -37,13 +37,11 @@ AI **chỉ** phục vụ việc đặt lịch, không dùng cho mục đích kh�
 | Trạng thái bận/rảnh | Thủ công: một nút + chọn nhanh thời gian, hết giờ tự về rảnh |
 | Quên mật khẩu | Đúng như doc: SĐT + mật khẩu mới. Có rate limit và log |
 | Memory | Ba tầng tách bạch: danh tính (tất định) / lịch sử hội thoại / ngữ nghĩa |
-| Thư viện memory | **Mem0** (self-hosted) trên pgvector, thay vì tự viết embed và trích xuất |
-| DB | Mongo cho dữ liệu ứng dụng, Postgres chỉ chứa memory ngữ nghĩa |
+| DB | Mongo cho toàn bộ dữ liệu ứng dụng |
 | Framework agent | LangGraph (thay AutoGen), supervisor + 2 subagent |
 | Báo lịch mới | Màn hình lịch hôm nay + Socket.IO realtime trong app |
 | Kênh phụ cho chủ tiệm | **Bot Telegram** — báo lịch mới, tra cứu, đổi bận/rảnh. Miễn phí, không cần giấy phép kinh doanh |
 | Quan sát (observability) | Langfuse |
-| Embedding | Azure OpenAI `text-embedding-3-small` (1536 chiều) |
 | Số worker | **Đúng 1** — ràng buộc từ long polling của Telegram, xem [06](06-telegram.md) |
 
 ### Rủi ro đã biết và chấp nhận
@@ -72,10 +70,10 @@ Không danh mục dịch vụ. Không thời lượng riêng theo dịch vụ. K
 
 **Viết lại:** `app/models/user.py` (email/username → phone, thêm `role`), `app/services/auth.py` (đăng nhập bằng SĐT, bỏ đăng ký tự do, thêm luồng quên mật khẩu), `app/repositories/user.py`, `app/api/v1/routers/auth.py`, `app/api/v1/schemas.py`.
 
-**Thêm mới:** `app/models/appointment.py`, `app/models/shop_status.py`, `app/models/shop_hours.py`, `app/repositories/appointment.py`, `app/services/appointment.py`, `app/services/shop_status.py`, `app/services/rate_limit.py`, `app/api/v1/routers/appointments.py`, `app/api/v1/routers/shop_status.py`, `app/memory/` (adapter async bọc Mem0, cấu hình, kiểm tra số chiều lúc khởi động), `app/agents/booking_graph/` (state, supervisor, hai subagent, tool, khối bối cảnh tất định), `app/core/langfuse.py`, `app/services/notifications.py` (tỏa tin Socket.IO + Telegram), `app/telegram/` (`bot.py` vòng lặp long polling, `handlers.py` xử lý nút bấm, `notify.py` gửi tin đi).
+**Thêm mới:** `app/models/appointment.py`, `app/models/shop_status.py`, `app/models/shop_hours.py`, `app/repositories/appointment.py`, `app/services/appointment.py`, `app/services/shop_status.py`, `app/services/rate_limit.py`, `app/api/v1/routers/appointments.py`, `app/api/v1/routers/shop_status.py`, `app/agents/booking_graph/` (state, supervisor, hai subagent, tool, khối bối cảnh tất định), `app/core/langfuse.py`, `app/services/notifications.py` (tỏa tin Socket.IO + Telegram), `app/telegram/` (`bot.py` vòng lặp long polling, `handlers.py` xử lý nút bấm, `notify.py` gửi tin đi).
 
 **Giữ nguyên:** `app/services/socketio_service.py`, `app/core/security.py`, `app/core/logging.py`, `app/infrastructure/database.py`, `app/repositories/base.py`.
 
-**Phụ thuộc mới:** `mem0ai`, `langgraph`, `langchain-openai`, `langfuse`, `psycopg`. Gỡ: `autogen-agentchat`, `autogen-core`, `google-api-python-client`. Telegram dùng `httpx` — đã có sẵn, không thêm phụ thuộc.
+**Phụ thuộc mới:** `langgraph`, `langchain-openai`, `langfuse`. Gỡ: `autogen-agentchat`, `autogen-core`, `google-api-python-client`. Telegram dùng `httpx` — đã có sẵn, không thêm phụ thuộc.
 
-**Biến môi trường mới:** `POSTGRES_*`, `AZURE_OPENAI_EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_IDS`, `BOOKING_SLOT_MINUTES`. Mọi tích hợp ngoài (Langfuse, Telegram, Mem0) đều tắt được bằng cách bỏ trống biến, app vẫn chạy.
+**Biến môi trường mới:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_IDS`, `BOOKING_SLOT_MINUTES`. Mọi tích hợp ngoài (Langfuse, Telegram) đều tắt được bằng cách bỏ trống biến, app vẫn chạy.

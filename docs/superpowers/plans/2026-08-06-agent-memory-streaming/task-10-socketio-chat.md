@@ -9,7 +9,7 @@
 - Modify: `static/socketio_test.html`
 
 **Interfaces:**
-- Consumes: `run_turn`, `AgentEvent` (task 9), `save_memory` (task 8), `AuthService` (Plan 1)
+- Consumes: `run_turn`, `AgentEvent` (task 9), `AuthService` (Plan 1)
 - Produces:
   - `SocketIOService(db).sio` — server Socket.IO
   - Sự kiện client gửi lên: `send_message` với `{"message": str}`
@@ -111,24 +111,6 @@ async def test_empty_message_is_ignored(service, test_db):
     user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
     await service.handle_message(sid="s1", user=user, message="   ")
     assert service.sio.events() == []
-
-
-async def test_memory_is_saved_after_the_answer_not_before(service, test_db, monkeypatch):
-    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
-    order = []
-
-    async def fake_turn(db, u, question):
-        yield AgentEvent("complete", {"answer": "Dạ được ạ"})
-        order.append("answered")
-
-    async def fake_save(db, user_id, question, answer):
-        order.append("saved")
-
-    monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
-    monkeypatch.setattr("app.services.socketio_service.save_memory", fake_save)
-
-    await service.handle_message(sid="s1", user=user, message="hỏi")
-    assert order == ["answered", "saved"]
 ```
 
 - [ ] **Step 3: Chạy test để xác nhận fail**
@@ -145,7 +127,6 @@ import socketio
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph import run_turn
-from app.agents.booking_graph.confirm import save_memory
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import verify_token
@@ -235,10 +216,6 @@ class SocketIOService:
             )
             return
 
-        # Ghi memory SAU khi khách đã nhận câu trả lời — không cộng vào thời gian chờ.
-        if answer:
-            await save_memory(self.db, str(user.id), question, answer)
-
     async def emit_to_user(self, user_id: str, event: str, data: dict) -> None:
         await self.sio.emit(event, data, room=self._room(user_id))
 
@@ -293,7 +270,7 @@ Expected: PASS toàn bộ
 - [ ] **Step 8: Kiểm tay đầu-cuối**
 
 ```bash
-docker compose up -d mongo postgres
+docker compose up -d mongo
 uvicorn main:app --reload
 ```
 

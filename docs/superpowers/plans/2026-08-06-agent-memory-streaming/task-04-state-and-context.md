@@ -6,10 +6,10 @@
 - Create: `app/agents/booking_graph/__init__.py`, `app/agents/booking_graph/state.py`, `app/agents/booking_graph/context.py`, `tests/test_context_block.py`
 
 **Interfaces:**
-- Consumes: `ShopStatusView` (Plan 1 task 8), `Appointment` (Plan 1 task 7), `User` (Plan 1 task 4), `to_local` (Plan 1 task 3), `recall` (task 2), `ConversationService` (task 3)
+- Consumes: `ShopStatusView` (Plan 1 task 8), `Appointment` (Plan 1 task 7), `User` (Plan 1 task 4), `to_local` (Plan 1 task 3), `ConversationService` (task 3)
 - Produces:
   - `state.py`: `GraphState` (TypedDict)
-  - `context.py`: `build_context_block(user, status, upcoming, memories) -> str`, `load_context(db, user, question) -> dict`, `format_vi_datetime(dt) -> str`
+  - `context.py`: `build_context_block(user, status, upcoming) -> str`, `load_context(db, user, question) -> dict`, `format_vi_datetime(dt) -> str`
 
 - [ ] **Step 1: Viết test (sẽ fail)**
 
@@ -64,7 +64,7 @@ def test_the_date_line_comes_first():
 
 
 def test_block_contains_the_real_name_from_the_database():
-    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], [])
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
     assert "Nguyễn Thị Lan" in block
     assert "0912345678" in block
 
@@ -101,27 +101,20 @@ def test_busy_status_gives_a_finish_TIME_not_a_countdown():
 
 
 def test_free_status_is_written_in_words():
-    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], [])
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
     assert "rảnh" in block.lower()
 
 
 def test_upcoming_appointments_appear_with_vietnamese_dates():
     block = build_context_block(
-        a_user(), ShopStatusView(is_busy=False), [an_appointment()], []
+        a_user(), ShopStatusView(is_busy=False), [an_appointment()]
     )
     assert "làm tóc" in block
     assert "Thứ Sáu" in block  # 7/8/2026 là Thứ Sáu
 
 
-def test_memories_are_included_but_clearly_separated():
-    block = build_context_block(
-        a_user(), ShopStatusView(is_busy=False), [], ["thích đặt buổi sáng"]
-    )
-    assert "thích đặt buổi sáng" in block
-
-
 def test_no_upcoming_appointments_is_stated_explicitly():
-    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], [])
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
     assert "chưa có lịch" in block.lower()
 
 
@@ -151,7 +144,6 @@ class GraphState(TypedDict, total=False):
     messages: Annotated[List[AnyMessage], add_messages]
     user_id: str
     context_block: str
-    recalled: List[str]
     pending_confirmation: Optional[Dict[str, Any]]
     route: str
     answer: str
@@ -167,7 +159,6 @@ from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import now_utc, to_local
-from app.memory import recall
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
 from app.models.user import User
@@ -196,7 +187,6 @@ def build_context_block(
     user: User,
     status: ShopStatusView,
     upcoming: List[Appointment],
-    memories: List[str],
     now: Optional[datetime] = None,
 ) -> str:
     """Khối bối cảnh dựng hoàn toàn bằng code — LLM không bao giờ sinh ra nó.
@@ -236,14 +226,6 @@ def build_context_block(
     else:
         lines.append("Khách chưa có lịch nào sắp tới.")
 
-    if memories:
-        lines.append("Ghi nhớ về khách (có thể không chính xác):")
-        lines.extend(f"  - {m}" for m in memories)
-
-    lines.append(
-        "Nếu phần ghi nhớ mâu thuẫn với tên và số điện thoại ở trên, "
-        "hãy tin phần trên — đó là dữ liệu thật từ hệ thống."
-    )
     return "\n".join(lines)
 
 
@@ -252,17 +234,15 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     conversations = ConversationService(db)
     user_id = str(user.id)
 
-    status, upcoming, history, memories, pending = await asyncio.gather(
+    status, upcoming, history, pending = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
         conversations.history(user_id),
-        recall(user_id, question, limit=5),
         conversations.get_pending(user_id),
     )
 
     return {
-        "context_block": build_context_block(user, status, upcoming, memories),
-        "recalled": memories,
+        "context_block": build_context_block(user, status, upcoming),
         "history": history,
         "pending_confirmation": pending,
     }

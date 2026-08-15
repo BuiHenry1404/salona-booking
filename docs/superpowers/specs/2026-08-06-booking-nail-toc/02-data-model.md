@@ -80,34 +80,6 @@ Hệ quả: giờ đặt được làm tròn về bội số 15 phút. Điều n
 
 `find_free_slots` chỉ trả về các mốc nằm trong `shop_hours`, không rơi vào `closed_days`, và không ở quá khứ.
 
-## Postgres + pgvector (do Mem0 quản lý)
-
-Không tự thiết kế bảng. Mem0 tạo và quản lý collection trong Postgres; app chỉ cung cấp cấu hình kết nối và số chiều vector.
-
-```python
-config = {
-    "llm":      {"provider": "azure_openai", "config": {
-                    "model": settings.azure_openai_model,
-                    "azure_kwargs": {...}}},
-    "embedder": {"provider": "azure_openai", "config": {
-                    "model": "text-embedding-3-small",
-                    "azure_kwargs": {...}}},
-    "vector_store": {"provider": "pgvector", "config": {
-                    "host": ..., "port": 5432, "dbname": ...,
-                    "user": ..., "password": ...,
-                    "collection_name": "salon_memories",
-                    "embedding_model_dims": 1536,
-                    "hnsw": True}},
-}
-memory = Memory.from_config(config)
-```
-
-Mọi lời gọi đều truyền `user_id`, nên memory của người này không bao giờ rò sang người khác.
-
-**Cạm bẫy bắt buộc ghi vào README.** `embedding_model_dims` phải khớp chính xác với số chiều của model embedding. Nếu lệch, pgvector **im lặng nuốt lỗi ghi**: API trả về thành công kèm memory ID nhưng không có gì được lưu — rất khó phát hiện. Không có đường migrate tại chỗ; đổi model embedding thì phải xóa volume và tạo lại dữ liệu.
-
-Hai biện pháp phòng: đặt `AZURE_OPENAI_EMBEDDING_MODEL` và `EMBEDDING_DIMS` cạnh nhau trong `.env.example` kèm chú thích cảnh báo; và khi khởi động app, embed thử một chuỗi rồi so độ dài vector với `EMBEDDING_DIMS`, lệch thì ghi log lỗi rõ ràng.
-
 ## Múi giờ
 
 Lưu UTC trong DB. Hiển thị và diễn giải ngôn ngữ tự nhiên ("3h chiều mai") theo `Asia/Ho_Chi_Minh`. Việc chuyển đổi tập trung ở một chỗ duy nhất trong service, không rải rác.

@@ -55,17 +55,6 @@ class Settings(BaseSettings):
     # Bắt buộc có giá trị thật trước khi chạy production.
     shop_phone: str
 
-    # Postgres (memory ngữ nghĩa — dùng ở Plan 2)
-    postgres_uri: Optional[str] = None
-    # CẢNH BÁO: hai giá trị dưới phải khớp nhau.
-    # Lệch số chiều thì pgvector IM LẶNG nuốt lỗi ghi — không có đường migrate,
-    # phải xóa volume và tạo lại dữ liệu.
-    embedding_dims: int
-    azure_openai_embedding_model: str
-    # Trên Azure, tên deployment do người tạo đặt và thường KHÁC tên model.
-    # Để trống thì lấy tên model làm tên deployment.
-    azure_openai_embedding_deployment: Optional[str] = None
-
     # Langfuse — để trống thì tắt trace
     langfuse_public_key: Optional[SecretStr] = None
     langfuse_secret_key: Optional[SecretStr] = None

@@ -22,7 +22,7 @@ Thiết kế: [`docs/superpowers/specs/2026-08-06-booking-nail-toc/`](docs/super
 
 ```bash
 cp .env.example .env      # điền MONGO_URI, JWT_SECRET, API_KEY
-docker compose up -d mongo postgres
+docker compose up -d mongo
 uvicorn main:app --reload
 ```
 
@@ -58,10 +58,6 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 **Đúng 1 worker.** Không truyền `--workers`, không dùng `gunicorn -w N`, không scale container lên nhiều replica: bot Telegram (Plan 3) dùng long polling, và Telegram chỉ chấp nhận một kết nối `getUpdates` cho mỗi bot token — nhiều tiến trình sẽ đá nhau và nhận 409 Conflict liên tục.
 
-## Cạm bẫy embedding (Plan 2)
-
-`AZURE_OPENAI_EMBEDDING_MODEL` và `EMBEDDING_DIMS` trong `.env` **phải khớp nhau**. Lệch số chiều thì pgvector im lặng nuốt lỗi ghi: API trả về thành công kèm memory ID nhưng không có gì được lưu. Không có đường migrate tại chỗ — đổi model embedding thì phải `docker compose down -v` rồi tạo lại dữ liệu.
-
 ## Test
 
 ```bash
@@ -73,7 +69,7 @@ Cần MongoDB chạy ở `localhost:27017`. Test dùng database riêng `chatbot_
 
 - [ ] **Step 2: Kiểm tra lệnh trong README chạy được**
 
-Run: `docker compose up -d mongo postgres && pytest -v`
+Run: `docker compose up -d mongo && pytest -v`
 Expected: PASS toàn bộ
 
 - [ ] **Step 3: Commit**

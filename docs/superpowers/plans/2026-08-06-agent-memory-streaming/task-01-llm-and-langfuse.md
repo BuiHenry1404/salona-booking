@@ -21,8 +21,6 @@ Thêm vào `requirements.txt`:
 langgraph>=0.2.60
 langchain-openai>=0.2.14
 langchain-core>=0.3.28
-mem0ai>=0.1.40
-psycopg[binary]>=3.2
 langfuse>=3.0
 ```
 

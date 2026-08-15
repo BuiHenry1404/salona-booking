@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Mỗi task là một file riêng; steps dùng checkbox (`- [ ]`).
 
-**Goal:** Khách chat bằng tiếng Việt để hỏi chủ tiệm bận/rảnh và đặt lịch. Agent LangGraph gọi tool bọc quanh service của Plan 1, có memory ngữ nghĩa qua Mem0/pgvector, trace bằng Langfuse, và đẩy token cùng sự kiện tool về giao diện qua Socket.IO.
+**Goal:** Khách chat bằng tiếng Việt để hỏi chủ tiệm bận/rảnh và đặt lịch. Agent LangGraph gọi tool bọc quanh service của Plan 1, trace bằng Langfuse, và đẩy token cùng sự kiện tool về giao diện qua Socket.IO.
 
-**Architecture:** `supervisor` phân loại ý định rồi định tuyến sang `StatusAgent`, `BookingAgent` hoặc `refuse`. Tool **không truy vấn DB**, chỉ bọc mỏng service. Ba tầng trí nhớ tách bạch: danh tính tất định từ JWT, lịch sử hội thoại từ Mongo, ngữ nghĩa từ Mem0. Nhánh tắt `pending_confirmation` cho câu "ừ" đi thẳng vào thực thi, bỏ qua supervisor.
+**Architecture:** `supervisor` phân loại ý định rồi định tuyến sang `StatusAgent`, `BookingAgent` hoặc `refuse`. Tool **không truy vấn DB**, chỉ bọc mỏng service. Hai tầng trí nhớ tách bạch: danh tính tất định từ JWT, lịch sử hội thoại từ Mongo. Không có tầng ngữ nghĩa — xem `CONTEXT.md` mục "Memory: vì sao chỉ hai tầng". Nhánh tắt `pending_confirmation` cho câu "ừ" đi thẳng vào thực thi, bỏ qua supervisor.
 
-**Tech Stack:** LangGraph, langchain-openai (Azure), mem0ai, psycopg, langfuse, python-socketio.
+**Tech Stack:** LangGraph, langchain-openai (Azure), langfuse, python-socketio.
 
 Spec: [`04-agent.md`](../../specs/2026-08-06-booking-nail-toc/04-agent.md) · Lộ trình: [roadmap](../2026-08-06-booking-nail-toc-roadmap.md)
 
@@ -23,7 +23,7 @@ Spec: [`04-agent.md`](../../specs/2026-08-06-booking-nail-toc/04-agent.md) · L�
 - **Bố cục prompt xếp theo độ ổn định:** System (tĩnh, được cache) → Messages (lịch sử) → Message (khối bối cảnh + memory, đổi mỗi lượt) → Message (tin mới). Không nhét khối bối cảnh vào system prompt.
 - **Chỉ stream token mang tag `respond`** — tag gắn cho model của hai subagent, nơi sinh câu trả lời cuối. Token của supervisor và của parser thời gian là JSON; lọt ra màn hình là rác.
 - **Fail-soft cho memory và trace.** `recall` lỗi hoặc quá 2 giây thì trả rỗng. Langfuse lỗi thì nuốt. Không thứ nào được làm hỏng một lượt chat.
-- **Mọi tích hợp ngoài tắt được bằng cách bỏ trống biến env.** Thiếu `POSTGRES_URI` thì memory tắt, thiếu `LANGFUSE_*` thì không trace, app vẫn chạy.
+- **Mọi tích hợp ngoài tắt được bằng cách bỏ trống biến env.** Thiếu `LANGFUSE_*` thì không trace, app vẫn chạy.
 - **Python 3.11+.**
 
 ## Thứ tự task
@@ -31,29 +31,27 @@ Spec: [`04-agent.md`](../../specs/2026-08-06-booking-nail-toc/04-agent.md) · L�
 | # | Task | Sản phẩm | Cần trước |
 |---|---|---|---|
 | 1 | [Phụ thuộc và LLM client](task-01-llm-and-langfuse.md) | `AzureChatOpenAI` factory, `app/core/langfuse.py` tắt được | — |
-| 2 | [Memory adapter](task-02-memory-adapter.md) | `recall()` / `remember()` bọc Mem0, fail-soft, kiểm số chiều lúc khởi động | 1 |
 | 3 | [Hội thoại và lịch sử](task-03-conversation.md) | Lưu tin nhắn, cắt lịch sử theo ngân sách token, `pending_confirmation` | — |
-| 4 | [State và khối bối cảnh](task-04-state-and-context.md) | `GraphState`, `build_context_block()` tất định | 2, 3 |
+| 4 | [State và khối bối cảnh](task-04-state-and-context.md) | `GraphState`, `build_context_block()` tất định | 3 |
 | 4b | [Parser thời gian tiếng Việt](task-04b-timeparse.md) | `parse_vi_time()` — regex đường tắt, LLM đỡ phần còn lại, một lớp chốt | 1 |
 | 5 | [Tool](task-05-tools.md) | 6 tool bọc service, `user_id` đóng kín trong closure | 4b |
 | 6 | [Supervisor và refuse](task-06-supervisor.md) | Định tuyến ý định, chặn câu ngoài chủ đề | 1, 4 |
 | 7 | [Hai subagent](task-07-subagents.md) | `StatusAgent`, `BookingAgent` với vòng lặp tool | 5, 6 |
-| 8 | [Xác nhận và ghi memory](task-08-confirm-and-save.md) | Nhánh tắt `pending_confirmation`, `save_memory` chạy nền | 3, 4 |
+| 8 | [Nhánh xác nhận](task-08-confirm-and-save.md) | Nhánh tắt `pending_confirmation` | 3, 4 |
 | 9 | [Ráp đồ thị và phát sự kiện](task-09-graph-and-events.md) | `astream_events` → 5 sự kiện Socket.IO, lọc theo tag | 6, 7, 8 |
 | 10 | [Socket.IO chat handler](task-10-socketio-chat.md) | Endpoint chat thật, thay handler cũ của template | 9 |
 
-Task 3 độc lập với task 1–2 — chạy song song được. Task 5 giờ cần task 4b.
+Task 3 độc lập với task 1 — chạy song song được. Task 5 giờ cần task 4b.
+
+Số 2 bỏ trống: task memory adapter đã xoá cùng quyết định bỏ Mem0. Giữ nguyên số của các task còn lại vì chúng được tham chiếu chéo ở nhiều chỗ.
 
 Đánh số `4b` thay vì chèn `5` rồi dồn cả loạt: task 5–10 được tham chiếu chéo ở nhiều chỗ, đổi số là phải sửa hết và dễ sót.
 
-## Sáu chỗ dễ sai nhất
+## Ba chỗ dễ sai nhất
 
 1. **Stream nhầm token của supervisor — hoặc của parser.** Gắn `tags=["respond"]` cho model của hai subagent và chỉ chuyển tiếp `on_chat_model_stream` mang tag đó. Model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, nếu không khách sẽ thấy `{"start_at": "2026-08-...` chạy ngang giữa cuộc trò chuyện. Test ở task 4b và task 9.
-2. **Số chiều embedding lệch.** pgvector **im lặng** nuốt lỗi ghi — API trả về thành công kèm memory ID nhưng không lưu gì. Kiểm tra lúc khởi động (task 2).
-3. **Memory rò giữa các user.** Mọi lời gọi Mem0 phải truyền `user_id`. Test cô lập A/B là bắt buộc (task 2).
-4. **Mem0 có thể chỉ có API đồng bộ.** Adapter chạy nó trong threadpool; đừng gọi thẳng trong event loop (task 2).
-5. **Tự thêm lại tool ghi lịch.** Nếu thấy "agent không đặt được lịch trong một lượt" mà thêm `create_appointment` vào bộ tool thì hỏng cả hai lớp bảo vệ: khách mất bước xác nhận, và chuỗi ISO quay lại đi vòng qua model. Test `test_there_is_NO_tool_that_writes_an_appointment` ở task 5 canh chỗ này.
-6. **Nới regex của parser thời gian.** Nó chỉ được trả lời khi câu khớp trọn vẹn; thiếu ngày hoặc thiếu giờ là nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — mà LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` ở task 4b canh chỗ này.
+2. **Tự thêm lại tool ghi lịch.** Nếu thấy "agent không đặt được lịch trong một lượt" mà thêm `create_appointment` vào bộ tool thì hỏng cả hai lớp bảo vệ: khách mất bước xác nhận, và chuỗi ISO quay lại đi vòng qua model. Test `test_there_is_NO_tool_that_writes_an_appointment` ở task 5 canh chỗ này.
+3. **Nới regex của parser thời gian.** Nó chỉ được trả lời khi câu khớp trọn vẹn; thiếu ngày hoặc thiếu giờ là nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — mà LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` ở task 4b canh chỗ này.
 
 ## Kiểm tra sau khi xong
 

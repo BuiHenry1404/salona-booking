@@ -210,8 +210,6 @@ async def run_turn(
 ) -> AsyncIterator[AgentEvent]:
     """Chạy một lượt chat và phát sự kiện theo thứ tự thời gian thực.
 
-    Ghi memory KHÔNG nằm ở đây — nó chạy nền sau khi khách đã nhận câu trả lời
-    (xem task 10), nên lượt LLM trích xuất của Mem0 không cộng vào thời gian chờ.
     """
     from app.agents.booking_graph.context import load_context
 
@@ -231,7 +229,6 @@ async def run_turn(
             "messages": [*history, HumanMessage(content=question)],
             "user_id": user_id,
             "context_block": context["context_block"],
-            "recalled": context["recalled"],
             "pending_confirmation": context["pending_confirmation"],
         }
 

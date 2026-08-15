@@ -4,7 +4,7 @@ Ngăn xếp, ranh giới các tầng, hạ tầng, và bốn sơ đồ. Xem [REA
 
 ## Ngăn xếp
 
-Giữ FastAPI + MongoDB (Motor) + Socket.IO từ template hiện có. Thêm Postgres + pgvector chỉ để chứa memory ngữ nghĩa, truy cập qua thư viện Mem0. Thay AutoGen bằng LangGraph. Thêm Langfuse để trace. Thêm một [bot Telegram](06-telegram.md) cho chủ tiệm, gọi HTTP API trực tiếp bằng `httpx`.
+Giữ FastAPI + MongoDB (Motor) + Socket.IO từ template hiện có. Thay AutoGen bằng LangGraph. Thêm Langfuse để trace. Thêm một [bot Telegram](06-telegram.md) cho chủ tiệm, gọi HTTP API trực tiếp bằng `httpx`.
 
 ## Năm tầng
 
@@ -14,15 +14,12 @@ Giữ FastAPI + MongoDB (Motor) + Socket.IO từ template hiện có. Thêm Post
 | `services/` | Đặt lịch, chặn trùng, trạng thái tiệm, xác thực | Sự tồn tại của LLM |
 | `agents/` | Hội thoại, định tuyến, gọi tool | DB (chỉ đi qua service) |
 | `repositories/` | Truy vấn Mongo | HTTP |
-| `memory/` | Adapter mỏng bọc Mem0 | Phần còn lại của app |
 
 Nguyên tắc quan trọng nhất: **tool của agent là vỏ mỏng bọc quanh service, không tự truy vấn DB**. Nhờ vậy logic chặn trùng giờ chỉ tồn tại một chỗ, dùng chung cho cả đường chat lẫn đường API thường, và kiểm thử được mà không cần LLM.
 
-Module `memory/` phơi ra đúng hai hàm — `remember(user_id, messages)` và `recall(user_id, query, limit)`. Mem0 và Postgres nằm sau interface đó; phần còn lại của app không biết Mem0 hay pgvector tồn tại. Giữ adapter kể cả khi đã dùng thư viện sẵn, vì Mem0 là dự án chuyển động nhanh — thay nó về sau chỉ phải sửa một file.
-
 ## Hạ tầng
 
-`docker-compose.yml` thêm service `postgres` dùng image `pgvector/pgvector:pg16` (đã có sẵn extension `vector`). Giữ `mongo` và `mongo-express`. Mem0 còn giữ một DB nhỏ ghi lịch sử thay đổi memory — phải trỏ vào volume bền vững, nếu không mỗi lần rebuild container là mất.
+`docker-compose.yml` giữ `mongo` và `mongo-express`. Không có kho dữ liệu nào khác — toàn bộ dữ liệu ứng dụng nằm trong Mongo.
 
 Langfuse mặc định dùng **Langfuse Cloud** (chỉ cần `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) — không thêm container. Nếu về sau cần dữ liệu nằm trong nhà thì self-host, nhưng Langfuse v3 kéo theo ClickHouse, Redis và MinIO nên chỉ làm khi thật sự cần.
 
@@ -53,7 +50,6 @@ flowchart TB
         R["api/v1/routers<br/>REST + Socket.IO"]
         BOT["telegram/bot.py<br/>long polling"]
         AG["agents/booking_graph<br/>LangGraph"]
-        MEM["memory/<br/>adapter Mem0"]
         SVC["services/<br/>toàn bộ nghiệp vụ"]
         NOTIF["services/notifications.py<br/>chỗ tỏa tin duy nhất"]
         REPO["repositories/<br/>Motor"]
@@ -61,11 +57,10 @@ flowchart TB
 
     subgraph data["Dữ liệu"]
         MG[("MongoDB<br/>users, appointments<br/>shop_status, conversations")]
-        PG[("Postgres + pgvector<br/>memory ngữ nghĩa")]
     end
 
     subgraph ext["Dịch vụ ngoài"]
-        AZ["Azure OpenAI<br/>LLM + embedding"]
+        AZ["Azure OpenAI<br/>LLM"]
         LF["Langfuse Cloud"]
         TGAPI["Telegram Bot API"]
     end
@@ -80,15 +75,12 @@ flowchart TB
     BOT --> SVC
 
     AG -->|"tool = vỏ mỏng"| SVC
-    AG --> MEM
     AG --> AZ
     AG -.->|trace| LF
 
     SVC --> REPO
     SVC --> NOTIF
     REPO --> MG
-    MEM --> PG
-    MEM --> AZ
 
     NOTIF -.->|Socket.IO| ADM
     NOTIF -.->|Socket.IO| WEB
@@ -133,7 +125,7 @@ flowchart TB
     OUT -.-> SM
 ```
 
-**`load_context` nạp năm thứ song song**, không thứ nào phụ thuộc thứ nào: hồ sơ user, lịch sử chat cắt theo ngân sách 1.500 token, lịch sắp tới, `shop_status`, và `recall()` từ Mem0.
+**`load_context` nạp bốn thứ song song**, không thứ nào phụ thuộc thứ nào: hồ sơ user, lịch sử chat cắt theo ngân sách 1.500 token, lịch sắp tới, và `shop_status`.
 
 **Nhánh tắt `pending_confirmation`** là chi tiết quan trọng nhất trong sơ đồ này. Khi AI vừa hỏi "3h chiều Thứ Năm đúng không cô?" ở lượt trước, câu "ừ" của khách đi thẳng vào BookingAgent mà **không qua supervisor** — tiết kiệm một lượt LLM và loại bỏ hẳn khả năng AI hỏi xác nhận vòng vo. Cờ hết hạn sau 10 phút, quá đó thì phải hỏi lại vì nhiều khả năng khách đã chuyển sang chuyện khác.
 
@@ -150,10 +142,6 @@ flowchart LR
         HIS["messages, cắt theo<br/>ngân sách 1.500 token<br/><b>lịch sử hội thoại</b>"]
     end
 
-    subgraph prob["Xác suất — có thể sai"]
-        VEC["Mem0 + pgvector<br/><b>ngữ nghĩa</b>"]
-    end
-
     subgraph prompt["Prompt gửi lên LLM — xếp theo độ ổn định"]
         direction TB
         P1["<b>System</b><br/>hướng dẫn tĩnh + schema tool<br/><i>được cache</i>"]
@@ -165,7 +153,6 @@ flowchart LR
 
     JWT -->|tên, SĐT| BLOCK
     BLOCK["Khối bối cảnh<br/><i>dựng bằng code,<br/>LLM không sinh ra</i>"] --> P3
-    VEC -->|"top-5, lọc theo user_id"| P3
     HIS -->|nguyên văn| P2
 
     prompt --> LLM(["LLM"])
@@ -199,17 +186,12 @@ sequenceDiagram
     participant G as LangGraph
     participant S as services
     participant M as MongoDB
-    participant V as Mem0/pgvector
     participant AZ as Azure OpenAI
 
     Note over K,AZ: Lượt 1 — hiểu ý và hỏi xác nhận
     K->>API: "mai 3h chiều làm tóc được không con"
     API->>G: state + user_id lấy từ JWT
-    par load_context — chạy song song
-        G->>M: hồ sơ, lịch sử chat, lịch sắp tới, shop_status
-    and
-        G->>V: recall(user_id, câu hỏi)
-    end
+    G->>M: load_context — hồ sơ, lịch sử chat, lịch sắp tới, shop_status
     G->>AZ: supervisor — phân loại ý định
     AZ-->>G: route = BookingAgent
     G->>AZ: BookingAgent + bộ tool
@@ -235,7 +217,7 @@ sequenceDiagram
 
 Ba thứ khó diễn đạt bằng văn xuôi mà sơ đồ này cho thấy ngay:
 
-- **Chỗ nào chạy song song** — `load_context` gom Mongo và Mem0 cùng lúc, nên memory không cộng thêm độ trễ.
+- **Chỗ nào chạy song song** — `load_context` gom mọi truy vấn Mongo cùng lúc, nên nạp bối cảnh không cộng thêm độ trễ.
 - **Chỗ nào chặn trùng** — không phải ở tầng ứng dụng mà ở đúng lệnh `insert`, do unique partial index. Nguyên tử, không cần transaction, không cần khóa.
 - **Chỗ nào nằm sau lúc khách đã nhận trả lời** — thông báo cho chủ tiệm và ghi memory đều chạy nền. Đường đi mà khách cảm nhận chỉ là 2 lượt LLM ở lượt 1, và **0 lượt** ở lượt 2 nhờ nhánh tắt xác nhận.
 
@@ -245,7 +227,6 @@ Nguyên tắc phân tuyến: thứ gì khách không thể làm gì được th�
 
 | Thành phần chết | Hậu quả |
 |---|---|
-| pgvector / Mem0 | `recall` trả rỗng, chat chạy bình thường, mất phần cá nhân hóa |
 | Langfuse | Nuốt lỗi, không ai biết |
 | Telegram | Ghi log; đặt lịch vẫn thành công, chủ tiệm vẫn thấy trên web |
 | Azure OpenAI | "Máy đang bận chút xíu", hiện nút gọi điện cho tiệm |
