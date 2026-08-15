@@ -1,0 +1,72 @@
+from app.agents.booking_graph.events import (RESPOND_TAG, AgentEvent,
+                                             translate_langchain_event)
+
+
+def lc_event(name, tags=None, **rest):
+    return {"event": name, "tags": tags or [], "name": rest.pop("node_name", "x"), **rest}
+
+
+def test_token_from_the_respond_node_is_forwarded():
+    class Chunk:
+        content = "Dạ"
+
+    events = translate_langchain_event(
+        lc_event("on_chat_model_stream", tags=[RESPOND_TAG], data={"chunk": Chunk()})
+    )
+    assert [(e.type, e.data["text"]) for e in events] == [("token", "Dạ")]
+
+
+def test_token_from_the_supervisor_is_dropped():
+    """Token của supervisor là JSON định tuyến — lọt ra màn hình là rác chạy ngang."""
+    class Chunk:
+        content = "booking"
+
+    assert translate_langchain_event(
+        lc_event("on_chat_model_stream", tags=["supervisor"], data={"chunk": Chunk()})
+    ) == []
+
+
+def test_token_without_any_tag_is_dropped():
+    class Chunk:
+        content = "?"
+
+    assert translate_langchain_event(
+        lc_event("on_chat_model_stream", tags=[], data={"chunk": Chunk()})
+    ) == []
+
+
+def test_empty_token_is_dropped():
+    class Chunk:
+        content = ""
+
+    assert translate_langchain_event(
+        lc_event("on_chat_model_stream", tags=[RESPOND_TAG], data={"chunk": Chunk()})
+    ) == []
+
+
+def test_tool_start_becomes_tool_started_with_the_raw_name():
+    """Backend gửi tên thô; dịch sang tiếng Việt là việc của frontend."""
+    events = translate_langchain_event(lc_event("on_tool_start", node_name="find_free_slots"))
+    assert [(e.type, e.data["name"]) for e in events] == [("tool_started", "find_free_slots")]
+
+
+def test_tool_end_becomes_tool_finished_ok():
+    events = translate_langchain_event(lc_event("on_tool_end", node_name="find_free_slots"))
+    assert events[0].type == "tool_finished"
+    assert events[0].data == {"name": "find_free_slots", "ok": True}
+
+
+def test_tool_error_becomes_tool_finished_not_ok():
+    events = translate_langchain_event(lc_event("on_tool_error", node_name="propose_appointment"))
+    assert events[0].data == {"name": "propose_appointment", "ok": False}
+
+
+def test_unrelated_events_produce_nothing():
+    assert translate_langchain_event(lc_event("on_chain_start")) == []
+    assert translate_langchain_event(lc_event("on_retriever_end")) == []
+
+
+def test_agent_event_is_json_serialisable():
+    import json
+    event = AgentEvent(type="token", data={"text": "Dạ"})
+    assert json.loads(json.dumps(event.data)) == {"text": "Dạ"}
