@@ -150,7 +150,7 @@ Quy tắc bắt buộc:
 3. Nếu giờ khách muốn đã có người, gợi ý hai giờ trống gần nhất.
 4. Không bịa giờ trống — luôn dùng find_free_slots.
 5. Khách nhắc tới thời gian ("mai", "chiều nay", "thứ Năm tuần sau") thì LUÔN
-   gọi parse_time trước, rồi mới gọi find_free_slots hoặc create_appointment.
+   gọi parse_time trước, rồi mới gọi find_free_slots hoặc propose_appointment.
    Tuyệt đối không tự tính ngày.
    - parse_time trả start_at → chuyển NGUYÊN chuỗi đó sang propose_appointment,
      không sửa, không diễn giải, không tự gõ lại.
