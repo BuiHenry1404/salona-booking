@@ -7,6 +7,16 @@
 # Key của project được tạo sẵn bằng LANGFUSE_INIT_* nên không phải bấm qua UI;
 # chép hai khoá đó vào .env là xong. Toàn bộ mật khẩu ở đây là mật khẩu dev,
 # stack này không được mở ra ngoài máy.
+#
+# LANGFUSE_INIT_* KHÔNG tạo được đơn giá model, mà thiếu nó thì mọi trace hiện
+# 0đ. Dựng lại stack từ đầu thì chạy thêm (giá USD cho MỖI token, không phải 1M):
+#
+#   curl -u pk-lf-salon-dev:sk-lf-salon-dev -X POST localhost:3100/api/public/models \
+#     -H 'Content-Type: application/json' \
+#     -d '{"modelName":"gpt-5.4-mini","matchPattern":"(?i)^(gpt-5\\.4-mini)$",
+#          "unit":"TOKENS","inputPrice":0.00000075,"outputPrice":0.0000045,
+#          "tokenizerId":"openai",
+#          "tokenizerConfig":{"tokensPerMessage":3,"tokensPerName":1,"tokenizerModel":"gpt-4o"}}'
 
 services:
   langfuse-web:

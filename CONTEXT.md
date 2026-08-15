@@ -21,6 +21,8 @@ Ba mặt tiếp xúc:
 
 **Langfuse tự dựng:** `docker compose -f docker-compose.langfuse.yml up -d` → http://localhost:3100 (`dev@salon.local` / `langfuse123`). Key project được tạo sẵn bằng `LANGFUSE_INIT_*` nên không phải bấm qua UI. Đã xác nhận trace lên đúng: `userId` và `sessionId` có giá trị (tức tiền tố `langfuse_` trong `get_trace_metadata` đúng), và một trace chứa đủ `__start__ → route_from_state → supervisor → AzureChatOpenAI → refuse`. Gói `langchain` là **bắt buộc** cho phần này — `langfuse.langchain` import nó chứ không chỉ langchain-core, thiếu thì trace tắt im lặng.
 
+Chi phí chỉ hiện khi có **model definition** khớp tên model; `gpt-5.4-mini` không nằm trong bảng dựng sẵn của server nên ban đầu mọi trace hiện 0đ dù token đếm đúng. Đơn giá đã seed ($0.75/1M input, $4.50/1M output) — lệnh tạo lại nằm ở đầu `docker-compose.langfuse.yml`. Định nghĩa chỉ áp cho trace **mới**, trace cũ vẫn 0đ.
+
 **Hai cạm bẫy cấu hình Azure** (mất thời gian nhất khi dựng):
 - `AZURE_OPENAI_ENDPOINT` phải là URL **gốc** của resource, không kèm `/openai/v1`. `AzureChatOpenAI` tự nối `/openai/deployments/<deployment>/chat/completions`; thêm đuôi vào là Azure trả `404 Resource not found`.
 - `AZURE_OPENAI_DEPLOYMENT` là tên **deployment**, không phải tên model — và Settings không đọc biến `AZURE_OPENAI_DEPLOYMENT_NAME` mà nhiều máy export sẵn. Để trống thì code lấy tạm `AZURE_OPENAI_MODEL` và cũng ra 404.
