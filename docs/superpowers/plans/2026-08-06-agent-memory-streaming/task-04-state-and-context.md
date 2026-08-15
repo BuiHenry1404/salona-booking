@@ -40,6 +40,11 @@ def an_appointment():
     )
 
 
+# `build_context_block` không còn tham số `memories`: tầng ngữ nghĩa đã bỏ cùng
+# Mem0 (xem README, "số 2 bỏ trống"). Câu "tin phần này" vẫn giữ — nó chống cả
+# chuyện model nhặt nhầm tên từ lịch sử chat.
+
+
 def test_block_tells_the_model_what_day_it_is_today():
     """Không có dòng này thì "mai 3h chiều" là câu không giải được.
 
@@ -49,7 +54,7 @@ def test_block_tells_the_model_what_day_it_is_today():
     nên không có gì để chặn.
     """
     now = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)
-    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], [], now=now)
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], now=now)
 
     assert "2026-08-07" in block          # dạng máy, để model tự cộng ngày
     assert "Thứ Sáu" in block             # dạng người, để model nói lại cho khách
@@ -59,7 +64,7 @@ def test_block_tells_the_model_what_day_it_is_today():
 def test_the_date_line_comes_first():
     """Đứng cuối khối thì model hay bỏ qua khi khối dài."""
     now = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)
-    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], [], now=now)
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], now=now)
     assert block.splitlines()[0].startswith("Bây giờ là")
 
 
@@ -69,15 +74,10 @@ def test_block_contains_the_real_name_from_the_database():
     assert "0912345678" in block
 
 
-def test_block_wins_over_contradicting_memory():
-    """Bảo vệ chống lỗi gọi nhầm tên: vector search là truy hồi xác suất, nó có
-    thể trả về memory của người khác. Prompt phải nói rõ tin khối bối cảnh."""
-    block = build_context_block(
-        a_user("Nguyễn Thị Lan"),
-        ShopStatusView(is_busy=False),
-        [],
-        ["Khách tên là Trần Văn Bảy"],
-    )
+def test_block_says_it_outranks_anything_else_in_the_prompt():
+    """Bảo vệ chống lỗi gọi nhầm tên: lịch sử chat có thể chứa tên người khác
+    (khách nhắc tên con cháu). Khối này phải tự tuyên bố là nguồn đúng."""
+    block = build_context_block(a_user("Nguyễn Thị Lan"), ShopStatusView(is_busy=False), [])
     assert "Nguyễn Thị Lan" in block
     assert "tin phần" in block.lower() or "ưu tiên" in block.lower()
 
@@ -92,7 +92,7 @@ def test_busy_status_gives_a_finish_TIME_not_a_countdown():
             busy_until=datetime(2026, 8, 7, 15, 30, tzinfo=TZ),
             minutes_left=30,
         ),
-        [], [],
+        [],
         now=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
     )
     assert "bận" in block.lower()
@@ -191,9 +191,9 @@ def build_context_block(
 ) -> str:
     """Khối bối cảnh dựng hoàn toàn bằng code — LLM không bao giờ sinh ra nó.
 
-    Đây là nguồn duy nhất cho danh tính khách. Memory ngữ nghĩa chỉ được bổ sung
-    sở thích, không được ghi đè tên. Đặt sát cuối prompt (không phải trong system
-    prompt) để giữ tiền tố ổn định cho prompt caching.
+    Đây là nguồn duy nhất cho danh tính khách; không gì trong prompt được ghi đè
+    nó. Đặt sát cuối prompt (không phải trong system prompt) để giữ tiền tố ổn
+    định cho prompt caching.
     """
     local_now = to_local(now or now_utc())
 
@@ -225,6 +225,12 @@ def build_context_block(
             lines.append(f"  - {format_vi_datetime(appt.start_at)}{note}")
     else:
         lines.append("Khách chưa có lịch nào sắp tới.")
+
+    # Dòng chốt: nếu lịch sử chat nói khác (khách nhắc tên con cháu, nhắc một
+    # giờ hẹn đã đổi), thì phần này mới là đúng.
+    lines.append(
+        "Nếu có gì trong cuộc trò chuyện mâu thuẫn với phần trên, hãy tin phần trên."
+    )
 
     return "\n".join(lines)
 
