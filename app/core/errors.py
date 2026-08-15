@@ -38,6 +38,18 @@ class NotFoundError(AppError):
     message = "Không tìm thấy"
 
 
+class InvalidRefreshTokenError(AppError):
+    """Refresh token sai, hết hạn, đã bị thu hồi, hoặc bị phát lại.
+
+    Cố ý dùng CHUNG một thông báo cho mọi nguyên nhân: phân biệt "token không
+    tồn tại" với "token đã bị thu hồi" là nói cho kẻ tấn công biết nó đoán trúng
+    tới đâu.
+    """
+
+    status_code = 401
+    message = "Phiên đăng nhập đã hết hạn, cô chú đăng nhập lại giúp con nhé"
+
+
 class ForbiddenError(AppError):
     status_code = 403
     message = "Không có quyền"

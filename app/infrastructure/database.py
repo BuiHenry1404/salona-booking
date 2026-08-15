@@ -77,6 +77,12 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db["appointments"].create_index("start_at")
     await db["appointments"].create_index([("user_id", 1), ("start_at", 1)])
 
+    # TTL tự dọn token hết hạn; unique để hai token không bao giờ trùng hash.
+    await db["refresh_tokens"].create_index("token_hash", unique=True)
+    await db["refresh_tokens"].create_index("expires_at", expireAfterSeconds=0)
+    await db["refresh_tokens"].create_index("family_id")
+    await db["refresh_tokens"].create_index("user_id")
+
     await db["rate_limits"].create_index("expires_at", expireAfterSeconds=0)
     await db["rate_limits"].create_index([("key", 1), ("created_at", 1)])
 

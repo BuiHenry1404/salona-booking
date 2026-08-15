@@ -170,7 +170,6 @@ Bốn plan chỉ lo *phần mềm chạy đúng*. Phần vận hành chưa có t
 
 **Đáng sửa, chưa chặn đường:**
 
-- `JWT_EXPIRE_MINUTES=30` — bắt khách lớn tuổi đăng nhập lại mỗi nửa tiếng là họ bỏ app. Chưa có refresh token. Cần quyết lại con số.
 - **Throttle toàn cục chống flood** — giới hạn request mỗi IP cho *mọi* endpoint, đếm trong RAM (token bucket), không chạm Mongo. Cố ý để tới Plan 5 vì nó phụ thuộc mục 7 (chưa có proxy), vì nginx có thể làm tốt hơn tầng ứng dụng, và vì bật sớm thì bộ test e2e sẽ đỏ vì 429 chứ không phải vì code sai. Kèm theo:
   - Hàm lấy IP dùng chung, đọc `X-Forwarded-For` **chỉ khi** `TRUST_PROXY_HEADERS=true`, lấy phần tử thứ `TRUSTED_PROXY_COUNT + 1` từ phải sang — phần bên trái do client tự gửi nên giả mạo được. Tin header này khi chưa có proxy thật là tự vô hiệu hoá rate limit. Hàm này thay `request.client.host` ở `auth.py` và middleware log, chỗ mà sau proxy luôn ra IP proxy nên không lần ra được ai.
   - Miễn trừ `/api/v1/health/*`: Docker `HEALTHCHECK` gọi mỗi 30 giây, để nó ăn quota thì lúc bị flood health check trượt và Docker tự giết container. Phải sửa mục 5 trước thì phần này mới kiểm chứng được.
@@ -197,9 +196,18 @@ Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không ch�
 
 **Cố ý KHÔNG vá — `reset-password` phân biệt 204 / 404.** Đúng là nó cho phép dò xem SĐT nào có tài khoản. Cách vá thường thấy là luôn trả 204, nhưng ở luồng này thì **hại nhiều hơn lợi**: endpoint không gửi mã xác thực mà **đổi mật khẩu ngay**, nên 204 cho một SĐT không tồn tại nghĩa là nói với khách "đổi xong rồi" trong khi không có gì đổi cả — rồi họ không đăng nhập được và không hiểu vì sao. Với khách lớn tuổi, đó là thiệt hại chắc chắn đổi lấy một rủi ro nhỏ đã bị rate limit 5 lần/giờ chặn. Luôn-trả-204 chỉ hợp với luồng "đã gửi mã cho bạn", không hợp với luồng "đã đổi xong".
 
-**Còn nợ:**
+**Đã vá — refresh token có xoay vòng.** Đăng nhập trả về cặp `access_token` (30 phút) + `refresh_token` (30 ngày). `POST /auth/refresh` đổi lấy cặp mới và **xoay**: token cũ bị đánh dấu đã dùng. `POST /auth/logout` xoá cả phiên.
 
-- `JWT_EXPIRE_MINUTES=30` và chưa có refresh token — xem mục "Chưa có" ở trên.
+Bốn điểm đáng nhớ:
+
+- **Refresh token là chuỗi ngẫu nhiên, không phải JWT.** Nó phải tra được trong DB để thu hồi; đã tra DB thì JWT không thêm gì ngoài độ phức tạp.
+- **Chỉ lưu hash (SHA-256).** DB rò rỉ không được tương đương trao phiên đăng nhập. Không dùng bcrypt vì đây là bí mật ngẫu nhiên 256 bit, không có gì để dò, mà bcrypt lại không tra được bằng đúng giá trị.
+- **`family_id` gom mọi token xoay ra từ một lần đăng nhập.** Phát hiện phát lại thì xoá cả family — đá đúng một phiên, không đụng máy khác của cùng khách.
+- **Cửa sổ ân hạn 10 giây** (`REFRESH_GRACE_SECONDS`). Không có nó thì chính cơ chế xoay vòng tự tạo lỗi: điện thoại mạng chập chờn bắn hai request song song lúc access token hết hạn, cả hai cùng trình một token, cái thứ hai trông y hệt token bị đánh cắp và khách bị đăng xuất dù không ai tấn công. Trong ân hạn, lần dùng lại cấp **một cặp mới** trong cùng family chứ không phát lại đúng cặp cũ — phát lại cặp cũ đòi lưu token thô, tức bỏ đi chính lý do phải băm.
+
+Đổi mật khẩu xoá **mọi** refresh token của user. Thiếu bước đó thì vá `token_version` là vô nghĩa: kẻ chiếm tài khoản vẫn tự cấp access token mới bằng refresh token cũ.
+
+**Còn nợ:** không còn món nào từ đợt rà bảo mật.
 
 **Đã kiểm và không có vấn đề:** NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 

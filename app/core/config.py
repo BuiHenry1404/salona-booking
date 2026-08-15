@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr
     jwt_algorithm: str
     jwt_expire_minutes: int
+    refresh_token_days: int
     api_key: SecretStr
     login_max_attempts: int
     login_window_seconds: int
