@@ -8,7 +8,7 @@
 - Create: `tests/test_conversation.py`
 
 **Interfaces:**
-- Consumes: `now_utc` (Plan 1 task 3)
+- Consumes: `now_utc`, `local_day_bounds` (Plan 1 task 3)
 - Produces:
   - `ChatMessage(role: Literal["user","assistant"], content: str, created_at: datetime)`
   - `Conversation(user_id: str, messages: list[ChatMessage], pending_confirmation: dict | None)`
@@ -79,6 +79,34 @@ async def test_history_keeps_the_most_recent_messages(test_db):
     assert "tin nhắn số 49" in history[-1].content
 
 
+async def test_history_drops_messages_from_previous_days(test_db):
+    svc = ConversationService(test_db)
+    await svc.append("u1", "user", "chuyện của ba tuần trước")
+    await svc.append("u1", "user", "hôm nay muốn đặt lịch")
+    stale = now_utc() - timedelta(days=21)
+    await test_db["conversations"].update_one(
+        {"user_id": "u1"}, {"$set": {"messages.0.created_at": stale}}
+    )
+
+    history = await svc.history("u1")
+    assert [m.content for m in history] == ["hôm nay muốn đặt lịch"]
+
+
+async def test_history_keeps_the_last_half_hour_across_midnight(test_db):
+    """Khách nhắn 23:58, AI hỏi xác nhận, khách đáp "ừ" lúc 00:01 — câu "ừ"
+    không được mất ngữ cảnh chỉ vì đồng hồ sang ngày."""
+    svc = ConversationService(test_db)
+    await svc.append("u1", "assistant", "3 giờ chiều Thứ Năm đúng không cô?")
+    await svc.append("u1", "user", "ừ")
+    just_before_midnight = now_utc() - timedelta(minutes=5)
+    await test_db["conversations"].update_one(
+        {"user_id": "u1"}, {"$set": {"messages.0.created_at": just_before_midnight}}
+    )
+
+    history = await svc.history("u1")
+    assert len(history) == 2
+
+
 async def test_pending_confirmation_round_trip(test_db):
     svc = ConversationService(test_db)
     await svc.set_pending("u1", {"start_at": "2026-08-07T08:00:00+00:00", "note": "làm tóc"})
@@ -129,10 +157,14 @@ class ChatMessage(BaseModel):
 
 
 class Conversation(BaseDocument):
-    """Mỗi khách có đúng một cuộc hội thoại chạy mãi — không chia phiên.
+    """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
 
-    Khách đặt lịch vài tuần một lần, nên cửa sổ trượt theo ngân sách token
-    thường phủ được vài tháng mà vẫn liền mạch.
+    Không có `session_id`. Ranh giới phiên được áp lúc ĐỌC (`history()`), không
+    phải lúc ghi — nhờ vậy đổi quy tắc cắt phiên về sau không cần migrate gì.
+
+    Document phình dần vì tin cũ không bị xoá, chỉ không được nạp. Mongo giới
+    hạn 16MB mỗi document; với vài trăm khách và vài tin mỗi tuần thì còn hàng
+    chục năm mới chạm, nên chưa xử — nhưng đừng quên là nó có trần.
     """
 
     user_id: str
@@ -148,13 +180,17 @@ from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.clock import now_utc
+from app.core.clock import local_day_bounds, now_utc, to_local
 from app.models.conversation import ChatMessage, Conversation
 
 # Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
 # đếm token thật cần tokenizer của model và không đáng cho việc này.
 CHARS_PER_TOKEN = 3
 DEFAULT_TOKEN_BUDGET = 1500
+
+# Tin trong ngần này phút luôn được giữ, kể cả khi đã sang ngày mới — xem
+# `ConversationService.history`.
+CARRY_OVER_MINUTES = 30
 
 
 class ConversationService:
@@ -186,16 +222,47 @@ class ConversationService:
     async def history(
         self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET
     ) -> List[ChatMessage]:
-        """Lấy ngược từ tin mới nhất cho tới khi chạm trần ngân sách.
+        """Lịch sử của PHIÊN HÔM NAY, cắt thêm theo ngân sách token.
 
-        Cắt theo token chứ không theo số lượt: một khách nói dài dòng chiếm gấp
-        nhiều lần một khách nói cộc lốc, nên đếm lượt là sai đơn vị.
+        Hai lớp cắt, cả hai đều cần:
+
+        1. **Theo ngày** — chỉ nạp tin của ngày hôm nay theo giờ Việt Nam. Lịch
+           sử chat chỉ dùng để hiểu các tham chiếu trong cùng mạch nói ("giờ đó",
+           "ừ", "đổi giúp cô"); những thứ đó không có nghĩa sau vài tuần. Mọi
+           thông tin bền của khách — tên, SĐT, lịch sắp tới, trạng thái tiệm —
+           đã nằm trong khối bối cảnh dựng bằng code ở mỗi lượt, không lấy từ
+           đây. Giữ lịch sử vài tháng chỉ tốn token và khiến model tưởng chuyện
+           tháng trước vừa mới xảy ra, vì prompt KHÔNG mang mốc thời gian của
+           từng tin.
+
+           Cắt theo giờ Việt Nam chứ không theo UTC: nửa đêm UTC là 7 giờ sáng ở
+           VN, cắt đúng giữa buổi làm việc.
+
+        2. **Theo ngân sách token** — một khách nói dài dòng chiếm gấp nhiều lần
+           một khách nói cộc lốc, nên đếm lượt là sai đơn vị.
+
+        Ngoại lệ nửa đêm: mọi tin trong 30 phút gần nhất luôn được giữ, kể cả khi
+        chúng thuộc hôm qua. Không có nó thì khách nhắn 23:58, AI hỏi xác nhận,
+        khách đáp "ừ" lúc 00:01 — và câu "ừ" mất sạch ngữ cảnh.
+
+        Ranh giới là NGÀY TRÔI QUA, không phải lần đăng nhập. Đăng nhập do vòng
+        đời cookie quyết định (30 ngày), không phải một mốc có nghĩa trong hội
+        thoại: khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói, còn
+        khách giữ đăng nhập nửa năm thì không bao giờ có ranh giới nào.
         """
         doc = await self.collection.find_one({"user_id": user_id})
         if not doc:
             return []
 
-        messages = [ChatMessage(**m) for m in doc.get("messages", [])]
+        day_start, _ = local_day_bounds(to_local(now_utc()).date())
+        carry_over = now_utc() - timedelta(minutes=CARRY_OVER_MINUTES)
+        cutoff = min(day_start, carry_over)
+
+        messages = [
+            message
+            for message in (ChatMessage(**m) for m in doc.get("messages", []))
+            if message.created_at >= cutoff
+        ]
         kept: List[ChatMessage] = []
         used = 0
         for message in reversed(messages):

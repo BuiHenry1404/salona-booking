@@ -59,7 +59,7 @@ Hai tầng tách bạch. Điểm cốt lõi: **"nhớ user là ai" và "nhớ đ
 | Tầng | Nguồn | Chống được gì | Tính chất |
 |---|---|---|---|
 | 1. Danh tính | JWT + `users` trong Mongo | Gọi nhầm tên, hỏi lại tên/SĐT | Tất định, luôn đúng |
-| 2. Lịch sử hội thoại | `messages` trong Mongo, cắt theo ngân sách token | Lặp trong cùng phiên, hỏi lại thứ vừa nói | Tất định, theo thứ tự |
+| 2. Lịch sử hội thoại | `messages` trong Mongo, cắt theo **ngày** rồi theo ngân sách token | Lặp trong cùng phiên, hỏi lại thứ vừa nói | Tất định, theo thứ tự |
 
 **Không có tầng ngữ nghĩa.** Đã cân nhắc Mem0 + pgvector rồi bỏ: agent chỉ trả lời tiệm bận/rảnh và đặt lịch — hai câu hỏi về trạng thái hiện tại — nên không tool nào cần biết sở thích khách. Cửa sổ trượt 1.500 token của tầng 2 tự nó đã phủ vài tháng với tần suất đặt lịch vài tuần một lần. Lý do đầy đủ và ba điều kiện mở lại: `CONTEXT.md`.
 
@@ -92,6 +92,8 @@ Lịch sử hội thoại đi vào **mảng `messages` thật**, không nhồi t
 **Mỗi lượt gọi chỉ nhận đúng thứ nó cần.** Supervisor chỉ phân loại ý định, nên **không** nhận memory, **không** nhận schema tool, **không** nhận lịch sắp tới — chỉ 4 lượt chat cuối. Riêng việc này cắt lượt supervisor từ ~500 xuống ~200 token.
 
 **Cắt lịch sử theo ngân sách token, không theo số lượt.** Một khách nói dài dòng chiếm gấp nhiều lần một khách nói cộc lốc, nên đếm lượt là sai đơn vị. Lấy ngược từ tin mới nhất cho tới khi chạm trần **1.500 token**, và luôn giữ trọn cặp hỏi–đáp chứ không cắt giữa chừng.
+
+**Một phiên mỗi ngày.** `history()` chỉ nạp tin của ngày hôm nay theo giờ Việt Nam, cộng mọi tin trong 30 phút gần nhất để câu "ừ" lúc 00:01 không mất ngữ cảnh của lượt hỏi lúc 23:58. Prompt **không** mang mốc thời gian của từng tin, nên nạp lịch sử nhiều ngày sẽ khiến model tưởng chuyện tuần trước vừa mới xảy ra. Ranh giới là ngày trôi qua, không phải lần đăng nhập.
 
 **Chống lặp là việc của tầng 2, không phải của memory ngữ nghĩa.** Điều kiện đủ: lịch sử tới tay subagent **giữ trọn cặp hỏi–đáp**. Cắt giữa cặp thì model thấy câu hỏi mà không thấy câu nó đã trả lời, và nói lại từ đầu. Khi gặp lỗi lặp, kiểm theo thứ tự: lịch sử có đủ và đúng cặp chưa → prompt đã dặn chưa → model có quá nhỏ không.
 

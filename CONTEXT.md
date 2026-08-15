@@ -68,6 +68,7 @@ Plan 3 và Plan 4 độc lập nhau, chạy song song được sau Plan 2.
 | Số worker | **Đúng 1** | Telegram chỉ cho một kết nối `getUpdates` mỗi token; nhiều worker → 409 Conflict liên tục |
 | Parser thời gian | Regex đường tắt + LLM + một lớp chốt | Spec riêng `2026-08-08-vi-time-parser-design.md` |
 | Ghi lịch | **Agent không có tool ghi lịch** — chỉ `propose_appointment` giữ chỗ, node `confirm` mới tạo | Quy tắc "xác nhận trước khi ghi" thành ràng buộc cấu trúc, và giá trị đem ghi lấy từ DB chứ không phải chuỗi model gõ lại |
+| Ranh giới hội thoại | **Một phiên mỗi ngày**, cắt theo giờ VN | Lịch sử chat chỉ để hiểu tham chiếu trong cùng mạch nói ("giờ đó", "ừ") — vô nghĩa sau vài tuần. Thông tin bền của khách đã nằm trong khối bối cảnh dựng bằng code. Mốc là **ngày trôi qua, không phải lần đăng nhập**: đăng nhập do vòng đời cookie quyết định (30 ngày), khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói. Cắt lúc ĐỌC, không lúc ghi — đổi quy tắc về sau không cần migrate |
 | Số lần ghi Mongo | **Không gộp** — chấp nhận 3 `update_one` ở lượt giữ chỗ / xác nhận | ~350 lần ghi/ngày trên một document nhỏ. Gộp được nhưng phải cho tool ghi vào state qua closure — tác dụng phụ ẩn, khó đọc hơn `set_pending`. Cần tối ưu thì gộp hai `append` trong `run_turn` trước |
 
 ## Mười ba cái bẫy — đã trả giá để tìm ra
