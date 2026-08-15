@@ -4,9 +4,6 @@ Sổ tay thao tác cho người mới vào máy: dựng môi trường, chạy a
 tài khoản test, xem trace. Phần *tại sao* nằm ở [`CONTEXT.md`](CONTEXT.md); file
 này chỉ trả lời *gõ gì*.
 
-> `docs/DEVELOPMENT.md` là tài liệu thời template `fastapi-agent-template`, còn
-> nhắc endpoint `/api/v1/tasks/` đã xoá. Đừng theo nó.
-
 ## 1. Yêu cầu
 
 - Python 3.12 (`.venv` trong repo dựng bằng [uv](https://docs.astral.sh/uv/))
