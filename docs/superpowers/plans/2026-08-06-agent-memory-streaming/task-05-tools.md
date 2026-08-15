@@ -271,6 +271,9 @@ from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
 from app.services.shop import ShopService
 
+# Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
+WHOLE_DAY = 200
+
 
 def _parse_local(value: str) -> datetime:
     """Đọc chuỗi ISO và LUÔN trả về datetime có múi giờ.
@@ -353,11 +356,18 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # giờ đó có người là bắt khách chọn lại hai lần.
         # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
         # giờ đã có người — một truy vấn thay cho bốn lần kiểm tay.
-        free = await service.find_free_slots(to_local(start).date())
+        #
+        # `limit` phải phủ TRỌN ngày. Mặc định của service là 12 mốc, tức chỉ
+        # tới gần 11 giờ trưa; để nguyên thì mọi giờ chiều đều bị báo "không đặt
+        # được" dù còn trống.
+        free = await service.find_free_slots(to_local(start).date(), limit=WHOLE_DAY)
         if start not in free:
             if not free:
                 return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
-            goi_y = ", ".join(format_vi_datetime(s) for s in free[:3])
+            # Gợi ý ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày:
+            # khách xin 4 giờ chiều mà gợi ý 8, 8:15, 8:30 sáng là gợi ý vô ích.
+            gan_nhat = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
+            goi_y = ", ".join(format_vi_datetime(s) for s in gan_nhat)
             return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {goi_y}."
 
         # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
