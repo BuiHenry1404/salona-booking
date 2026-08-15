@@ -15,7 +15,7 @@ Ba mặt tiếp xúc:
 | Chủ tiệm | Cùng web app, giao diện admin — bật/tắt bận rảnh, xem lịch hôm nay, quản khách |
 | Chủ tiệm | Bot Telegram — nhận báo lịch mới, tra lịch, đổi bận/rảnh bằng nút bấm |
 
-**Trạng thái: thiết kế xong, chưa viết một dòng code nào.**
+**Trạng thái: Plan 1 (nền tảng backend) đã hiện thực xong.** REST API chạy được bằng `docker compose up`, đã test end-to-end qua HTTP: đăng nhập/JWT, phân quyền admin, đặt lịch, chống trùng giờ, giờ mở cửa, bận/rảnh, huỷ lịch. **Chưa có AI** — Plan 2 chưa bắt đầu.
 
 ## Tài liệu
 
@@ -28,6 +28,7 @@ docs/superpowers/
     05-frontend.md    06-telegram.md     07-errors-testing.md
     ui-mockup.html  ui-mockup-streaming.html   ← mở bằng trình duyệt
   specs/2026-08-08-vi-time-parser-design.md    ← spec bổ sung, parser thời gian
+  specs/2026-08-15-otp-password-reset-design.md ← spec bổ sung, OTP qua Zalo ZNS
   plans/2026-08-06-booking-nail-toc-roadmap.md ← bản đồ 4 plan
   plans/2026-08-06-backend-foundation/         ← Plan 1, 12 task
   plans/2026-08-06-agent-memory-streaming/     ← Plan 2, 11 task (có 04b)
@@ -61,6 +62,7 @@ Plan 3 và Plan 4 độc lập nhau, chạy song song được sau Plan 2.
 | Memory ngữ nghĩa | **Mem0 + Postgres/pgvector** | Mongo giữ dữ liệu app, pgvector giữ vector |
 | Quan sát | Langfuse Cloud | Self-host v3 cần ClickHouse + Redis + MinIO, quá nặng |
 | Kênh cho chủ tiệm | **Telegram**, không phải Zalo OA | Bot API miễn phí, không có khung 48h tính phí, không cần giấy phép kinh doanh |
+| Kênh gửi OTP cho khách | **Zalo ZNS** | Khách không dùng Telegram. ZNS cần OA đã xác thực — xác thực chấp nhận giấy phép **hộ kinh doanh**, tiệm có. OTP là loại tin duy nhất được gửi cho người chưa từng tương tác với OA. Chỉ dùng cho OTP; kênh chủ tiệm vẫn là Telegram. Spec `2026-08-15-otp-password-reset-design.md` |
 | Bot Telegram | **Không có AI**, chỉ 4 nút | Tất định, không tốn token, test không cần LLM |
 | Redis | **Không dùng** | Xem `specs/.../README.md` mục "Vì sao chưa dùng Redis" — có 3 điều kiện để mở lại |
 | Số worker | **Đúng 1** | Telegram chỉ cho một kết nối `getUpdates` mỗi token; nhiều worker → 409 Conflict liên tục |
@@ -154,48 +156,64 @@ Bốn plan chỉ lo *phần mềm chạy đúng*. Phần vận hành chưa có t
 1. **Không có sao lưu Mongo.** Spec ghi mất Mongo là fail-hard duy nhất của cả hệ. Một `docker compose down -v` nhầm là mất sạch lịch của mọi khách.
 2. **`mongo-express` nằm trong `docker-compose.yml`**, cổng 8081, user/pass `admin`/`admin`. Lên prod là ai cũng đọc và sửa được tên, SĐT, lịch của mọi khách.
 3. **Mongo mở cổng `27017:27017` ra host, không auth.**
-4. **`HEALTHCHECK` trong Dockerfile chạy `import requests`, mà `requests` không có trong `requirements.txt`** → container luôn `unhealthy`.
-5. **`docker-compose.yml` thiếu Postgres/pgvector** mà Plan 2 cần.
-6. **Không có `restart: unless-stopped`** → máy reboot là app không tự lên.
-7. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
-8. **Không có CI.** Không có `.github/`; bốn plan đầy test mà không ai chạy tự động.
+4. **`docker-compose.yml` hardcode `JWT_SECRET` và `API_KEY` bản dev**, và hai giá trị này **ghi đè `.env`** — biến môi trường thắng dotenv. Ai đọc repo cũng ký được token admin. Cần `docker-compose.prod.yml` riêng, đọc secret từ `.env` của server. Mục 2, 3, 4 nên gộp làm một việc: tách file compose dev khỏi prod.
+5. **`HEALTHCHECK` trong Dockerfile chạy `import requests`, mà `requests` không có trong `requirements.txt`** → container luôn `unhealthy`.
+6. **`docker-compose.yml` thiếu Postgres/pgvector** mà Plan 2 cần.
+7. **Không có `restart: unless-stopped`** → máy reboot là app không tự lên.
+8. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
+9. **Không có CI.** Không có `.github/`; bốn plan đầy test mà không ai chạy tự động.
+10. **Thiếu `.dockerignore`** → `COPY . .` đưa cả `.env` và `.git` vào layer của image.
 
 **Đáng sửa, chưa chặn đường:**
 
 - `JWT_EXPIRE_MINUTES=30` — bắt khách lớn tuổi đăng nhập lại mỗi nửa tiếng là họ bỏ app. Chưa có refresh token. Cần quyết lại con số.
-- Middleware log ghi `request.client.host` — sau reverse proxy luôn là IP proxy, nên log rate-limit không lần ra được ai. Cần đọc `X-Forwarded-For`.
+- **Throttle toàn cục chống flood** — giới hạn request mỗi IP cho *mọi* endpoint, đếm trong RAM (token bucket), không chạm Mongo. Cố ý để tới Plan 5 vì nó phụ thuộc mục 8 (chưa có proxy), vì nginx có thể làm tốt hơn tầng ứng dụng, và vì bật sớm thì bộ test e2e sẽ đỏ vì 429 chứ không phải vì code sai. Kèm theo:
+  - Hàm lấy IP dùng chung, đọc `X-Forwarded-For` **chỉ khi** `TRUST_PROXY_HEADERS=true`, lấy phần tử thứ `TRUSTED_PROXY_COUNT + 1` từ phải sang — phần bên trái do client tự gửi nên giả mạo được. Tin header này khi chưa có proxy thật là tự vô hiệu hoá rate limit. Hàm này thay `request.client.host` ở `auth.py` và middleware log, chỗ mà sau proxy luôn ra IP proxy nên không lần ra được ai.
+  - Miễn trừ `/api/v1/health/*`: Docker `HEALTHCHECK` gọi mỗi 30 giây, để nó ăn quota thì lúc bị flood health check trượt và Docker tự giết container. Phải sửa mục 5 trước thì phần này mới kiểm chứng được.
+  - Bucket trong RAM phải được dọn định kỳ, nếu không đổi IP liên tục là làm app phình bộ nhớ tới chết.
+  - Middleware phải **trả thẳng `JSONResponse`**, không `raise RateLimitedError` — handler `AppError` nằm bên trong lớp middleware nên không bắt được.
+  - Đếm trong RAM chỉ đúng khi **một worker**, xem dòng "Số worker" ở bảng quyết định.
 - Một worker là ràng buộc cứng → mỗi lần deploy đều có downtime, không rolling update.
 
 Đã đề xuất gom thành **Plan 5 — Vận hành và deploy**, chưa viết.
 
-## Rủi ro đã biết và chấp nhận
+## Bảo mật — đã rà, còn nợ
 
-Luồng quên mật khẩu cho phép **bất kỳ ai biết SĐT của khách cũng đổi được mật khẩu tài khoản đó**. Chủ dự án đã cân nhắc và giữ nguyên: tiệm nhỏ, khách quen, ưu tiên tối giản thao tác cho người lớn tuổi. Giảm rủi ro bằng hai biện pháp rẻ — giới hạn 5 lần đổi mỗi giờ theo SĐT và theo IP, ghi log mọi lần đổi kèm thời điểm và IP.
+Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không chỉ đọc code.
 
-**Đây là quyết định đã chốt, không phải thiếu sót cần vá.**
+**Đang vá:** luồng quên mật khẩu cho phép bất kỳ ai biết SĐT cũng đổi được mật khẩu tài khoản đó — kể cả **admin**, và chiếm admin là lộ SĐT toàn bộ khách, huỷ mọi lịch, đổi giờ mở cửa. Trước đây đây là rủi ro đã chấp nhận có chủ đích, nhưng quyết định đó chỉ cân nhắc cho khách, không cho admin. Thay bằng OTP qua Zalo ZNS — spec `2026-08-15-otp-password-reset-design.md`.
+
+**Còn nợ, theo thứ tự nên làm:**
+
+1. **`POST /auth/login` không có giới hạn nào.** Đã kiểm: 25 lần sai liên tiếp đều trả 401. Cộng với mật khẩu tối thiểu 4 ký tự và SĐT là định danh (không gian hẹp, đầu số đoán được) thì dò mật khẩu khả thi. Làm cùng đợt OTP — nó nằm ở `AuthService`, tức tầng `services/`, mà Plan 2/3/4 đều bọc mỏng bên ngoài tầng này.
+2. **Đổi mật khẩu không thu hồi token đang sống.** Đã kiểm: token lấy trước khi đổi vẫn dùng được sau đó, tối đa 30 phút. (`is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu.)
+3. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm. Spec OTP đã xử: luôn trả 204.
+
+**Đã kiểm và không có vấn đề:** NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 
 ## Trạng thái git
 
-- **Repo:** `agentbox-eco-system` → Azure DevOps `Flezi Agentbox Program/_git/agentbox-eco-system`
-- **Nhánh:** `henryb1/personal-project-hehe`
-- **Commit:** `8d3a4c090` — 113 file, đã push
-- `fastapi-agent-template` trước đây là repo lồng (GitHub Cognitive-Stack). `.git` của nó **đã bị xóa** để toàn bộ file nằm trong repo Azure. Không còn đường `git pull` bản mới từ GitHub.
-- Bản sao lưu `.git` cũ: `/home/henryb1/Desktop/HenryB1/projects/fastapi-agent-template-git-backup-20260808-153948.tar.gz`
-
-Chưa commit tại thời điểm bàn giao: `ui-mockup.html`, `ui-mockup-streaming.html` (sửa tay), `ai-avatar.jpg`, `Gemini_Generated_Image_*.png`.
+- **Repo:** GitHub `BuiHenry1404/salona-booking`, remote `origin`
+- **Nhánh:** `main`
+- Repo được tạo lại từ đầu, **không còn** lịch sử Azure DevOps (`agentbox-eco-system`, nhánh `henryb1/personal-project-hehe`, commit `8d3a4c090`) mà bản bàn giao nhắc tới.
+- `ui-mockup.html` và `ui-mockup-streaming.html` **đã commit**. Ảnh sinh bằng Gemini (`ai-avatar.*`, `Gemini_Generated_Image_*.png`) bị `.gitignore` bỏ qua vì nặng ~6MB — ai clone mới sẽ **không có** chúng, mockup sẽ hiện ảnh vỡ.
 
 ## Việc còn dở
 
-- **Avatar chatbot** — đang sinh bằng Gemini. Mockup trỏ tới `ai-avatar.jpg`, hiển thị tròn 44×44px. Kiểm bắt buộc: thu nhỏ về 44px, nhìn ở khoảng cách cầm điện thoại — không phân biệt được thì sinh lại, **không** phóng to trên giao diện vì 44px đã là con số chốt trong mockup.
-- **`alt` của avatar đang là `"Avatar Cô Ba"`** nhưng bot xưng "con" với khách. Cô Ba là chủ tiệm, còn bot là thư ký đặt lịch — hai thứ đá nhau. Nên đổi thành `"Trợ lý đặt lịch của tiệm"`.
+- **Avatar chatbot** — sinh bằng Gemini, mockup trỏ tới `ai-avatar.jpg`, hiển thị tròn 44×44px. Kiểm bắt buộc: thu nhỏ về 44px, nhìn ở khoảng cách cầm điện thoại — không phân biệt được thì sinh lại, **không** phóng to trên giao diện vì 44px đã là con số chốt trong mockup. File không nằm trong git, xem mục trên.
 
 ## Bắt đầu từ đâu
 
+Plan 1 đã xong. Chạy thử trước khi làm gì tiếp:
+
 ```bash
-cd fastapi-agent-template
-cat docs/superpowers/specs/2026-08-06-booking-nail-toc/README.md
-cat docs/superpowers/plans/2026-08-06-booking-nail-toc-roadmap.md
-cat docs/superpowers/plans/2026-08-06-backend-foundation/README.md
+docker compose up -d app mongo
+curl localhost:8000/api/v1/health/     # nhớ dấu / cuối, thiếu là 307
 ```
 
-Rồi làm Plan 1 task 1. Plan 1 xong là đã có API đầy đủ test được bằng pytest và Swagger, **chưa có AI** — đó là mốc kiểm tra thật đầu tiên.
+Chưa có tài khoản nào trong DB và **không có đăng ký tự do** — user đầu tiên phải seed thẳng vào Mongo bằng `AuthService.create_user(...)` chạy trong container, sau đó mọi thứ đi qua REST.
+
+Việc tiếp theo, theo thứ tự:
+
+1. **OTP + rate limit login** — spec `specs/2026-08-15-otp-password-reset-design.md`, chưa có plan. Làm trước Plan 2/3/4 vì nó sửa tầng `services/` mà cả ba plan kia đều bọc mỏng bên ngoài.
+2. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Cần thêm Postgres/pgvector vào compose trước.

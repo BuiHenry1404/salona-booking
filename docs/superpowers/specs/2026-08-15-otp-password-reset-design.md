@@ -15,9 +15,11 @@ Mục "Rủi ro đã biết và chấp nhận" trong `CONTEXT.md` hết hiệu l
 
 ## Phạm vi
 
-**Trong phạm vi:** đặt lại mật khẩu bằng OTP, áp cho mọi vai trò (khách và admin).
+**Trong phạm vi:** đặt lại mật khẩu bằng OTP, áp cho mọi vai trò (khách và admin). Kèm rate limit theo danh tính cho các endpoint nhạy cảm (xem mục "Rate limit tầng 1").
 
 **Ngoài phạm vi (YAGNI):** OTP khi đăng nhập, OTP khi đăng ký tài khoản, đổi mật khẩu lúc đang đăng nhập.
+
+**Cố ý để sang Plan 5:** throttle toàn cục chống flood theo IP cho mọi request. Nó phụ thuộc reverse proxy (chưa có), có thể để nginx làm, và bật sớm thì bộ test e2e đỏ vì `429` chứ không phải vì code sai. Chi tiết đã ghi trong `CONTEXT.md` mục "Chưa có — cần trước khi mở cho khách thật".
 
 ## Kênh gửi
 
@@ -99,6 +101,27 @@ Index: `(phone, purpose)`, và TTL trên `expires_at` — cùng cách `rate_limi
 
 Giới hạn số lần xin mã dùng lại `RateLimitService` đang có, thêm khoá `otp:phone:*` và `otp:ip:*`. Không viết cơ chế đếm thứ hai.
 
+## Rate limit tầng 1
+
+Gộp vào bản này vì cùng sửa `auth.py` và `AuthService`, cùng thêm khoá vào `RateLimitService`. Tách ra là đụng cùng file hai lần.
+
+| Endpoint | Giới hạn | Khoá |
+|---|---|---|
+| `POST /auth/login` | 10 lần **sai** / 15 phút | SĐT + IP |
+| `POST /auth/forgot-password` | 3 / giờ | SĐT + IP |
+| `POST /auth/reset-password` | 5 / giờ | SĐT + IP |
+| `POST /appointments` | 20 / giờ | `user_id` |
+
+Ba khác biệt cần làm đúng:
+
+**Login chỉ đếm lần sai.** Gọi `check_and_hit` *sau* khi `verify_password` thất bại, không phải đầu hàm. Khác `reset-password` (đếm mọi lần gọi) — ở đó chặn nhầm còn an toàn hơn cho lọt, còn ở login thì đếm cả lần đúng nghĩa là người dùng thật đăng nhập nhiều lần trong ngày sẽ tự khoá mình.
+
+**Chuẩn hoá SĐT trước khi làm khoá.** Không thì `0912345678` và `+84912345678` thành hai bucket riêng và đi vòng được qua giới hạn.
+
+**Ngưỡng đọc từ cấu hình.** `LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_SECONDS` — để test đặt ngưỡng cao hoặc tắt hẳn. Bộ e2e hiện tại bắn hàng chục request liên tiếp; ngưỡng cứng sẽ làm nó đỏ vì `429`.
+
+`request.client.host` sau reverse proxy trả IP của proxy, nên khoá `ip:*` sẽ gộp mọi người dùng vào một bucket. Bản này chấp nhận điều đó vì khoá theo SĐT vẫn đúng; hàm lấy IP tử tế thuộc Plan 5.
+
 ## Lỗi
 
 **Mã sai, mã hết hạn, mã đã dùng — cùng một phản hồi:** `400 "Mã xác thực không đúng hoặc đã hết hạn"`. Phân biệt ba trường hợp là nói cho kẻ tấn công biết mã nào từng tồn tại.
@@ -128,6 +151,8 @@ Giá trị khởi tạo (`ZALO_APP_ID`, `ZALO_OA_SECRET`, refresh token lần đ
 OTP_PROVIDER=log          # log | zns
 OTP_TTL_SECONDS=300
 OTP_MAX_ATTEMPTS=5
+LOGIN_MAX_ATTEMPTS=10
+LOGIN_WINDOW_SECONDS=900
 # ZALO_APP_ID=
 # ZALO_OA_SECRET=
 # ZALO_REFRESH_TOKEN=     # chỉ dùng lần đầu, sau đó token sống trong Mongo
@@ -155,6 +180,14 @@ TDD. Không ca nào chạm mạng — dùng `LogOtpSender`; đẩy thời gian b
 
 Ca cuối là ca quan trọng nhất của bản này — nó chốt rằng lỗ hổng cũ đã đóng và không mở lại được khi refactor.
 
+Cho rate limit tầng 1:
+
+- quá `LOGIN_MAX_ATTEMPTS` lần sai → 429
+- login **đúng** không tốn quota; login sai thì có
+- `0912345678` và `+84912345678` dùng chung một bucket
+- hết cửa sổ thời gian → cho đăng nhập lại
+- quá 20 lịch/giờ trên cùng `user_id` → 429
+
 ## Tài liệu phải sửa theo
 
 | File | Sửa gì |
@@ -168,7 +201,6 @@ Ca cuối là ca quan trọng nhất của bản này — nó chốt rằng lỗ
 
 Chưa nằm trong bản này, ghi lại để không quên:
 
-- Rate limit cho `POST /auth/login` — hiện **không có giới hạn nào**, 25 lần sai liên tiếp đều trả 401. Cộng với mật khẩu tối thiểu 4 ký tự thì brute-force khả thi. Độc lập với OTP, nên làm sớm.
-- `docker-compose.yml` hardcode `JWT_SECRET`/`API_KEY` dev và publish Mongo (không auth) cùng mongo-express (admin/admin) ra host. Thuộc Plan 5.
-- Đổi mật khẩu không thu hồi token cũ đang sống (tối đa 30 phút).
-- `request.client.host` sau reverse proxy gộp mọi người dùng vào một bucket IP.
+- **Đổi mật khẩu không thu hồi token cũ đang sống** (tối đa 30 phút). Nạn nhân bị chiếm tài khoản, đổi lại mật khẩu, nhưng token của kẻ tấn công vẫn dùng được. `is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu, ví dụ lưu `password_changed_at` và so với `iat` của token.
+- **Mật khẩu tối thiểu 4 ký tự** (`schemas.py`). Nên nâng, nhưng phải cân với ràng buộc người dùng lớn tuổi.
+- Các mục hạ tầng (`docker-compose.yml` hardcode secret, Mongo mở cổng không auth, mongo-express, `.dockerignore`) — đã ghi trong `CONTEXT.md`, thuộc Plan 5.
