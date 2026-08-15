@@ -28,7 +28,10 @@ RESET_WINDOW_SECONDS = 3600
 # hai request song song đúng lúc access token hết hạn, cả hai cùng trình một
 # refresh token. Cái thứ hai trông y hệt một vụ phát lại token bị đánh cắp, và
 # khách bị đăng xuất dù không ai tấn công.
-REFRESH_GRACE_SECONDS = 10
+#
+# 30 giây là mặc định của Okta (chỉnh được 0-60); Auth0 gọi cùng thứ này là
+# "rotation overlap period". Mạng 3G ở VN có thể chậm hơn 10 giây thật.
+REFRESH_GRACE_SECONDS = 30
 
 
 def _hash_token(raw: str) -> str:

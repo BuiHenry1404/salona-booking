@@ -10,14 +10,16 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    """Refresh token KHÔNG nằm ở đây — nó đi bằng cookie HttpOnly.
+
+    Trả trong body là buộc frontend cất ở nơi JavaScript đọc được; IETF
+    "OAuth 2.0 for Browser-Based Applications" khuyến nghị mạnh cookie HttpOnly
+    cho ứng dụng xử lý dữ liệu cá nhân, mà app này giữ tên, SĐT và lịch của khách.
+    """
+
     access_token: str
-    refresh_token: str
     token_type: str = "bearer"
     role: Literal["user", "admin"]
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
 
 
 class CreateUserRequest(BaseModel):

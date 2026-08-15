@@ -151,6 +151,7 @@ Người dùng là khách lớn tuổi. Đây không phải sở thích thẩm m
 - **Hủy lịch phải qua một bước xác nhận**, xác nhận tại chỗ chứ không mở modal.
 - **Thời gian hiển thị bằng MỐC, KHÔNG BAO GIỜ bằng khoảng.** Chỉ "Xong lúc 3:30 chiều". Không đếm ngược ở bất kỳ đâu — không "còn 30 phút", không "sắp xong rồi". Nút 15/30/60/120 phút chỉ là **đầu vào**; `set_busy` quy ngay ra `busy_until` và từ đó mọi màn hình chỉ dùng mốc. Lý do: mốc không cũ đi (người lớn tuổi hay để màn hình đó rồi quay lại), không bắt tính nhẩm, và không dính lệch đồng hồ máy. Áp cho thẻ khách, bảng chủ tiệm, và câu trả lời của AI — câu của AI còn nằm lại trong lịch sử chat nên càng không được nói "còn N phút".
 - **Tôn trọng `prefers-reduced-motion: reduce`**, icon là SVG inline không dùng emoji.
+- **Access token giữ trong BỘ NHỚ, không `localStorage`.** Refresh token đã nằm trong cookie `HttpOnly` mà React không đọc được — nếu rồi lại cất access token vào `localStorage` thì công sức đó thành vô nghĩa. Mọi lời gọi tới `/api/v1/auth/*` phải đặt `credentials: "include"`, nếu không trình duyệt không gửi cookie. Mở lại tab thì gọi `/auth/refresh` để lấy access token mới.
 
 ## Chưa có — cần trước khi mở cho khách thật
 
@@ -200,10 +201,15 @@ Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không ch�
 
 Bốn điểm đáng nhớ:
 
+- **Refresh token đi bằng cookie `HttpOnly`, KHÔNG nằm trong body.** Trả trong body là buộc React cất ở nơi JavaScript đọc được, và một lỗ XSS là mất sạch phiên của khách. Cookie kèm `Secure` (bật bằng `COOKIE_SECURE`, bắt buộc khi có HTTPS), `SameSite=Strict`, và `Path=/api/v1/auth` để nó không đính vào mọi request. Theo IETF *OAuth 2.0 for Browser-Based Applications*, khuyến nghị mạnh cho ứng dụng xử lý dữ liệu cá nhân — app này giữ tên, SĐT và lịch của khách.
 - **Refresh token là chuỗi ngẫu nhiên, không phải JWT.** Nó phải tra được trong DB để thu hồi; đã tra DB thì JWT không thêm gì ngoài độ phức tạp.
 - **Chỉ lưu hash (SHA-256).** DB rò rỉ không được tương đương trao phiên đăng nhập. Không dùng bcrypt vì đây là bí mật ngẫu nhiên 256 bit, không có gì để dò, mà bcrypt lại không tra được bằng đúng giá trị.
 - **`family_id` gom mọi token xoay ra từ một lần đăng nhập.** Phát hiện phát lại thì xoá cả family — đá đúng một phiên, không đụng máy khác của cùng khách.
-- **Cửa sổ ân hạn 10 giây** (`REFRESH_GRACE_SECONDS`). Không có nó thì chính cơ chế xoay vòng tự tạo lỗi: điện thoại mạng chập chờn bắn hai request song song lúc access token hết hạn, cả hai cùng trình một token, cái thứ hai trông y hệt token bị đánh cắp và khách bị đăng xuất dù không ai tấn công. Trong ân hạn, lần dùng lại cấp **một cặp mới** trong cùng family chứ không phát lại đúng cặp cũ — phát lại cặp cũ đòi lưu token thô, tức bỏ đi chính lý do phải băm.
+- **Cửa sổ ân hạn 30 giây** (`REFRESH_GRACE_SECONDS`) — bằng mặc định của Okta; Auth0 gọi cùng thứ này là *rotation overlap period*. Không có nó thì chính cơ chế xoay vòng tự tạo lỗi: điện thoại mạng chập chờn bắn hai request song song lúc access token hết hạn, cả hai cùng trình một token, cái thứ hai trông y hệt token bị đánh cắp và khách bị đăng xuất dù không ai tấn công. Trong ân hạn, lần dùng lại cấp **một cặp mới** trong cùng family chứ không phát lại đúng cặp cũ — phát lại cặp cũ đòi lưu token thô, tức bỏ đi chính lý do phải băm.
+
+Đối chiếu ngày 2026-08-15 với RFC 9700 (BCP OAuth 2.0, 1/2025) và IETF *OAuth 2.0 for Browser-Based Applications*: xoay vòng mỗi lần dùng, phát hiện phát lại, thu hồi cả family, refresh token trong cookie HttpOnly — đủ cả bốn.
+
+**Chưa có hạn tuyệt đối cho phiên.** BCP cho phép chọn một trong hai: trần thời gian sống, **hoặc** hết hạn khi không dùng. Dự án chọn vế sau (không dùng 30 ngày thì chết). Hệ quả: khách dùng app đều đặn sẽ không bao giờ phải đăng nhập lại — với khách lớn tuổi thì đó là điều mong muốn, nên đây là **quyết định sản phẩm**, không phải thiếu sót.
 
 Đổi mật khẩu xoá **mọi** refresh token của user. Thiếu bước đó thì vá `token_version` là vô nghĩa: kẻ chiếm tài khoản vẫn tự cấp access token mới bằng refresh token cũ.
 
