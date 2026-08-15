@@ -128,16 +128,15 @@ Bốn plan chỉ lo *phần mềm chạy đúng*. Phần vận hành chưa có t
 2. **`mongo-express` trong `docker-compose.yml`** — cổng 8081, `admin`/`admin`. Lên prod là ai cũng đọc và sửa được dữ liệu khách.
 3. **Mongo mở cổng `27017:27017` ra host, không auth.**
 4. **`.env` dev nằm cùng chỗ với cấu hình chạy thật.** Cần `docker-compose.prod.yml` riêng và một `.env` của server. Mục 2, 3, 4 nên gộp làm một việc: tách compose dev khỏi prod.
-5. **`HEALTHCHECK` trong Dockerfile chạy `import requests`, mà `requests` không có trong `requirements.txt`** → container luôn `unhealthy`.
-6. **Không có `restart: unless-stopped`** → máy reboot là app không tự lên.
-7. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
-8. **Không có CI.** Bốn plan đầy test mà không ai chạy tự động.
-9. **Thiếu `.dockerignore`** → `COPY . .` đưa cả `.env` và `.git` vào layer của image.
+5. **Không có HTTPS/reverse proxy.** Ngoài bảo mật, nút micro (Web Speech API) **chỉ chạy trên HTTPS**.
+6. **Không có CI.** Bốn plan đầy test mà không ai chạy tự động.
 
-**Đáng sửa, chưa chặn đường — throttle toàn cục chống flood.** Giới hạn request mỗi IP cho mọi endpoint, đếm trong RAM. Để tới Plan 5 vì phụ thuộc mục 7, vì nginx làm tốt hơn tầng ứng dụng, và vì bật sớm thì test e2e đỏ vì 429 chứ không phải vì code sai. Bốn điều kèm theo:
+Đã vá: `HEALTHCHECK` (dùng `urllib` thay `requests` vốn không có trong requirements, và thêm dấu `/` cuối vì 307 vẫn bị `urlopen` coi là thành công), `restart: unless-stopped` cho `app` và `mongo` (cố ý **không** cho `mongo-express`), và `.dockerignore` — đã dựng image kiểm lại: không còn `.env` hay `.git` trong `/app`, container lên `healthy` sau 10 giây.
+
+**Đáng sửa, chưa chặn đường — throttle toàn cục chống flood.** Giới hạn request mỗi IP cho mọi endpoint, đếm trong RAM. Để tới Plan 5 vì phụ thuộc mục 5 (chưa có proxy), vì nginx làm tốt hơn tầng ứng dụng, và vì bật sớm thì test e2e đỏ vì 429 chứ không phải vì code sai. Bốn điều kèm theo:
 
 - Hàm lấy IP dùng chung, đọc `X-Forwarded-For` **chỉ khi** `TRUST_PROXY_HEADERS=true`, lấy phần tử thứ `TRUSTED_PROXY_COUNT + 1` từ phải sang — phần bên trái do client tự gửi. Tin header này khi chưa có proxy thật là tự vô hiệu hoá rate limit.
-- Miễn trừ `/api/v1/health/*`: Docker gọi mỗi 30 giây, để nó ăn quota thì lúc bị flood health check trượt và Docker tự giết container. Phải sửa mục 5 trước.
+- Miễn trừ `/api/v1/health/*`: Docker gọi mỗi 30 giây, để nó ăn quota thì lúc bị flood health check trượt và Docker tự giết container.
 - Bucket trong RAM phải được dọn định kỳ, không thì đổi IP liên tục là làm app phình bộ nhớ tới chết.
 - Middleware phải trả thẳng `JSONResponse`, không `raise RateLimitedError` — handler `AppError` nằm bên trong lớp middleware.
 
