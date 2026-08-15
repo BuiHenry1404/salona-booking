@@ -4,7 +4,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging import get_logger
 from app.core.security import verify_token
 from app.services.auth import AuthService
-from app.services.task import TaskService
 from app.models.user import CurrentUser
 
 logger = get_logger(__name__)
@@ -17,7 +16,6 @@ class SocketIOService:
         self.db = db
         self.llm_manager = llm_manager
         self.auth_service = AuthService(db)
-        self.task_service = TaskService(db)
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
             cors_allowed_origins="*",  # Configure based on your needs

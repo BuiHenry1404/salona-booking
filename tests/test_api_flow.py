@@ -190,3 +190,55 @@ async def test_listed_appointments_keep_their_utc_offset(async_client, user_head
     assert listed["start_at"] == created.json()["start_at"]
     assert listed["start_at"].endswith("+00:00") or listed["start_at"].endswith("Z")
 
+
+
+async def test_chat_history_days_are_listed_for_the_logged_in_customer(
+    async_client, user_headers, test_db
+):
+    from app.repositories.user import UserRepository
+    from app.services.conversation import ConversationService
+
+    user = await UserRepository(test_db).get_by_phone("0912345678")
+    await ConversationService(test_db).append(str(user.id), "user", "mai 3 giờ chiều nhé con")
+
+    resp = await async_client.get("/api/v1/conversations/days", headers=user_headers)
+    assert resp.status_code == 200, resp.text
+    [today] = resp.json()["days"]
+    assert today["message_count"] == 1
+    assert today["preview"].startswith("mai 3 giờ chiều")
+
+    messages = await async_client.get(
+        f"/api/v1/conversations/days/{today['day']}", headers=user_headers
+    )
+    assert messages.status_code == 200, messages.text
+    body = messages.json()
+    assert body["is_today"] is True
+    assert [m["content"] for m in body["messages"]] == ["mai 3 giờ chiều nhé con"]
+
+
+async def test_chat_history_requires_login(async_client):
+    assert (await async_client.get("/api/v1/conversations/days")).status_code == 403
+
+
+async def test_an_old_day_is_marked_read_only(async_client, user_headers, test_db):
+    from app.core.clock import now_utc
+    from app.repositories.user import UserRepository
+    from app.services.conversation import ConversationService
+
+    user = await UserRepository(test_db).get_by_phone("0912345678")
+    await ConversationService(test_db).append(str(user.id), "user", "chuyện hôm kia")
+    await test_db["conversations"].update_one(
+        {"user_id": str(user.id)},
+        {"$set": {"messages.0.created_at": now_utc() - timedelta(days=2)}},
+    )
+
+    [old_day] = (
+        await async_client.get("/api/v1/conversations/days", headers=user_headers)
+    ).json()["days"]
+    body = (
+        await async_client.get(
+            f"/api/v1/conversations/days/{old_day['day']}", headers=user_headers
+        )
+    ).json()
+    assert body["is_today"] is False
+    assert [m["content"] for m in body["messages"]] == ["chuyện hôm kia"]
