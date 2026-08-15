@@ -28,7 +28,7 @@ docs/superpowers/
     05-frontend.md    06-telegram.md     07-errors-testing.md
     ui-mockup.html  ui-mockup-streaming.html   ← mở bằng trình duyệt
   specs/2026-08-08-vi-time-parser-design.md    ← spec bổ sung, parser thời gian
-  specs/2026-08-15-otp-password-reset-design.md ← spec bổ sung, OTP qua Zalo ZNS
+  specs/2026-08-15-admin-password-reset-telegram-design.md  ← spec bổ sung, HOÃN tới sau Plan 3
   plans/2026-08-06-booking-nail-toc-roadmap.md ← bản đồ 4 plan
   plans/2026-08-06-backend-foundation/         ← Plan 1, 12 task
   plans/2026-08-06-agent-memory-streaming/     ← Plan 2, 11 task (có 04b)
@@ -62,7 +62,7 @@ Plan 3 và Plan 4 độc lập nhau, chạy song song được sau Plan 2.
 | Memory ngữ nghĩa | **Mem0 + Postgres/pgvector** | Mongo giữ dữ liệu app, pgvector giữ vector |
 | Quan sát | Langfuse Cloud | Self-host v3 cần ClickHouse + Redis + MinIO, quá nặng |
 | Kênh cho chủ tiệm | **Telegram**, không phải Zalo OA | Bot API miễn phí, không có khung 48h tính phí, không cần giấy phép kinh doanh |
-| Kênh gửi OTP cho khách | **Zalo ZNS** | Khách không dùng Telegram. ZNS cần OA đã xác thực — xác thực chấp nhận giấy phép **hộ kinh doanh**, tiệm có. OTP là loại tin duy nhất được gửi cho người chưa từng tương tác với OA. Chỉ dùng cho OTP; kênh chủ tiệm vẫn là Telegram. Spec `2026-08-15-otp-password-reset-design.md` |
+| Khôi phục mật khẩu admin | **Qua bot Telegram**, không phải OTP | Đã cân nhắc Zalo ZNS và SMS rồi loại: cả hai đòi giấy phép kinh doanh và nhiều hạ tầng (xoay vòng token, duyệt mẫu tin) cho một rủi ro vốn đã chấp nhận. Dòng trên **không có ngoại lệ**: Zalo OA không dùng ở đâu cả. Spec `2026-08-15-admin-password-reset-telegram-design.md` |
 | Bot Telegram | **Không có AI**, chỉ 4 nút | Tất định, không tốn token, test không cần LLM |
 | Redis | **Không dùng** | Xem `specs/.../README.md` mục "Vì sao chưa dùng Redis" — có 3 điều kiện để mở lại |
 | Số worker | **Đúng 1** | Telegram chỉ cho một kết nối `getUpdates` mỗi token; nhiều worker → 409 Conflict liên tục |
@@ -181,13 +181,15 @@ Bốn plan chỉ lo *phần mềm chạy đúng*. Phần vận hành chưa có t
 
 Rà ngày 2026-08-15 bằng request thật lên server đang chạy, không chỉ đọc code.
 
-**Đang vá:** luồng quên mật khẩu cho phép bất kỳ ai biết SĐT cũng đổi được mật khẩu tài khoản đó — kể cả **admin**, và chiếm admin là lộ SĐT toàn bộ khách, huỷ mọi lịch, đổi giờ mở cửa. Trước đây đây là rủi ro đã chấp nhận có chủ đích, nhưng quyết định đó chỉ cân nhắc cho khách, không cho admin. Thay bằng OTP qua Zalo ZNS — spec `2026-08-15-otp-password-reset-design.md`.
+**Luồng quên mật khẩu của khách giữ nguyên** — công khai, chỉ cần SĐT. Rủi ro này đã chốt chấp nhận và vẫn còn hiệu lực: tiệm nhỏ, khách quen, thiệt hại tối đa là một khách mất lịch của chính mình.
+
+**Riêng admin thì không.** `AuthService.reset_password` không nhìn `role`, nên quyết định trên đang tự động áp cả cho chủ tiệm — mà chiếm admin là lộ SĐT toàn bộ khách, huỷ mọi lịch, đổi giờ mở cửa, và khoá chính chủ tiệm ra ngoài. SĐT chủ tiệm thì dán trên biển hiệu. Vá bằng cách chặn `role == "admin"` khỏi luồng công khai, cho admin đường khôi phục qua bot Telegram — spec `2026-08-15-admin-password-reset-telegram-design.md`, **hoãn tới sau Plan 3** vì cần bot tồn tại trước.
 
 **Còn nợ, theo thứ tự nên làm:**
 
-1. **`POST /auth/login` không có giới hạn nào.** Đã kiểm: 25 lần sai liên tiếp đều trả 401. Cộng với mật khẩu tối thiểu 4 ký tự và SĐT là định danh (không gian hẹp, đầu số đoán được) thì dò mật khẩu khả thi. Làm cùng đợt OTP — nó nằm ở `AuthService`, tức tầng `services/`, mà Plan 2/3/4 đều bọc mỏng bên ngoài tầng này.
+1. **`POST /auth/login` không có giới hạn nào.** Đã kiểm: 25 lần sai liên tiếp đều trả 401. Cộng với mật khẩu tối thiểu 4 ký tự và SĐT là định danh (không gian hẹp, đầu số đoán được) thì dò mật khẩu khả thi. Vì đã bỏ OTP nên đây là **lớp bảo vệ duy nhất** cho tài khoản khách. Không phụ thuộc Telegram, tách ra làm sớm được — và nên, vì nó nằm ở tầng `services/` mà Plan 2/3/4 đều bọc mỏng bên ngoài.
 2. **Đổi mật khẩu không thu hồi token đang sống.** Đã kiểm: token lấy trước khi đổi vẫn dùng được sau đó, tối đa 30 phút. (`is_active=False` thì có thu hồi ngay — chỉ thiếu cơ chế tương tự cho đổi mật khẩu.)
-3. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm. Spec OTP đã xử: luôn trả 204.
+3. **`reset-password` phân biệt 204 / 404** theo SĐT có tài khoản hay không → dò được ai là khách của tiệm.
 
 **Đã kiểm và không có vấn đề:** NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 
@@ -215,5 +217,8 @@ Chưa có tài khoản nào trong DB và **không có đăng ký tự do** — u
 
 Việc tiếp theo, theo thứ tự:
 
-1. **OTP + rate limit login** — spec `specs/2026-08-15-otp-password-reset-design.md`, chưa có plan. Làm trước Plan 2/3/4 vì nó sửa tầng `services/` mà cả ba plan kia đều bọc mỏng bên ngoài.
-2. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Cần thêm Postgres/pgvector vào compose trước.
+1. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Cần thêm Postgres/pgvector vào compose trước.
+2. **Plan 3** (Telegram) — `plans/2026-08-06-telegram-bot/`. Chạy song song Plan 4 được.
+3. **Đặt lại mật khẩu admin** — spec `specs/2026-08-15-admin-password-reset-telegram-design.md`, sau Plan 3.
+
+Chen ngang lúc nào cũng được, không phụ thuộc gì: **rate limit cho `POST /auth/login`** — vài chục dòng, xem mục "Bảo mật".
