@@ -9,10 +9,8 @@ services:
       - mongo
     volumes:
       - .:/app
-      # Settings CHỈ đọc file, không đọc biến môi trường (xem
-      # app/core/config.py). Nên khác biệt của container phải đi bằng file này
-      # chứ không phải khối `environment:` — khối đó giờ không có tác dụng gì.
-      # Mount ra ngoài /app để nó không xuất hiện trên máy dev qua volume `.`.
+      # Settings chỉ đọc file, không đọc biến môi trường — nên không có khối
+      # `environment:`. Mount ra ngoài /app để máy dev không thấy file này.
       - ./.env.docker:/run/config/env.docker:ro
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 

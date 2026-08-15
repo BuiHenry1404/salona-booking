@@ -2,8 +2,7 @@ from typing import Literal, Union, Optional
 from pydantic import SecretStr, field_validator, AnyUrl
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-# File override chỉ tồn tại bên trong container — docker-compose mount vào đây.
-# Trên máy dev không có file này nên pydantic bỏ qua, không lỗi.
+# Chỉ tồn tại trong container (compose mount vào). Máy dev không có thì bỏ qua.
 DOCKER_ENV_FILE = "/run/config/env.docker"
 
 
@@ -84,9 +83,8 @@ class Settings(BaseSettings):
             return origins
         return v if isinstance(v, list) else [str(v)]
 
-    # Hai file, file sau thắng file trước. `.env` là cấu hình gốc;
-    # `DOCKER_ENV_FILE` chỉ đè vài khoá khác biệt khi chạy trong container
-    # (host của Mongo chẳng hạn), nên không phải chép cả file làm hai bản.
+    # File sau thắng file trước: `.env` là gốc, `DOCKER_ENV_FILE` chỉ đè vài
+    # khoá khác biệt trong container.
     model_config = {
         "env_file": (".env", DOCKER_ENV_FILE),
         "case_sensitive": False
@@ -101,16 +99,13 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Cấu hình CHỈ đến từ file .env — biến môi trường của shell bị bỏ qua.
+        """Chỉ đọc file .env — bỏ qua biến môi trường của shell.
 
-        Mặc định của pydantic-settings là biến môi trường thắng file. Trên máy
-        dev, biến `AZURE_OPENAI_*` được export sẵn ở shell (từ dự án khác) đã
-        âm thầm đè lên `.env`: sửa file không thấy tác dụng gì, mà cũng không
-        có lỗi nào để lần ra. Một nguồn cấu hình thì đọc file là biết đang
-        chạy với gì.
+        Mặc định ngược lại: biến môi trường thắng file, nên một biến export sẵn
+        từ dự án khác âm thầm đè lên `.env` mà không có lỗi nào để lần ra.
 
-        Đánh đổi: không còn đặt cấu hình bằng `docker run -e` hay biến của CI
-        được nữa. Chỗ nào cần khác `.env` thì ghi vào `DOCKER_ENV_FILE`.
+        Đánh đổi: `docker run -e` và biến của CI không đặt được cấu hình nữa;
+        chỗ nào cần khác `.env` thì ghi vào `DOCKER_ENV_FILE`.
         """
         return (init_settings, dotenv_settings)
 
