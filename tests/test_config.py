@@ -7,8 +7,15 @@ def test_booking_defaults():
 
 
 def test_optional_integrations_default_to_none():
-    assert settings.telegram_bot_token is None
-    assert settings.langfuse_public_key is None
+    """Kiểm mặc định của trường, không kiểm `.env` của máy đang chạy.
+
+    Đọc `settings` ở đây thì bật Langfuse lên là test đỏ — một tính năng hợp lệ
+    không được làm hỏng suite.
+    """
+    from app.core.config import Settings
+
+    assert Settings.model_fields["telegram_bot_token"].default is None
+    assert Settings.model_fields["langfuse_public_key"].default is None
 
 
 def test_shell_environment_cannot_override_the_env_file(monkeypatch):

@@ -1,12 +1,29 @@
+import pytest
+
 from app.core.langfuse import get_callbacks, get_trace_metadata
 
 
-def test_returns_empty_list_when_not_configured():
+@pytest.fixture
+def not_configured(monkeypatch):
+    """Dựng trạng thái "chưa cấu hình" thay vì trông vào `.env` của máy.
+
+    Máy dev có thể đang bật Langfuse thật (stack tự dựng ở
+    docker-compose.langfuse.yml) — bật một tính năng hợp lệ không được làm
+    suite đỏ. `_client_ready` phải reset vì nó nhớ lần khởi tạo trước.
+    """
+    import app.core.langfuse as mod
+
+    monkeypatch.setattr(mod.settings, "langfuse_public_key", None)
+    monkeypatch.setattr(mod.settings, "langfuse_secret_key", None)
+    monkeypatch.setattr(mod, "_client_ready", False)
+
+
+def test_returns_empty_list_when_not_configured(not_configured):
     """Thiếu key thì app vẫn chạy, chỉ là không trace."""
     assert get_callbacks() == []
 
 
-def test_never_raises_even_with_odd_input():
+def test_never_raises_even_with_odd_input(not_configured):
     assert get_callbacks() == []
     assert get_trace_metadata(None, None) == {}
 
@@ -44,3 +61,15 @@ def test_handler_is_constructed_without_credentials(monkeypatch):
 
     assert len(get_callbacks()) == 1
     assert seen["kwargs"] == {}
+
+
+def test_the_handler_class_can_actually_be_imported():
+    """Nạp được CallbackHandler thật, không chỉ nhánh nuốt lỗi.
+
+    `langfuse.langchain` import gói `langchain` chứ không chỉ langchain-core.
+    Thiếu nó thì `_load_handler_class` trả None và trace tắt im lặng — có key
+    đúng vẫn không thấy trace nào, chỉ một dòng warning trong log.
+    """
+    from app.core.langfuse import _load_handler_class
+
+    assert _load_handler_class() is not None

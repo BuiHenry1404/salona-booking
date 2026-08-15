@@ -19,6 +19,8 @@ Ba mặt tiếp xúc:
 
 **Đã đo với model thật** (Azure `gpt-5.4-mini`): 279 test xanh, 10 test tiếng Việt gọi Azure thật xanh (`pytest tests/test_timeparse_llm.py -m llm`), và bài kiểm hai lượt chạy đúng như spec — lượt "mai 3h chiều làm tóc được không con" gọi `parse_time` rồi `propose_appointment`, hỏi lại xác nhận, **chưa** ghi lịch; lượt "ừ" không gọi tool nào và ghi lịch ngay; câu ngoài chủ đề bị `refuse` từ chối lịch sự.
 
+**Langfuse tự dựng:** `docker compose -f docker-compose.langfuse.yml up -d` → http://localhost:3100 (`dev@salon.local` / `langfuse123`). Key project được tạo sẵn bằng `LANGFUSE_INIT_*` nên không phải bấm qua UI. Đã xác nhận trace lên đúng: `userId` và `sessionId` có giá trị (tức tiền tố `langfuse_` trong `get_trace_metadata` đúng), và một trace chứa đủ `__start__ → route_from_state → supervisor → AzureChatOpenAI → refuse`. Gói `langchain` là **bắt buộc** cho phần này — `langfuse.langchain` import nó chứ không chỉ langchain-core, thiếu thì trace tắt im lặng.
+
 **Hai cạm bẫy cấu hình Azure** (mất thời gian nhất khi dựng):
 - `AZURE_OPENAI_ENDPOINT` phải là URL **gốc** của resource, không kèm `/openai/v1`. `AzureChatOpenAI` tự nối `/openai/deployments/<deployment>/chat/completions`; thêm đuôi vào là Azure trả `404 Resource not found`.
 - `AZURE_OPENAI_DEPLOYMENT` là tên **deployment**, không phải tên model — và Settings không đọc biến `AZURE_OPENAI_DEPLOYMENT_NAME` mà nhiều máy export sẵn. Để trống thì code lấy tạm `AZURE_OPENAI_MODEL` và cũng ra 404.
