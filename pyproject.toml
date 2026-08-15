@@ -109,10 +109,14 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short --strict-markers"
+# -m "not llm": bảng câu tiếng Việt thật gọi Azure, tốn tiền và cần mạng. Để nó
+# trong lần chạy mặc định là có ngày build đỏ vì Azure nghẽn chứ không phải vì
+# code sai. Chạy tay bằng: pytest tests/test_timeparse_llm.py -m llm
+addopts = "-v --tb=short --strict-markers -m \"not llm\""
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
+    "llm: gọi Azure OpenAI thật, tốn tiền và cần mạng",
 ]
 asyncio_mode = "auto"
 

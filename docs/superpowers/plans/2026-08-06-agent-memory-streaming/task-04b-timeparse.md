@@ -6,7 +6,7 @@ Spec: [`2026-08-08-vi-time-parser-design.md`](../../specs/2026-08-08-vi-time-par
 
 **Files:**
 - Create: `app/agents/booking_graph/timeparse.py`, `tests/test_timeparse.py`, `tests/test_timeparse_llm.py`
-- Modify: `pytest.ini`
+- Modify: `pyproject.toml` (`[tool.pytest.ini_options]`)
 
 **Interfaces:**
 - Consumes: `build_chat_model(tags, temperature, streaming)` (task 1), `TZ` (Plan 1 task 3)
@@ -15,15 +15,19 @@ Spec: [`2026-08-08-vi-time-parser-design.md`](../../specs/2026-08-08-vi-time-par
   - `parse_vi_time(text: str, now: datetime) -> ParsedTime`
   - `PARSE_TIMEOUT_SECONDS: float = 2.0`
 
-- [ ] **Step 1: Đăng ký marker `llm` trong `pytest.ini`**
+- [ ] **Step 1: Đăng ký marker `llm`**
 
-Thêm vào `pytest.ini` (tạo file nếu chưa có):
+Cấu hình pytest của dự án nằm ở `[tool.pytest.ini_options]` trong `pyproject.toml`,
+không phải `pytest.ini`. Tạo thêm `pytest.ini` sẽ khiến pytest bỏ qua hẳn khối
+trong `pyproject.toml` — mất `asyncio_mode = "auto"` và mọi test async đỏ hết.
+Sửa tại chỗ:
 
-```ini
-[pytest]
-markers =
-    llm: gọi Azure OpenAI thật, tốn tiền và cần mạng
-addopts = -m "not llm"
+```toml
+addopts = "-v --tb=short --strict-markers -m \"not llm\""
+markers = [
+    ...,
+    "llm: gọi Azure OpenAI thật, tốn tiền và cần mạng",
+]
 ```
 
 Bảng câu tiếng Việt thật ở step 8 phải nằm ngoài lần chạy mặc định. Để nó trong CI là có ngày build đỏ vì Azure nghẽn chứ không phải vì code sai.
@@ -361,7 +365,11 @@ _DAY_OFFSETS = {
 # thành "mai 3h chiều" thì đặt nhầm hẳn một ngày.
 # Thứ tự trong alternation cũng quan trọng: "ngày mai" phải đứng trước "mai".
 _DAY_PATTERN = r"\b(hôm nay|ngày mai|ngày kia|mai|mốt)\b"
-_TIME_PATTERN = r"(\d{1,2})\s*(?:h|g|giờ)\s*(sáng|trưa|chiều|tối)?"
+# "giờ" phải đứng TRƯỚC "g" trong alternation: Python thử các nhánh theo thứ tự,
+# "g" khớp ngay chữ đầu của "giờ", phần "iờ" còn lại rơi ra ngoài và nhóm buổi
+# (vốn không bắt buộc) khớp rỗng — "mai 3 giờ chiều" thành 3 giờ không rõ buổi
+# rồi bị _to_24h trả None. Sai im lặng, không lỗi gì cả.
+_TIME_PATTERN = r"(\d{1,2})\s*(?:giờ|h|g)\s*(sáng|trưa|chiều|tối)?"
 
 _FULL = re.compile(_DAY_PATTERN + r".{0,20}?" + _TIME_PATTERN, re.IGNORECASE)
 
