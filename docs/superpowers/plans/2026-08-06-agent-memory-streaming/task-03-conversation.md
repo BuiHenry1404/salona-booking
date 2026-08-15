@@ -3,8 +3,8 @@
 > Thuộc plan [Agent, memory và streaming](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
 **Files:**
-- Rewrite: `app/models/conversation.py`, `app/repositories/conversation.py`, `app/services/conversation.py`
-- Delete: `app/models/task.py`, `app/repositories/task.py`, `app/services/task.py`, `app/api/v1/routers/tasks.py`, `app/api/v1/routers/conversations.py`
+- Rewrite: `app/models/conversation.py`, `app/repositories/conversation.py`, `app/services/conversation.py`, `app/api/v1/routers/conversations.py`
+- Delete: `app/models/task.py`, `app/repositories/task.py`, `app/services/task.py`, `app/api/v1/routers/tasks.py`
 - Create: `tests/test_conversation.py`
 
 **Interfaces:**
@@ -17,6 +17,10 @@
   - `ConversationService(db).history(user_id: str, token_budget: int = 1500) -> list[ChatMessage]`
   - `ConversationService(db).set_pending(user_id: str, payload: dict | None) -> None`
   - `ConversationService(db).get_pending(user_id: str, max_age_minutes: int = 10) -> dict | None`
+  - `DaySummary(day: date, message_count: int, preview: str)`
+  - `ConversationService(db).list_days(user_id: str) -> list[DaySummary]`
+  - `ConversationService(db).messages_on(user_id: str, day: date) -> list[ChatMessage]`
+  - `GET /api/v1/conversations/days`, `GET /api/v1/conversations/days/{day}`
 
 - [ ] **Step 1: Xóa phần task cũ của template**
 
@@ -37,7 +41,7 @@ from datetime import timedelta
 
 import pytest
 
-from app.core.clock import now_utc
+from app.core.clock import now_utc, to_local
 from app.services.conversation import ConversationService
 
 pytestmark = pytest.mark.asyncio
@@ -107,6 +111,32 @@ async def test_history_keeps_the_last_half_hour_across_midnight(test_db):
     assert len(history) == 2
 
 
+async def test_list_days_groups_by_vietnam_local_day(test_db):
+    """Gom theo UTC là cắt vào 7 giờ sáng ở VN — một buổi làm việc bị xé đôi."""
+    svc = ConversationService(test_db)
+    await svc.append("u1", "user", "tin lúc nửa đêm UTC")
+    await svc.append("u1", "user", "tin ngay sau đó")
+
+    days = await svc.list_days("u1")
+    assert len(days) == 1
+
+
+async def test_list_days_previews_the_first_thing_the_customer_said(test_db):
+    svc = ConversationService(test_db)
+    await svc.append("u1", "assistant", "Dạ con nghe đây ạ")
+    await svc.append("u1", "user", "mai 3 giờ chiều làm tóc được không con")
+
+    [today] = await svc.list_days("u1")
+    assert today.preview.startswith("mai 3 giờ chiều")
+
+
+async def test_messages_on_a_day_are_isolated_per_user(test_db):
+    svc = ConversationService(test_db)
+    await svc.append("u1", "user", "của u1")
+    today = to_local(now_utc()).date()
+    assert await svc.messages_on("u2", today) == []
+
+
 async def test_pending_confirmation_round_trip(test_db):
     svc = ConversationService(test_db)
     await svc.set_pending("u1", {"start_at": "2026-08-07T08:00:00+00:00", "note": "làm tóc"})
@@ -154,6 +184,17 @@ class ChatMessage(BaseModel):
     role: Role
     content: str
     created_at: datetime = Field(default_factory=now_utc)
+
+
+class DaySummary(BaseModel):
+    """Một dòng trong màn lịch sử trò chuyện của khách."""
+
+    day: date
+    message_count: int
+    # Câu ĐẦU TIÊN khách nói hôm đó, cắt ngắn — để khách nhận ra hôm ấy nói
+    # chuyện gì. Lấy câu của khách chứ không lấy câu mở đầu của AI, vì câu của
+    # AI ngày nào cũng na ná nhau.
+    preview: str
 
 
 class Conversation(BaseDocument):

@@ -28,6 +28,22 @@ Ba lý do:
 
 Thẻ trạng thái luôn nằm đó nên phần lớn khách biết tiệm bận hay rảnh mà không cần hỏi AI — hỏi AI là đường dự phòng chứ không phải đường duy nhất.
 
+### Lịch sử trò chuyện
+
+Hội thoại cắt phiên theo ngày, nên **hôm sau mở app ra là khung chat trống**. Với khách lớn tuổi, đó dễ bị hiểu thành "mất hết rồi", hoặc tệ hơn — "lịch con đặt hôm qua có còn không?". Màn lịch sử tồn tại để trả lời đúng câu đó. Nó là phần bù cho quyết định cắt phiên, không phải tính năng thêm cho vui.
+
+**Đường vào:** một link chữ to ngay dưới thẻ trạng thái tiệm ở màn Chat — "Xem các lần trò chuyện trước". Không nhét vào menu ẩn; Chat vẫn là hành động chính duy nhất của màn đó.
+
+**Danh sách** — mỗi ngày một thẻ lớn, mới nhất trên cùng. Ngày viết đủ chữ tiếng Việt ("Thứ Ba, 12 tháng 8"), **không** viết `12/08`. Dòng thứ hai là câu đầu tiên khách nói hôm đó, cắt ngắn, để nhận ra hôm ấy nói chuyện gì. Thẻ đầu tiên là hôm nay, mở ra khung chat thật.
+
+**Xem lại một ngày** — đúng khung chat cũ, cùng bong bóng và cỡ chữ, **không có ô nhập**. Chỗ ô nhập là một dòng chữ: "Đây là cuộc trò chuyện ngày 12 tháng 8. Cô chú muốn nhắn thì quay về hôm nay", kèm nút to quay lại.
+
+Không diễn đạt "chỉ xem" bằng ô nhập xám hoặc bị khoá — mọi trạng thái phải nói bằng **chữ**.
+
+**"Chỉ xem" không cần ép bằng quyền.** Backend không có đường nào để nhắn vào một ngày cũ: `append()` luôn ghi vào cuối và tin mới luôn thuộc hôm nay, không có tham số ngày ở đâu cả. Đây là thuộc tính cấu trúc, không phải một nút bị ẩn — nên giao diện chỉ cần đừng vẽ ô nhập.
+
+**Không làm:** tìm kiếm, xoá hội thoại, đổi tên, phân trang. Khách đặt lịch vài tuần một lần nên sau nhiều năm danh sách vẫn chỉ vài chục thẻ.
+
 ### Khung chat
 
 Bong bóng chữ to. Ô nhập có nút micro dùng Web Speech API vì gõ phím là rào cản lớn nhất với người lớn tuổi; trình duyệt không hỗ trợ thì ẩn nút.

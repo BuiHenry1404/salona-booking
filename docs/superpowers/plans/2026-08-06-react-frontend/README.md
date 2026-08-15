@@ -40,10 +40,13 @@ frontend khi gặp triệu chứng này.
 | 2 | [API client và đăng nhập](task-02-auth.md) | `api.ts`, lưu token, route bảo vệ, màn hình đăng nhập | 1 |
 | 3 | [Hook streaming](task-03-agent-stream.md) | `useAgentStream` — gom 6 sự kiện thành một máy trạng thái | 1 |
 | 4 | [Màn hình chat](task-04-chat-screen.md) | Thẻ trạng thái tiệm, bong bóng chat, tiến trình gọi tool | 2, 3 |
+| 4b | [Lịch sử trò chuyện](task-04b-chat-history.md) | Danh sách ngày đã chat, xem lại một ngày ở chế độ chỉ đọc | 4 |
 | 5 | [Lịch của tôi](task-05-my-appointments.md) | Danh sách thẻ lớn, hủy có xác nhận tại chỗ | 2 |
 | 6 | [Bảng điều khiển chủ tiệm](task-06-admin-dashboard.md) | Nút bận/rảnh khổng lồ, lịch hôm nay realtime | 2, 3 |
 | 7 | [Khách hàng và giờ mở cửa](task-07-admin-customers.md) | Tạo tài khoản, tìm theo SĐT, sửa giờ mở cửa | 2 |
 | 8 | [Kiểm tra và đóng gói](task-08-build-and-verify.md) | Build production, rà accessibility, hướng dẫn deploy | 1–7 |
+
+Đánh số `4b` thay vì chèn `5` rồi dồn cả loạt: task 5–8 được tham chiếu chéo ở nhiều chỗ, đổi số là phải sửa hết và dễ sót. Cùng lý do đã dùng cho `4b` ở Plan 2.
 
 ## Năm chỗ dễ sai nhất
 

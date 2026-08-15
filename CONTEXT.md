@@ -33,7 +33,7 @@ docs/superpowers/
   plans/2026-08-06-backend-foundation/         ← Plan 1, 12 task
   plans/2026-08-06-agent-memory-streaming/     ← Plan 2, 11 task (có 04b)
   plans/2026-08-06-telegram-bot/               ← Plan 3, 5 task
-  plans/2026-08-06-react-frontend/             ← Plan 4, 8 task
+  plans/2026-08-06-react-frontend/             ← Plan 4, 9 task (có 04b)
 ```
 
 Mỗi plan có `README.md` riêng với mục **Ràng buộc toàn cục** — bắt buộc đọc trước khi làm task nào của plan đó.
