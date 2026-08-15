@@ -20,7 +20,7 @@
 
 > Ba sự kiện cuối (`shop_status_changed`, `appointment_created`, `appointment_cancelled`) chỉ được **định nghĩa kênh** ở đây. Chỗ thực sự phát chúng là `SocketNotifier` ở [Plan 3 task 5](../2026-08-06-telegram-bot/task-05-wire-services.md). Task này xong mà chưa có Plan 3 thì kênh vẫn im lặng — đúng như thiết kế, không phải lỗi.
 
-- [ ] **Step 1: Xóa phần chat cũ của template**
+- [x] **Step 1: Xóa phần chat cũ của template**
 
 ```bash
 git rm app/services/chat.py app/api/v1/routers/chat.py
@@ -28,7 +28,7 @@ git rm app/services/chat.py app/api/v1/routers/chat.py
 
 Trong `app/api/v1/routers/__init__.py`, xóa dòng nhắc `chat`.
 
-- [ ] **Step 2: Viết test (sẽ fail)**
+- [x] **Step 2: Viết test (sẽ fail)**
 
 Tạo `tests/test_socketio_chat.py`:
 
@@ -113,12 +113,12 @@ async def test_empty_message_is_ignored(service, test_db):
     assert service.sio.events() == []
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận fail**
+- [x] **Step 3: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_socketio_chat.py -v`
 Expected: FAIL — `SocketIOService` chưa có `handle_message`
 
-- [ ] **Step 4: Viết lại `app/services/socketio_service.py`**
+- [x] **Step 4: Viết lại `app/services/socketio_service.py`**
 
 ```python
 from typing import Dict, Optional
@@ -236,7 +236,7 @@ class SocketIOService:
 hai đi, agent tự lấy model qua `build_chat_model`, không còn dùng `LLMManager`
 của template nữa.
 
-- [ ] **Step 5: Cập nhật trang test tay**
+- [x] **Step 5: Cập nhật trang test tay**
 
 Thay phần script trong `static/socketio_test.html` để lắng nghe đúng sáu sự kiện mới:
 
@@ -265,17 +265,17 @@ Thay phần script trong `static/socketio_test.html` để lắng nghe đúng s�
 </script>
 ```
 
-- [ ] **Step 6: Chạy test để xác nhận pass**
+- [x] **Step 6: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_socketio_chat.py -v`
 Expected: PASS (5 passed)
 
-- [ ] **Step 7: Chạy toàn bộ test**
+- [x] **Step 7: Chạy toàn bộ test**
 
 Run: `pytest -v`
 Expected: PASS toàn bộ
 
-- [ ] **Step 8: Kiểm tay đầu-cuối**
+- [x] **Step 8: Kiểm tay đầu-cuối**
 
 ```bash
 docker compose up -d mongo
@@ -290,7 +290,7 @@ say("mai 3h chiều làm tóc được không con")
 
 Phải thấy lần lượt `turn_started` → `tool_started` → `tool_finished` → nhiều `token` → `complete`. Sau đó gõ `say("cháu bán bảo hiểm không")` — phải bị từ chối lịch sự và **không** có `tool_started` nào.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A

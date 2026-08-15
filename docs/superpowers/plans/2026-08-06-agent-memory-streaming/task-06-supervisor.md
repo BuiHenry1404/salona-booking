@@ -11,7 +11,7 @@
   - `prompts.py`: `SUPERVISOR_PROMPT`, `STATUS_PROMPT`, `BOOKING_PROMPT`, `REFUSE_MESSAGE`
   - `supervisor.py`: `supervise(state: GraphState) -> dict` (đặt `route`), `refuse(state: GraphState) -> dict`, `route_from_state(state) -> str`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_supervisor.py`:
 
@@ -108,12 +108,12 @@ def test_no_pending_confirmation_goes_to_supervisor():
     assert route_from_state(a_state()) == "supervisor"
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_supervisor.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.supervisor'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/prompts.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/prompts.py`**
 
 ```python
 SUPERVISOR_PROMPT = """Bạn phân loại ý định của khách tại một tiệm làm nail và tóc.
@@ -168,7 +168,7 @@ REFUSE_MESSAGE = (
 )
 ```
 
-- [ ] **Step 4: Viết `app/agents/booking_graph/supervisor.py`**
+- [x] **Step 4: Viết `app/agents/booking_graph/supervisor.py`**
 
 ```python
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -217,12 +217,12 @@ async def refuse(state: GraphState) -> dict:
     return {"answer": REFUSE_MESSAGE}
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận pass**
+- [x] **Step 5: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_supervisor.py -v`
 Expected: PASS (9 passed)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/agents/booking_graph/prompts.py app/agents/booking_graph/supervisor.py tests/test_supervisor.py

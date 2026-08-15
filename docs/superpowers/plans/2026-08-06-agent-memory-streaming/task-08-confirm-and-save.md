@@ -11,7 +11,7 @@
   - `is_affirmative(text: str) -> bool`
   - `make_confirm_node(db, user) -> Callable[[GraphState], Awaitable[dict]]`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_confirm.py`:
 
@@ -125,12 +125,12 @@ async def test_taken_slot_produces_a_friendly_message_not_a_crash(test_db):
     assert await ConversationService(test_db).get_pending(str(user.id)) is None
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_confirm.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.confirm'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/confirm.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/confirm.py`**
 
 ```python
 import re
@@ -206,12 +206,12 @@ def make_confirm_node(
     return node
 ```
 
-- [ ] **Step 4: Chạy test để xác nhận pass**
+- [x] **Step 4: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_confirm.py -v`
 Expected: PASS (18 passed — 13 tham số hóa + 5 test tích hợp) — quan trọng nhất là `test_propose_then_yes_books_the_time_from_MONGO`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/agents/booking_graph/confirm.py tests/test_confirm.py

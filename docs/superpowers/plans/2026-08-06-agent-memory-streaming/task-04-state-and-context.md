@@ -11,7 +11,7 @@
   - `state.py`: `GraphState` (TypedDict)
   - `context.py`: `build_context_block(user, status, upcoming) -> str`, `load_context(db, user, question) -> dict`, `format_vi_datetime(dt) -> str`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_context_block.py`:
 
@@ -123,12 +123,12 @@ def test_format_vi_datetime():
     assert format_vi_datetime(datetime(2026, 8, 7, 9, 30, tzinfo=TZ)) == "Thứ Sáu 7/8, 9:30 sáng"
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_context_block.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/state.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/state.py`**
 
 ```python
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
@@ -149,7 +149,7 @@ class GraphState(TypedDict, total=False):
     answer: str
 ```
 
-- [ ] **Step 4: Viết `app/agents/booking_graph/context.py`**
+- [x] **Step 4: Viết `app/agents/booking_graph/context.py`**
 
 ```python
 import asyncio
@@ -254,19 +254,19 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     }
 ```
 
-- [ ] **Step 5: Tạo `app/agents/booking_graph/__init__.py`**
+- [x] **Step 5: Tạo `app/agents/booking_graph/__init__.py`**
 
 ```python
 ```
 
 (file rỗng — nội dung export sẽ thêm ở task 9)
 
-- [ ] **Step 6: Chạy test để xác nhận pass**
+- [x] **Step 6: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_context_block.py -v`
 Expected: PASS (10 passed) — quan trọng nhất là `test_block_tells_the_model_what_day_it_is_today`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/agents/booking_graph tests/test_context_block.py

@@ -13,7 +13,7 @@
   - `app/core/langfuse.py`: `get_callbacks() -> list` — trả về `[]` khi chưa cấu hình, không bao giờ ném lỗi
   - `app/core/langfuse.py`: `get_trace_metadata(user_id, conversation_id) -> dict` — khóa `langfuse_user_id` / `langfuse_session_id` để nhét vào `config["metadata"]`
 
-- [ ] **Step 1: Thêm phụ thuộc**
+- [x] **Step 1: Thêm phụ thuộc**
 
 Thêm vào `requirements.txt`:
 
@@ -28,7 +28,7 @@ Ghim `>=3.0` chứ không phải `>=2.x`: v3 đổi cả đường import lẫn 
 
 Chạy: `pip install -r requirements.txt`
 
-- [ ] **Step 2: Viết test cho Langfuse shim (sẽ fail)**
+- [x] **Step 2: Viết test cho Langfuse shim (sẽ fail)**
 
 Tạo `tests/test_langfuse.py`:
 
@@ -81,12 +81,12 @@ def test_handler_is_constructed_without_credentials(monkeypatch):
     assert seen["kwargs"] == {}
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận fail**
+- [x] **Step 3: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_langfuse.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.core.langfuse'`
 
-- [ ] **Step 4: Viết `app/core/langfuse.py`**
+- [x] **Step 4: Viết `app/core/langfuse.py`**
 
 ```python
 from typing import Any, Dict, List, Optional
@@ -177,12 +177,12 @@ def get_trace_metadata(
     return metadata
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận pass**
+- [x] **Step 5: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_langfuse.py -v`
 Expected: PASS (4 passed) — với điều kiện `.env` không có `LANGFUSE_PUBLIC_KEY`
 
-- [ ] **Step 6: Viết `app/agents/llm.py`**
+- [x] **Step 6: Viết `app/agents/llm.py`**
 
 ```python
 from typing import List, Optional
@@ -220,12 +220,12 @@ def build_chat_model(
     )
 ```
 
-- [ ] **Step 7: Kiểm tra import sạch**
+- [x] **Step 7: Kiểm tra import sạch**
 
 Run: `python -c "from app.agents.llm import build_chat_model; from app.core.langfuse import get_callbacks; print('ok')"`
 Expected: in ra `ok`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add requirements.txt app/agents/llm.py app/core/langfuse.py tests/test_langfuse.py

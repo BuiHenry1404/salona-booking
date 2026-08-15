@@ -15,7 +15,9 @@ Ba mặt tiếp xúc:
 | Chủ tiệm | Cùng web app, giao diện admin — bật/tắt bận rảnh, xem lịch hôm nay, quản khách |
 | Chủ tiệm | Bot Telegram — nhận báo lịch mới, tra lịch, đổi bận/rảnh bằng nút bấm |
 
-**Trạng thái: Plan 1 (nền tảng backend) đã hiện thực xong.** REST API chạy được bằng `docker compose up`, đã test end-to-end qua HTTP: đăng nhập/JWT, phân quyền admin, đặt lịch, chống trùng giờ, giờ mở cửa, bận/rảnh, huỷ lịch. **Chưa có AI** — Plan 2 chưa bắt đầu.
+**Trạng thái: Plan 1 (nền tảng backend) và Plan 2 (agent, memory, streaming) đã hiện thực xong.** REST API chạy được bằng `docker compose up`, đã test end-to-end qua HTTP: đăng nhập/JWT, phân quyền admin, đặt lịch, chống trùng giờ, giờ mở cửa, bận/rảnh, huỷ lịch. Agent LangGraph đã ráp xong: supervisor → StatusAgent/BookingAgent/refuse, nhánh tắt `confirm`, parser thời gian tiếng Việt, năm tool đặt lịch, và streaming token + sự kiện tool qua Socket.IO.
+
+**Chưa chạy được đầu-cuối với AI thật:** `.env` chưa có `AZURE_OPENAI_API_KEY` và `AZURE_OPENAI_ENDPOINT`. Thiếu chúng thì app vẫn khởi động (fail-soft, chỉ log cảnh báo) và mọi test đơn vị vẫn xanh — nhưng một lượt chat thật sẽ ném lỗi ở `build_chat_model` và khách nhận về sự kiện `error`. Hai thứ còn nợ vì lý do này: bảng câu tiếng Việt thật (`pytest tests/test_timeparse_llm.py -m llm`) và bài kiểm tay hai lượt ở [Plan 2 README](docs/superpowers/plans/2026-08-06-agent-memory-streaming/README.md#kiểm-tra-sau-khi-xong).
 
 ## Tài liệu
 
@@ -242,8 +244,9 @@ Chưa có tài khoản nào trong DB và **không có đăng ký tự do** — u
 
 Việc tiếp theo, theo thứ tự:
 
-1. **Plan 2** (agent) — `plans/2026-08-06-agent-memory-streaming/`. Task 2 (memory adapter) đã bỏ cùng Mem0.
+1. **Điền key Azure vào `.env`** rồi chạy nốt hai bài kiểm còn nợ của Plan 2 (bảng câu tiếng Việt và bài kiểm tay hai lượt). Plan 2 xong phần code, chưa xong phần đo với model thật.
 2. **Plan 3** (Telegram) — `plans/2026-08-06-telegram-bot/`. Chạy song song Plan 4 được.
-3. **Đặt lại mật khẩu admin** — spec `specs/2026-08-15-admin-password-reset-telegram-design.md`, sau Plan 3.
+3. **Plan 4** (React) — `plans/2026-08-06-react-frontend/`.
+4. **Đặt lại mật khẩu admin** — spec `specs/2026-08-15-admin-password-reset-telegram-design.md`, sau Plan 3.
 
 Rate limit đăng nhập đã xong. Xem mục "Bảo mật" cho phần còn nợ.

@@ -15,7 +15,7 @@ Spec: [`2026-08-08-vi-time-parser-design.md`](../../specs/2026-08-08-vi-time-par
   - `parse_vi_time(text: str, now: datetime) -> ParsedTime`
   - `PARSE_TIMEOUT_SECONDS: float = 2.0`
 
-- [ ] **Step 1: Đăng ký marker `llm`**
+- [x] **Step 1: Đăng ký marker `llm`**
 
 Cấu hình pytest của dự án nằm ở `[tool.pytest.ini_options]` trong `pyproject.toml`,
 không phải `pytest.ini`. Tạo thêm `pytest.ini` sẽ khiến pytest bỏ qua hẳn khối
@@ -32,7 +32,7 @@ markers = [
 
 Bảng câu tiếng Việt thật ở step 8 phải nằm ngoài lần chạy mặc định. Để nó trong CI là có ngày build đỏ vì Azure nghẽn chứ không phải vì code sai.
 
-- [ ] **Step 2: Viết test cho lớp chốt (sẽ fail)**
+- [x] **Step 2: Viết test cho lớp chốt (sẽ fail)**
 
 Tạo `tests/test_timeparse.py`:
 
@@ -268,12 +268,12 @@ class TestParseViTime:
         assert seen["streaming"] is False
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận fail**
+- [x] **Step 3: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_timeparse.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.timeparse'`
 
-- [ ] **Step 4: Viết phần khai báo và lớp chốt**
+- [x] **Step 4: Viết phần khai báo và lớp chốt**
 
 Tạo `app/agents/booking_graph/timeparse.py`:
 
@@ -347,7 +347,7 @@ def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
     return candidate.model_copy(update={"start_at": start})
 ```
 
-- [ ] **Step 5: Viết tầng regex**
+- [x] **Step 5: Viết tầng regex**
 
 Thêm vào `app/agents/booking_graph/timeparse.py`:
 
@@ -418,7 +418,7 @@ def _match_regex(text: str, now: datetime) -> Optional[datetime]:
     return datetime(day.year, day.month, day.day, hour, 0, tzinfo=TZ)
 ```
 
-- [ ] **Step 6: Viết tầng LLM và hàm công khai**
+- [x] **Step 6: Viết tầng LLM và hàm công khai**
 
 Thêm vào `app/agents/booking_graph/timeparse.py`:
 
@@ -489,12 +489,12 @@ async def parse_vi_time(
     return _guard(candidate.model_copy(update={"source": "llm"}), now)
 ```
 
-- [ ] **Step 7: Chạy test để xác nhận pass**
+- [x] **Step 7: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_timeparse.py -v`
 Expected: PASS (36 passed) — quan trọng nhất là cả lớp `TestRegexDefers` và `test_a_year_off_date_is_rejected`
 
-- [ ] **Step 8: Viết bảng câu tiếng Việt thật (chỉ chạy khi gọi tay)**
+- [x] **Step 8: Viết bảng câu tiếng Việt thật (chỉ chạy khi gọi tay)**
 
 Tạo `tests/test_timeparse_llm.py`:
 
@@ -554,7 +554,7 @@ async def test_a_question_with_no_time_returns_nothing():
     assert result.start_at is None
 ```
 
-- [ ] **Step 9: Chạy bảng câu thật một lần**
+- [x] **Step 9: Chạy bảng câu thật một lần**
 
 Run: `pytest tests/test_timeparse_llm.py -m llm -v`
 Expected: PASS. Câu nào đỏ thì sửa `_PROMPT` ở step 6 rồi chạy lại — **không** nới test cho vừa với kết quả.
@@ -564,7 +564,7 @@ Sau đó xác nhận nó bị loại khỏi lần chạy mặc định:
 Run: `pytest tests/ -v --collect-only -q | grep timeparse_llm`
 Expected: không ra dòng nào
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add app/agents/booking_graph/timeparse.py pytest.ini \

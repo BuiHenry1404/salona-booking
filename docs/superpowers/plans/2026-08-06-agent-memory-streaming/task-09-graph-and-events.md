@@ -13,7 +13,7 @@
   - `events.py`: `AgentEvent` (dataclass: `type: str`, `data: dict`), `run_turn(db, user, question) -> AsyncIterator[AgentEvent]`
   - Loại sự kiện: `turn_started`, `tool_started`, `tool_finished`, `token`, `complete`, `error`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_graph_events.py`:
 
@@ -94,12 +94,12 @@ def test_agent_event_is_json_serialisable():
     assert json.loads(json.dumps(event.data)) == {"text": "Dạ"}
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_graph_events.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.events'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/graph.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/graph.py`**
 
 ```python
 from langgraph.graph import END, START, StateGraph
@@ -154,7 +154,7 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     return graph.compile()
 ```
 
-- [ ] **Step 4: Viết `app/agents/booking_graph/events.py`**
+- [x] **Step 4: Viết `app/agents/booking_graph/events.py`**
 
 ```python
 from dataclasses import dataclass, field
@@ -263,7 +263,7 @@ async def run_turn(
         })
 ```
 
-- [ ] **Step 5: Xuất API công khai trong `app/agents/booking_graph/__init__.py`**
+- [x] **Step 5: Xuất API công khai trong `app/agents/booking_graph/__init__.py`**
 
 ```python
 from app.agents.booking_graph.events import AgentEvent, run_turn
@@ -271,12 +271,12 @@ from app.agents.booking_graph.events import AgentEvent, run_turn
 __all__ = ["run_turn", "AgentEvent"]
 ```
 
-- [ ] **Step 6: Chạy test để xác nhận pass**
+- [x] **Step 6: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_graph_events.py -v`
 Expected: PASS (9 passed) — quan trọng nhất là `test_token_from_the_supervisor_is_dropped`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/agents/booking_graph tests/test_graph_events.py
