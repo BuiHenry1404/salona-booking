@@ -70,6 +70,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Socket.IO unavailable, continuing without realtime", error=str(e))
 
+    from app.services.notifications import notifications
+    from app.services.socket_notifier import SocketNotifier
+
+    notifications.clear()
+    if app.state.socketio_service is not None:
+        notifications.register(SocketNotifier(app.state.socketio_service))
+
     yield
     
     # Shutdown
