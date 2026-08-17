@@ -1,7 +1,7 @@
-"""Nối thông báo vào AppointmentService (Plan 3, task 5).
+"""Nối thông báo vào nghiệp vụ (Plan 3, task 5).
 
-Chỉ phần AppointmentService: tạo/hủy lịch THÀNH CÔNG mới tỏa tin. Mọi nhánh
-đi ngược (idempotency, slot bị chiếm, lịch không tồn tại) phải im lặng.
+Hai phần: AppointmentService (tạo/hủy lịch) và router shop (/busy, /free).
+Chỉ thao tác THÀNH CÔNG mới tỏa tin; các đường đi ngược hoặc chỉ đọc phải im lặng.
 """
 
 from datetime import datetime
@@ -12,6 +12,7 @@ from app.core.clock import TZ
 from app.core.errors import NotFoundError, SlotTakenError
 from app.models.user import User
 from app.services.appointment import AppointmentService
+from app.services.auth import AuthService
 from app.services.notifications import notifications
 
 pytestmark = pytest.mark.asyncio
@@ -147,3 +148,89 @@ async def test_broken_notifier_does_not_break_cancelling(test_db):
 
     await svc.cancel(user, str(appt.id))
     assert await svc.upcoming_for(user) == []
+
+
+# ---------------------------------------------------------------------------
+# Router shop: POST /busy và POST /free tỏa tin sau khi đổi trạng thái thành công
+# ---------------------------------------------------------------------------
+
+
+async def _login(client, phone, password):
+    resp = await client.post(
+        "/api/v1/auth/login", json={"phone": phone, "password": password}
+    )
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest.fixture
+async def admin_headers(async_client, test_db):
+    await AuthService(test_db).create_user(
+        "0901234567", "chutiem123", "Chủ tiệm", role="admin"
+    )
+    return await _login(async_client, "0901234567", "chutiem123")
+
+
+@pytest.fixture
+async def user_headers(async_client, test_db):
+    await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    return await _login(async_client, "0912345678", "matkhau123")
+
+
+async def test_set_busy_fires_status_changed(async_client, admin_headers, spy):
+    resp = await async_client.post(
+        "/api/v1/shop/busy", json={"minutes": 30}, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_busy"] is True
+
+    assert spy.events == [("status", True)]
+
+
+async def test_set_free_fires_status_changed(async_client, admin_headers, spy):
+    await async_client.post(
+        "/api/v1/shop/busy", json={"minutes": 30}, headers=admin_headers
+    )
+    spy.events.clear()
+
+    resp = await async_client.post("/api/v1/shop/free", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_busy"] is False
+
+    assert spy.events == [("status", False)]
+
+
+async def test_reading_status_fires_nothing(async_client, user_headers, spy):
+    """GET /status là đường chỉ đọc — không được tỏa tin."""
+    resp = await async_client.get("/api/v1/shop/status", headers=user_headers)
+    assert resp.status_code == 200
+
+    assert spy.events == []
+
+
+async def test_forbidden_busy_call_fires_nothing(async_client, user_headers, spy):
+    """Khách thường bị 403 trước khi chạm trạng thái — không có tin nào."""
+    resp = await async_client.post(
+        "/api/v1/shop/busy", json={"minutes": 30}, headers=user_headers
+    )
+    assert resp.status_code == 403
+
+    assert spy.events == []
+
+
+async def test_broken_notifier_does_not_break_set_busy(async_client, admin_headers):
+    notifications.register(BrokenNotifier())
+
+    resp = await async_client.post(
+        "/api/v1/shop/busy", json={"minutes": 30}, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_busy"] is True
+
+
+async def test_broken_notifier_does_not_break_set_free(async_client, admin_headers):
+    notifications.register(BrokenNotifier())
+
+    resp = await async_client.post("/api/v1/shop/free", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_busy"] is False

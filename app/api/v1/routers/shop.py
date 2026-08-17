@@ -6,6 +6,7 @@ from app.api.v1.schemas import (SetBusyRequest, ShopHoursRequest,
                                 ShopStatusResponse)
 from app.models.shop import ShopHours
 from app.models.user import User
+from app.services.notifications import notifications
 from app.services.shop import ShopService
 
 router = APIRouter(prefix="/shop", tags=["shop"])
@@ -24,14 +25,18 @@ async def set_busy(
     _: User = Depends(require_admin),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    return ShopStatusResponse(**(await ShopService(db).set_busy(payload.minutes)).model_dump())
+    status = await ShopService(db).set_busy(payload.minutes)
+    await notifications.shop_status_changed(status)
+    return ShopStatusResponse(**status.model_dump())
 
 
 @router.post("/free", response_model=ShopStatusResponse)
 async def set_free(
     _: User = Depends(require_admin), db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    return ShopStatusResponse(**(await ShopService(db).set_free()).model_dump())
+    status = await ShopService(db).set_free()
+    await notifications.shop_status_changed(status)
+    return ShopStatusResponse(**status.model_dump())
 
 
 @router.get("/hours", response_model=ShopHours)
