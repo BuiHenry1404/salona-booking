@@ -41,3 +41,14 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+.screen { padding: var(--s4) var(--s3) var(--s5); max-width: 560px; margin: 0 auto; }
+.screen--narrow { max-width: 460px; }
+
+.alert {
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  font-size: 19px;
+  margin-bottom: var(--s3);
+}
+.alert--danger { background: var(--color-danger-weak); color: var(--color-danger); }
