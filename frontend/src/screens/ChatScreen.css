@@ -1,0 +1,141 @@
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+.chat__head {
+  padding: var(--s3) var(--s3) 0;
+}
+.chat__log {
+  flex: 1;
+  padding: var(--s3);
+  /* Dư đáy để nav + ô nhập (đều fixed) không che tin cuối. */
+  padding-bottom: 200px;
+}
+.chat__hello {
+  font-size: 20px;
+  color: var(--color-fg-muted);
+}
+
+/* Cảnh báo mất mạng — dùng kèm .alert của tokens.css. Chữ #92400e trên nền
+   --color-warn-weak đạt tương phản AA, và luôn có CHỮ, không chỉ màu. */
+.alert--warn {
+  background: var(--color-warn-weak);
+  color: #92400e;
+}
+
+/* To ngang nút gửi: lúc AI hỏng thì đây mới là đường đi thật của khách. */
+.callbtn {
+  display: block;
+  min-height: var(--tap);
+  line-height: var(--tap);
+  margin: var(--s3) 0;
+  text-align: center;
+  font-size: 21px;
+  font-weight: 700;
+  border-radius: var(--r);
+  background: var(--color-accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+.thinking {
+  display: flex;
+  gap: 6px;
+  padding: var(--s2) 0;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-fg-muted);
+  animation: dot-bounce 1.2s infinite;
+}
+.dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.dot:nth-child(4) {
+  animation-delay: 0.6s;
+}
+@keyframes dot-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+/* Chấm nhấp nháy đứng yên khi người dùng giảm chuyển động — rule toàn cục
+   trong tokens.css đã vô hiệu mọi animation; giữ ở đây chỉ để ghi rõ chủ ý,
+   dòng chữ sr-only vẫn nói trạng thái khi chấm đứng im. */
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+.chat__bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 56px; /* nằm trên BottomNav */
+  display: flex;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--color-surface);
+  border-top: 2px solid var(--color-border);
+}
+.chat__input {
+  flex: 1;
+  min-height: var(--tap);
+  padding: var(--s2) var(--s3);
+  font-family: inherit;
+  font-size: 20px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+  resize: none;
+}
+.iconbtn {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--r);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 19px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.iconbtn--on {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+.iconbtn--send {
+  background: var(--color-primary);
+  color: #fff;
+  padding: 0 var(--s3);
+}
+.iconbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
