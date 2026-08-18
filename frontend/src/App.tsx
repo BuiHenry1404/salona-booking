@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./auth/RequireAuth";
+import { ChatScreen } from "./screens/ChatScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 
 export default function App() {
@@ -13,7 +14,7 @@ export default function App() {
             path="/"
             element={
               <RequireAuth>
-                <p style={{ padding: "var(--s4)" }}>Màn hình chat — task 4</p>
+                <ChatScreen />
               </RequireAuth>
             }
           />
