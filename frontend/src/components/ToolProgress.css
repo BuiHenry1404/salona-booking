@@ -1,0 +1,41 @@
+.tools {
+  list-style: none;
+  margin: var(--s2) 0;
+}
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  color: var(--color-fg-muted);
+  padding: 6px 0;
+}
+.tool--done {
+  color: var(--color-accent);
+}
+.tool--failed {
+  color: var(--color-danger);
+}
+.tool__mark {
+  width: 22px;
+  text-align: center;
+  font-weight: 700;
+  flex: none;
+}
+.tool__spin {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: tool-spin 0.9s linear infinite;
+}
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* prefers-reduced-motion đã bị vô hiệu toàn cục trong tokens.css — không ghi
+   đè ở đây: vòng xoay đứng yên nhưng dòng chữ vẫn nói rõ đang chạy hay xong. */

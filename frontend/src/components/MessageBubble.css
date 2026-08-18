@@ -1,0 +1,43 @@
+.bubble {
+  max-width: 88%;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  font-size: 20px;
+  margin-bottom: var(--s2);
+  /* Giữ nguyên dấu xuống dòng trong tin nhắn — AI trả lời nhiều dòng. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.bubble--me {
+  margin-left: auto;
+  background: var(--color-primary);
+  color: #fff;
+}
+.bubble--bot {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+}
+
+.bubble__pending {
+  text-align: right;
+  font-size: 17px;
+  color: var(--color-fg-muted);
+  margin: -6px 0 var(--s2);
+}
+
+/* Con trỏ nhấp nháy cuối bong bóng đang stream. Caret là trang trí — phần
+   chữ đã stream mới là nội dung, trình đọc màn hình đọc phần đó là đủ. */
+.caret {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--color-fg);
+  vertical-align: -2px;
+  animation: caret-blink 1s steps(2) infinite;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
