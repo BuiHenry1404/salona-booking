@@ -25,6 +25,23 @@ Cập nhật: 2026-08-17
 - [ ] **Avatar chatbot** — chưa sinh; mockup đang trỏ tới `ai-avatar.jpg` không có
       trong git.
 
+## Thiết kế Mongo — đã rà 2026-08-17, không phải sửa ngay
+
+Bảy collection: `appointments`, `users`, `conversations`, `rate_limits`,
+`refresh_tokens`, cộng `shop_hours` và `shop_status` (tạo lười lúc ghi đầu tiên,
+không có trong `ensure_indexes`). Index đủ, không có truy vấn nào quét toàn bộ.
+Hai điều ghi lại để khỏi giật mình khi gặp:
+
+- **`conversations` phình vô hạn.** Mỗi khách một document, tin cũ không bị xoá, và
+  `history()` nạp cả document mỗi lượt chat rồi mới lọc bằng Python. Tính ra ~20KB
+  sau một năm cho một khách bình thường nên chưa đáng làm gì. Nếu có khách chat
+  hằng ngày thì vá bằng `{"messages": {"$slice": -50}}` trong `find_one`, không
+  phải tách bảng.
+- **`user_id` lưu dạng chuỗi, còn `users._id` là ObjectId.** Nhất quán trong app nên
+  hiện không sai ở đâu, nhưng `$lookup` sang `users` sẽ không khớp vì lệch kiểu —
+  sẽ vấp lúc viết báo cáo cho chủ tiệm. Đổi thì phải migrate bốn collection, chỉ
+  làm khi có nhu cầu thật.
+
 ## Dễ quên
 
 - Dựng lại stack Langfuse từ đầu là **mất đơn giá model** → mọi trace hiện 0đ.
