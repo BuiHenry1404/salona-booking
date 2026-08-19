@@ -4,6 +4,7 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { ChatHistoryScreen } from "./screens/ChatHistoryScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { LoginScreen } from "./screens/LoginScreen";
+import { MyAppointmentsScreen } from "./screens/MyAppointmentsScreen";
 import { PastChatScreen } from "./screens/PastChatScreen";
 
 export default function App() {
@@ -33,6 +34,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <PastChatScreen />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lich-cua-toi"
+            element={
+              <RequireAuth>
+                <MyAppointmentsScreen />
               </RequireAuth>
             }
           />

@@ -1,0 +1,35 @@
+.appt {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+  padding: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+/* Giờ hẹn là thông tin quan trọng nhất — chữ to hơn chuẩn đọc chính. */
+.appt__when {
+  font-size: 21px;
+  font-weight: 700;
+}
+.appt__note {
+  font-size: 19px;
+  margin-top: var(--s1);
+}
+.appt__confirm {
+  margin-top: var(--s3);
+}
+.appt__ask {
+  font-size: 19px;
+  margin-bottom: var(--s2);
+}
+/* Hai nút ngang hàng, mỗi cái vẫn cao đủ var(--tap) để bấm không trượt. */
+.appt__row {
+  display: flex;
+  gap: var(--s2);
+}
+.appt__row > * {
+  flex: 1;
+}
+.appt > .btn {
+  margin-top: var(--s3);
+}

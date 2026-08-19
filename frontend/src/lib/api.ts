@@ -40,6 +40,18 @@ interface TokenResponse {
   role: Role;
 }
 
+/** Contract của GET /api/v1/appointments/mine và POST /api/v1/appointments
+ * (backend: AppointmentResponse trong app/api/v1/schemas.py). */
+export interface AppointmentResponse {
+  id: string;
+  start_at: string; // ISO datetime
+  duration_minutes: number;
+  note: string | null;
+  status: "booked" | "cancelled";
+  user_name: string | null;
+  phone: string | null;
+}
+
 async function parseError(response: Response): Promise<ApiError> {
   let detail: string | undefined;
   try {
