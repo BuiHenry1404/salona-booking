@@ -1,26 +1,44 @@
-# NOTE — việc đang treo
+# NOTE — bắt đầu từ đây
 
-Sổ tay ngắn, cập nhật khi có gì đó bị hoãn. *Tại sao* nằm ở
+**Đọc file này trước** khi tiếp tục dự án. *Tại sao* nằm ở
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md).
 
-Cập nhật: 2026-08-17
+Cập nhật: 2026-08-19
 
 ## Đang ở đâu
 
 - Plan 1 (backend) và Plan 2 (agent, memory, streaming): **xong**. 283 test xanh,
   10 test gọi Azure thật xanh, 31 case đầu-cuối trên server thật xanh
   (`scripts/live_e2e.py`), 8 kịch bản hội thoại chạy đúng (`scripts/chat_scenarios.py`).
-- Nhánh `feat/agent-memory-streaming` — 20 commit, đã push, **chưa merge vào `main`**.
+- Nhánh `feat/agent-memory-streaming`, 25 commit, đã mở **PR #1** vào `main`
+  (https://github.com/BuiHenry1404/salona-booking/pull/1) — chưa merge.
+- Chat đặt lịch chạy thật với Azure `gpt-5.4-mini`. Langfuse tự dựng, có trace và
+  có chi phí.
+
+## Việc tiếp theo — đã chốt
+
+Chủ tiệm ngồi máy tính nên bảng điều khiển web là kênh chính, Telegram chỉ là phụ.
+Vì vậy **tạm bỏ qua bot Telegram**, nhưng vẫn phải lấy hai task realtime của Plan 3
+(chúng không dính gì tới Telegram):
+
+1. **Plan 3 task 1** — `plans/2026-08-06-telegram-bot/task-01-notifications.md`
+   ("Chỗ tỏa tin duy nhất") và **task 5** — `task-05-wire-services.md`
+   ("Nối thông báo vào nghiệp vụ"). Plan 2 mới dựng sẵn
+   `SocketIOService.broadcast` và `emit_to_admins` mà **chưa ai gọi**; hai task này
+   nối chúng vào `AppointmentService` / `ShopService`. Bỏ qua thì lịch mới không tự
+   nhảy lên màn hình chủ tiệm, phải F5.
+2. **Plan 4 — React**, `plans/2026-08-06-react-frontend/`, 9 task. Làm sau bước 1
+   thì task 6 (bảng admin) cắm thẳng vào sự kiện realtime, không phải sửa lại.
+3. Bot Telegram (Plan 3 task 2–4) khi nào cần.
 
 ## Để sau
 
 - [ ] **mongo-express** — đang bật cùng `docker compose up`, đăng nhập `admin`/`admin`
       hardcode. Chọn một: thêm `profiles: ["tools"]` để mặc định không bật, hoặc xoá
       hẳn và soi DB bằng `docker compose exec mongo mongosh salon_booking`.
-- [ ] **Merge `feat/agent-memory-streaming` vào `main`.**
-- [ ] **Plan 3 — Telegram** (`plans/2026-08-06-telegram-bot/`). Sau đó mới làm được
-      phần đặt lại mật khẩu admin.
-- [ ] **Plan 4 — React** (`plans/2026-08-06-react-frontend/`). Song song Plan 3 được.
+- [ ] **Merge PR #1** (`feat/agent-memory-streaming` → `main`).
+- [ ] **Đặt lại mật khẩu admin** — cần bot Telegram tồn tại trước, xem
+      `specs/2026-08-15-admin-password-reset-telegram-design.md`.
 - [ ] **Plan 5 — vận hành**, chưa viết: nginx + HTTPS, `docker-compose.prod.yml`,
       sao lưu Mongo, CI, throttle toàn cục. Danh sách đầy đủ ở mục "Chưa có" trong
       CONTEXT.md.

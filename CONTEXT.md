@@ -13,9 +13,9 @@ App đặt lịch cho **một tiệm nail–tóc nhỏ ở Việt Nam**, ngườ
 | Chủ tiệm | Cùng web app, giao diện admin — bật/tắt bận rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — nhận báo lịch mới, tra lịch, đổi bận/rảnh bằng nút bấm |
 
-**Xong: Plan 1 (backend) và Plan 2 (agent, memory, streaming).** 281 test xanh, cộng 10 test gọi Azure thật. Đã đo đầu-cuối với `gpt-5.4-mini`: lượt "mai 3h chiều làm tóc được không con" gọi `parse_time` → `propose_appointment` rồi hỏi xác nhận mà **chưa** ghi lịch; lượt "ừ" không gọi tool nào và ghi lịch ngay; câu ngoài chủ đề bị `refuse`. Trace lên Langfuse đủ `userId`/`sessionId` và các span `TOOL`.
+**Xong: Plan 1 (backend) và Plan 2 (agent, memory, streaming).** 283 test xanh, cộng 10 test gọi Azure thật. Đã đo đầu-cuối với `gpt-5.4-mini`: lượt "mai 3h chiều làm tóc được không con" gọi `parse_time` → `propose_appointment` rồi hỏi xác nhận mà **chưa** ghi lịch; lượt "ừ" không gọi tool nào và ghi lịch ngay; câu ngoài chủ đề bị `refuse`. Trace lên Langfuse đủ `userId`/`sessionId` và các span `TOOL`.
 
-**Tiếp theo:** Plan 3 (Telegram) → Plan 4 (React); hai plan này song song được. Sau Plan 3 thì làm đặt lại mật khẩu admin (`specs/2026-08-15-admin-password-reset-telegram-design.md`).
+**Tiếp theo:** chốt tạm bỏ qua bot Telegram (chủ tiệm ngồi máy tính, Telegram chỉ là phụ), nhưng vẫn lấy **task 1 và task 5 của Plan 3** vì chúng là phần tỏa tin realtime chứ không dính Telegram — Plan 2 mới dựng sẵn `broadcast`/`emit_to_admins` mà chưa ai gọi. Xong hai task đó thì làm Plan 4 (React). Chi tiết ở [`NOTE.md`](NOTE.md).
 
 ## Tài liệu
 
@@ -57,9 +57,9 @@ Plan 1 dựng toàn bộ tầng `services/`; agent, Telegram và REST chỉ bọ
 | Ranh giới hội thoại | **Một phiên mỗi ngày**, cắt theo giờ VN, áp lúc ĐỌC | Lịch sử chat chỉ để hiểu tham chiếu trong cùng mạch nói ("giờ đó", "ừ") — vô nghĩa sau vài tuần. Mốc là ngày trôi qua, không phải lần đăng nhập: cookie sống 30 ngày, khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói. Cắt lúc đọc nên đổi quy tắc không cần migrate |
 | Số lần ghi Mongo | **Không gộp** — chấp nhận 3 `update_one` mỗi lượt giữ chỗ/xác nhận | ~350 lần ghi/ngày trên một document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn. Cần tối ưu thì gộp hai `append` trong `run_turn` trước |
 
-## Mười ba cái bẫy — đã trả giá để tìm ra
+## Mười bốn cái bẫy — đã trả giá để tìm ra
 
-Cả 13 đã được vá. Đừng "sửa lại cho gọn" mà làm hỏng.
+Cả 14 đã được vá. Đừng "sửa lại cho gọn" mà làm hỏng.
 
 **Dữ liệu**
 
@@ -74,20 +74,24 @@ Cả 13 đã được vá. Đừng "sửa lại cho gọn" mà làm hỏng.
 
 **Agent và streaming**
 
+*(Ba lỗi dưới đây — 5, 8, và timeout của parser — đều KHÔNG làm test nào đỏ vì
+chỗ nào fail-soft thì chỗ đó nuốt luôn bằng chứng. Xem `NOTE.md` mục "Dễ quên".)*
+
 6. **Khối bối cảnh PHẢI nói hôm nay là ngày nào**, ở dòng **đầu**. Không có mốc thì "mai 3h chiều" không giải được; model suy từ dữ liệu huấn luyện và đặt lệch cả năm — mà `2025-08-08` vẫn là chuỗi ISO hợp lệ nên không gì chặn được.
 7. **Agent KHÔNG có tool ghi lịch.** Năm tool: `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`. Thêm `create_appointment` là hỏng cả hai lớp bảo vệ — khách mất bước xác nhận, và chuỗi ISO quay lại đi vòng qua model.
 8. **Chỉ stream token mang tag `respond`.** Token của supervisor là JSON định tuyến; model của parser thời gian phải mang `tags=["timeparse"]` và `streaming=False`, không thì khách thấy `{"start_at": "2026-08-...` chạy ngang màn hình.
 9. **Khối bối cảnh KHÔNG nằm trong system prompt.** Prompt cache ăn theo tiền tố chung; khối này đổi mỗi lượt nên đặt đầu là cache không bao giờ trúng. Thứ tự: System → lịch sử → bối cảnh → tin mới.
-10. **Đừng nới regex của parser thời gian.** Nó chỉ trả lời khi câu khớp trọn vẹn; thiếu gì cũng nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` canh chỗ này.
+10. **Timeout của parser phải đủ cho một lượt Azure thật.** Ngưỡng ban đầu 2 giây, mà đo thật mất 2,2–2,4 giây → nhánh LLM của parser chưa từng chạy được, chỉ regex sống, và khách đáp "9 giờ" bị hỏi lại đúng câu vừa hỏi. Fail-soft trả `missing=["giờ cụ thể"]` y như khi câu thật sự thiếu giờ nên không có gì đỏ. Nay là 8 giây, có `test_timeout_leaves_room_for_a_real_azure_call` chốt.
+11. **Đừng nới regex của parser thời gian.** Nó chỉ trả lời khi câu khớp trọn vẹn; thiếu gì cũng nhường cho LLM. Thêm mẫu "thứ Năm" là mẫu đó nuốt luôn "thứ Năm tuần sau" và trả sai ngày — LLM không bao giờ được gọi để sửa. Lớp `TestRegexDefers` canh chỗ này.
 
 **Telegram**
 
-11. **Trả `answerCallbackQuery` TRƯỚC khi làm việc.** Callback query hết hạn sau 10 giây; chậm là nút quay mãi và chủ tiệm bấm lại → đặt bận hai lần.
-12. **`get_updates` phải NÉM lỗi ra ngoài** (khác `send_message` nuốt lỗi). Nuốt thì mạng đứt trông giống hệt "không có tin mới".
+12. **Trả `answerCallbackQuery` TRƯỚC khi làm việc.** Callback query hết hạn sau 10 giây; chậm là nút quay mãi và chủ tiệm bấm lại → đặt bận hai lần.
+13. **`get_updates` phải NÉM lỗi ra ngoài** (khác `send_message` nuốt lỗi). Nuốt thì mạng đứt trông giống hệt "không có tin mới".
 
 **Frontend**
 
-13. **Hết giờ bận KHÔNG có sự kiện nào từ server** — backend không có timer, `busy_until` chỉ được tính lại khi ai đó gọi `get_status()`. `useShopStatus` đặt **một** `setTimeout` theo `minutes_left` (một **khoảng**, không phải hiệu hai **mốc** — máy khách lệch giờ là chuyện thường), tới giờ lật thẻ rồi hỏi lại server; trạng thái đổi thì `clearTimeout`.
+14. **Hết giờ bận KHÔNG có sự kiện nào từ server** — backend không có timer, `busy_until` chỉ được tính lại khi ai đó gọi `get_status()`. `useShopStatus` đặt **một** `setTimeout` theo `minutes_left` (một **khoảng**, không phải hiệu hai **mốc** — máy khách lệch giờ là chuyện thường), tới giờ lật thẻ rồi hỏi lại server; trạng thái đổi thì `clearTimeout`.
     **`socket.io-client` gộp kết nối theo URL** — hai hook cùng gọi `io(BASE)` nhận cùng một socket, hook nào unmount trước sẽ ngắt của hook kia. Dùng `acquireSocket()`/`releaseSocket()` đếm tham chiếu.
 
 ## Memory: vì sao chỉ hai tầng
@@ -170,8 +174,9 @@ Bốn điểm đáng nhớ về refresh token:
 
 ## Trạng thái git
 
-- **Repo:** GitHub `BuiHenry1404/salona-booking`, remote `origin`. Nhánh `main`; Plan 2 nằm ở `feat/agent-memory-streaming` đã push, **chưa merge**.
+- **Repo:** GitHub `BuiHenry1404/salona-booking`, remote `origin`. Nhánh `main`; Plan 2 nằm ở `feat/agent-memory-streaming`, đã mở **PR #1**, chưa merge.
 - Repo tạo lại từ đầu, **không còn** lịch sử Azure DevOps mà bản bàn giao nhắc tới.
+- Socket.IO từng mount sai đường dẫn (`/socket.io/socket.io/`) nên client mặc định nhận 404 — đã vá, có test hồi quy chạy qua lifespan thật.
 - Ảnh sinh bằng Gemini (`ai-avatar.*`, `Gemini_Generated_Image_*.png`) bị `.gitignore` bỏ qua vì nặng ~6MB — ai clone mới sẽ thấy mockup vỡ ảnh.
 
 ## Việc còn dở
