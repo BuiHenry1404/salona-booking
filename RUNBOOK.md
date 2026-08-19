@@ -114,6 +114,15 @@ docker compose up -d mongo
 Cần Mongo ở `localhost:27017`; test dùng database riêng `chatbot_test_db` và tự dọn
 sau mỗi test.
 
+Kiểm đầu-cuối trên server đang chạy — HTTP + Socket.IO thật, gọi Azure thật,
+không mock gì (31 case: xác thực, phân quyền, bận/rảnh, đặt/huỷ lịch, hai lượt
+chat, lịch sử trò chuyện):
+
+```bash
+docker compose up -d
+PYTHONPATH=. .venv/bin/python scripts/live_e2e.py
+```
+
 Nhóm test gọi Azure thật bị loại khỏi lần chạy mặc định (`-m "not llm"` trong
 `pyproject.toml`). Chạy tay khi sửa prompt của parser thời gian:
 

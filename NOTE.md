@@ -7,7 +7,9 @@ Cập nhật: 2026-08-17
 
 ## Đang ở đâu
 
-- Plan 1 (backend) và Plan 2 (agent, memory, streaming): **xong**, 281 test xanh.
+- Plan 1 (backend) và Plan 2 (agent, memory, streaming): **xong**. 282 test xanh,
+  10 test gọi Azure thật xanh, 31 case đầu-cuối trên server thật xanh
+  (`scripts/live_e2e.py`).
 - Nhánh `feat/agent-memory-streaming` — 20 commit, đã push, **chưa merge vào `main`**.
 
 ## Để sau

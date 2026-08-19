@@ -52,3 +52,17 @@ def test_readiness_returns_503_when_mongo_is_unreachable():
 def test_readiness_returns_200_when_mongo_is_up():
     with TestClient(app) as client:
         assert client.get("/api/v1/health/ready").status_code == 200
+
+
+def test_socketio_is_reachable_at_the_default_client_path():
+    """Client gọi `io()` đi vào /socket.io/ — phải có handshake ở đúng đó.
+
+    `socketio.ASGIApp` mặc định tự phục vụ dưới tiền tố "socket.io"; mount nó
+    vào /socket.io nữa là địa chỉ thật thành /socket.io/socket.io/ và mọi client
+    mặc định nhận 404. Test đơn vị gọi thẳng `handle_message` nên không thấy.
+    """
+    with TestClient(app) as client:   # phải vào lifespan, mount xảy ra ở đó
+        resp = client.get("/socket.io/", params={"EIO": "4", "transport": "polling"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.text.lstrip("0").startswith("{"), resp.text[:80]

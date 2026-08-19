@@ -101,5 +101,11 @@ class SocketIOService:
         await self.sio.emit(event, data, room="admins")
 
     def get_asgi_app(self):
-        """App ASGI để main.py mount vào /socket.io."""
-        return socketio.ASGIApp(self.sio)
+        """App ASGI để main.py mount vào /socket.io.
+
+        `socketio_path=""` là bắt buộc. Mặc định ASGIApp tự phục vụ dưới tiền tố
+        "socket.io"; mount nó vào /socket.io nữa thì địa chỉ thật thành
+        /socket.io/socket.io/ và mọi client gọi `io()` (đường mặc định
+        /socket.io/) đều nhận 404.
+        """
+        return socketio.ASGIApp(self.sio, socketio_path="")
