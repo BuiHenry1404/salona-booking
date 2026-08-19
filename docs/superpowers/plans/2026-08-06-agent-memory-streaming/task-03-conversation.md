@@ -22,7 +22,7 @@
   - `ConversationService(db).messages_on(user_id: str, day: date) -> list[ChatMessage]`
   - `GET /api/v1/conversations/days`, `GET /api/v1/conversations/days/{day}`
 
-- [ ] **Step 1: Xóa phần task cũ của template**
+- [x] **Step 1: Xóa phần task cũ của template**
 
 ```bash
 git rm app/models/task.py app/repositories/task.py app/services/task.py \
@@ -32,7 +32,7 @@ git rm -f tests/test_chat.py 2>/dev/null || true
 
 Trong `app/api/v1/routers/__init__.py`, xóa mọi dòng nhắc `tasks` hoặc `conversations`.
 
-- [ ] **Step 2: Viết test (sẽ fail)**
+- [x] **Step 2: Viết test (sẽ fail)**
 
 Tạo `tests/test_conversation.py`:
 
@@ -161,12 +161,12 @@ async def test_clearing_pending(test_db):
     assert await svc.get_pending("u1") is None
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận fail**
+- [x] **Step 3: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_conversation.py -v`
 Expected: FAIL — `ConversationService` cũ không có `append`/`history`
 
-- [ ] **Step 4: Viết `app/models/conversation.py`**
+- [x] **Step 4: Viết `app/models/conversation.py`**
 
 ```python
 from datetime import datetime
@@ -213,7 +213,7 @@ class Conversation(BaseDocument):
     pending_confirmation: Optional[Dict[str, Any]] = None
 ```
 
-- [ ] **Step 5: Viết `app/services/conversation.py`**
+- [x] **Step 5: Viết `app/services/conversation.py`**
 
 ```python
 from datetime import timedelta
@@ -343,7 +343,7 @@ class ConversationService:
         return pending
 ```
 
-- [ ] **Step 6: Viết lại `app/repositories/conversation.py`**
+- [x] **Step 6: Viết lại `app/repositories/conversation.py`**
 
 Xóa nội dung cũ (dựa trên `task`) và thay bằng:
 
@@ -359,7 +359,7 @@ class ConversationRepository(BaseRepository[Conversation]):
         super().__init__(db, Conversation, "conversations")
 ```
 
-- [ ] **Step 7: Thêm index cho conversations**
+- [x] **Step 7: Thêm index cho conversations**
 
 Trong `app/infrastructure/database.py`, thêm vào `ensure_indexes`:
 
@@ -367,17 +367,17 @@ Trong `app/infrastructure/database.py`, thêm vào `ensure_indexes`:
     await db["conversations"].create_index("user_id", unique=True)
 ```
 
-- [ ] **Step 8: Chạy test để xác nhận pass**
+- [x] **Step 8: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_conversation.py -v`
 Expected: PASS (7 passed)
 
-- [ ] **Step 9: Chạy toàn bộ test để chắc không vỡ gì**
+- [x] **Step 9: Chạy toàn bộ test để chắc không vỡ gì**
 
 Run: `pytest -v`
 Expected: PASS toàn bộ
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add -A

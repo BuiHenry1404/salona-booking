@@ -11,7 +11,7 @@
   - `make_subagent_node(prompt: str, tools: list[BaseTool], tag: str) -> Callable[[GraphState], Awaitable[dict]]`
   - `MAX_TOOL_ROUNDS: int = 4`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_subagents.py`:
 
@@ -136,12 +136,12 @@ async def test_unknown_tool_name_does_not_crash(patch_model):
     assert (await node(a_state()))["answer"] == "Dạ con xin lỗi ạ."
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_subagents.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.agents'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/agents.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/agents.py`**
 
 ```python
 from typing import Awaitable, Callable, List
@@ -181,7 +181,10 @@ def make_subagent_node(
         ]
 
         for _ in range(MAX_TOOL_ROUNDS):
-            reply = await model.ainvoke(messages)
+            # Gửi một bản chụp: `messages` còn bị nối thêm ngay sau đây, mà
+            # LangChain giữ nguyên tham chiếu — trace và test sẽ thấy một danh
+            # sách khác với thứ thật sự gửi đi ở lượt đó.
+            reply = await model.ainvoke(list(messages))
             messages.append(reply)
 
             calls = getattr(reply, "tool_calls", None)
@@ -208,12 +211,12 @@ def make_subagent_node(
     return node
 ```
 
-- [ ] **Step 4: Chạy test để xác nhận pass**
+- [x] **Step 4: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_subagents.py -v`
 Expected: PASS (7 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/agents/booking_graph/agents.py tests/test_subagents.py

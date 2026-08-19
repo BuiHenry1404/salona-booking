@@ -11,7 +11,7 @@
   - `prompts.py`: `SUPERVISOR_PROMPT`, `STATUS_PROMPT`, `BOOKING_PROMPT`, `REFUSE_MESSAGE`
   - `supervisor.py`: `supervise(state: GraphState) -> dict` (đặt `route`), `refuse(state: GraphState) -> dict`, `route_from_state(state) -> str`
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_supervisor.py`:
 
@@ -108,12 +108,12 @@ def test_no_pending_confirmation_goes_to_supervisor():
     assert route_from_state(a_state()) == "supervisor"
 ```
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_supervisor.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.supervisor'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/prompts.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/prompts.py`**
 
 ```python
 SUPERVISOR_PROMPT = """Bạn phân loại ý định của khách tại một tiệm làm nail và tóc.
@@ -150,13 +150,17 @@ Quy tắc bắt buộc:
 3. Nếu giờ khách muốn đã có người, gợi ý hai giờ trống gần nhất.
 4. Không bịa giờ trống — luôn dùng find_free_slots.
 5. Khách nhắc tới thời gian ("mai", "chiều nay", "thứ Năm tuần sau") thì LUÔN
-   gọi parse_time trước, rồi mới gọi find_free_slots hoặc create_appointment.
+   gọi parse_time trước, rồi mới gọi find_free_slots hoặc propose_appointment.
    Tuyệt đối không tự tính ngày.
    - parse_time trả start_at → chuyển NGUYÊN chuỗi đó sang propose_appointment,
      không sửa, không diễn giải, không tự gõ lại.
    - parse_time trả missing → hỏi lại khách đúng thứ còn thiếu, hỏi MỘT thứ
      một lần. Ví dụ missing là ["sáng hay chiều"] thì hỏi "Dạ 3 giờ chiều hay
      3 giờ sáng ạ cô?" — không hỏi kèm thứ khác.
+   - Khi khách trả lời phần còn thiếu, GHÉP nó với thứ đã biết rồi mới gọi
+     parse_time. Khách nói "sáng mai" rồi đáp "9 giờ" thì gọi
+     parse_time("sáng mai 9 giờ"), KHÔNG gọi parse_time("9 giờ"). Truyền mảnh
+     rời thì parse_time lại báo thiếu ngày và bạn hỏi lại đúng câu vừa hỏi.
    Vẫn nhắc lại ngày bằng lời cho khách nghe trước khi ghi lịch.
 
 Cách nói: xưng "con", gọi khách theo tên trong phần bối cảnh, câu ngắn,
@@ -168,7 +172,7 @@ REFUSE_MESSAGE = (
 )
 ```
 
-- [ ] **Step 4: Viết `app/agents/booking_graph/supervisor.py`**
+- [x] **Step 4: Viết `app/agents/booking_graph/supervisor.py`**
 
 ```python
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -217,12 +221,12 @@ async def refuse(state: GraphState) -> dict:
     return {"answer": REFUSE_MESSAGE}
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận pass**
+- [x] **Step 5: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_supervisor.py -v`
 Expected: PASS (9 passed)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/agents/booking_graph/prompts.py app/agents/booking_graph/supervisor.py tests/test_supervisor.py

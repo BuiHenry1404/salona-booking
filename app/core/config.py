@@ -1,6 +1,9 @@
 from typing import Literal, Union, Optional
 from pydantic import SecretStr, field_validator, AnyUrl
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+# Chỉ tồn tại trong container (compose mount vào). Máy dev không có thì bỏ qua.
+DOCKER_ENV_FILE = "/run/config/env.docker"
 
 
 class Settings(BaseSettings):
@@ -80,10 +83,31 @@ class Settings(BaseSettings):
             return origins
         return v if isinstance(v, list) else [str(v)]
 
+    # File sau thắng file trước: `.env` là gốc, `DOCKER_ENV_FILE` chỉ đè vài
+    # khoá khác biệt trong container.
     model_config = {
-        "env_file": ".env",
+        "env_file": (".env", DOCKER_ENV_FILE),
         "case_sensitive": False
     }
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Chỉ đọc file .env — bỏ qua biến môi trường của shell.
+
+        Mặc định ngược lại: biến môi trường thắng file, nên một biến export sẵn
+        từ dự án khác âm thầm đè lên `.env` mà không có lỗi nào để lần ra.
+
+        Đánh đổi: `docker run -e` và biến của CI không đặt được cấu hình nữa;
+        chỗ nào cần khác `.env` thì ghi vào `DOCKER_ENV_FILE`.
+        """
+        return (init_settings, dotenv_settings)
 
 
 settings = Settings()

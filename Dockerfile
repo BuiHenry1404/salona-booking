@@ -35,8 +35,13 @@ USER appuser
 EXPOSE 8000
 
 # Health check
+#
+# urllib chứ không phải requests: requests không nằm trong requirements.txt, nên
+# `import requests` ném ImportError và container LUÔN unhealthy.
+# Dấu / cuối cũng bắt buộc — thiếu là 307, mà urlopen coi redirect là thành công
+# nên healthcheck sẽ xanh cả khi app hỏng.
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/v1/health')"
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health/', timeout=10).status == 200 else 1)"
 
 # Run the application
 # IMPORTANT: keep this at a single worker. Do NOT add --workers N (or switch to

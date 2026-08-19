@@ -1,134 +1,168 @@
-from typing import List, Optional, Tuple
-from bson import ObjectId
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.api.v1.schemas import ConversationCreate, ConversationUpdate
-from app.models.conversation import Conversation
-from app.repositories.conversation import ConversationRepository
-from app.repositories.task import TaskRepository
+
+from app.core.clock import local_day_bounds, now_utc, to_local
+from app.models.conversation import ChatMessage, Conversation, DaySummary
+
+# Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
+# đếm token thật cần tokenizer của model và không đáng cho việc này.
+CHARS_PER_TOKEN = 3
+DEFAULT_TOKEN_BUDGET = 1500
+
+# Tin trong ngần này phút luôn được giữ, kể cả khi đã sang ngày mới — xem
+# `ConversationService.history`.
+CARRY_OVER_MINUTES = 30
+
+# Độ dài dòng xem trước trong màn lịch sử.
+PREVIEW_CHARS = 80
 
 
 class ConversationService:
-    """Service for managing conversations."""
-    
     def __init__(self, db: AsyncIOMotorDatabase):
-        self.conversation_repo = ConversationRepository(db)
-        self.task_repo = TaskRepository(db)
-    
-    async def create_conversation(self, user_id: str, conversation_data: ConversationCreate) -> Conversation:
-        """Create a new conversation."""
-        conversation_dict = {
-            "user_id": ObjectId(user_id),
-            "title": conversation_data.title,
-            "description": conversation_data.description,
-            "task_ids": [],
-            "is_active": True,
-            "metadata": conversation_data.metadata
-        }
-        
-        conversation = await self.conversation_repo.create(conversation_dict)
-        return conversation
-    
-    async def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
-        """Get conversation by ID."""
-        return await self.conversation_repo.get_by_id(conversation_id)
-    
-    async def get_user_conversation(self, conversation_id: str, user_id: str) -> Optional[Conversation]:
-        """Get a specific conversation for a user."""
-        return await self.conversation_repo.get_user_conversation(conversation_id, user_id)
-    
-    async def list_user_conversations(
-        self,
-        user_id: str,
-        skip: int = 0,
-        limit: int = 20,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
-        is_active: Optional[bool] = None
-    ) -> Tuple[List[Conversation], int]:
-        """List conversations for a user with pagination."""
-        return await self.conversation_repo.get_user_conversations(
-            user_id=user_id,
-            skip=skip,
-            limit=limit,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            is_active=is_active
+        self.collection = db["conversations"]
+
+    async def get_or_create(self, user_id: str) -> Conversation:
+        doc = await self.collection.find_one({"user_id": user_id})
+        if doc:
+            return Conversation(**doc)
+        now = now_utc()
+        payload = {"user_id": user_id, "messages": [], "pending_confirmation": None,
+                   "created_at": now, "updated_at": now}
+        result = await self.collection.insert_one(payload)
+        payload["_id"] = result.inserted_id
+        return Conversation(**payload)
+
+    async def append(self, user_id: str, role: str, content: str) -> None:
+        await self.collection.update_one(
+            {"user_id": user_id},
+            {
+                "$push": {"messages": ChatMessage(role=role, content=content).model_dump()},
+                "$set": {"updated_at": now_utc()},
+                "$setOnInsert": {"user_id": user_id, "created_at": now_utc()},
+            },
+            upsert=True,
         )
-    
-    async def update_conversation(
-        self,
-        conversation_id: str,
-        user_id: str,
-        update_data: ConversationUpdate
-    ) -> Optional[Conversation]:
-        """Update a conversation."""
-        # First check if the conversation belongs to the user
-        conversation = await self.conversation_repo.get_user_conversation(conversation_id, user_id)
-        if not conversation:
-            return None
-        
-        # Prepare update data
-        update_dict = {}
-        if update_data.title is not None:
-            update_dict["title"] = update_data.title
-        if update_data.description is not None:
-            update_dict["description"] = update_data.description
-        if update_data.is_active is not None:
-            update_dict["is_active"] = update_data.is_active
-        if update_data.metadata is not None:
-            update_dict["metadata"] = update_data.metadata
-        
-        if not update_dict:
-            return conversation
-        
-        return await self.conversation_repo.update(conversation_id, update_dict)
-    
-    async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
-        """Delete a conversation and all its tasks."""
-        # First check if the conversation belongs to the user
-        conversation = await self.conversation_repo.get_user_conversation(conversation_id, user_id)
-        if not conversation:
-            return False
-        
-        # Delete all tasks in the conversation
-        await self.task_repo.delete_conversation_tasks(conversation_id)
-        
-        # Delete the conversation
-        return await self.conversation_repo.delete_user_conversation(conversation_id, user_id)
-    
-    async def add_task_to_conversation(self, conversation_id: str, task_id: str) -> bool:
-        """Add a task to a conversation."""
-        return await self.conversation_repo.add_task_to_conversation(conversation_id, task_id)
-    
-    async def remove_task_from_conversation(self, conversation_id: str, task_id: str) -> bool:
-        """Remove a task from a conversation."""
-        return await self.conversation_repo.remove_task_from_conversation(conversation_id, task_id)
-    
-    async def get_conversation_with_tasks(self, conversation_id: str, user_id: str) -> Optional[dict]:
-        """Get conversation with all its tasks."""
-        conversation = await self.conversation_repo.get_user_conversation(conversation_id, user_id)
-        if not conversation:
-            return None
-        
-        tasks = await self.task_repo.get_conversation_tasks(conversation_id)
-        
-        return {
-            "conversation": conversation,
-            "tasks": tasks
-        }
-    
-    async def archive_conversation(self, conversation_id: str, user_id: str) -> Optional[Conversation]:
-        """Archive a conversation (set is_active to False)."""
-        return await self.update_conversation(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            update_data=ConversationUpdate(is_active=False)
+
+    async def _all_messages(self, user_id: str) -> List[ChatMessage]:
+        doc = await self.collection.find_one({"user_id": user_id})
+        if not doc:
+            return []
+        return [ChatMessage(**m) for m in doc.get("messages", [])]
+
+    async def history(
+        self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET
+    ) -> List[ChatMessage]:
+        """Lịch sử của PHIÊN HÔM NAY, cắt thêm theo ngân sách token.
+
+        Hai lớp cắt, cả hai đều cần:
+
+        1. **Theo ngày** — chỉ nạp tin của ngày hôm nay theo giờ Việt Nam. Lịch
+           sử chat chỉ dùng để hiểu các tham chiếu trong cùng mạch nói ("giờ đó",
+           "ừ", "đổi giúp cô"); những thứ đó không có nghĩa sau vài tuần. Mọi
+           thông tin bền của khách — tên, SĐT, lịch sắp tới, trạng thái tiệm —
+           đã nằm trong khối bối cảnh dựng bằng code ở mỗi lượt, không lấy từ
+           đây. Giữ lịch sử vài tháng chỉ tốn token và khiến model tưởng chuyện
+           tháng trước vừa mới xảy ra, vì prompt KHÔNG mang mốc thời gian của
+           từng tin.
+
+           Cắt theo giờ Việt Nam chứ không theo UTC: nửa đêm UTC là 7 giờ sáng ở
+           VN, cắt đúng giữa buổi làm việc.
+
+        2. **Theo ngân sách token** — một khách nói dài dòng chiếm gấp nhiều lần
+           một khách nói cộc lốc, nên đếm lượt là sai đơn vị.
+
+        Ngoại lệ nửa đêm: mọi tin trong 30 phút gần nhất luôn được giữ, kể cả khi
+        chúng thuộc hôm qua. Không có nó thì khách nhắn 23:58, AI hỏi xác nhận,
+        khách đáp "ừ" lúc 00:01 — và câu "ừ" mất sạch ngữ cảnh.
+
+        Ranh giới là NGÀY TRÔI QUA, không phải lần đăng nhập. Đăng nhập do vòng
+        đời cookie quyết định (30 ngày), không phải một mốc có nghĩa trong hội
+        thoại: khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói, còn
+        khách giữ đăng nhập nửa năm thì không bao giờ có ranh giới nào.
+        """
+        all_messages = await self._all_messages(user_id)
+        if not all_messages:
+            return []
+
+        day_start, _ = local_day_bounds(to_local(now_utc()).date())
+        carry_over = now_utc() - timedelta(minutes=CARRY_OVER_MINUTES)
+        cutoff = min(day_start, carry_over)
+
+        messages = [m for m in all_messages if m.created_at >= cutoff]
+        kept: List[ChatMessage] = []
+        used = 0
+        for message in reversed(messages):
+            cost = max(1, len(message.content) // CHARS_PER_TOKEN)
+            if used + cost > token_budget and kept:
+                break
+            kept.append(message)
+            used += cost
+        return list(reversed(kept))
+
+    async def list_days(self, user_id: str) -> List[DaySummary]:
+        """Các ngày khách từng nhắn, mới nhất trước.
+
+        Gom theo ngày ĐỊA PHƯƠNG. Gom theo UTC thì mốc cắt rơi vào 7 giờ sáng
+        giờ Việt Nam, xé đôi một buổi làm việc thành hai dòng trong danh sách.
+        """
+        buckets: Dict[date, List[ChatMessage]] = {}
+        for message in await self._all_messages(user_id):
+            buckets.setdefault(to_local(message.created_at).date(), []).append(message)
+
+        summaries = []
+        for day, messages in buckets.items():
+            first_from_customer = next(
+                (m.content for m in messages if m.role == "user"),
+                messages[0].content,
+            )
+            summaries.append(
+                DaySummary(
+                    day=day,
+                    message_count=len(messages),
+                    preview=first_from_customer[:PREVIEW_CHARS],
+                )
+            )
+        return sorted(summaries, key=lambda s: s.day, reverse=True)
+
+    async def messages_on(self, user_id: str, day: date) -> List[ChatMessage]:
+        """Toàn bộ tin của một ngày, KHÔNG cắt theo ngân sách token.
+
+        Đây là màn đọc lại của khách, không phải thứ nhồi vào prompt — cắt bớt
+        ở đây chỉ làm mất chữ khách đã nói.
+        """
+        start, end = local_day_bounds(day)
+        return [
+            m
+            for m in await self._all_messages(user_id)
+            if start <= m.created_at < end
+        ]
+
+    async def set_pending(self, user_id: str, payload: Optional[Dict[str, Any]]) -> None:
+        value = {**payload, "asked_at": now_utc()} if payload else None
+        await self.collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"pending_confirmation": value, "updated_at": now_utc()},
+             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
+            upsert=True,
         )
-    
-    async def activate_conversation(self, conversation_id: str, user_id: str) -> Optional[Conversation]:
-        """Activate a conversation (set is_active to True)."""
-        return await self.update_conversation(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            update_data=ConversationUpdate(is_active=True)
-        ) 
+
+    async def get_pending(
+        self, user_id: str, max_age_minutes: int = 10
+    ) -> Optional[Dict[str, Any]]:
+        """Cờ hết hạn sau 10 phút: quá đó thì khách nói "ừ" cũng phải hỏi lại,
+        vì nhiều khả năng họ đang nói về chuyện khác."""
+        doc = await self.collection.find_one({"user_id": user_id})
+        pending = (doc or {}).get("pending_confirmation")
+        if not pending:
+            return None
+
+        asked_at = pending.get("asked_at")
+        if asked_at is None:
+            return None
+        if asked_at.tzinfo is None:
+            asked_at = asked_at.replace(tzinfo=now_utc().tzinfo)
+        if now_utc() - asked_at > timedelta(minutes=max_age_minutes):
+            return None
+        return pending

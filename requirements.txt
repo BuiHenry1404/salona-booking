@@ -11,7 +11,7 @@ motor==3.3.2
 pymongo==4.6.0
 
 # Validation and serialization
-pydantic==2.5.0
+pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
 pydantic-settings==2.1.0
 email-validator==2.1.0
 
@@ -19,7 +19,7 @@ email-validator==2.1.0
 httpx==0.25.2
 
 # JSON response optimization
-orjson==3.9.10
+orjson>=3.9.10
 
 # Development and testing
 pytest==7.4.3
@@ -39,6 +39,15 @@ pip-audit==2.6.1
 
 # Real-time
 python-socketio[asyncio]>=5.13.0
+
+# Agent
+langgraph>=0.2.60
+langchain-openai>=0.2.14
+langchain-core>=0.3.28
+# langfuse.langchain import chính gói `langchain`, không chỉ langchain-core.
+# Thiếu nó thì trace tắt im lặng, chỉ còn một dòng warning.
+langchain>=0.3
+langfuse>=3.0
 
 # Logging
 structlog==23.2.0

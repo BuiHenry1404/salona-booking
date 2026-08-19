@@ -13,7 +13,7 @@
   - Tên tool: `get_shop_status`, `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`
   - **Không có tool ghi lịch.** Lịch chỉ được tạo ở node `confirm` (task 8), sau khi khách đồng ý.
 
-- [ ] **Step 1: Viết test (sẽ fail)**
+- [x] **Step 1: Viết test (sẽ fail)**
 
 Tạo `tests/test_tools.py`:
 
@@ -248,12 +248,12 @@ async def test_parse_time_is_not_given_to_the_status_agent(test_db):
 
 `test_parse_time_says_what_is_missing_instead_of_guessing` chạm tới tầng LLM, nên nó cần Azure. Nếu chưa cấu hình key, `parse_vi_time` fail-soft trả `missing=["giờ cụ thể"]` — test vẫn xanh, đúng ý: điều được khẳng định là "không đoán", không phải "hiểu được câu".
 
-- [ ] **Step 2: Chạy test để xác nhận fail**
+- [x] **Step 2: Chạy test để xác nhận fail**
 
 Run: `pytest tests/test_tools.py -v`
 Expected: FAIL với `ModuleNotFoundError: No module named 'app.agents.booking_graph.tools'`
 
-- [ ] **Step 3: Viết `app/agents/booking_graph/tools.py`**
+- [x] **Step 3: Viết `app/agents/booking_graph/tools.py`**
 
 ```python
 from datetime import date, datetime
@@ -270,6 +270,9 @@ from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
 from app.services.shop import ShopService
+
+# Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
+WHOLE_DAY = 200
 
 
 def _parse_local(value: str) -> datetime:
@@ -353,11 +356,18 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # giờ đó có người là bắt khách chọn lại hai lần.
         # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
         # giờ đã có người — một truy vấn thay cho bốn lần kiểm tay.
-        free = await service.find_free_slots(to_local(start).date())
+        #
+        # `limit` phải phủ TRỌN ngày. Mặc định của service là 12 mốc, tức chỉ
+        # tới gần 11 giờ trưa; để nguyên thì mọi giờ chiều đều bị báo "không đặt
+        # được" dù còn trống.
+        free = await service.find_free_slots(to_local(start).date(), limit=WHOLE_DAY)
         if start not in free:
             if not free:
                 return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
-            goi_y = ", ".join(format_vi_datetime(s) for s in free[:3])
+            # Gợi ý ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày:
+            # khách xin 4 giờ chiều mà gợi ý 8, 8:15, 8:30 sáng là gợi ý vô ích.
+            gan_nhat = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
+            goi_y = ", ".join(format_vi_datetime(s) for s in gan_nhat)
             return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {goi_y}."
 
         # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
@@ -404,12 +414,12 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     ]
 ```
 
-- [ ] **Step 4: Chạy test để xác nhận pass**
+- [x] **Step 4: Chạy test để xác nhận pass**
 
 Run: `pytest tests/test_tools.py -v`
 Expected: PASS (16 passed) — quan trọng nhất là `test_there_is_NO_tool_that_writes_an_appointment` và `test_propose_stores_the_time_in_mongo_not_in_the_prompt`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/agents/booking_graph/tools.py tests/test_tools.py

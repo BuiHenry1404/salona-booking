@@ -1,28 +1,42 @@
-from typing import List, Optional
-from pydantic import Field, ConfigDict
-from app.models.base import BaseDocument, PyObjectId
+from datetime import date, datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from app.core.clock import now_utc
+from app.models.base import BaseDocument
+
+Role = Literal["user", "assistant"]
+
+
+class ChatMessage(BaseModel):
+    role: Role
+    content: str
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class DaySummary(BaseModel):
+    """Một dòng trong màn lịch sử trò chuyện của khách."""
+
+    day: date
+    message_count: int
+    # Câu ĐẦU TIÊN khách nói hôm đó, cắt ngắn — để khách nhận ra hôm ấy nói
+    # chuyện gì. Lấy câu của khách chứ không lấy câu mở đầu của AI, vì câu của
+    # AI ngày nào cũng na ná nhau.
+    preview: str
 
 
 class Conversation(BaseDocument):
-    """Conversation model - groups related tasks together."""
-    
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "title": "Project Planning Discussion",
-                "description": "Planning the new feature development",
-                "is_active": True,
-                "metadata": {
-                    "category": "work",
-                    "priority": "high"
-                }
-            }
-        }
-    )
-    
-    user_id: PyObjectId = Field(..., description="ID of the user who owns this conversation")
-    title: str = Field(..., min_length=1, max_length=200, description="Conversation title")
-    description: Optional[str] = Field(None, max_length=1000, description="Optional conversation description")
-    task_ids: List[PyObjectId] = Field(default_factory=list, description="List of task IDs in this conversation")
-    is_active: bool = Field(True, description="Whether the conversation is active")
-    metadata: dict = Field(default_factory=dict, description="Additional conversation metadata") 
+    """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
+
+    Không có `session_id`. Ranh giới phiên được áp lúc ĐỌC (`history()`), không
+    phải lúc ghi — nhờ vậy đổi quy tắc cắt phiên về sau không cần migrate gì.
+
+    Document phình dần vì tin cũ không bị xoá, chỉ không được nạp. Mongo giới
+    hạn 16MB mỗi document; với vài trăm khách và vài tin mỗi tuần thì còn hàng
+    chục năm mới chạm, nên chưa xử — nhưng đừng quên là nó có trần.
+    """
+
+    user_id: str
+    messages: List[ChatMessage] = Field(default_factory=list)
+    pending_confirmation: Optional[Dict[str, Any]] = None

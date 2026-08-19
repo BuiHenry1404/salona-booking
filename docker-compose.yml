@@ -5,21 +5,21 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - MONGO_URI=mongodb://mongo:27017
-      - MONGO_DB_NAME=chatbot_db
-      - JWT_SECRET=development-secret-key-change-in-production
-      - API_KEY=development-api-key
-      - ENV=dev
-      - DEBUG=true
+    # Máy reboot hoặc app crash thì tự lên lại. `unless-stopped` chứ không phải
+    # `always`: đã chủ động `docker compose stop` thì đừng tự bật lại.
+    restart: unless-stopped
     depends_on:
       - mongo
     volumes:
       - .:/app
+      # Settings chỉ đọc file, không đọc biến môi trường — nên không có khối
+      # `environment:`. Mount ra ngoài /app để máy dev không thấy file này.
+      - ./.env.docker:/run/config/env.docker:ro
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   mongo:
     image: mongo:7.0
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
@@ -36,6 +36,9 @@ services:
         soft: 64000
         hard: 64000
 
+  # CHỈ dùng ở dev: cổng 8081, user/pass admin/admin, ai vào cũng sửa được dữ
+  # liệu khách. Không có `restart:` để nó không tự sống lại sau reboot. Phải bỏ
+  # hẳn khỏi file compose của prod.
   mongo-express:
     image: mongo-express:1.0.0
     ports:
