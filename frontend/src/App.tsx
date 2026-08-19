@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./auth/RequireAuth";
+import { AdminDashboard } from "./screens/AdminDashboard";
 import { ChatHistoryScreen } from "./screens/ChatHistoryScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -49,7 +50,7 @@ export default function App() {
             path="/chu-tiem"
             element={
               <RequireAuth role="admin">
-                <div>Màn hình chủ tiệm — task 6</div>
+                <AdminDashboard />
               </RequireAuth>
             }
           />

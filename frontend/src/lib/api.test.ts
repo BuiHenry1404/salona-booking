@@ -160,4 +160,20 @@ describe("api", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/v1/auth/logout");
     expect(fetchMock.mock.calls[0][1].credentials).toBe("include");
   });
+
+  it("postNoBody: POST thật sự KHÔNG body — không '{}' và không Content-Type", async () => {
+    const fetchMock = mockFetchSequence([
+      { status: 200, body: { is_busy: false, busy_until: null, minutes_left: null } },
+    ]);
+
+    await api.postNoBody("/api/v1/shop/free");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/api/v1/shop/free");
+    expect(opts.method).toBe("POST");
+    // body undefined là bằng chứng chắc chắn không có "{}" nào được gửi.
+    expect(opts.body).toBeUndefined();
+    expect(opts.headers?.["Content-Type"]).toBeUndefined();
+  });
 });

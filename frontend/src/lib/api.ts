@@ -150,6 +150,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
+  /** POST không body (vd /shop/free). KHÔNG dùng `post(path)` — nó tự nhét
+   * `{}` làm body. Truyền `undefined` xuyên qua request/rawRequest: không
+   * body, không Content-Type, và vẫn kế thừa toàn bộ auth/refresh/error. */
+  postNoBody: <T>(path: string) => request<T>("POST", path),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: <T>(path: string) => request<T>("DELETE", path),
 };

@@ -1,9 +1,24 @@
 .appt {
+  position: relative; /* cho badge MỚI neo góc phải trên */
   background: var(--color-surface);
   border: 2px solid var(--color-border);
   border-radius: var(--r);
   padding: var(--s3);
   margin-bottom: var(--s3);
+}
+
+/* Nhãn MỚI là CHỮ trên nền accent — không bao giờ chỉ báo hiệu bằng màu. */
+.appt__new {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  border-radius: 999px;
 }
 
 /* Giờ hẹn là thông tin quan trọng nhất — chữ to hơn chuẩn đọc chính. */
@@ -13,6 +28,12 @@
 }
 .appt__note {
   font-size: 19px;
+  margin-top: var(--s1);
+}
+/* Tên + SĐT khách cho chủ tiệm — SĐT là thứ chủ tiệm cần đọc nhanh nhất. */
+.appt__who {
+  font-size: 18px;
+  color: var(--color-fg-muted);
   margin-top: var(--s1);
 }
 .appt__confirm {

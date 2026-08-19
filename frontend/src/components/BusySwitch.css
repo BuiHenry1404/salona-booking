@@ -1,0 +1,39 @@
+/* Thẻ trạng thái to của chủ tiệm: chữ "Đang bận"/"Đang rảnh" 32px đậm,
+   kèm nền khác nhau — nhưng chữ mới là tín hiệu chính, màu chỉ hỗ trợ. */
+.switch {
+  padding: var(--s4) var(--s3);
+  border-radius: var(--r);
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  margin-bottom: var(--s4);
+  text-align: center;
+}
+.switch--busy {
+  background: var(--color-warn-weak);
+  border-color: #b45309;
+}
+.switch--free {
+  background: var(--color-accent-weak);
+  border-color: var(--color-accent);
+}
+.switch__state {
+  font-size: 32px;
+  font-weight: 700;
+  margin-bottom: var(--s1);
+}
+.switch__count {
+  font-size: 21px;
+  color: var(--color-fg-muted);
+  margin-bottom: var(--s3);
+}
+.switch__ask {
+  font-size: 20px;
+  margin-bottom: var(--s2);
+}
+/* Bốn lựa chọn thời lượng dạng lưới 2×2, mỗi ô vẫn cao đủ var(--tap). */
+.switch__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
