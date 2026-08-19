@@ -123,6 +123,14 @@ docker compose up -d
 PYTHONPATH=. .venv/bin/python scripts/live_e2e.py
 ```
 
+Diễn lại tám cuộc trò chuyện thật của khách (đặt lịch suôn sẻ, nói mơ hồ, hỏi
+bận/rảnh, trùng giờ, đổi ý, hủy lịch, câu ngoài chủ đề, giờ đóng cửa) — in ra
+nguyên văn hội thoại kèm tool đã gọi:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/chat_scenarios.py
+```
+
 Nhóm test gọi Azure thật bị loại khỏi lần chạy mặc định (`-m "not llm"` trong
 `pyproject.toml`). Chạy tay khi sửa prompt của parser thời gian:
 
