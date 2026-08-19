@@ -7,9 +7,9 @@ Cập nhật: 2026-08-17
 
 ## Đang ở đâu
 
-- Plan 1 (backend) và Plan 2 (agent, memory, streaming): **xong**. 282 test xanh,
+- Plan 1 (backend) và Plan 2 (agent, memory, streaming): **xong**. 283 test xanh,
   10 test gọi Azure thật xanh, 31 case đầu-cuối trên server thật xanh
-  (`scripts/live_e2e.py`).
+  (`scripts/live_e2e.py`), 8 kịch bản hội thoại chạy đúng (`scripts/chat_scenarios.py`).
 - Nhánh `feat/agent-memory-streaming` — 20 commit, đã push, **chưa merge vào `main`**.
 
 ## Để sau
@@ -46,6 +46,11 @@ Hai điều ghi lại để khỏi giật mình khi gặp:
 
 ## Dễ quên
 
+- **Fail-soft che lỗi.** Hai lỗi nặng nhất tới giờ đều không làm test nào đỏ:
+  Socket.IO mount sai đường dẫn (test gọi thẳng `handle_message`), và timeout
+  parser 2 giây khiến mọi lượt LLM hết giờ (fail-soft trả "thiếu giờ cụ thể" y
+  như khi câu thật sự thiếu). Chỗ nào nuốt lỗi thì phải có kịch bản chạy thật
+  soi vào — `scripts/chat_scenarios.py` sinh ra vì lý do đó.
 - Dựng lại stack Langfuse từ đầu là **mất đơn giá model** → mọi trace hiện 0đ.
   Lệnh seed lại nằm ở đầu `docker-compose.langfuse.yml`.
 - `docker compose down -v` xoá luôn volume: mất lịch của khách và toàn bộ trace.

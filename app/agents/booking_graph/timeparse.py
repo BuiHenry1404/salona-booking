@@ -11,7 +11,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-PARSE_TIMEOUT_SECONDS = 2.0
+# Đo thật với Azure gpt-5.4-mini: một lượt parse mất 2,2–2,4 giây. Ngưỡng cũ là
+# 2.0 nên MỌI lượt đi qua LLM đều hết giờ và trả về "thiếu giờ cụ thể" — nhánh
+# LLM của parser coi như chết, chỉ còn regex sống, và khách nói "sáng mai 9 giờ"
+# bị hỏi lại đúng câu vừa hỏi. Fail-soft che mất lỗi nên log chỉ có warning.
+# 8 giây cho đủ biên: một lượt chat vốn đã mất 5–15 giây, thêm vài giây ở đây
+# không đổi cảm nhận của khách, còn hỏi lại thì đổi.
+PARSE_TIMEOUT_SECONDS = 8.0
 MAX_DAYS_AHEAD = 90
 
 

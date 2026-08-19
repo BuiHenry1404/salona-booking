@@ -227,3 +227,16 @@ class TestParseViTime:
 
         assert "respond" not in seen["tags"]
         assert seen["streaming"] is False
+
+
+def test_timeout_leaves_room_for_a_real_azure_call():
+    """2 giây là quá chặt: đo thật thấy một lượt parse mất 2,2–2,4 giây.
+
+    Ngưỡng thấp không làm test nào đỏ — `parse_vi_time` fail-soft, trả về
+    "thiếu giờ cụ thể" y như khi câu thật sự thiếu giờ. Hậu quả chỉ lộ ra khi
+    nói chuyện thật: khách đáp "9 giờ" và bị hỏi lại đúng câu vừa hỏi. Nên phải
+    có một test khẳng định thẳng cái ngưỡng.
+    """
+    from app.agents.booking_graph.timeparse import PARSE_TIMEOUT_SECONDS
+
+    assert PARSE_TIMEOUT_SECONDS >= 5.0

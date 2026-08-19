@@ -13,7 +13,7 @@ Spec: [`2026-08-08-vi-time-parser-design.md`](../../specs/2026-08-08-vi-time-par
 - Produces:
   - `ParsedTime` (Pydantic): `start_at: datetime | None`, `missing: list[str]`, `partial_date: date | None`, `source: "regex" | "llm"`
   - `parse_vi_time(text: str, now: datetime) -> ParsedTime`
-  - `PARSE_TIMEOUT_SECONDS: float = 2.0`
+  - `PARSE_TIMEOUT_SECONDS: float = 8.0` (ban đầu 2.0 — đo thật thấy Azure mất 2,2–2,4s nên mọi lượt LLM đều hết giờ)
 
 - [x] **Step 1: Đăng ký marker `llm`**
 
@@ -291,7 +291,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-PARSE_TIMEOUT_SECONDS = 2.0
+PARSE_TIMEOUT_SECONDS = 8.0
 MAX_DAYS_AHEAD = 90
 
 

@@ -63,6 +63,10 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         """Quy câu nói về thời gian của khách ra ngày giờ chuẩn.
         Gọi tool này TRƯỚC find_free_slots và propose_appointment, mỗi khi khách
         nhắc tới thời gian. Không tự tính ngày.
+        `text` phải là cụm ĐẦY ĐỦ, ghép cả những gì khách đã nói ở lượt trước:
+        khách nói "sáng mai" rồi đáp "9 giờ" thì truyền "sáng mai 9 giờ", không
+        truyền "9 giờ". Tool này chỉ đọc đúng chuỗi bạn đưa, nó không thấy
+        những lượt trước.
         Ví dụ text: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai"."""
         parsed: ParsedTime = await parse_vi_time(text, now_utc())
         # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
