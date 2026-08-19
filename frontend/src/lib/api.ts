@@ -52,6 +52,38 @@ export interface AppointmentResponse {
   phone: string | null;
 }
 
+/** POST /api/v1/appointments — for_user_id chỉ admin được điền (đặt lịch hộ). */
+export interface AppointmentCreateRequest {
+  start_at: string;
+  note: string | null;
+  for_user_id?: string;
+}
+
+/** UserResponse của /auth/users và /auth/me (backend: schemas.py). */
+export interface UserResponse {
+  id: string;
+  phone: string;
+  full_name: string | null;
+  role: "user" | "admin";
+  is_active: boolean;
+}
+
+/** Body POST /api/v1/auth/users (CreateUserRequest backend). */
+export interface CreateUserRequest {
+  phone: string;
+  password: string;
+  full_name?: string | null;
+  role: "user" | "admin";
+}
+
+/** GET/PUT /api/v1/shop/hours (backend: ShopHours). closed_days theo
+ * Python date.weekday(): 0 = Thứ Hai ... 6 = Chủ Nhật. */
+export interface ShopHours {
+  open_time: string;
+  close_time: string;
+  closed_days: number[];
+}
+
 async function parseError(response: Response): Promise<ApiError> {
   let detail: string | undefined;
   try {
