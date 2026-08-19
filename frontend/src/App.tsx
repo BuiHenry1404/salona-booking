@@ -1,8 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./auth/RequireAuth";
+import { ChatHistoryScreen } from "./screens/ChatHistoryScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { LoginScreen } from "./screens/LoginScreen";
+import { PastChatScreen } from "./screens/PastChatScreen";
 
 export default function App() {
   return (
@@ -15,6 +17,22 @@ export default function App() {
             element={
               <RequireAuth>
                 <ChatScreen />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lich-su"
+            element={
+              <RequireAuth>
+                <ChatHistoryScreen />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lich-su/:day"
+            element={
+              <RequireAuth>
+                <PastChatScreen />
               </RequireAuth>
             }
           />

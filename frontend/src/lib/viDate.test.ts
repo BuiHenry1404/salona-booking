@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatViDateTime, formatViTime } from "./viDate";
+import { formatViDate, formatViDateTime, formatViDayMonth, formatViTime } from "./viDate";
 
 /* Giờ Việt Nam là UTC+7 và không có DST, nên tính ngược từ UTC là an toàn. */
 
@@ -26,5 +26,17 @@ describe("formatViDateTime", () => {
 
   it("formatViTime chỉ trả phần giờ", () => {
     expect(formatViTime("2026-08-07T08:00:00Z")).toBe("3:00 chiều");
+  });
+});
+
+describe("formatViDate", () => {
+  it("ngày viết đủ chữ kèm tên thứ, dùng ở màn lịch sử", () => {
+    expect(formatViDate("2026-08-12")).toBe("Thứ Tư, 12 tháng 8");
+  });
+});
+
+describe("formatViDayMonth", () => {
+  it("chỉ ngày tháng đủ chữ, không kèm thứ", () => {
+    expect(formatViDayMonth("2026-08-12")).toBe("12 tháng 8");
   });
 });

@@ -47,3 +47,18 @@ export function formatViDateTime(iso: string): string {
   const { weekday, day, month } = vnParts(iso);
   return `${WEEKDAYS[weekday]}, ${day}/${month} — ${formatViTime(iso)}`;
 }
+
+/** "12 tháng 8" — ngày tháng viết đủ chữ, dành cho chỗ cần câu tự nhiên
+ * ("cuộc trò chuyện ngày 12 tháng 8"). Không bao giờ dùng dạng 12/8 cho khách. */
+export function formatViDayMonth(iso: string): string {
+  const { day, month } = vnParts(iso);
+  return `${day} tháng ${month}`;
+}
+
+/** "Thứ Tư, 12 tháng 8" — ngày viết đủ chữ tiếng Việt kèm tên thứ, dùng ở
+ * màn lịch sử. Chuỗi "2026-08-12" (không giờ) được hiểu là nửa đêm UTC,
+ * vnParts đổi sang giờ Việt Nam vẫn đúng ngày nên không lệch thứ. */
+export function formatViDate(iso: string): string {
+  const { weekday } = vnParts(iso);
+  return `${WEEKDAYS[weekday]}, ${formatViDayMonth(iso)}`;
+}

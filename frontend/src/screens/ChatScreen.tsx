@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
+import { Link } from "react-router-dom";
 import { BottomNav } from "../components/BottomNav";
 import { MessageBubble } from "../components/MessageBubble";
 import { ShopStatusCard } from "../components/ShopStatusCard";
@@ -76,6 +77,20 @@ export function ChatScreen() {
     <div className="chat">
       <header className="chat__head">
         <ShopStatusCard status={status} loading={loading} />
+        <Link
+          to="/lich-su"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            minHeight: "var(--tap)",
+            marginTop: "var(--s2)",
+            fontSize: 19,
+            fontWeight: 600,
+            color: "var(--color-primary)",
+          }}
+        >
+          Xem các cuộc trò chuyện trước
+        </Link>
       </header>
 
       <main className="chat__log">

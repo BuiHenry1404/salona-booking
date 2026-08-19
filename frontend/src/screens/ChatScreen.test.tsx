@@ -381,4 +381,10 @@ describe("ChatScreen", () => {
     act(() => speechOnTranscript?.("nữa nè"));
     expect(screen.getByLabelText(/nhắn cho tiệm/i)).toHaveValue("dòng một\ndòng hai nữa nè");
   });
+
+  it("35. có đường vào lịch sử: link 'Xem các cuộc trò chuyện trước' trỏ /lich-su", () => {
+    renderChat();
+    const link = screen.getByRole("link", { name: /xem các cuộc trò chuyện trước/i });
+    expect(link).toHaveAttribute("href", "/lich-su");
+  });
 });
