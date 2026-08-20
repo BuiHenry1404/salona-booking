@@ -10,12 +10,14 @@ import { LoginScreen } from "./screens/LoginScreen";
 import { MyAppointmentsScreen } from "./screens/MyAppointmentsScreen";
 import { PastChatScreen } from "./screens/PastChatScreen";
 import { ShopHoursScreen } from "./screens/ShopHoursScreen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <ErrorBoundary>
+          <Routes>
           <Route path="/dang-nhap" element={<LoginScreen />} />
           <Route
             path="/"
@@ -83,6 +85,7 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );

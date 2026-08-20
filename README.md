@@ -13,6 +13,16 @@ uvicorn main:app --reload
 
 Swagger: http://localhost:8000/docs
 
+## Giao diện web
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Chi tiết xem [`frontend/README.md`](frontend/README.md). Nhớ thêm
+`http://localhost:5173` vào `ALLOWED_ORIGINS` trong `.env`, nếu không mọi
+request từ giao diện đều bị CORS chặn.
+
 ## Tạo tài khoản chủ tiệm đầu tiên
 
 Không có đăng ký tự do. Tài khoản admin đầu tiên phải tạo bằng tay:

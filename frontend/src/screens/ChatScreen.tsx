@@ -145,7 +145,7 @@ export function ChatScreen() {
         <textarea
           id="draft"
           className="chat__input"
-          rows={1}
+          rows={2}
           value={draft}
           placeholder="Cô chú nhắn ở đây…"
           onChange={(e) => setDraft(e.target.value)}

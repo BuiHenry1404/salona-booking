@@ -1,8 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap");
 
 :root {
-  /* Màu đã kiểm bằng công thức WCAG. Không dùng #0284C7 (4.10:1) hay
-     #059669 (3.77:1) cho chữ — cả hai trượt AA cho chữ thường. */
+  /* Màu đã kiểm bằng công thức WCAG. Không dùng các màu xanh cũ đã
+     trượt AA cho chữ thường (tương phản < 4.5:1). */
   --color-primary: #0369a1;      /* 5.93:1 trên nền sáng */
   --color-primary-weak: #e0f2fe;
   --color-accent: #047857;       /* 5.48:1 */
