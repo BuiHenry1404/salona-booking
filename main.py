@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
@@ -90,11 +91,36 @@ async def lifespan(app: FastAPI):
     if app.state.socketio_service is not None:
         notifications.register(SocketNotifier(app.state.socketio_service))
 
+    # Kênh Telegram của chỗ tỏa tin — chỉ đăng ký khi có token. Thiếu token thì
+    # app chạy bình thường, không bot, không kênh Telegram rác. Phải đăng ký
+    # TRƯỚC start_bot để bot đổi bận/rảnh có kênh để tỏa tin.
+    from app.telegram.client import TelegramClient, is_configured as telegram_is_configured
+    from app.telegram.notify import TelegramNotifier
+    if telegram_is_configured():
+        notifications.register(TelegramNotifier(TelegramClient()))
+        logger.info("Telegram notifier registered")
+
+    # Bot Telegram — long polling chạy như asyncio task trong lifespan, chỉ bật
+    # khi có TELEGRAM_BOT_TOKEN. Thiếu token thì app chạy bình thường, không bot.
+    # Phải đứng SAU khi đăng ký kênh tỏa tin để handler đổi bận/rảnh có thể phát
+    # shop_status_changed qua cả Socket.IO lẫn Telegram.
+    from app.telegram import start_bot
+    app.state.telegram_task = start_bot(app.state.db)
+
     yield
     
     # Shutdown
     logger.info("Shutting down application")
     
+    # Dừng bot Telegram trước khi đóng các kênh tỏa tin
+    if getattr(app.state, 'telegram_task', None):
+        app.state.telegram_task.cancel()
+        try:
+            await asyncio.wait_for(app.state.telegram_task, timeout=5)
+        except (asyncio.CancelledError, Exception):
+            pass
+        logger.info("Telegram bot stopped")
+
     # Cleanup Socket.IO connections
     if getattr(app.state, 'socketio_service', None):
         await app.state.socketio_service.sio.shutdown()

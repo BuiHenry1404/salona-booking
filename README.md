@@ -53,6 +53,18 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 **Đúng 1 worker.** Không truyền `--workers`, không dùng `gunicorn -w N`, không scale container lên nhiều replica: bot Telegram (Plan 3) dùng long polling, và Telegram chỉ chấp nhận một kết nối `getUpdates` cho mỗi bot token — nhiều tiến trình sẽ đá nhau và nhận 409 Conflict liên tục.
 
+Nếu về sau thật sự cần nhiều worker, phương án là tách bot thành tiến trình riêng và thêm cờ `RUN_TELEGRAM_POLLER` để lifespan của web không khởi động vòng lặp poll.
+
+### Lấy chat_id của chủ tiệm
+
+Tạo bot qua [@BotFather](https://t.me/BotFather), lấy token, điền vào `TELEGRAM_BOT_TOKEN` trong `.env`. Nhắn bot một câu bất kỳ, rồi mở:
+
+```
+https://api.telegram.org/bot<TOKEN>/getUpdates
+```
+
+Số trong `result[0].message.chat.id` chính là chat_id. Điền vào `TELEGRAM_ADMIN_CHAT_IDS` (nhiều người thì phân cách bằng dấu phẩy). Bot **chỉ** trả lời những chat_id trong danh sách này — nó đọc được tên và số điện thoại khách, nên đây là ranh giới bảo mật, không phải tiện ích. Thiếu `TELEGRAM_BOT_TOKEN` thì bot không khởi động, app vẫn chạy bình thường.
+
 
 ## Cấu hình
 

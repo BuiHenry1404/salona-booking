@@ -54,12 +54,14 @@ def test_readiness_returns_200_when_mongo_is_up():
         assert client.get("/api/v1/health/ready").status_code == 200
 
 
-def test_lifespan_registers_socket_notifier_channel():
+def test_lifespan_registers_socket_notifier_channel(monkeypatch):
     """Vào lifespan thật: SocketNotifier phải là kênh duy nhất, bọc đúng
-    socketio_service vừa tạo."""
+    socketio_service vừa tạo. Telegram tắt ở test này để cô lập kênh Socket.IO
+    — không cho kết quả phụ thuộc vào việc .env có token Telegram hay không."""
     from app.services.notifications import notifications
     from app.services.socket_notifier import SocketNotifier
 
+    monkeypatch.setattr("app.telegram.client.is_configured", lambda: False)
     notifications.clear()
     try:
         with TestClient(app):
@@ -70,10 +72,11 @@ def test_lifespan_registers_socket_notifier_channel():
         notifications.clear()
 
 
-def test_rerunning_lifespan_does_not_duplicate_channels():
+def test_rerunning_lifespan_does_not_duplicate_channels(monkeypatch):
     """Reload/test chạy lifespan nhiều lần không được đăng ký trùng kênh."""
     from app.services.notifications import notifications
 
+    monkeypatch.setattr("app.telegram.client.is_configured", lambda: False)
     notifications.clear()
     try:
         with TestClient(app):
@@ -85,7 +88,8 @@ def test_rerunning_lifespan_does_not_duplicate_channels():
 
 
 def test_socketio_failure_leaves_no_channels_but_app_still_boots(monkeypatch):
-    """Socket.IO chết là fail-soft: app vẫn khởi động, và không có kênh rác."""
+    """Socket.IO chết là fail-soft: app vẫn khởi động, và không có kênh rác.
+    Telegram cũng tắt để test đúng kịch bản 'Socket.IO hỏng một mình'."""
     from app.services.notifications import notifications
 
     class _Broken:
@@ -93,6 +97,7 @@ def test_socketio_failure_leaves_no_channels_but_app_still_boots(monkeypatch):
             raise RuntimeError("socket hỏng")
 
     monkeypatch.setattr("main.SocketIOService", _Broken)
+    monkeypatch.setattr("app.telegram.client.is_configured", lambda: False)
     notifications.clear()
     try:
         with TestClient(app) as client:
