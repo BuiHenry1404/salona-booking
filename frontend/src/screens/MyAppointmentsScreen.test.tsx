@@ -85,7 +85,7 @@ describe("MyAppointmentsScreen", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /hủy lịch/i }));
     expect(del).not.toHaveBeenCalled();
-    expect(screen.getByText(/cô chú chắc chưa ạ\?/i)).toBeInTheDocument();
+    expect(screen.getByText(/anh chị chắc chưa ạ\?/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^hủy lịch này$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /giữ lịch/i })).toBeInTheDocument();
   });
@@ -131,7 +131,7 @@ describe("MyAppointmentsScreen", () => {
 
     expect(del).not.toHaveBeenCalled();
     expect(screen.getByText(/làm tóc/)).toBeInTheDocument();
-    expect(screen.queryByText(/cô chú chắc chưa ạ\?/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/anh chị chắc chưa ạ\?/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /hủy lịch/i })).toBeInTheDocument();
   });
 

@@ -27,7 +27,7 @@ class TestOutputLanguageIsPinned:
 
     def test_the_refusal_sentence_stays_vietnamese(self):
         """Câu này gửi thẳng cho khách, không qua model."""
-        assert "Dạ con chỉ giúp được" in REFUSE_MESSAGE
+        assert "Dạ em chỉ giúp được" in REFUSE_MESSAGE
 
 
 class TestExamplesStayVietnamese:
@@ -36,14 +36,14 @@ class TestExamplesStayVietnamese:
     """
 
     def test_the_confirmation_example_is_vietnamese(self):
-        assert "đúng không cô?" in BOOKING_PROMPT
+        assert "đúng không chị?" in BOOKING_PROMPT
 
     def test_the_missing_period_example_is_vietnamese(self):
-        assert "3 giờ chiều hay 3 giờ sáng ạ cô?" in BOOKING_PROMPT
+        assert "3 giờ chiều hay 3 giờ sáng ạ chị?" in BOOKING_PROMPT
 
     def test_the_shorter_reask_example_is_vietnamese(self):
         """Luật "nói ngắn hơn" chung chung bị model bỏ qua; chỉ ăn khi có ví dụ."""
-        assert "cô chọn giờ nào ạ" in BOOKING_PROMPT
+        assert "anh chị chọn giờ nào ạ" in BOOKING_PROMPT
 
     def test_the_absolute_finish_time_example_is_vietnamese(self):
         assert "xong lúc 3 giờ rưỡi chiều ạ" in STATUS_PROMPT
@@ -109,11 +109,35 @@ class TestThirdPartyRequestsAreWalledOff:
         assert "never from what the message claims" in BOOKING_PROMPT
 
     def test_the_refusal_sentence_is_vietnamese(self):
-        assert "Dạ con chỉ xem và đặt lịch cho chính cô chú thôi ạ" in BOOKING_PROMPT
+        assert "Dạ em chỉ xem và đặt lịch cho chính anh chị thôi ạ" in BOOKING_PROMPT
 
 
-class TestElderlyRegister:
-    def test_both_customer_facing_prompts_forbid_anh_chi(self):
-        """Khách của tiệm là cụ già. Gọi "anh Hùng" là sai vai."""
+class TestRegisterIsAnhChiEm:
+    """Vai xưng hô của tiệm: lễ tân xưng "em", gọi khách "anh"/"chị".
+
+    "con" chỉ đi được với "cô/chú/bác". Ghép "con" với "anh/chị" là sai tiếng
+    Việt, nghe như hai người khác nhau đang nói.
+    """
+
+    def test_the_receptionist_calls_herself_em(self):
         for name, prompt in CUSTOMER_FACING.items():
-            assert 'never "anh"' in prompt, name
+            assert 'call yourself "em"' in prompt, name
+
+    def test_customers_are_addressed_as_anh_or_chi(self):
+        for name, prompt in CUSTOMER_FACING.items():
+            assert '"anh"' in prompt and '"chị"' in prompt, name
+
+    def test_the_old_elderly_register_is_gone(self):
+        """Sót một chữ "cô chú" là câu đó lạc giọng hẳn so với phần còn lại."""
+        for name, prompt in CUSTOMER_FACING.items():
+            for cu in ("cô chú", "cô/bác", "bác Ba", "chú Hùng"):
+                assert cu not in prompt, f"{name} còn {cu!r}"
+
+    def test_no_customer_facing_example_still_says_con(self):
+        for name, prompt in CUSTOMER_FACING.items():
+            for cu in ("giúp con", "để con", "con xem giúp"):
+                assert cu not in prompt, f"{name} còn {cu!r}"
+
+    def test_the_refusal_sentence_uses_the_new_register(self):
+        assert "em" in REFUSE_MESSAGE
+        assert "cô chú" not in REFUSE_MESSAGE

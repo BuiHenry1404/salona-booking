@@ -54,7 +54,7 @@ export function AppointmentCard({ appointment, onCancel, showCustomer, isNew }: 
       {onCancel &&
         (confirming ? (
           <div className="appt__confirm">
-            <p className="appt__ask">Cô chú chắc chưa ạ? Hủy rồi là mất chỗ này.</p>
+            <p className="appt__ask">Anh chị chắc chưa ạ? Hủy rồi là mất chỗ này.</p>
             <div className="appt__row">
               <Button variant="danger" fullWidth={false} loading={busy} onClick={confirmCancel}>
                 Hủy lịch này

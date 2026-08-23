@@ -93,8 +93,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     ) -> str:
         """Giữ chỗ tạm thời và chuẩn bị câu hỏi xác nhận cho khách.
         `start_at` dạng ISO 8601, lấy NGUYÊN từ kết quả parse_time.
-        `xung_ho` là cách bạn gọi khách trong câu vừa nói: "cô Lan", "bác Ba",
-        "chú Hùng". Câu chốt lịch ở lượt sau được ghép sẵn bằng code chứ không
+        `xung_ho` là cách bạn gọi khách trong câu vừa nói: "chị Lan", "anh Ba",
+        "anh Hùng". Câu chốt lịch ở lượt sau được ghép sẵn bằng code chứ không
         qua bạn nữa, nên không truyền thì câu đó sẽ không gọi tên khách.
         Gọi tool này rồi hỏi khách xác nhận. KHÔNG có tool nào ghi lịch trực tiếp —
         lịch chỉ được ghi khi khách trả lời đồng ý ở lượt sau."""
@@ -103,7 +103,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         except ValueError:
             return "Thời gian không hợp lệ."
 
-        # Kiểm trước khi hỏi khách. Hỏi "3 giờ chiều đúng không cô?" rồi mới báo
+        # Kiểm trước khi hỏi khách. Hỏi "3 giờ chiều đúng không chị?" rồi mới báo
         # giờ đó có người là bắt khách chọn lại hai lần.
         # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
         # giờ đã có người — một truy vấn thay cho bốn lần kiểm tay.

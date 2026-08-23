@@ -90,14 +90,14 @@ describe("ChatScreen", () => {
     renderChat();
     expect(screen.getByText(/dạ chào cô lan\./i)).toBeInTheDocument();
     expect(
-      screen.getByText(/cô chú muốn đặt lịch giờ nào thì nhắn cho con ạ\./i),
+      screen.getByText(/anh chị muốn đặt lịch giờ nào thì nhắn cho em ạ\./i),
     ).toBeInTheDocument();
   });
 
-  it("2. không có tên: chào chung 'cô chú'", () => {
+  it("2. không có tên: chào chung 'anh chị'", () => {
     authFullName = null;
     renderChat();
-    expect(screen.getByText(/dạ chào cô chú\./i)).toBeInTheDocument();
+    expect(screen.getByText(/dạ chào anh chị\./i)).toBeInTheDocument();
     expect(screen.queryByText(/cô lan/i)).not.toBeInTheDocument();
   });
 

@@ -47,7 +47,7 @@ class InvalidRefreshTokenError(AppError):
     """
 
     status_code = 401
-    message = "Phiên đăng nhập đã hết hạn, cô chú đăng nhập lại giúp con nhé"
+    message = "Phiên đăng nhập đã hết hạn, anh chị đăng nhập lại giúp em nhé"
 
 
 class ForbiddenError(AppError):

@@ -98,7 +98,7 @@ export function ChatScreen() {
           // Empty state thuần UI — không push vào useAgentStream để thành
           // một "message": nó sẽ bị trộn lẫn logic dòng chở.
           <p className="chat__hello">
-            Dạ chào {fullName || "cô chú"}. Cô chú muốn đặt lịch giờ nào thì nhắn cho con ạ.
+            Dạ chào {fullName || "anh chị"}. Anh chị muốn đặt lịch giờ nào thì nhắn cho em ạ.
           </p>
         )}
 
@@ -147,7 +147,7 @@ export function ChatScreen() {
           className="chat__input"
           rows={2}
           value={draft}
-          placeholder="Cô chú nhắn ở đây…"
+          placeholder="Anh chị nhắn ở đây…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />

@@ -92,7 +92,7 @@ describe("api", () => {
     ]);
 
     await expect(api.put("/api/v1/shop/hours", {})).rejects.toThrow(
-      "Thông tin chưa hợp lệ, cô chú xem lại giúp con ạ.",
+      "Thông tin chưa hợp lệ, anh chị xem lại giúp em ạ.",
     );
   });
 

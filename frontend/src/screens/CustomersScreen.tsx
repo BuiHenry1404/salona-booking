@@ -52,7 +52,7 @@ export function CustomersScreen() {
 
   async function createUser() {
     if (!form.phone.trim() || !form.password) {
-      setError("Cô chú nhập số điện thoại và mật khẩu ban đầu giúp con ạ.");
+      setError("Anh chị nhập số điện thoại và mật khẩu ban đầu giúp em ạ.");
       return;
     }
     setBusy(true);
@@ -70,7 +70,7 @@ export function CustomersScreen() {
       // Hệ thống không có email/SMS: mật khẩu ban đầu chỉ đến được khách
       // qua MIỆNG chủ tiệm — phải nhắc ngay lúc này kẻo quên.
       setNote(
-        `Đã tạo tài khoản cho ${created.full_name ?? created.phone}. Mật khẩu ban đầu là ${form.password} — cô chú đọc cho khách ghi nhớ ngay ạ.`,
+        `Đã tạo tài khoản cho ${created.full_name ?? created.phone}. Mật khẩu ban đầu là ${form.password} — anh chị đọc cho khách ghi nhớ ngay ạ.`,
       );
       setForm({ phone: "", full_name: "", password: "" });
       setCreating(false);

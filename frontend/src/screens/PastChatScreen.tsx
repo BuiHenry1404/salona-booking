@@ -11,7 +11,7 @@ import { formatViDayMonth } from "../lib/viDate";
  *
  * "Chỉ xem" là thuộc tính cấu trúc: backend không có đường nào nhắn vào ngày
  * cũ, nên màn này đơn giản là KHÔNG vẽ ô nhập — và diễn đạt điều đó BẰNG CHỮ
- * ("Đây là cuộc trò chuyện ngày … Cô chú muốn nhắn thì quay về hôm nay."),
+ * ("Đây là cuộc trò chuyện ngày … Anh chị muốn nhắn thì quay về hôm nay."),
  * không dùng ô nhập xám/bị khoá. Không streaming, không tiến trình tool,
  * không mic — bong bóng y hệt màn chat để khách không phải học lại cách đọc.
  *
@@ -108,7 +108,7 @@ export function PastChatScreen() {
         >
           {data !== null && (
             <p style={{ fontSize: 19, marginBottom: "var(--s2)" }}>
-              Đây là cuộc trò chuyện ngày {formatViDayMonth(data.day)}. Cô chú muốn nhắn thì quay
+              Đây là cuộc trò chuyện ngày {formatViDayMonth(data.day)}. Anh chị muốn nhắn thì quay
               về hôm nay.
             </p>
           )}

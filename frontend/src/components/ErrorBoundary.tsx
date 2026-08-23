@@ -22,7 +22,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
       <main className="screen screen--narrow">
         <h1 style={{ fontSize: 26, marginBottom: "var(--s3)" }}>Máy đang trục trặc</h1>
         <p style={{ fontSize: 20, marginBottom: "var(--s4)" }}>
-          Cô chú bấm nút bên dưới để mở lại giúp con ạ. Nếu vẫn không được thì gọi cho tiệm nhé.
+          Anh chị bấm nút bên dưới để mở lại giúp em ạ. Nếu vẫn không được thì gọi cho tiệm nhé.
         </p>
         <button className="btn btn--primary btn--full" onClick={() => window.location.reload()}>
           Mở lại
