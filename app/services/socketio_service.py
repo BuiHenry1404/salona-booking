@@ -6,9 +6,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.booking_graph import run_turn
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.errors import RateLimitedError
 from app.core.security import verify_token
 from app.models.user import User
 from app.services.auth import AuthService
+from app.services.rate_limit import RateLimitService
 
 logger = get_logger(__name__)
 
@@ -19,6 +21,7 @@ class SocketIOService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.auth_service = AuthService(db)
+        self.rate_limit = RateLimitService(db)
         self.sio = socketio.AsyncServer(
             async_mode="asgi",
             cors_allowed_origins=settings.allowed_origins
@@ -72,10 +75,42 @@ class SocketIOService:
     def _room(user_id: str) -> str:
         return f"user_{user_id}"
 
+    @staticmethod
+    def _too_fast_message(retry_after_seconds: int) -> str:
+        minutes = max(round(retry_after_seconds / 60), 1)
+        # "khoảng 60 phút" nghe lủng củng; cô chú nói "một tiếng".
+        khi_nao = "1 tiếng" if minutes >= 60 else f"{minutes} phút"
+        return (
+            f"Cô chú nhắn hơi nhanh, khoảng {khi_nao} nữa nhắn lại giúp con nhé. "
+            "Gấp thì cô chú gọi thẳng cho tiệm ạ."
+        )
+
     async def handle_message(self, sid: str, user: User, message: str) -> None:
         """Chạy một lượt chat, đẩy từng sự kiện về đúng socket của khách."""
         question = (message or "").strip()
         if not question:
+            return
+
+        # Trần chi phí LLM. Đặt SAU nhánh tin rỗng: gõ hụt rồi bấm Gửi không
+        # được tiêu hạn mức. Khoá theo user chứ không theo sid — mở thêm tab là
+        # có sid mới, tính theo sid thì nhân đôi hạn mức bằng một cú Ctrl+T.
+        key = f"chat:user:{user.id}"
+        try:
+            await self.rate_limit.check_and_hit(
+                key, settings.chat_max_per_hour, 3600
+            )
+        except RateLimitedError:
+            retry_after = await self.rate_limit.retry_after_seconds(
+                key, settings.chat_max_per_hour, 3600
+            )
+            await self.sio.emit(
+                "error",
+                {
+                    "message": self._too_fast_message(retry_after),
+                    "retry_after_seconds": retry_after,
+                },
+                room=sid,
+            )
             return
 
         try:
