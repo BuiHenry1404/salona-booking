@@ -60,6 +60,10 @@ def _callback(data, chat_id=ADMIN_ID):
 @pytest.fixture
 def handler_client(monkeypatch, test_db):
     monkeypatch.setattr("app.telegram.handlers.admin_chat_ids", lambda: {ADMIN_ID})
+    # TelegramNotifier._broadcast gọi `admin_chat_ids` đã import vào
+    # app.telegram.notify — vá mỗi bên handlers thì notifier vẫn đọc config thật,
+    # mà TELEGRAM_ADMIN_CHAT_IDS trong .env đang rỗng nên nó không gửi cho ai.
+    monkeypatch.setattr("app.telegram.notify.admin_chat_ids", lambda: {ADMIN_ID})
     return _SpyClient()
 
 
