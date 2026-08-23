@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -69,10 +69,28 @@ class SetBusyRequest(BaseModel):
     minutes: int = Field(..., ge=5, le=480)
 
 
+_HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
 class ShopHoursRequest(BaseModel):
-    open_time: str = "08:00"
-    close_time: str = "19:00"
+    """Giờ mở cửa phải chặn ngay tại đây, không để xuống service.
+
+    `_to_minutes` làm `int(hhmm.split(":"))` không bẫy, và `is_within` gọi nó ở
+    MỌI lượt đặt lịch. Lưu được "25:99" một lần là từ đó khách nào đặt cũng ăn
+    500 — chủ tiệm gõ nhầm một cú, cả tiệm ngừng nhận lịch mà không ai biết vì sao.
+    """
+
+    open_time: str = Field("08:00", pattern=_HHMM)
+    close_time: str = Field("19:00", pattern=_HHMM)
     closed_days: List[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _close_must_be_after_open(self):
+        """Đóng trước mở thì `is_within` không bao giờ đúng: tiệm đóng cửa vĩnh
+        viễn trong khi giao diện vẫn hiện giờ làm bình thường."""
+        if self.close_time <= self.open_time:
+            raise ValueError("Giờ đóng cửa phải sau giờ mở cửa")
+        return self
 
 
 class FreeSlotsResponse(BaseModel):

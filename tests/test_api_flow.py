@@ -290,3 +290,71 @@ async def test_admin_booking_for_unknown_user_returns_404(async_client, admin_he
         headers=admin_headers,
     )
     assert resp.status_code == 404
+
+
+class TestShopHoursValidation:
+    """Giờ mở cửa rác phải bị chặn ngay ở cổng vào.
+
+    `_to_minutes` trong app/core/... làm `int(hhmm.split(":"))` không bẫy, mà
+    `is_within` gọi nó ở MỌI lượt đặt lịch. Lưu được "25:99" một lần là từ đó
+    khách nào đặt lịch cũng ăn 500, và chủ tiệm không hề biết mình vừa làm gì.
+    """
+
+    async def test_garbage_open_time_is_rejected(self, async_client, admin_headers):
+        resp = await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "abc", "close_time": "19:00", "closed_days": []},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_hour_out_of_range_is_rejected(self, async_client, admin_headers):
+        resp = await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "25:99", "close_time": "19:00", "closed_days": []},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_closing_before_opening_is_rejected(self, async_client, admin_headers):
+        """Mở 19:00 đóng 08:00 thì `is_within` không bao giờ đúng — tiệm đóng
+        cửa vĩnh viễn mà giao diện vẫn báo giờ làm bình thường."""
+        resp = await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "19:00", "close_time": "08:00", "closed_days": []},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_closing_equal_to_opening_is_rejected(self, async_client, admin_headers):
+        resp = await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "09:00", "close_time": "09:00", "closed_days": []},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_valid_hours_are_still_accepted(self, async_client, admin_headers):
+        resp = await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "09:00", "close_time": "18:00", "closed_days": [0]},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["open_time"] == "09:00"
+
+    async def test_booking_still_works_after_valid_hours_are_set(
+        self, async_client, admin_headers, user_headers
+    ):
+        """Hàng rào mới không được chặn nhầm giờ hợp lệ: đặt lịch vẫn chạy."""
+        await async_client.put(
+            "/api/v1/shop/hours",
+            json={"open_time": "08:00", "close_time": "19:00", "closed_days": []},
+            headers=admin_headers,
+        )
+        day = (datetime.now(TZ) + timedelta(days=1)).date().isoformat()
+        slots = await async_client.get(
+            f"/api/v1/appointments/free-slots/{day}", headers=user_headers
+        )
+        assert slots.status_code == 200
+        assert slots.json()["slots"]

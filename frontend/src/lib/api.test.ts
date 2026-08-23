@@ -80,6 +80,22 @@ describe("api", () => {
     );
   });
 
+  it("422 của FastAPI không rơi vào câu lỗi chung chung", async () => {
+    // FastAPI trả detail dạng MẢNG cho lỗi validate, nên nhánh
+    // `typeof detail === "string"` không bắt được và chủ tiệm chỉ thấy
+    // "Có lỗi xảy ra" — không biết mình vừa gõ sai chỗ nào.
+    mockFetchSequence([
+      {
+        status: 422,
+        body: { detail: [{ loc: ["body", "close_time"], msg: "Value error, Giờ đóng cửa phải sau giờ mở cửa" }] },
+      },
+    ]);
+
+    await expect(api.put("/api/v1/shop/hours", {})).rejects.toThrow(
+      "Thông tin chưa hợp lệ, cô chú xem lại giúp con ạ.",
+    );
+  });
+
   it("mất mạng thì báo bằng câu người thường đọc được", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 

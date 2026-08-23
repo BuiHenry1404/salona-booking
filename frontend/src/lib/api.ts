@@ -17,6 +17,7 @@ const FALLBACK: Record<number, string> = {
   403: "Phần này chỉ chủ tiệm mới xem được ạ.",
   404: "Không tìm thấy ạ.",
   409: "Giờ này vừa có người đặt mất rồi ạ.",
+  422: "Thông tin chưa hợp lệ, cô chú xem lại giúp con ạ.",
   429: "Cô chú thử lại sau ít phút giúp con ạ.",
 };
 
