@@ -1,7 +1,8 @@
 # NOTE — bắt đầu từ đây
 
 **Đọc file này trước** khi tiếp tục dự án. *Tại sao* nằm ở
-[`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md).
+[`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
+để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
 Cập nhật: 2026-08-19
 
