@@ -176,7 +176,7 @@ async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):
         {"start_at": naive, "note": "làm tóc"}
     )
     assert "giữ chỗ" in result.lower()
-    assert "3:00 chiều" in result   # 15h giờ Việt Nam, không bị lệch 7 tiếng
+    assert "3 giờ chiều" in result   # 15h giờ Việt Nam, không bị lệch 7 tiếng
 
 
 async def test_rubbish_time_string_gets_a_polite_answer_not_a_crash(test_db):

@@ -16,7 +16,12 @@ _WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "
 
 
 def format_vi_datetime(dt) -> str:
-    """'Thứ Sáu 7/8, 3:00 chiều' — cách người Việt lớn tuổi thực sự nói giờ."""
+    """'Thứ Sáu 7/8, 3 giờ chiều' — cách người Việt lớn tuổi thực sự nói giờ.
+
+    Không dùng dấu hai chấm: "3:00 chiều" là cách máy viết giờ. Chuỗi này đi
+    thẳng vào lời thoại (câu chốt lịch của node confirm, danh sách lịch trong
+    khối bối cảnh) nên nó phải đọc lên nghe được.
+    """
     local = to_local(dt)
     hour = local.hour
     if hour < 12:
@@ -25,8 +30,15 @@ def format_vi_datetime(dt) -> str:
         period, display = "chiều", hour - 12 if hour > 12 else 12
     else:
         period, display = "tối", hour - 12
-    return (f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, "
-            f"{display}:{local.minute:02d} {period}")
+
+    minute = local.minute
+    if minute == 0:
+        clock = f"{display} giờ"
+    elif minute == 30:
+        clock = f"{display} giờ rưỡi"      # không ai đọc "9 giờ 30"
+    else:
+        clock = f"{display} giờ {minute:02d}"
+    return f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, {clock} {period}"
 
 
 def build_context_block(

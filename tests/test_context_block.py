@@ -38,7 +38,7 @@ def test_block_tells_the_model_what_day_it_is_today():
 
     assert "2026-08-07" in block          # dạng máy, để model tự cộng ngày
     assert "Thứ Sáu" in block             # dạng người, để model nói lại cho khách
-    assert "2:30 chiều" in block
+    assert "2 giờ rưỡi chiều" in block
 
 
 def test_the_date_line_comes_first():
@@ -76,7 +76,7 @@ def test_busy_status_gives_a_finish_TIME_not_a_countdown():
         now=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
     )
     assert "bận" in block.lower()
-    assert "3:30 chiều" in block
+    assert "3 giờ rưỡi chiều" in block
     assert "30 phút" not in block
 
 
@@ -98,6 +98,35 @@ def test_no_upcoming_appointments_is_stated_explicitly():
     assert "chưa có lịch" in block.lower()
 
 
-def test_format_vi_datetime():
-    assert format_vi_datetime(datetime(2026, 8, 7, 15, 0, tzinfo=TZ)) == "Thứ Sáu 7/8, 3:00 chiều"
-    assert format_vi_datetime(datetime(2026, 8, 7, 9, 30, tzinfo=TZ)) == "Thứ Sáu 7/8, 9:30 sáng"
+class TestFormatViDatetime:
+    """Cụ già đọc "3 giờ chiều", không đọc "3:00 chiều".
+
+    Câu này đi thẳng vào lời thoại: node confirm dùng nó cho câu chốt lịch, và
+    khối bối cảnh dùng nó cho danh sách lịch. Dấu hai chấm là cách máy viết giờ,
+    không phải cách người nói.
+    """
+
+    def test_a_whole_hour_drops_the_minutes_entirely(self):
+        assert format_vi_datetime(
+            datetime(2026, 8, 7, 15, 0, tzinfo=TZ)) == "Thứ Sáu 7/8, 3 giờ chiều"
+
+    def test_half_past_is_said_as_ruoi(self):
+        """Không ai nói "9 giờ 30" — người ta nói "9 rưỡi". STATUS_PROMPT cũng
+        đang lấy "3 giờ rưỡi chiều" làm ví dụ mẫu."""
+        assert format_vi_datetime(
+            datetime(2026, 8, 7, 9, 30, tzinfo=TZ)) == "Thứ Sáu 7/8, 9 giờ rưỡi sáng"
+
+    def test_other_minutes_are_spelled_out_after_gio(self):
+        assert format_vi_datetime(
+            datetime(2026, 8, 7, 13, 45, tzinfo=TZ)) == "Thứ Sáu 7/8, 1 giờ 45 chiều"
+
+    def test_evening_keeps_its_period(self):
+        assert format_vi_datetime(
+            datetime(2026, 8, 7, 19, 15, tzinfo=TZ)) == "Thứ Sáu 7/8, 7 giờ 15 tối"
+
+    def test_no_colon_ever_appears(self):
+        """Hàng rào: một dấu hai chấm lọt vào là lại thành giọng máy."""
+        for hour in range(8, 20):
+            for minute in (0, 15, 30, 45):
+                out = format_vi_datetime(datetime(2026, 8, 7, hour, minute, tzinfo=TZ))
+                assert ":" not in out, out
