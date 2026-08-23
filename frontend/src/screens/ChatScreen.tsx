@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "../components/BottomNav";
+import { BotAvatar } from "../components/BotAvatar";
 import { MessageBubble } from "../components/MessageBubble";
 import { ShopStatusCard } from "../components/ShopStatusCard";
 import { ToolProgress } from "../components/ToolProgress";
@@ -97,9 +98,12 @@ export function ChatScreen() {
         {messages.length === 0 && (
           // Empty state thuần UI — không push vào useAgentStream để thành
           // một "message": nó sẽ bị trộn lẫn logic dòng chở.
-          <p className="chat__hello">
-            Dạ chào {fullName || "anh chị"}. Anh chị muốn đặt lịch giờ nào thì nhắn cho em ạ.
-          </p>
+          <div className="chat__hellorow">
+            <BotAvatar />
+            <p className="chat__hello">
+              Dạ chào {fullName || "anh chị"}. Anh chị muốn đặt lịch giờ nào thì nhắn cho em ạ.
+            </p>
+          </div>
         )}
 
         {messages.map((m) => (
@@ -118,6 +122,7 @@ export function ChatScreen() {
           // role="status" + chữ ẩn: người dùng trình đọc màn hình cũng biết
           // máy đang chạy — ba chấm nhấp nháy không nói được điều gì với họ.
           <div className="thinking" role="status">
+            <BotAvatar />
             <span className="sr-only">Con đang đọc tin nhắn ạ</span>
             <span className="dot" aria-hidden="true" />
             <span className="dot" aria-hidden="true" />

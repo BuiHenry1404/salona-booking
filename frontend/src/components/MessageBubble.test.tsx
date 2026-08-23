@@ -15,6 +15,21 @@ describe("MessageBubble", () => {
     expect(el.className).toMatch(/bubble--bot/);
   });
 
+  it("bot: có ảnh đại diện Salona, và ảnh là trang trí (aria-hidden)", () => {
+    render(<MessageBubble role="bot" text="Dạ em nghe ạ" />);
+    const img = document.querySelector<HTMLImageElement>(".bubble__wrap--bot .avatar");
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute("src")).toBe("/brand/salona-avatar.png");
+    // alt rỗng + aria-hidden: vai người nói đã nằm ở chữ, đọc thêm chỉ ồn.
+    expect(img!.getAttribute("alt")).toBe("");
+    expect(img!.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("user: KHÔNG có ảnh đại diện", () => {
+    render(<MessageBubble role="user" text="mai 3h nha con" />);
+    expect(document.querySelector(".avatar")).toBeNull();
+  });
+
   it("pending: caption 'Đang gửi lại…' đi kèm bong bóng", () => {
     render(<MessageBubble role="user" text="hủy giùm cô lịch mai" pending />);
     expect(screen.getByText("hủy giùm cô lịch mai")).toBeInTheDocument();

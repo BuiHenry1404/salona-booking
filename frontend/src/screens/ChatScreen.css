@@ -12,6 +12,12 @@
   /* Dư đáy để nav + ô nhập (đều fixed) không che tin cuối. */
   padding-bottom: 200px;
 }
+/* Lời chào đầu màn: ảnh Salona đứng cạnh cho khách thấy "ai đang nói". */
+.chat__hellorow {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
 .chat__hello {
   font-size: 20px;
   color: var(--color-fg-muted);
@@ -43,6 +49,12 @@
   display: flex;
   gap: 6px;
   padding: var(--s2) 0;
+  /* Ảnh Salona đứng cạnh ba chấm: chấm nằm đúng tầm mắt giữa ảnh, và thẳng
+     hàng với bong bóng bot sắp hiện ra ngay dưới. */
+  align-items: center;
+}
+.thinking .avatar {
+  margin-right: var(--s1);
 }
 .dot {
   width: 10px;
@@ -51,13 +63,15 @@
   background: var(--color-fg-muted);
   animation: dot-bounce 1.2s infinite;
 }
-.dot:nth-child(2) {
+/* nth-of-type chứ không nth-child: ảnh đại diện <img> chen vào đầu hàng sẽ
+   làm lệch số thứ tự nth-child, còn of-type chỉ đếm các <span>. */
+.dot:nth-of-type(2) {
   animation-delay: 0.2s;
 }
-.dot:nth-child(3) {
+.dot:nth-of-type(3) {
   animation-delay: 0.4s;
 }
-.dot:nth-child(4) {
+.dot:nth-of-type(4) {
   animation-delay: 0.6s;
 }
 @keyframes dot-bounce {
