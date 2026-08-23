@@ -192,3 +192,46 @@ class TestConfirmUsesTheRightHonorific:
                               "note": None, "xung_ho": "bác Ba"}})
 
         assert "3 giờ chiều" in out["answer"]
+
+
+class TestHonorificInTheOtherBranches:
+    """Danh xưng phải dùng ở MỌI nhánh của confirm, không riêng nhánh thành công.
+
+    Khách nói "cắt tóc cho bác", AI đáp "đúng không bác?", rồi khách đổi ý — mà
+    câu tiếp theo gọi họ là "cô chú" thì công sức xưng hô ở trên đổ sông đổ bể.
+    """
+
+    async def test_declining_keeps_the_honorific(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+        node = make_confirm_node(test_db, user)
+        out = await node({"messages": [HumanMessage(content="thôi khỏi con")],
+                          "pending_confirmation": {
+                              "start_at": tomorrow_at(15).isoformat(),
+                              "note": None, "xung_ho": "bác Ba"}})
+
+        assert "bác Ba" in out["answer"]
+        assert "cô chú" not in out["answer"].lower()
+
+    async def test_a_taken_slot_keeps_the_honorific(self, test_db):
+        """Giờ vừa bị người khác đặt mất giữa hai lượt."""
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+        other = await AuthService(test_db).create_user("0999888777", "matkhau123", "Người khác")
+        await AppointmentService(test_db).create(other, tomorrow_at(15), "làm tóc")
+
+        node = make_confirm_node(test_db, user)
+        out = await node({"messages": [HumanMessage(content="ừ")],
+                          "pending_confirmation": {
+                              "start_at": tomorrow_at(15).isoformat(),
+                              "note": None, "xung_ho": "bác Ba"}})
+
+        assert "cô chú" not in out["answer"].lower(), out["answer"]
+
+    async def test_without_an_honorific_the_decline_branch_stays_polite(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        node = make_confirm_node(test_db, user)
+        out = await node({"messages": [HumanMessage(content="thôi")],
+                          "pending_confirmation": {
+                              "start_at": tomorrow_at(15).isoformat(), "note": None}})
+
+        assert out["answer"].strip()
+        assert "  " not in out["answer"]   # không để lại khoảng trắng đôi khi bỏ xưng hô

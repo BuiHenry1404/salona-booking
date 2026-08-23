@@ -91,24 +91,27 @@ def make_confirm_node(
 
         await conversations.set_pending(user_id, None)
 
+        # Danh xưng do model điền lúc propose_appointment: node này chạy 0 lượt
+        # LLM nên không tự suy ra được "cô Lan" hay "bác Ba" từ "Nguyễn Thị Lan".
+        # Thiếu thì lùi về "cô chú" ở những câu BẮT BUỘC phải xưng hô, và bỏ hẳn
+        # lời gọi ở câu chốt — chỗ đó không xưng hô vẫn đọc trôi.
+        xung_ho = (pending.get("xung_ho") or "").strip()
+        goi = xung_ho or "cô chú"
+        loi_goi = f" {xung_ho}" if xung_ho else ""
+
         if not is_affirmative(last_message):
-            return {"answer": "Dạ vâng, vậy cô chú muốn đặt ngày giờ nào ạ?"}
+            return {"answer": f"Dạ vâng, vậy {goi} muốn đặt ngày giờ nào ạ?"}
 
         try:
             appointment = await service.create(
                 user, datetime.fromisoformat(pending["start_at"]), pending.get("note")
             )
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. Cô chú chọn giờ khác giúp con nhé."}
+            return {"answer": f"Dạ {exc.message} ạ. {goi.capitalize()} chọn giờ khác giúp con nhé."}
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return {"answer": "Dạ con nhầm mất rồi, cô chú nhắc lại ngày giờ giúp con ạ."}
+            return {"answer": f"Dạ con nhầm mất rồi, {goi} nhắc lại ngày giờ giúp con ạ."}
 
-        # Danh xưng do model điền lúc propose_appointment: node này chạy 0 lượt
-        # LLM nên không tự suy ra được "cô Lan" hay "bác Ba" từ "Nguyễn Thị Lan".
-        # Thiếu thì bỏ hẳn lời xưng hô — đoán sai còn tệ hơn không gọi.
-        xung_ho = (pending.get("xung_ho") or "").strip()
-        loi_goi = f" {xung_ho}" if xung_ho else ""
         return {"answer": f"Xong rồi ạ. Hẹn gặp{loi_goi} "
                           f"{format_vi_datetime(appointment.start_at)} nhé."}
 
