@@ -1,0 +1,76 @@
+/* Bar chart thuần CSS cho "Khách theo tháng" */
+
+.stats {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+  padding: var(--s3);
+  margin-bottom: var(--s4);
+}
+
+.stats__title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: var(--s2);
+  color: var(--color-fg);
+}
+
+.stats__hint {
+  font-size: 17px;
+  color: var(--color-fg-muted);
+  margin-bottom: var(--s3);
+}
+
+.stats__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.stats__row {
+  display: grid;
+  grid-template-columns: 64px 1fr 44px;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 36px;
+}
+
+.stats__month {
+  font-size: 17px;
+  color: var(--color-fg);
+  white-space: nowrap;
+}
+
+.stats__bar-cell {
+  position: relative;
+  height: 20px;
+  background: var(--color-primary-weak);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.stats__bar {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--r);
+  min-width: 2px; /* để count=0 vẫn thấy vạch nhỏ */
+}
+
+.stats__count {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-fg);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Mobile: label ngắn hơn để tránh xuống dòng */
+@media (max-width: 360px) {
+  .stats__row {
+    grid-template-columns: 56px 1fr 40px;
+  }
+}
