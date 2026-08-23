@@ -88,9 +88,14 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
 
     @tool
-    async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
+    async def propose_appointment(
+        start_at: str, note: Optional[str] = None, xung_ho: Optional[str] = None
+    ) -> str:
         """Giữ chỗ tạm thời và chuẩn bị câu hỏi xác nhận cho khách.
         `start_at` dạng ISO 8601, lấy NGUYÊN từ kết quả parse_time.
+        `xung_ho` là cách bạn gọi khách trong câu vừa nói: "cô Lan", "bác Ba",
+        "chú Hùng". Câu chốt lịch ở lượt sau được ghép sẵn bằng code chứ không
+        qua bạn nữa, nên không truyền thì câu đó sẽ không gọi tên khách.
         Gọi tool này rồi hỏi khách xác nhận. KHÔNG có tool nào ghi lịch trực tiếp —
         lịch chỉ được ghi khi khách trả lời đồng ý ở lượt sau."""
         try:
@@ -120,7 +125,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
         # thể chép sai giờ giữa hai lượt.
         await conversations.set_pending(
-            str(user.id), {"start_at": start.isoformat(), "note": note}
+            str(user.id),
+            {"start_at": start.isoformat(), "note": note, "xung_ho": xung_ho},
         )
         note_text = f", {note}" if note else ""
         return (
