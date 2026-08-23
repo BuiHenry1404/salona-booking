@@ -10,6 +10,7 @@ Thư mục này chứa toàn bộ các kịch bản kiểm thử (Test Scenarios
 |---|---|---|
 | [**`01-system-test-scenarios.md`**](01-system-test-scenarios.md) | **Kiểm thử Toàn hệ thống (9 Tầng)** | Core utilities (phone, clock, slots, security), MongoDB repositories, Partial index, Business services, LangGraph Graph, Socket.IO streaming, Telegram bot, REST API, Frontend React tokens, Ma trận 14 Failure modes. |
 | [**`02-llm-chat-scenarios.md`**](02-llm-chat-scenarios.md) | **Kịch bản Đối thoại Chi tiết với AI (LLM Chat Scenarios)** | Toàn bộ kịch bản hội thoại đa lượt (Multi-turn dialogues) giữa Khách lớn tuổi và AI Lễ tân: Đặt lịch, Tra cứu thời gian mơ hồ, Hỏi bận/rảnh, Xung đột slot & gợi ý, Xem/Huỷ lịch, Đổi ý giữa chừng, Chặn câu hỏi ngoài luồng & Jailbreak, Tiếng lóng/Tiếng Việt không dấu, Quá hạn cờ pending, và Phục hồi sự cố (Fail-soft). |
+| [**`03-llm-live-run-2026-08-23.md`**](03-llm-live-run-2026-08-23.md) | **Báo cáo chạy thật kịch bản LLM** | Kết quả chạy 19 kịch bản qua Socket.IO thật, gọi Azure `gpt-5.4-mini`: 1 lỗi thật (lặp câu), 2 ca không gọi tool khi đáng lẽ phải gọi, 5 điểm sượng/máy móc, 4 nhóm làm tốt, kèm thứ tự xử lý đề xuất. |
 
 ---
 
