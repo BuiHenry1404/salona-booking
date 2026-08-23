@@ -1,3 +1,30 @@
+/* Bong bóng bot đi kèm ảnh đại diện Salona: cột ảnh cố định 44px, cột chữ
+   co giãn. Dùng grid chứ không flex để dòng "Đang gửi lại…" (nếu có) còn
+   nằm thẳng hàng dưới, không bị đẩy sang cạnh ảnh. */
+.bubble__wrap--bot {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: var(--s2);
+  /* end chứ không start: mockup đã chốt (ui-mockup.html, .msg-row) cho ảnh
+     đứng sát ĐÁY bong bóng — câu trả lời dài mấy dòng thì ảnh vẫn nằm ngang
+     dòng cuối, đúng thói quen đọc chat của khách. */
+  align-items: end;
+}
+.bubble__wrap--bot .bubble__pending {
+  grid-column: 1 / -1;
+}
+
+/* Ảnh tròn, viền mảnh cho tách khỏi nền trắng. Không co lại khi chữ dài. */
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 .bubble {
   max-width: 88%;
   padding: var(--s2) var(--s3);
@@ -16,6 +43,8 @@
 .bubble--bot {
   background: var(--color-surface);
   border: 2px solid var(--color-border);
+  /* Đã bị cột grid giới hạn bề ngang, 88% nữa thì bong bóng hụt vô lý. */
+  max-width: 100%;
 }
 
 .bubble__pending {
