@@ -240,3 +240,53 @@ def test_timeout_leaves_room_for_a_real_azure_call():
     from app.agents.booking_graph.timeparse import PARSE_TIMEOUT_SECONDS
 
     assert PARSE_TIMEOUT_SECONDS >= 5.0
+
+
+class TestRightNow:
+    """Khách nói 'bây giờ'.
+
+    Có thật trong log: khách hỏi "giờ cô qua được không", trả lời "bây giờ",
+    và máy đáp "giờ đó qua mất rồi ạ" — vô lý với chính giây phút đang nói.
+    LLM trả về đúng lúc này, mà lúc này thì không lớn hơn `now`.
+    """
+
+    def test_right_now_becomes_the_next_slot_instead_of_being_called_past(self):
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now, source="llm"), now)
+
+        assert result.start_at == at(7, 14, 45)
+        assert result.missing == []
+
+    def test_a_time_inside_the_current_slot_also_moves_up(self):
+        """Nói '2 giờ 30' lúc 2 giờ 32 là muốn tới ngay, không phải muốn tới
+        hai phút trước."""
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=at(7, 14, 30), source="llm"), now)
+
+        assert result.start_at == at(7, 14, 45)
+
+    def test_the_bumped_time_lands_on_a_15_minute_mark(self):
+        """Lệch mốc thì slot_keys_for ném MisalignedSlotError và khách chỉ thấy
+        một lỗi trống không."""
+        from app.core.slots import slot_keys_for
+
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now, source="llm"), now)
+
+        assert result.start_at is not None
+        assert slot_keys_for(result.start_at, 60)
+
+    def test_exactly_on_a_slot_mark_moves_to_the_next_one(self):
+        """14:30:00 lúc 14:30:00 — slot này đã bắt đầu, giữ chỗ slot sau."""
+        now = datetime(2026, 8, 7, 14, 30, 0, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now, source="llm"), now)
+
+        assert result.start_at == at(7, 14, 45)
+
+    def test_a_genuinely_past_time_is_still_rejected(self):
+        """Giữ nguyên hàng rào cũ: 10 giờ sáng nói lúc 2 giờ chiều vẫn là đã qua."""
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=at(7, 10), source="llm"), now)
+
+        assert result.start_at is None
+        assert result.missing == ["ngày khác — giờ đó qua mất rồi"]

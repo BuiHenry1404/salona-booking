@@ -17,6 +17,17 @@ def quantize(dt: datetime) -> datetime:
     return dt.replace(minute=dt.minute - dt.minute % SLOT_MINUTES, second=0, microsecond=0)
 
 
+def next_slot_after(dt: datetime) -> datetime:
+    """Mốc 15 phút gần nhất SAU dt. Đúng mốc thì nhảy sang mốc kế.
+
+    `quantize` làm tròn xuống nên không dùng được cho câu "bây giờ": nó luôn
+    trả về một thời điểm đã qua vài giây tới vài phút.
+    """
+    dt = ensure_aware(dt).astimezone(timezone.utc)
+    floor = dt.replace(minute=dt.minute - dt.minute % SLOT_MINUTES, second=0, microsecond=0)
+    return floor + timedelta(minutes=SLOT_MINUTES)
+
+
 def slot_keys_for(start_at: datetime, duration_minutes: int) -> list[str]:
     """Các mốc 15 phút mà một lịch chiếm.
 

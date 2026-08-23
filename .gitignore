@@ -140,3 +140,5 @@ logs/
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
+# AgentBox project credentials — never commit.
+.agentbox/.project-auth

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.llm import build_chat_model
 from app.core.clock import TZ
+from app.core.slots import SLOT_MINUTES, next_slot_after
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -56,6 +57,14 @@ def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
     if start.tzinfo is None:
         start = start.replace(tzinfo=TZ)
 
+    # "Bây giờ" là câu bình thường ở tiệm vãng lai, và LLM trả đúng lúc này —
+    # thứ không bao giờ lớn hơn `now`. Coi nó là quá khứ thì máy đáp "giờ đó qua
+    # mất rồi" cho chính giây phút khách đang nói (có thật trong log).
+    # Trong slot đang chạy thì hiểu là "tới ngay", giữ chỗ ở mốc kế tiếp.
+    if now - timedelta(minutes=SLOT_MINUTES) < start <= now:
+        return candidate.model_copy(update={"start_at": next_slot_after(now), "missing": []})
+
+    # Quá slot hiện tại thì đúng là đã qua: "10 giờ sáng" nói lúc 2 giờ chiều.
     if start <= now:
         return candidate.model_copy(
             update={"start_at": None, "missing": ["ngày khác — giờ đó qua mất rồi"]}
@@ -154,6 +163,9 @@ Quy tắc:
   "3 giờ" → missing là ["sáng hay chiều"].
   "thứ Năm" → missing là ["thứ Năm tuần này hay tuần sau"].
 - TUYỆT ĐỐI không đoán thay khách. Đoán sai thì cụ già tới tiệm lúc không ai mở cửa.
+- "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ cô qua được không" đều nghĩa
+  là NGAY LÚC NÀY: điền start_at đúng {hour:02d}:{minute:02d} hôm nay, missing rỗng.
+  Tiệm nhận khách vãng lai nên đây là câu rất hay gặp, đừng hỏi lại "mấy giờ ạ".
 - Câu không nhắc gì tới thời gian thì để start_at null và missing rỗng.
 
 Câu của khách: {text}"""

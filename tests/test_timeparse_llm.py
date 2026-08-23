@@ -52,3 +52,23 @@ async def test_asks_back_instead_of_guessing(text, phai_hoi_lai):
 async def test_a_question_with_no_time_returns_nothing():
     result = await parse_vi_time("chủ tiệm rảnh không con", NOW, timeout=10.0)
     assert result.start_at is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bây giờ",
+        "giờ cô qua được không",
+        "cô qua liền được không con",
+        "giờ này qua được không",
+    ],
+)
+async def test_right_now_resolves_to_the_next_slot(text):
+    """Khách tiệm vãng lai nói "qua liền" suốt. Trước đây prompt không có luật
+    nào cho "bây giờ" nên model trả null và lễ tân hỏi lại "mấy giờ ạ?" — câu
+    hỏi vô nghĩa với người vừa nói là muốn tới ngay."""
+    result = await parse_vi_time(text, NOW, timeout=10.0)
+
+    assert result.start_at is not None, f"vẫn hỏi lại thay vì hiểu: {text} ({result.missing})"
+    # NOW là 14:30:00 đúng mốc, nên mốc kế tiếp là 14:45.
+    assert result.start_at.isoformat() == "2026-08-07T14:45:00+07:00"
