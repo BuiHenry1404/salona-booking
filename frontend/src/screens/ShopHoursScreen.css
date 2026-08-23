@@ -1,0 +1,41 @@
+.shop-hours__back {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: 19px;
+  color: var(--color-primary);
+}
+.shop-hours__title {
+  font-size: 28px;
+  margin: var(--s3) 0 var(--s4);
+}
+.shop-hours__loading {
+  font-size: 19px;
+}
+/* "Đã lưu" là chữ trên nền accent-weak + viền accent — không chỉ đổi màu. */
+.shop-hours__saved {
+  font-size: 19px;
+  background: var(--color-accent-weak);
+  border: 2px solid var(--color-accent);
+  border-radius: var(--r);
+  padding: var(--s3);
+}
+.shop-hours__section {
+  font-size: 20px;
+  font-weight: 600;
+  margin: var(--s4) 0 var(--s2);
+}
+.shop-hours__day {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: var(--tap); /* cả dòng là target bấm, không chỉ ô vuông nhỏ */
+  font-size: 20px;
+}
+.shop-hours__checkbox {
+  width: 26px;
+  height: 26px;
+}
+.shop-hours__save {
+  margin-top: var(--s4);
+}

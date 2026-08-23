@@ -45,6 +45,8 @@ class UserResponse(BaseModel):
 class AppointmentCreateRequest(BaseModel):
     start_at: datetime
     note: Optional[str] = None
+    # Chỉ admin được điền — khách gửi lên sẽ bị từ chối 403 ở router.
+    for_user_id: Optional[str] = None
 
 
 class AppointmentResponse(BaseModel):

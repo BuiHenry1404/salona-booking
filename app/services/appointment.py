@@ -12,6 +12,7 @@ from app.core.slots import SLOT_MINUTES, quantize, slot_keys_for
 from app.models.appointment import Appointment, CreatedVia
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
+from app.services.notifications import notifications
 from app.services.rate_limit import RateLimitService
 from app.services.shop import ShopService, fits_before_closing
 
@@ -55,7 +56,7 @@ class AppointmentService:
         )
 
         try:
-            return await self.repo.insert_booked(
+            appointment = await self.repo.insert_booked(
                 user_id=user_id,
                 user_name=user.full_name,
                 phone=user.phone,
@@ -72,6 +73,8 @@ class AppointmentService:
             if clash and clash.user_id == user_id:
                 raise SlotTakenError("Giờ này trùng với lịch bạn đã đặt rồi")
             raise
+        await notifications.appointment_created(appointment)
+        return appointment
 
     async def cancel(self, user: User, appointment_id: str) -> None:
         appt = await self.repo.get_by_id(appointment_id)
@@ -85,6 +88,7 @@ class AppointmentService:
         # giá trị trả về là báo "đã hủy" cho một thao tác chưa hủy được gì.
         if not await self.repo.cancel(appointment_id):
             raise NotFoundError("Không tìm thấy lịch này")
+        await notifications.appointment_cancelled(appt)
 
     async def upcoming_for(self, user: User) -> List[Appointment]:
         return await self.repo.upcoming_for_user(str(user.id), now=now_utc())

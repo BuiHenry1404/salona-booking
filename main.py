@@ -62,13 +62,33 @@ async def lifespan(app: FastAPI):
         app.state.socketio_service = SocketIOService(app.state.db)
         logger.info("Socket.IO service initialized")
 
-        # Mount Socket.IO application
-        socketio_asgi = app.state.socketio_service.get_asgi_app()
-        app.mount("/socket.io", socketio_asgi)
-        logger.info("Socket.IO mounted at /socket.io")
+        # Mount Socket.IO application.
+        # Mounted tại "/socket.io" để không che các router HTTP (/api/v1, /docs, /).
+        # Starlette strip prefix mount khiến scope['path'] thành "/" khi gọi ASGIApp.
+        # Wrapping ASGIApp để khôi phục lại scope['path'] về "/socket.io..." giúp
+        # python-socketio nhận diện đúng URI socketio và tránh lỗi 500 khi handshake.
+        raw_sio_app = app.state.socketio_service.get_asgi_app()
+
+        async def socketio_asgi_wrapper(scope, receive, send):
+            if scope.get("type") in ("http", "websocket"):
+                root_path = scope.get("root_path", "")
+                path = scope.get("path", "")
+                if root_path and not path.startswith(root_path):
+                    scope = dict(scope, path=root_path + path)
+            await raw_sio_app(scope, receive, send)
+
+        app.mount("/socket.io", socketio_asgi_wrapper)
+        logger.info("Socket.IO mounted at /socket.io with path prefix preservation")
 
     except Exception as e:
         logger.warning("Socket.IO unavailable, continuing without realtime", error=str(e))
+
+    from app.services.notifications import notifications
+    from app.services.socket_notifier import SocketNotifier
+
+    notifications.clear()
+    if app.state.socketio_service is not None:
+        notifications.register(SocketNotifier(app.state.socketio_service))
 
     yield
     

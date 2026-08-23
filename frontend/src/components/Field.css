@@ -1,0 +1,20 @@
+.field { margin-bottom: var(--s4); }
+.field__label {
+  display: block;
+  font-size: 19px;
+  font-weight: 600;
+  margin-bottom: var(--s1);
+}
+.field__input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 var(--s3);
+  font-family: inherit;
+  font-size: 21px;
+  color: var(--color-fg);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+}
+.field__input:focus { border-color: var(--color-primary); }
+.field__hint { font-size: 17px; color: var(--color-fg-muted); margin-top: 6px; }

@@ -1,0 +1,54 @@
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap");
+
+:root {
+  /* Màu đã kiểm bằng công thức WCAG. Không dùng các màu xanh cũ đã
+     trượt AA cho chữ thường (tương phản < 4.5:1). */
+  --color-primary: #0369a1;      /* 5.93:1 trên nền sáng */
+  --color-primary-weak: #e0f2fe;
+  --color-accent: #047857;       /* 5.48:1 */
+  --color-accent-weak: #ecfdf5;
+  --color-danger: #b91c1c;       /* 5.91:1 */
+  --color-danger-weak: #fef2f2;
+  --color-warn-weak: #fffbeb;
+  --color-bg: #f0f9ff;
+  --color-surface: #ffffff;
+  --color-fg: #0f172a;
+  --color-fg-muted: #475569;
+  --color-border: #cbe3f0;
+
+  --tap: 56px;   /* chiều cao tối thiểu mọi thứ bấm được */
+  --r: 14px;
+  --s1: 8px; --s2: 12px; --s3: 16px; --s4: 24px; --s5: 32px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Be Vietnam Pro", system-ui, sans-serif;
+  font-size: 19px;            /* nền, không phải 16px */
+  line-height: 1.55;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible { outline: 3px solid var(--color-fg); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.screen { padding: var(--s4) var(--s3) var(--s5); max-width: 560px; margin: 0 auto; }
+.screen--narrow { max-width: 460px; }
+
+.alert {
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  font-size: 19px;
+  margin-bottom: var(--s3);
+}
+.alert--danger { background: var(--color-danger-weak); color: var(--color-danger); }

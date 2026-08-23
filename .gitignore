@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -136,3 +136,7 @@ logs/
 # (Quy tắc này trước nằm ở .gitignore của repo agentbox, chuyển sang khi tách repo.)
 **/Gemini_Generated_Image_*.png
 **/ai-avatar.jpg
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

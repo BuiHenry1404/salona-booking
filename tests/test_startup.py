@@ -66,3 +66,51 @@ def test_socketio_is_reachable_at_the_default_client_path():
 
     assert resp.status_code == 200, resp.text
     assert resp.text.lstrip("0").startswith("{"), resp.text[:80]
+
+def test_lifespan_registers_socket_notifier_channel():
+    """Vào lifespan thật: SocketNotifier phải là kênh duy nhất, bọc đúng
+    socketio_service vừa tạo."""
+    from app.services.notifications import notifications
+    from app.services.socket_notifier import SocketNotifier
+
+    notifications.clear()
+    try:
+        with TestClient(app):
+            assert len(notifications.channels) == 1
+            assert isinstance(notifications.channels[0], SocketNotifier)
+            assert notifications.channels[0].socketio is app.state.socketio_service
+    finally:
+        notifications.clear()
+
+
+def test_rerunning_lifespan_does_not_duplicate_channels():
+    """Reload/test chạy lifespan nhiều lần không được đăng ký trùng kênh."""
+    from app.services.notifications import notifications
+
+    notifications.clear()
+    try:
+        with TestClient(app):
+            pass
+        with TestClient(app):
+            assert len(notifications.channels) == 1
+    finally:
+        notifications.clear()
+
+
+def test_socketio_failure_leaves_no_channels_but_app_still_boots(monkeypatch):
+    """Socket.IO chết là fail-soft: app vẫn khởi động, và không có kênh rác."""
+    from app.services.notifications import notifications
+
+    class _Broken:
+        def __init__(self, db):
+            raise RuntimeError("socket hỏng")
+
+    monkeypatch.setattr("main.SocketIOService", _Broken)
+    notifications.clear()
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/health").status_code == 200
+        assert app.state.socketio_service is None
+        assert notifications.channels == []
+    finally:
+        notifications.clear()

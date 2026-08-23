@@ -242,3 +242,51 @@ async def test_an_old_day_is_marked_read_only(async_client, user_headers, test_d
     ).json()
     assert body["is_today"] is False
     assert [m["content"] for m in body["messages"]] == ["chuyện hôm kia"]
+
+
+async def test_admin_can_book_for_customer(async_client, admin_headers, test_db):
+    """Khách gọi điện, chủ tiệm bấm hộ. Lịch phải THUỘC KHÁCH: chứng minh bằng
+    chính đăng nhập của khách thấy lịch trong /mine, không chỉ dựa vào
+    user_name/phone trong response (hai field đó chỉ là bản chụp)."""
+    customer = await AuthService(test_db).create_user("0987654321", "matkhau123", "Cô Hoa")
+
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(9), "note": "làm nail", "for_user_id": str(customer.id)},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["user_name"] == "Cô Hoa"
+    assert resp.json()["phone"] == "0987654321"
+
+    # Ownership THẬT: đăng nhập bằng chính tài khoản khách, lịch phải nằm
+    # trong danh sách "Lịch của tôi" của khách.
+    customer_headers = await _login(async_client, "0987654321", "matkhau123")
+    listed = await async_client.get("/api/v1/appointments/mine", headers=customer_headers)
+    assert listed.status_code == 200, listed.text
+    assert [a["id"] for a in listed.json()] == [resp.json()["id"]]
+
+
+async def test_customer_cannot_book_for_another_user(async_client, user_headers, test_db):
+    """Chặn ở BACKEND: sửa localStorage thành admin cũng không đặt hộ được."""
+    victim = await AuthService(test_db).create_user("0987654321", "matkhau123", "Cô Hoa")
+
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(9), "note": None, "for_user_id": str(victim.id)},
+        headers=user_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_admin_booking_for_unknown_user_returns_404(async_client, admin_headers):
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={
+            "start_at": tomorrow_at(9),
+            "note": None,
+            "for_user_id": "000000000000000000000000",
+        },
+        headers=admin_headers,
+    )
+    assert resp.status_code == 404

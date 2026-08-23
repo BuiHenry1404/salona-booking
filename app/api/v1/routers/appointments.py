@@ -6,9 +6,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import get_current_user, get_db, require_admin
 from app.api.v1.schemas import (AppointmentCreateRequest, AppointmentResponse,
                                 FreeSlotsResponse)
+from app.core.errors import ForbiddenError, NotFoundError
 from app.models.appointment import Appointment
 from app.models.user import User
 from app.services.appointment import AppointmentService
+from app.services.auth import AuthService
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
@@ -26,8 +28,21 @@ async def create_appointment(
     user: User = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    # created_via nói ai BẤM nút đặt, nên tính theo CALLER chứ không theo
+    # người được đặt hộ.
     created_via = "admin" if user.role == "admin" else "chat"
-    appt = await AppointmentService(db).create(user, payload.start_at, payload.note, created_via)
+
+    # Khách gọi điện, chủ tiệm bấm hộ: đặt cho `for_user_id` thay cho caller.
+    # Kiểm quyền Ở ĐÂY, không dựa vào việc React ẩn nút.
+    booking_for = user
+    if payload.for_user_id and payload.for_user_id != str(user.id):
+        if user.role != "admin":
+            raise ForbiddenError("Không có quyền đặt lịch hộ người khác")
+        booking_for = await AuthService(db).get_user_by_id(payload.for_user_id)
+        if not booking_for:
+            raise NotFoundError("Không tìm thấy khách này")
+
+    appt = await AppointmentService(db).create(booking_for, payload.start_at, payload.note, created_via)
     return _to_response(appt)
 
 

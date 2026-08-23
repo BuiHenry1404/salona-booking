@@ -1,0 +1,41 @@
+.shopcard {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-radius: var(--r);
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  margin-bottom: var(--s3);
+}
+.shopcard__dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex: none;
+}
+.shopcard--free {
+  background: var(--color-accent-weak);
+  border-color: var(--color-accent);
+}
+.shopcard--free .shopcard__dot {
+  background: var(--color-accent);
+}
+/* #b45309 trên nền --color-warn-weak: chỉ dùng cho viền/dot, không dùng cho chữ. */
+.shopcard--busy {
+  background: var(--color-warn-weak);
+  border-color: #b45309;
+}
+.shopcard--busy .shopcard__dot {
+  background: #b45309;
+}
+.shopcard__title {
+  font-size: 21px;
+}
+.shopcard__sub {
+  font-size: 19px;
+  color: var(--color-fg);
+}
+.shopcard--loading {
+  color: var(--color-fg-muted);
+}
