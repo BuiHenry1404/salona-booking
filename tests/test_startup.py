@@ -16,15 +16,33 @@ def test_app_starts_and_serves_health():
 
 
 def test_app_starts_without_ai_credentials(monkeypatch):
-    """Thiếu key AI không được làm chết app — đặt lịch không cần LLM."""
-    async def _die():
-        raise ValueError("Azure endpoint and deployment are required for Azure OpenAI")
+    """Thiếu key AI không được làm chết app — đặt lịch không cần LLM.
 
-    monkeypatch.setattr("main.initialize_llm_clients", _die)
+    Model chat dựng lười trong `build_chat_model` ở lượt chat đầu tiên, nên
+    khởi động không được đụng tới key nào cả.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "azure_openai_api_key", None)
+    monkeypatch.setattr(settings, "azure_openai_endpoint", None)
 
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code == 200
-    assert app.state.llm_manager is None
+
+
+def test_startup_builds_no_llm_manager():
+    """Khởi động không được dựng manager LLM nào.
+
+    Manager autogen là code chết — luồng chat thật đi `build_chat_model`
+    (langchain), dựng lười ở lượt chat đầu. Mà `autogen_ext` còn không nằm
+    trong requirements.txt, nên mỗi lần boot in 2 dòng ERROR + 1 WARNING cho
+    một thứ không ai dùng: người trực đêm thấy ERROR lúc khởi động sẽ đi truy
+    một sự cố không tồn tại.
+    """
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").status_code == 200
+
+    assert not hasattr(app.state, "llm_manager")
 
 
 def test_readiness_returns_503_when_mongo_is_unreachable():

@@ -13,7 +13,6 @@ from app.core.logging import configure_logging
 from app.api.v1.routers import api_router
 from app.services.socketio_service import SocketIOService
 from app.infrastructure.database import create_mongodb_connection
-from app.infrastructure.llm import initialize_llm_clients
 
 # Configure structured logging
 configure_logging()
@@ -47,16 +46,6 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to initialize database", error=str(e))
         raise
     
-    # Initialize LLM clients.
-    # KHÔNG fail-hard: đặt lịch là chức năng cốt lõi và không cần LLM. Chỉ Mongo
-    # chết mới được chặn khởi động. Thiếu key AI thì tiệm vẫn nhận lịch qua REST
-    # được, chỉ mất phần trợ lý — nên chỉ ghi log và chạy tiếp.
-    app.state.llm_manager = None
-    try:
-        app.state.llm_manager = await initialize_llm_clients()
-    except Exception as e:
-        logger.warning("LLM clients unavailable, continuing without AI", error=str(e))
-
     # Initialize Socket.IO service (cũng không fail-hard, cùng lý do)
     app.state.socketio_service = None
     try:
@@ -126,11 +115,6 @@ async def lifespan(app: FastAPI):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
 
-    # Shutdown LLM clients
-    if getattr(app.state, 'llm_manager', None):
-        await app.state.llm_manager.shutdown()
-        logger.info("LLM clients closed")
-    
     # Shutdown database connection
     if hasattr(app.state, 'mongo_db'):
         await app.state.mongo_db.disconnect()

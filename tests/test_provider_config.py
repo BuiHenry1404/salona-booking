@@ -1,5 +1,4 @@
-"""Cấu hình provider cho `build_chat_model` (luồng chat thật) và
-`initialize_llm_clients` (khởi động app).
+"""Cấu hình provider cho `build_chat_model` — đường duy nhất dựng model chat.
 
 Không test gọi AI thật: chỉ kiểm cấu hình được dựng đúng, lỗi nêu đúng TÊN biến
 còn thiếu, và không bao giờ in giá trị secret.
@@ -134,32 +133,3 @@ def test_new_settings_default_to_none():
     assert Settings.model_fields["openai_compatible_base_url"].default is None
     assert Settings.model_fields["openai_compatible_api_key"].default is None
     assert Settings.model_fields["openai_compatible_model"].default is None
-
-
-# ---------------------------------------------------------------------------
-# initialize_llm_clients (khởi động app — autogen manager)
-# ---------------------------------------------------------------------------
-
-async def test_initialize_llm_clients_compat_missing_config(monkeypatch):
-    from app.infrastructure.llm import initialize_llm_clients
-
-    monkeypatch.setattr(settings, "llm_provider", "openai_compatible")
-    monkeypatch.setattr(settings, "openai_compatible_base_url", None)
-    monkeypatch.setattr(settings, "openai_compatible_api_key", None)
-    monkeypatch.setattr(settings, "openai_compatible_model", None)
-
-    with pytest.raises(ValueError) as exc:
-        await initialize_llm_clients()
-    msg = str(exc.value)
-    for name in ("OPENAI_COMPATIBLE_BASE_URL", "OPENAI_COMPATIBLE_API_KEY",
-                 "OPENAI_COMPATIBLE_MODEL"):
-        assert name in msg
-
-
-async def test_initialize_llm_clients_compat_validates_and_succeeds(compat_ready):
-    """Config hợp lệ thì khởi động không raise — luồng chat thật dùng langchain,
-    manager autogen không cần dựng client cho provider này."""
-    from app.infrastructure.llm import initialize_llm_clients, llm_manager
-
-    manager = await initialize_llm_clients()
-    assert manager is llm_manager
