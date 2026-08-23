@@ -99,6 +99,7 @@ class AzureOpenAIClient(LLMInterface):
                 kwargs["azure_ad_token_provider"] = token_provider
             else:
                 kwargs["api_key"] = self.api_key
+
             
             self.client = AzureOpenAIChatCompletionClient(**kwargs)
             logger.info("Azure OpenAI client initialized", model=self.model, deployment=self.azure_deployment)
@@ -368,8 +369,30 @@ async def initialize_llm_clients() -> LLMManager:
             )
             llm_manager.set_active_client("default")
             
+        elif provider == "openai_compatible":
+            # Endpoint tương thích OpenAI (gateway tự dựng / nhà cung cấp khác /
+            # gateway local). Luồng chat THẬT dùng langchain (app/agents/llm.py),
+            # không dùng manager autogen này — nhánh chỉ validate cấu hình để
+            # khởi động app sạch (không warning sai ý) và nêu đúng biến thiếu.
+            missing = [
+                name for name, value in (
+                    ("OPENAI_COMPATIBLE_BASE_URL", settings.openai_compatible_base_url),
+                    ("OPENAI_COMPATIBLE_API_KEY", settings.openai_compatible_api_key),
+                    ("OPENAI_COMPATIBLE_MODEL", settings.openai_compatible_model),
+                ) if not value
+            ]
+            if missing:
+                raise ValueError(f"Thiếu {', '.join(missing)} cho provider openai_compatible")
+            logger.info(
+                "OpenAI-compatible provider configured",
+                model=settings.openai_compatible_model,
+            )
+
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Supported: openai, azure, anthropic, gemini")
+            raise ValueError(
+                f"Unsupported provider: {provider}. "
+                "Supported: openai, azure, anthropic, gemini, openai_compatible"
+            )
         
         logger.info("LLM clients initialized successfully", provider=provider)
         return llm_manager

@@ -1,5 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { StrictMode } from "react";
+import type { ReactNode } from "react";
 import { useAgentStream } from "./useAgentStream";
 
 /** Socket giả: giữ handler trong Map để test tự bắn sự kiện. */
@@ -314,5 +317,68 @@ describe("useAgentStream", () => {
 
     act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
     expect(result.current.steps.every((s) => s.done)).toBe(true); // cả hai mới xong
+  });
+
+  /** TRÌNH DUYỆT THẬT chạy trong <StrictMode> (main.tsx) — StrictMode gọi updater
+   * của setState HAI LẦN cùng một `prev` để lộ updater không thuần. onToken cũ đặt
+   * `streamingId.current` ngay TRONG updater: lần gọi đầu tạo bubble + gán ref,
+   * lần gọi hai thấy ref đã có bèn đi nhánh append trên `prev` CHƯA có bubble →
+   * trả `prev` nguyên vẹn → React commit kết quả lần hai → bong bóng biến mất.
+   * Mọi token sau append vào bubble không tồn tại (no-op), complete thay bubble
+   * không tồn tại (no-op) → khách không thấy câu trả lời, dù tool đã chạy xong. */
+  it("W. REGRESSION live sequence dưới StrictMode: câu trả lời phải hiện sau complete", () => {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(StrictMode, null, children);
+    const { result } = renderHook(() => useAgentStream(), { wrapper });
+
+    act(() => result.current.send("Xin chào, hôm nay tiệm còn giờ trống không?"));
+    act(() => socket.fire("turn_started"));
+    // Thinking xuất hiện ngay khi lượt bắt đầu.
+    expect(result.current.phase).toBe("thinking");
+
+    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
+    // Trạng thái tool ĐANG CHẠY phải hiện.
+    expect(result.current.phase).toBe("tool");
+    expect(result.current.steps).toEqual([
+      { name: "find_free_slots", label: "Đang xem lịch trống…", done: false, ok: true },
+    ]);
+
+    act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
+    // Trạng thái tool ĐÃ XONG phải hiện (và giữ lại trên màn hình).
+    expect(result.current.steps).toEqual([
+      { name: "find_free_slots", label: "Đã xem lịch trống", done: true, ok: true },
+    ]);
+
+    // Chuỗi token + complete giống hệt lượt thật qua Socket.IO (12 token, 1 complete).
+    act(() => socket.fire("token", { text: "Dạ chào cô, " }));
+    // Câu trả lời PHẢI HIỆN DẦN trong lúc stream, không đợi complete.
+    expect(result.current.messages.filter((m) => m.role === "bot")[0]?.text).toBe("Dạ chào cô, ");
+    act(() => socket.fire("token", { text: "hôm nay tiệm còn trống" }));
+    act(() => socket.fire("token", { text: " buổi sáng ạ." }));
+    act(() => socket.fire("complete", { answer: "Dạ chào cô, hôm nay tiệm còn trống buổi sáng ạ." }));
+
+    // Câu của khách phải còn.
+    expect(result.current.messages[0]).toMatchObject({ role: "user" });
+    // PHẢI có đúng MỘT bong bóng bot với câu chốt — bug cũ cho ra MẢNG RỖNG.
+    const bot = result.current.messages.filter((m) => m.role === "bot");
+    expect(bot).toHaveLength(1);
+    expect(bot[0].text).toBe("Dạ chào cô, hôm nay tiệm còn trống buổi sáng ạ.");
+    // Câu chốt khác rỗng, và không có bong bóng fallback/error nào.
+    expect(bot[0].text.length).toBeGreaterThan(0);
+    expect(result.current.steps).toEqual([]);
+    expect(result.current.phase).toBe("idle");
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("X. REGRESSION StrictMode: MỘT token đơn lẻ cũng phải tạo bubble", () => {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(StrictMode, null, children);
+    const { result } = renderHook(() => useAgentStream(), { wrapper });
+
+    act(() => socket.fire("token", { text: "Dạ" }));
+
+    const bot = result.current.messages.filter((m) => m.role === "bot");
+    expect(bot).toHaveLength(1);
+    expect(bot[0].text).toBe("Dạ");
   });
 });
