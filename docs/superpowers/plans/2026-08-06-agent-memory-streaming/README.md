@@ -1,5 +1,10 @@
 # Agent, memory và streaming — Implementation Plan
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../../../../CONTEXT.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Mỗi task là một file riêng; steps dùng checkbox (`- [ ]`).
 
 **Goal:** Khách chat bằng tiếng Việt để hỏi chủ tiệm bận/rảnh và đặt lịch. Agent LangGraph gọi tool bọc quanh service của Plan 1, trace bằng Langfuse, và đẩy token cùng sự kiện tool về giao diện qua Socket.IO.

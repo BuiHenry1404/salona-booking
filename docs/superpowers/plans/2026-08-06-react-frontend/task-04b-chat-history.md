@@ -1,5 +1,10 @@
 # Task 4b · Lịch sử trò chuyện
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../../../../CONTEXT.md).
+
 > Thuộc plan [Frontend React](README.md). **Đọc [Ràng buộc toàn cục](README.md#ràng-buộc-toàn-cục) trước khi bắt đầu** — chúng áp cho mọi task, kể cả khi không nhắc lại ở đây.
 
 **Vì sao có màn này.** Hội thoại cắt phiên theo ngày, nên hôm sau mở app ra là khung chat trống. Với khách lớn tuổi, đó dễ bị hiểu thành "mất hết rồi", hoặc tệ hơn — "lịch con đặt hôm qua có còn không?". Màn này trả lời đúng câu đó. Nó là phần bù cho quyết định cắt phiên, không phải tính năng thêm cho vui.

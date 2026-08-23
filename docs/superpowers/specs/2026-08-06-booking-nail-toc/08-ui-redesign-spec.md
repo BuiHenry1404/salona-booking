@@ -1,5 +1,10 @@
 # Thiết Kế Chi Tiết Nâng Cấp Giao Diện Prototype (UI/UX Pro Max)
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../../../../CONTEXT.md).
+
 Tài liệu này đặc tả các cải tiến về giao diện, bảng màu, tính tương tác và hoạt họa cho ứng dụng đặt lịch nail-tóc Cô Ba.
 
 ---

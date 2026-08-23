@@ -5,7 +5,7 @@ File này giữ phần **tại sao**. Phần *gõ gì* nằm ở [`RUNBOOK.md`](
 
 ## Đang làm gì
 
-App đặt lịch cho **một tiệm nail–tóc nhỏ ở Việt Nam**, người dùng chính là **khách lớn tuổi**. Dựng trên `fastapi-agent-template`.
+App đặt lịch cho **một tiệm nail–tóc nhỏ ở Việt Nam**, người dùng chính là **khách phổ thông**. Dựng trên `fastapi-agent-template`.
 
 | Ai | Qua đâu |
 |---|---|
@@ -13,7 +13,7 @@ App đặt lịch cho **một tiệm nail–tóc nhỏ ở Việt Nam**, ngườ
 | Chủ tiệm | Cùng web app, giao diện admin — bật/tắt bận rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — nhận báo lịch mới, tra lịch, đổi bận/rảnh bằng nút bấm |
 
-**Xong: Plan 1 (backend) và Plan 2 (agent, memory, streaming).** 283 test xanh, cộng 10 test gọi Azure thật. Đã đo đầu-cuối với `gpt-5.4-mini`: lượt "mai 3h chiều làm tóc được không con" gọi `parse_time` → `propose_appointment` rồi hỏi xác nhận mà **chưa** ghi lịch; lượt "ừ" không gọi tool nào và ghi lịch ngay; câu ngoài chủ đề bị `refuse`. Trace lên Langfuse đủ `userId`/`sessionId` và các span `TOOL`.
+**Xong: Plan 1 (backend) và Plan 2 (agent, memory, streaming).** 283 test xanh, cộng 10 test gọi Azure thật. Đã đo đầu-cuối với `gpt-5.4-mini`: lượt "mai 3h chiều làm tóc được không em" gọi `parse_time` → `propose_appointment` rồi hỏi xác nhận mà **chưa** ghi lịch; lượt "ừ" không gọi tool nào và ghi lịch ngay; câu ngoài chủ đề bị `refuse`. Trace lên Langfuse đủ `userId`/`sessionId` và các span `TOOL`.
 
 **Tiếp theo:** chốt tạm bỏ qua bot Telegram (chủ tiệm ngồi máy tính, Telegram chỉ là phụ), nhưng vẫn lấy **task 1 và task 5 của Plan 3** vì chúng là phần tỏa tin realtime chứ không dính Telegram — Plan 2 mới dựng sẵn `broadcast`/`emit_to_admins` mà chưa ai gọi. Xong hai task đó thì làm Plan 4 (React). Chi tiết ở [`NOTE.md`](NOTE.md).
 
@@ -107,16 +107,36 @@ Tầng 3 (ngữ nghĩa, vector) **đã bỏ**. Khách đặt lịch vài tuần 
 
 **Ba điều kiện mở lại:** (1) phạm vi agent mở sang tư vấn dịch vụ chứ không chỉ bận/rảnh và đặt lịch; (2) đã chạy thật và **quan sát được** ca cụ thể mà nhớ ngữ cảnh tự do sẽ cứu cuộc trò chuyện; (3) đã có Postgres trong hạ tầng vì lý do khác. Cắm lại rẻ vì tầng 2 lưu đủ tin nhắn — chạy ngược trên lịch sử cũ là dựng lại được.
 
+## Xưng hô — chốt 2026-08-23
+
+**Lễ tân xưng "em", gọi khách "anh"/"chị".** Model tự chọn anh hay chị theo tên
+trong khối bối cảnh — đã chạy thật, nó ra đúng "anh Hùng" và "chị Lan" mà không
+cần luật riêng.
+
+**Không dùng "con", "cô", "chú", "bác" ở bất kỳ đâu khách nhìn thấy.** "con" chỉ
+đi được với cô/chú/bác; ghép "con" với "anh/chị" là sai tiếng Việt, nghe như hai
+người khác nhau đang nói. Đổi một vế thì phải đổi cả hai.
+
+Ràng buộc này phủ cả prompt, câu lỗi fail-soft, câu vượt hạn mức chat, câu hết
+phiên, và toàn bộ chuỗi trong frontend. `tests/test_prompts.py` giữ hàng rào hai
+chiều: sót một chữ "cô chú" hay "giúp con" trong prompt là test đỏ.
+
+Tài liệu trong `docs/superpowers/` (plan và spec) cùng các báo cáo có ghi ngày
+(`REPO_AUDIT.md`, `docs/SYSTEM_PROMPTS_EVALUATION.md`,
+`docs/test-scenarios/03-llm-live-run-2026-08-23.md`) **giữ nguyên vai cũ** — đó
+là biên bản của thời điểm đó, sửa lại là làm sai lịch sử.
+
 ## Ràng buộc giao diện — không được phá
 
-Người dùng là khách lớn tuổi. Đây không phải sở thích thẩm mỹ.
+Đây không phải sở thích thẩm mỹ — khách đặt lịch trên điện thoại, thường là
+ngoài đường hoặc trong tiệm đang ồn.
 
 - **Cỡ chữ nền 19px. Nút cao tối thiểu 56px, rộng hết chiều ngang.**
-- **Mọi trạng thái diễn đạt bằng CHỮ**, không chỉ bằng màu — người lớn tuổi hay bị lóa và mù màu nhẹ.
+- **Mọi trạng thái diễn đạt bằng CHỮ**, không chỉ bằng màu — nhiều người bị lóa nắng hoặc mù màu nhẹ.
 - **Tương phản tối thiểu 4.5:1.** Dùng `#0369A1` (5.93), `#047857` (5.48), `#B91C1C` (5.91). **Không** dùng `#0284C7` (4.10) hay `#059669` (3.77) cho chữ — trượt AA. Test chốt ở Plan 4 task 8.
 - **Font Be Vietnam Pro.** Atkinson Hyperlegible dễ đọc hơn nhưng **không có bộ ký tự tiếng Việt**.
 - **Không hiện tên tool kỹ thuật cho khách.** `find_free_slots` → "Đang xem lịch trống…"; tool lạ → "Đang xử lý…".
-- **Mất mạng giữa lúc stream: GIỮ NGUYÊN chữ đã hiện**, chỉ thêm "Mất mạng, đang thử lại…". Xoá đi thì người lớn tuổi tưởng mình làm hỏng.
+- **Mất mạng giữa lúc stream: GIỮ NGUYÊN chữ đã hiện**, chỉ thêm "Mất mạng, đang thử lại…". Xoá đi thì khách tưởng mình làm hỏng.
 - **Hủy lịch phải qua một bước xác nhận**, tại chỗ chứ không mở modal.
 - **Thời gian hiển thị bằng MỐC, không bao giờ bằng khoảng.** "Xong lúc 3:30 chiều", không "còn 30 phút". Nút 15/30/60/120 phút chỉ là **đầu vào**; `set_busy` quy ngay ra `busy_until`. Mốc không cũ đi, không bắt tính nhẩm, không dính lệch đồng hồ máy. Áp cho cả câu trả lời của AI — câu đó còn nằm lại trong lịch sử chat.
 - **Tôn trọng `prefers-reduced-motion: reduce`**; icon là SVG inline, không emoji.
@@ -168,7 +188,7 @@ Bốn điểm đáng nhớ về refresh token:
 
 **Cố ý KHÔNG vá — `reset-password` phân biệt 204/404.** Nó cho dò xem SĐT nào có tài khoản, nhưng luôn-trả-204 ở đây **hại nhiều hơn lợi**: endpoint đổi mật khẩu ngay chứ không gửi mã, nên 204 cho SĐT không tồn tại là nói với khách "đổi xong rồi" trong khi không có gì đổi — rồi họ không đăng nhập được và không hiểu vì sao. Luôn-trả-204 chỉ hợp với luồng "đã gửi mã".
 
-**Chưa có hạn tuyệt đối cho phiên.** BCP cho chọn một trong hai: trần thời gian sống, hoặc hết hạn khi không dùng. Dự án chọn vế sau (không dùng 30 ngày thì chết) — khách lớn tuổi không phải đăng nhập lại là điều mong muốn, nên đây là **quyết định sản phẩm**.
+**Chưa có hạn tuyệt đối cho phiên.** BCP cho chọn một trong hai: trần thời gian sống, hoặc hết hạn khi không dùng. Dự án chọn vế sau (không dùng 30 ngày thì chết) — khách phổ thông không phải đăng nhập lại là điều mong muốn, nên đây là **quyết định sản phẩm**.
 
 Đối chiếu với RFC 9700 và IETF *OAuth 2.0 for Browser-Based Applications*: xoay vòng mỗi lần dùng, phát hiện phát lại, thu hồi cả family, cookie HttpOnly — đủ cả bốn. Đã kiểm và không có vấn đề: NoSQL injection bị chặn bởi kiểu `str` của Pydantic; `appointment_id` rác trả 404 chứ không 500; kiểm quyền huỷ lịch đúng, không IDOR; lỗi trả cho khách không lộ traceback.
 

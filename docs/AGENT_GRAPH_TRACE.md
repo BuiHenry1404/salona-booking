@@ -1,6 +1,6 @@
 # KIẾN TRÚC AGENT GRAPH & TRACE MÃ NGUỒN — SALONA BOOKING
 
-> **Hệ thống:** Trợ lý AI Đặt lịch Nail & Tóc cho người lớn tuổi (FastAPI + LangGraph + MongoDB + Socket.IO)  
+> **Hệ thống:** Trợ lý AI Đặt lịch Nail & Tóc (FastAPI + LangGraph + MongoDB + Socket.IO)  
 > **Thư mục mã nguồn:** [`app/agents/booking_graph/`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/agents/booking_graph/)  
 > **Mục đích tài liệu:** Mô tả toàn diện đồ thị LangGraph, các Subagent, các Node chức năng, cơ chế định tuyến, bộ công cụ (Tools), vòng đời xử lý sự kiện realtime và các ràng buộc an toàn bất biến.
 
@@ -147,7 +147,7 @@ Khi phân vân giữa booking và refuse, chọn booking."""
 * **Mã nguồn:** [`app/agents/booking_graph/supervisor.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/agents/booking_graph/supervisor.py#L41-L45)
 * **Nhiệm vụ:** Chặn các câu hỏi không liên quan đến tiệm nail-tóc (thời tiết, bảo hiểm, số đề, prompt injection...).
 * **Chi phí:** **0 lượt LLM** (trả về hằng số chuỗi cố định):
-  > *"Dạ con chỉ giúp được việc đặt lịch làm tóc và làm nail thôi ạ. Cô chú cần đặt lịch ngày nào để con xem giúp ạ?"*
+  > *"Dạ em chỉ giúp được việc đặt lịch làm tóc và làm nail thôi ạ. Anh chị cần đặt lịch ngày nào để em xem giúp ạ?"*
 
 ---
 
@@ -238,7 +238,7 @@ sequenceDiagram
         Graph->>LLM: Stream token
         LLM-->>Graph: Token chunks
         Graph-->>Engine: on_chat_model_stream (tag="respond")
-        Engine-->>Client: emit("token", {"text": "Dạ con"})
+        Engine-->>Client: emit("token", {"text": "Dạ em"})
     else Supervisor / TimeParser (Tag != 'respond')
         Graph-->>Engine: on_chat_model_stream (tag="supervisor")
         Note over Engine: BỘ LỌC CHẶN LẠI (Không emit ra client)
