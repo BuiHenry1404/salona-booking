@@ -1,5 +1,10 @@
 # Kiến trúc
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../../../../CONTEXT.md).
+
 Ngăn xếp, ranh giới các tầng, hạ tầng, và bốn sơ đồ. Xem [README](README.md) để biết mục tiêu và các quyết định đã chốt.
 
 ## Ngăn xếp

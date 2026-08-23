@@ -1,6 +1,6 @@
 # TÀI LIỆU KIỂM THỬ TOÀN HỆ THỐNG — SALONA BOOKING
 
-> **Hệ thống:** Ứng dụng đặt lịch làm Nail & Tóc cho người lớn tuổi (FastAPI + LangGraph + MongoDB + Socket.IO + Telegram Bot + React).  
+> **Hệ thống:** Ứng dụng đặt lịch làm Nail & Tóc (FastAPI + LangGraph + MongoDB + Socket.IO + Telegram Bot + React).  
 > **Ngôn ngữ chuẩn:** Tiếng Việt (cả UI, thông báo lỗi, logic nghiệp vụ).  
 > **Mục đích tài liệu:** Quy định toàn bộ kịch bản kiểm thử (Test Scenarios), ca kiểm thử chi tiết (Test Cases), các trường hợp biên/cực hạn (Edge Cases) và ma trận sự cố (Failure Modes) cho toàn bộ hệ thống từ Backend, Agent AI, Realtime, Bot đến Frontend.
 
@@ -52,7 +52,7 @@
    - 8.4 Conversation History Endpoints (`/api/v1/conversations/*`)
    - 8.5 Health Check & Ping (`/api/v1/health/`)
    - 8.6 Middleware Bắt lỗi Toàn cục & Định dạng JSON Tiếng Việt
-9. [Tầng 8: Frontend React (UI/UX cho người lớn tuổi)](#9-tầng-8-frontend-react-uiux-cho-người-lớn-tuổi)
+9. [Tầng 8: Frontend React (UI/UX dễ đọc)](#9-tầng-8-frontend-react-uiux-dễ-đọc)
    - 9.1 Design Tokens & Tiêu chuẩn Accessibility (AA 4.5:1, Font >= 18px, Nút >= 56px)
    - 9.2 Trạng thái Tiệm không đếm ngược (Mốc giờ tuyệt đối)
    - 9.3 Client-side Timer lật thẻ trạng thái bằng `minutes_left`
@@ -157,7 +157,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 | ID | Tên Kịch bản | Dữ liệu Đầu vào | Kết quả Mong đợi | Loại kiểm thử |
 |---|---|---|---|---|
-| `TC-REPO-USER-01` | Tạo User mới thành công | `User(phone="0912345678", full_name="Cô Lan", role="user")` | Lưu vào collection `users`, sinh `_id`, `token_version=1`, `is_active=True` | Integration / Happy |
+| `TC-REPO-USER-01` | Tạo User mới thành công | `User(phone="0912345678", full_name="Chị Lan", role="user")` | Lưu vào collection `users`, sinh `_id`, `token_version=1`, `is_active=True` | Integration / Happy |
 | `TC-REPO-USER-02` | Chặn trùng SĐT ở tầng Database | Tạo 2 user cùng SĐT `"0912345678"` | Lần 2 ném `DuplicateKeyError` do Unique Index trên trường `phone` | Integration / Constraint |
 | `TC-REPO-USER-03` | Tra cứu theo SĐT đã chuẩn hoá | Tìm `"0912345678"` | Trả về đúng User document | Integration / Happy |
 | `TC-REPO-USER-04` | Tăng `token_version` khi đổi mật khẩu | Gọi `increment_token_version(user_id)` | Trường `token_version` tăng từ `1` lên `2` | Integration / Happy |
@@ -174,7 +174,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 | `TC-REPO-APPT-02` | Chặn trùng slot bằng Partial Unique Index | 2 lịch có cùng slot `"2026-08-07T15:00"`, đều có `status="booked"` | DB ném `DuplicateKeyError`. Repository chuyển đổi thành `SlotTakenError` | Integration / Constraint |
 | `TC-REPO-APPT-03` | **Bẫy mảng rỗng (Bẫy 1):** Huỷ 2 lịch liên tiếp | Huỷ lịch A và B bằng cách cập nhật `status="cancelled"` (giữ nguyên `slot_keys`) | **Thành công.** Không ném lỗi trùng khoá `undefined` | Integration / Trap Validation |
 | `TC-REPO-APPT-04` | **Đặt lại khung giờ đã huỷ:** | Lịch A bị huỷ (`status="cancelled"`). Khách B đặt đúng khung giờ của A | **Thành công.** Do Partial Index chỉ index các doc có `{ status: "booked" }` | Integration / Happy |
-| `TC-REPO-APPT-05` | **Bẫy DuplicateKeyError (Bẫy 2):** Kiểm tra chuyển đổi Exception | Gây ra trùng slot ở DB | Repository bắt `DuplicateKeyError` (con của `PyMongoError`) và `raise SlotTakenError` trước khi bắt PyMongoError chung | Integration / Error Handling |
+| `TC-REPO-APPT-05` | **Bẫy DuplicateKeyError (Bẫy 2):** Kiểm tra chuyển đổi Exception | Gây ra trùng slot ở DB | Repository bắt `DuplicateKeyError` (em của `PyMongoError`) và `raise SlotTakenError` trước khi bắt PyMongoError chung | Integration / Error Handling |
 | `TC-REPO-APPT-06` | Race condition đặt trùng đồng thời (`asyncio.gather`) | 2 coroutine đồng thời cố gắng lưu 2 lịch trùng `slot_keys` | Đúng 1 lịch thành công, 1 lịch ném `SlotTakenError`. Không bao giờ ghi đè cả 2 | Integration / Concurrency |
 | `TC-REPO-APPT-07` | Lấy danh sách lịch trong ngày theo UTC range | Query từ `start_utc` đến `end_utc` | Trả về chính xác các lịch có `start_at` trong khoảng, sắp xếp tăng dần | Integration / Happy |
 
@@ -209,7 +209,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 | ID | Tên Kịch bản | Dữ liệu Đầu vào | Kết quả Mong đợi | Loại kiểm thử |
 |---|---|---|---|---|
-| `TC-REPO-CONV-01` | Thêm tin nhắn mới (`append_message`) | `user_id`, `role="user"`, `content="Chào con"` | Lưu tin nhắn kèm `created_at` UTC; liên kết đúng `user_id` | Integration / Happy |
+| `TC-REPO-CONV-01` | Thêm tin nhắn mới (`append_message`) | `user_id`, `role="user"`, `content="Chào em"` | Lưu tin nhắn kèm `created_at` UTC; liên kết đúng `user_id` | Integration / Happy |
 | `TC-REPO-CONV-02` | Phân tách phiên theo ngày VN (`history`) | Tin nhắn từ hôm qua và tin nhắn hôm nay | Chỉ lấy tin nhắn phát sinh trong ngày hôm nay theo giờ VN (+ tin trong 30p gần nhất) | Integration / Boundary |
 | `TC-REPO-CONV-03` | Cắt lịch sử theo ngân sách 1.500 tokens | Hội thoại dài > 30 tin nhắn | Lấy ngược từ tin mới nhất, không vượt quá 1.500 token, luôn giữ trọn cặp hỏi-đáp | Integration / Algorithm |
 | `TC-REPO-CONV-04` | Đặt và đọc cờ `pending_confirmation` | Lưu `{start_at: "...", note: "...", asked_at: "..."}` | Đọc lại chính xác payload cờ xác nhận | Integration / Happy |
@@ -331,7 +331,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 | ID | Tên Kịch bản | Dữ liệu Đầu vào | Kết quả Mong đợi | Loại kiểm thử |
 |---|---|---|---|---|
 | `TC-CTX-01` | **Mốc ngày hiện tại ở dòng đầu (Bẫy 6):** | `now = 2026-08-07 14:30 (Thứ Sáu)` | Dòng đầu tiên của khối bối cảnh: `"Hôm nay là Thứ Sáu, ngày 07/08/2026, bây giờ là 14:30."` | Prompt / Integrity |
-| `TC-CTX-02` | Danh tính và xưng hô | User: `"Nguyễn Thị Lan"`, Phone: `"0912345678"` | `"Bạn đang nói chuyện với: Nguyễn Thị Lan (0912345678). Xưng hô: gọi 'cô Lan', tự xưng 'con'."` | Prompt / Integrity |
+| `TC-CTX-02` | Danh tính và xưng hô | User: `"Nguyễn Thị Lan"`, Phone: `"0912345678"` | `"Bạn đang nói chuyện với: Nguyễn Thị Lan (0912345678). Xưng hô: gọi 'chị Lan', tự xưng 'em'."` | Prompt / Integrity |
 | `TC-CTX-03` | Lịch sắp tới của khách | Khách có lịch `Thứ Bảy 08/08 15:00 làm tóc` | Nêu rõ lịch sắp tới kèm ngày giờ và ghi chú | Prompt / Integrity |
 | `TC-CTX-04` | Trạng thái tiệm hiện tại | Tiệm đang bận đến 16:00 | `"Chủ tiệm: đang bận, xong lúc 4:00 chiều."` (Không nói "còn 90 phút") | Prompt / Integrity |
 | `TC-CTX-05` | **Không đặt bối cảnh vào System Prompt (Bẫy 9):** | Khối bối cảnh | Được inject dưới dạng 1 `HumanMessage`/`SystemMessage` động ngay trước tin nhắn mới, không trộn vào System Prompt tĩnh | Prompt Caching |
@@ -342,12 +342,12 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 | ID | Tin nhắn của khách | Phân loại mong đợi | Rationale |
 |---|---|---|---|
-| `TC-SUP-01` | `"Mai 3h chiều còn chỗ làm tóc không con?"` | `route = "booking"` | Ý định đặt lịch |
+| `TC-SUP-01` | `"Mai 3h chiều còn chỗ làm tóc không em?"` | `route = "booking"` | Ý định đặt lịch |
 | `TC-SUP-02` | `"Tiệm mình đang đông không em ơi?"` | `route = "status"` | Ý định hỏi bận/rảnh |
 | `TC-SUP-03` | `"Cháu bán bảo hiểm nhân thọ không?"` | `route = "refuse"` | Ngoài phạm vi tiệm nail-tóc |
-| `TC-SUP-04` | `"Thời tiết hôm nay thế nào con?"` | `route = "refuse"` | Ngoài phạm vi tiệm nail-tóc |
-| `TC-SUP-05` | `"Xem giùm cô mấy giờ cô có lịch"` | `route = "booking"` | Tra cứu lịch cá nhân |
-| `TC-SUP-06` | `"Huỷ cái lịch ngày mai giúp cô"` | `route = "booking"` | Huỷ lịch |
+| `TC-SUP-04` | `"Thời tiết hôm nay thế nào em?"` | `route = "refuse"` | Ngoài phạm vi tiệm nail-tóc |
+| `TC-SUP-05` | `"Xem giùm chị mấy giờ chị có lịch"` | `route = "booking"` | Tra cứu lịch cá nhân |
+| `TC-SUP-06` | `"Huỷ cái lịch ngày mai giúp chị"` | `route = "booking"` | Huỷ lịch |
 | `TC-SUP-07` | Ngân sách token của Supervisor | Prompt + 4 tin nhắn gần nhất | Tổng token input < 300 tokens (không nhồi memory/tool schemas) |
 
 ---
@@ -371,7 +371,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 | ID | Tên Kịch bản | Trạng thái & Tin nhắn khách | Hành vi & Kết quả mong đợi |
 |---|---|---|---|
-| `TC-CONF-01` | Xác nhận đồng ý bằng tiếng Việt | Cờ `pending` có hiệu lực + Khách nhắn: `"ừ"`, `"Ừ"`, `"đúng rồi"`, `"ok"`, `"OK con"`, `"vâng"`, `"dạ đúng"`, `"được"` | Nhánh `route_from_state` đi thẳng vào node `confirm` (0 lượt LLM). Đọc `start_at` từ Mongo -> Gọi `AppointmentService.create` -> Tạo lịch thành công -> Xoá cờ pending |
+| `TC-CONF-01` | Xác nhận đồng ý bằng tiếng Việt | Cờ `pending` có hiệu lực + Khách nhắn: `"ừ"`, `"Ừ"`, `"đúng rồi"`, `"ok"`, `"OK em"`, `"vâng"`, `"dạ đúng"`, `"được"` | Nhánh `route_from_state` đi thẳng vào node `confirm` (0 lượt LLM). Đọc `start_at` từ Mongo -> Gọi `AppointmentService.create` -> Tạo lịch thành công -> Xoá cờ pending |
 | `TC-CONF-02` | **Đọc giờ từ Mongo, không đọc từ LLM (Bẫy 115):** | Cờ pending lưu `15:00`. Model ở lượt trước nhắc lại sai thành `05:00` | Lịch được tạo đúng vào lúc `15:00` do node `confirm` lấy trực tiếp từ Mongo |
 | `TC-CONF-03` | Từ chối hoặc đổi ý | Cờ `pending` có hiệu lực + Khách nhắn: `"không"`, `"thôi khỏi"`, `"đổi giờ khác"`, `"để mai đi"` | Xoá cờ `pending_confirmation`, không tạo lịch, trả lời nhẹ nhàng |
 | `TC-CONF-04` | Xung đột slot lúc bấm xác nhận | Cờ pending hợp lệ nhưng trong lúc chờ, admin đã xếp người khác vào giờ đó | Node `confirm` bắt `SlotTakenError`, xoá cờ pending, báo khách thông cảm chọn giờ khác |
@@ -502,7 +502,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 | ID | Tiêu chuẩn UI/UX | Quy định thiết kế | Kiểm tra thực tế | Kết quả |
 |---|---|---|---|---|
-| `TC-UI-01` | **Cỡ chữ nền tối thiểu:** | Base font size >= 18px (hoặc 19px) | Đo computed style trên các phần tử văn bản | Đạt chuẩn đọc cho người lớn tuổi |
+| `TC-UI-01` | **Cỡ chữ nền tối thiểu:** | Base font size >= 18px (hoặc 19px) | Đo computed style trên các phần tử văn bản | Đạt chuẩn đọc thoải mái |
 | `TC-UI-02` | **Kích thước nút bấm:** | Chiều cao >= 56px, full width (rộng 100%) | Đo chiều cao và chiều rộng button | Dễ bấm bằng ngón tay cái, không bấm trượt |
 | `TC-UI-03` | **Tương phản màu sắc (AA >= 4.5:1):** | Dùng `#0369A1` (5.93), `#047857` (5.48), `#B91C1C` (5.91). **Cấm dùng `#0284C7` (4.10) hay `#059669` (3.77)** | Chạy công cụ kiểm tra độ tương phản WCAG AA | Đạt độ tương phản cao, chống lóa cho mắt kém |
 | `TC-UI-04` | **Phông chữ tiếng Việt:** | Dùng `Be Vietnam Pro` | Kiểm tra CSS font-family | Hiển thị đầy đủ dấu tiếng Việt không bị lỗi font |
@@ -539,7 +539,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 |---|---|---|---|---|
 | `TC-UI-HIST-01` | Mở app vào ngày hôm sau | Khung chat hôm nay trống | Hiển thị link to: `"Xem các lần trò chuyện trước"` | Tránh người dùng tưởng bị mất lịch đã đặt |
 | `TC-UI-HIST-02` | Danh sách lịch sử các ngày | Mở màn hình lịch sử | Thẻ lớn từng ngày: `"Thứ Ba, 12 tháng 8"` (viết đủ chữ, không viết `12/08`) kèm trích dẫn câu đầu | Dễ nhận diện câu chuyện cũ |
-| `TC-UI-HIST-03` | Xem lại hội thoại ngày cũ (Read-only) | Bấm vào ngày 12 tháng 8 | Xem lại bong bóng chat cũ. **Không có ô nhập tin nhắn**. Chỗ ô nhập là dòng chữ: `"Đây là cuộc trò chuyện ngày 12 tháng 8. Cô chú muốn nhắn thì quay về hôm nay"` kèm nút to | Rõ ràng, không dùng ô input xám gây khó hiểu |
+| `TC-UI-HIST-03` | Xem lại hội thoại ngày cũ (Read-only) | Bấm vào ngày 12 tháng 8 | Xem lại bong bóng chat cũ. **Không có ô nhập tin nhắn**. Chỗ ô nhập là dòng chữ: `"Đây là cuộc trò chuyện ngày 12 tháng 8. Anh chị muốn nhắn thì quay về hôm nay"` kèm nút to | Rõ ràng, không dùng ô input xám gây khó hiểu |
 
 ---
 
@@ -560,7 +560,7 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 | `EC-11` | **AI / Network** | Azure OpenAI gặp sự cố hoặc phản hồi chậm (> 8s) | Giao diện chat của khách bị treo đơ | Fail-soft: Timeout 8s trả về fallback `missing=["giờ cụ thể"]`, AI lịch sự hỏi lại khách hoặc hiện hotline tiệm. |
 | `EC-12` | **Observability** | Langfuse Cloud/Self-hosted bị sập hoặc quá tải | Lượt chat của khách bị báo lỗi 500 | Callback handler nuốt mọi lỗi kết nối của Langfuse; ghi log warning; lượt chat vẫn stream mượt mà cho khách. |
 | `EC-13` | **Timezone** | Khách nhắn lúc 23:59 ngày hôm nay, xác nhận lúc 00:01 ngày hôm sau | Lịch sử chat bị cắt theo ngày làm mất ngữ cảnh câu xác nhận "ừ" | Cơ chế nạp lịch sử lấy toàn bộ tin trong ngày VN **cộng thêm mọi tin nhắn trong 30 phút gần nhất**. |
-| `EC-14` | **Client Clock Skew** | Đồng hồ trên điện thoại của khách lớn tuổi bị chỉnh sai 15 phút | Thẻ trạng thái tiệm đếm ngược sai hoặc lật thẻ sai giờ | Client dùng `minutes_left` (khoảng tương đối) để đặt `setTimeout`, không lấy `busy_until` trừ giờ máy khách. Hiển thị thì dùng mốc giờ tuyệt đối của server. |
+| `EC-14` | **Client Clock Skew** | Đồng hồ trên điện thoại của khách bị chỉnh sai 15 phút | Thẻ trạng thái tiệm đếm ngược sai hoặc lật thẻ sai giờ | Client dùng `minutes_left` (khoảng tương đối) để đặt `setTimeout`, không lấy `busy_until` trừ giờ máy khách. Hiển thị thì dùng mốc giờ tuyệt đối của server. |
 
 ---
 

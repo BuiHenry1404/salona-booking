@@ -1,5 +1,10 @@
 # Màn hình
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../../../../CONTEXT.md).
+
 ## Nguyên tắc chung
 
 Áp cho mọi màn hình, viết thành design token trong React: cỡ chữ nền tối thiểu 18px, nút cao tối thiểu 56px và rộng hết chiều ngang, tương phản cao, mỗi màn hình chỉ một hành động chính, không menu ẩn, không modal chồng nhau, mọi trạng thái đều diễn đạt bằng chữ chứ không chỉ bằng màu.

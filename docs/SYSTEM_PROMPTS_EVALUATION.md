@@ -1,5 +1,10 @@
 # BÁO CÁO NGHIÊN CỨU & ĐÁNH GIÁ SYSTEM PROMPTS — DỰ ÁN SALONA BOOKING
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](../CONTEXT.md).
+
 > **Dự án:** Ứng dụng AI Đặt lịch Nail & Tóc cho người lớn tuổi (Salona Booking)  
 > **Thư mục mã nguồn:** [`app/agents/booking_graph/prompts.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/agents/booking_graph/prompts.py) và [`app/agents/booking_graph/timeparse.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/agents/booking_graph/timeparse.py)  
 > **Ngày đánh giá:** 2026-08-23  
