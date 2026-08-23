@@ -16,7 +16,7 @@ export function LoginScreen() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!phone.trim() || !password) {
-      setError("Cô chú nhập đủ số điện thoại và mật khẩu giúp con ạ.");
+      setError("Anh chị nhập đủ số điện thoại và mật khẩu giúp em ạ.");
       return;
     }
     setError(null);
@@ -38,7 +38,7 @@ export function LoginScreen() {
       <form onSubmit={submit} noValidate>
         <Field
           label="Số điện thoại"
-          hint="Số cô chú vẫn dùng, ví dụ 0912345678"
+          hint="Số anh chị vẫn dùng, ví dụ 0912345678"
           inputMode="numeric"
           autoComplete="tel"
           value={phone}
@@ -65,7 +65,7 @@ export function LoginScreen() {
       </form>
 
       <p style={{ marginTop: "var(--s4)", fontSize: 19 }}>
-        Quên mật khẩu thì cô chú gọi cho tiệm, chủ tiệm đặt lại giúp ạ.
+        Quên mật khẩu thì anh chị gọi cho tiệm, chủ tiệm đặt lại giúp ạ.
       </p>
     </main>
   );

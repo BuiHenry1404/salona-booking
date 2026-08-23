@@ -78,11 +78,11 @@ class SocketIOService:
     @staticmethod
     def _too_fast_message(retry_after_seconds: int) -> str:
         minutes = max(round(retry_after_seconds / 60), 1)
-        # "khoảng 60 phút" nghe lủng củng; cô chú nói "một tiếng".
+        # "khoảng 60 phút" nghe lủng củng; người ta nói "một tiếng".
         khi_nao = "1 tiếng" if minutes >= 60 else f"{minutes} phút"
         return (
-            f"Cô chú nhắn hơi nhanh, khoảng {khi_nao} nữa nhắn lại giúp con nhé. "
-            "Gấp thì cô chú gọi thẳng cho tiệm ạ."
+            f"Anh chị nhắn hơi nhanh, khoảng {khi_nao} nữa nhắn lại giúp em nhé. "
+            "Gấp thì anh chị gọi thẳng cho tiệm ạ."
         )
 
     async def handle_message(self, sid: str, user: User, message: str) -> None:
@@ -120,7 +120,7 @@ class SocketIOService:
             logger.error("chat_turn_failed", extra={"error": str(exc)})
             await self.sio.emit(
                 "error",
-                {"message": "Máy đang bận chút xíu, cô chú nhắn lại giúp con nhé."},
+                {"message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."},
                 room=sid,
             )
 

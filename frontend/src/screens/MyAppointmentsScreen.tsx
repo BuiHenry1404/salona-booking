@@ -55,7 +55,7 @@ export function MyAppointmentsScreen() {
 
       {appointments !== null && appointments.length === 0 && !error && (
         <div>
-          <p style={{ fontSize: 20, marginBottom: "var(--s3)" }}>Cô chú chưa có lịch nào ạ.</p>
+          <p style={{ fontSize: 20, marginBottom: "var(--s3)" }}>Anh chị chưa có lịch nào ạ.</p>
           <Link to="/" className="btn btn--primary btn--full" style={{ textDecoration: "none" }}>
             Nhắn cho tiệm
           </Link>

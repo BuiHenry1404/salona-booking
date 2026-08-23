@@ -98,5 +98,5 @@ async def run_turn(
     except Exception as exc:
         logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})
         yield AgentEvent("error", {
-            "message": "Máy đang bận chút xíu, cô chú nhắn lại giúp con nhé."
+            "message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."
         })

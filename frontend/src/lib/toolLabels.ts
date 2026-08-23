@@ -17,8 +17,8 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
   parse_time: { running: "Đang xem lịch…", done: "Đã xem lịch" },
   find_free_slots: { running: "Đang xem lịch trống…", done: "Đã xem lịch trống" },
   // Agent không ghi lịch trực tiếp — nó giữ chỗ rồi hỏi khách xác nhận.
-  propose_appointment: { running: "Đang giữ chỗ cho cô…", done: "Đã giữ chỗ" },
-  list_my_appointments: { running: "Đang xem lịch của cô…", done: "Đã xem lịch của cô" },
+  propose_appointment: { running: "Đang giữ chỗ cho anh chị…", done: "Đã giữ chỗ" },
+  list_my_appointments: { running: "Đang xem lịch…", done: "Đã xem lịch" },
   cancel_appointment: { running: "Đang hủy lịch…", done: "Đã hủy lịch" },
 };
 

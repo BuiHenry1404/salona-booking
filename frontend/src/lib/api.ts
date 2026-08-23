@@ -13,12 +13,12 @@ export class ApiError extends Error {
 }
 
 const FALLBACK: Record<number, string> = {
-  401: "Phiên đăng nhập đã hết hạn, cô chú đăng nhập lại giúp con ạ.",
+  401: "Phiên đăng nhập đã hết hạn, anh chị đăng nhập lại giúp em ạ.",
   403: "Phần này chỉ chủ tiệm mới xem được ạ.",
   404: "Không tìm thấy ạ.",
   409: "Giờ này vừa có người đặt mất rồi ạ.",
-  422: "Thông tin chưa hợp lệ, cô chú xem lại giúp con ạ.",
-  429: "Cô chú thử lại sau ít phút giúp con ạ.",
+  422: "Thông tin chưa hợp lệ, anh chị xem lại giúp em ạ.",
+  429: "Anh chị thử lại sau ít phút giúp em ạ.",
 };
 
 /** Refresh token đi bằng cookie HttpOnly scoped /api/v1/auth — request tới
@@ -95,7 +95,7 @@ async function parseError(response: Response): Promise<ApiError> {
   }
   return new ApiError(
     response.status,
-    detail ?? FALLBACK[response.status] ?? "Có lỗi xảy ra, cô chú thử lại giúp con ạ.",
+    detail ?? FALLBACK[response.status] ?? "Có lỗi xảy ra, anh chị thử lại giúp em ạ.",
   );
 }
 
@@ -121,7 +121,7 @@ async function rawRequest<T>(
   } catch {
     // TypeError từ fetch nghĩa là không tới được server. Không bao giờ hiện
     // "Failed to fetch" cho khách.
-    throw new ApiError(0, "Máy không vào được mạng, cô chú kiểm tra wifi giúp con ạ.");
+    throw new ApiError(0, "Máy không vào được mạng, anh chị kiểm tra wifi giúp em ạ.");
   }
 
   if (!response.ok) throw await parseError(response);

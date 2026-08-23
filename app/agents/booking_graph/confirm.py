@@ -93,10 +93,10 @@ def make_confirm_node(
 
         # Danh xưng do model điền lúc propose_appointment: node này chạy 0 lượt
         # LLM nên không tự suy ra được "cô Lan" hay "bác Ba" từ "Nguyễn Thị Lan".
-        # Thiếu thì lùi về "cô chú" ở những câu BẮT BUỘC phải xưng hô, và bỏ hẳn
+        # Thiếu thì lùi về "anh chị" ở những câu BẮT BUỘC phải xưng hô, và bỏ hẳn
         # lời gọi ở câu chốt — chỗ đó không xưng hô vẫn đọc trôi.
         xung_ho = (pending.get("xung_ho") or "").strip()
-        goi = xung_ho or "cô chú"
+        goi = xung_ho or "anh chị"
         loi_goi = f" {xung_ho}" if xung_ho else ""
 
         if not is_affirmative(last_message):
@@ -107,10 +107,10 @@ def make_confirm_node(
                 user, datetime.fromisoformat(pending["start_at"]), pending.get("note")
             )
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. {goi.capitalize()} chọn giờ khác giúp con nhé."}
+            return {"answer": f"Dạ {exc.message} ạ. {goi.capitalize()} chọn giờ khác giúp em nhé."}
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return {"answer": f"Dạ con nhầm mất rồi, {goi} nhắc lại ngày giờ giúp con ạ."}
+            return {"answer": f"Dạ em nhầm mất rồi, {goi} nhắc lại ngày giờ giúp em ạ."}
 
         return {"answer": f"Xong rồi ạ. Hẹn gặp{loi_goi} "
                           f"{format_vi_datetime(appointment.start_at)} nhé."}
