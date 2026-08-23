@@ -1,4 +1,4 @@
-"""Tạo hai tài khoản dev để test tay. Chạy lại nhiều lần được.
+"""Tạo tài khoản dev để test tay: 1 chủ tiệm + 4 khách. Chạy lại nhiều lần được.
 
     PYTHONPATH=. python scripts/seed_dev_users.py
 
@@ -12,9 +12,15 @@ from app.core.errors import PhoneTakenError
 from app.infrastructure.database import create_mongodb_connection, ensure_indexes
 from app.services.auth import AuthService
 
+# Bốn khách để thử những thứ cần nhiều người cùng lúc: giành slot (hai người
+# đặt trùng giờ), hạn mức chat tính riêng từng người, và thông báo realtime chỉ
+# về đúng socket của chủ nhân. Mật khẩu để giống nhau cho dễ gõ.
 DEV_USERS = [
     ("0901234567", "chutiem123", "Chủ tiệm", "admin"),
     ("0912345678", "matkhau123", "Cô Lan", "user"),
+    ("0923456789", "matkhau123", "Chú Hùng", "user"),
+    ("0934567890", "matkhau123", "Bác Ba", "user"),
+    ("0945678901", "matkhau123", "Cô Tám", "user"),
 ]
 
 

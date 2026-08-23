@@ -73,7 +73,7 @@ một kết nối `getUpdates` mỗi token.
 
 ## 5. Tài khoản test
 
-`scripts/seed_dev_users.py` tạo sẵn hai tài khoản (chạy lại nhiều lần được, đã có
+`scripts/seed_dev_users.py` tạo sẵn năm tài khoản (chạy lại nhiều lần được, đã có
 thì bỏ qua). **Không có đăng ký tự do** — muốn thêm khách thì admin gọi
 `POST /api/v1/auth/users`.
 
@@ -81,6 +81,13 @@ thì bỏ qua). **Không có đăng ký tự do** — muốn thêm khách thì a
 |---|---|---|---|---|
 | admin | `0901234567` | `chutiem123` | Chủ tiệm | bật/tắt bận rảnh, xem lịch mọi khách, tạo tài khoản |
 | khách | `0912345678` | `matkhau123` | Cô Lan | chat đặt lịch, xem lịch của mình |
+| khách | `0923456789` | `matkhau123` | Chú Hùng | " |
+| khách | `0934567890` | `matkhau123` | Bác Ba | " |
+| khách | `0945678901` | `matkhau123` | Cô Tám | " |
+
+Bốn khách để thử những thứ cần nhiều người cùng lúc: giành slot (hai người đặt
+trùng giờ → 409), hạn mức chat tính riêng từng người, và thông báo realtime chỉ
+về đúng socket của chủ nhân.
 
 Lấy token:
 
