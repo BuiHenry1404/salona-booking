@@ -53,7 +53,7 @@ export function BusySwitch({
     return (
       <section className="switch">
         <p className="switch__state">Chưa biết tình trạng tiệm</p>
-        <p className="switch__count">Cô chú thử lại sau một chút ạ.</p>
+        <p className="switch__count">Anh chị thử lại sau một chút ạ.</p>
       </section>
     );
   }

@@ -163,7 +163,7 @@ Quy tắc:
   "3 giờ" → missing là ["sáng hay chiều"].
   "thứ Năm" → missing là ["thứ Năm tuần này hay tuần sau"].
 - TUYỆT ĐỐI không đoán thay khách. Đoán sai thì cụ già tới tiệm lúc không ai mở cửa.
-- "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ cô qua được không" đều nghĩa
+- "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ em qua được không" đều nghĩa
   là NGAY LÚC NÀY: điền start_at đúng {hour:02d}:{minute:02d} hôm nay, missing rỗng.
   Tiệm nhận khách vãng lai nên đây là câu rất hay gặp, đừng hỏi lại "mấy giờ ạ".
 - Câu không nhắc gì tới thời gian thì để start_at null và missing rỗng.

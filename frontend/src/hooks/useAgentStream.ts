@@ -171,7 +171,7 @@ export function useAgentStream() {
         {
           id: nextId(),
           role: "bot" as const,
-          text: data?.message ?? "Máy đang bận chút xíu, cô chú nhắn lại giúp con nhé.",
+          text: data?.message ?? "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé.",
         },
       ]);
     };
