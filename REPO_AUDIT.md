@@ -1,5 +1,10 @@
 # Full Repository Audit
 
+> **Vai xưng hô đã đổi sau tài liệu này.** Từ 2026-08-23 lễ tân xưng "em",
+> gọi khách "anh"/"chị". Mọi câu "con", "cô", "chú", "bác" dưới đây là
+> nguyên văn của thời điểm đó, giữ lại làm biên bản chứ không phải mẫu để
+> chép theo. Vai hiện hành: mục "Xưng hô" trong [`CONTEXT.md`](CONTEXT.md).
+
 > Ghi chú về model: yêu cầu ghi "dùng DeepSeek V4 Pro". Phiên chạy audit này là
 > opencode với model được cấu hình sẵn (9router/open-code) — không tự đổi model
 > được. Toàn bộ kết luận dưới đây dựa trên đọc nguồn trực tiếp, không suy đoán.

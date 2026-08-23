@@ -1,6 +1,6 @@
 # Giao diện web — Tiệm Nail & Tóc
 
-React + TypeScript + Vite. Người dùng chính là khách lớn tuổi, nên mọi lựa chọn
+React + TypeScript + Vite. Người dùng chính là khách phổ thông, nên mọi lựa chọn
 giao diện đều nghiêng về dễ nhìn dễ bấm hơn là gọn đẹp.
 
 ## Chạy
