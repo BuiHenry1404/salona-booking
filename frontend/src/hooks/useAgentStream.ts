@@ -119,16 +119,21 @@ export function useAgentStream() {
 
     const onToken = (data: { text: string }) => {
       setPhase("answering");
-      setMessages((prev) => {
-        if (streamingId.current) {
-          return prev.map((m) =>
-            m.id === streamingId.current ? { ...m, text: m.text + data.text } : m,
-          );
-        }
-        const id = nextId();
-        streamingId.current = id;
-        return [...prev, { id, role: "bot" as const, text: data.text }];
-      });
+      // Đọc/ghi ref ở ĐÂY (trong handler), KHÔNG trong updater của setState.
+      // StrictMode gọi updater HAI LẦN với cùng một `prev`: nếu gán
+      // `streamingId.current` trong updater thì lần gọi thứ hai thấy ref đã có,
+      // đi nhầm nhánh append trên `prev` chưa chứa bubble → trả `prev` nguyên vẹn
+      // → React commit kết quả lần hai → bong bóng bot biến mất hẳn.
+      if (streamingId.current) {
+        const id = streamingId.current;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, text: m.text + data.text } : m)),
+        );
+        return;
+      }
+      const id = nextId();
+      streamingId.current = id;
+      setMessages((prev) => [...prev, { id, role: "bot" as const, text: data.text }]);
     };
 
     const onComplete = (data: { answer?: string }) => {

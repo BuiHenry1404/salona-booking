@@ -35,7 +35,14 @@ class Settings(BaseSettings):
     log_level: str
 
     # LLM Configuration
-    llm_provider: Literal["openai", "azure", "anthropic", "gemini"]
+    llm_provider: Literal["openai", "azure", "anthropic", "gemini", "openai_compatible"]
+
+    # OpenAI-compatible — endpoint bất kỳ nói giao thức OpenAI: gateway tự dựng,
+    # nhà cung cấp khác, hoặc gateway chạy local. URL/key/model chỉ đến từ .env,
+    # không bao giờ hardcode trong code.
+    openai_compatible_base_url: Optional[str] = None
+    openai_compatible_api_key: Optional[SecretStr] = None
+    openai_compatible_model: Optional[str] = None
 
     # Azure OpenAI
     azure_openai_api_key: Optional[SecretStr] = None

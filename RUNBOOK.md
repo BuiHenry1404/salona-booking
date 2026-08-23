@@ -39,6 +39,15 @@ Bốn khoá Azure hay điền sai:
 | `AZURE_OPENAI_API_KEY` | Key của resource | mọi lượt chat trả sự kiện `error` |
 | `AZURE_OPENAI_API_VERSION` | ví dụ `2025-04-01-preview` | 404 hoặc lỗi schema |
 
+### Provider khác: OpenAI-compatible
+
+Không muốn dùng Azure thì đặt `LLM_PROVIDER=openai_compatible` và điền ba biến
+`OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` / `OPENAI_COMPATIBLE_MODEL`.
+Endpoint là bất kỳ dịch vụ nào nói giao thức OpenAI: gateway tự dựng, nhà cung
+cấp khác, hoặc gateway chạy local. Chat, tool calling và streaming đều đi qua đó.
+Thiếu biến nào thì log khởi động nêu đúng **tên biến** đó (không in giá trị).
+URL/key/model chỉ nằm trong `.env`, không hardcode trong code.
+
 Langfuse và Telegram: **comment cả dòng** thì tắt. Để `KEY=` trống *không* tắt —
 chuỗi rỗng khác `None`.
 
