@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # Booking
     booking_slot_minutes: int
     booking_max_per_hour: int
+
+    # Trần chi phí LLM cho chat. CÓ mặc định (khác booking_max_per_hour) vì thêm
+    # một biến bắt buộc sẽ làm hỏng mọi .env đang chạy.
+    chat_max_per_hour: int = 30
     timezone: str
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.

@@ -31,6 +31,33 @@ class RateLimitService:
             {"key": key, "created_at": {"$gte": window_start}}
         )
 
+    async def retry_after_seconds(self, key: str, limit: int, window_seconds: int) -> int:
+        """Còn bao lâu nữa thì gửi lại được.
+
+        Chuẩn IETF (Retry-After) khuyên nói rõ con số để client tự điều tiết.
+        Không có con số thì người dùng bấm hoài — mà `check_and_hit` tính cả
+        những lần đã bị từ chối, nên bấm hoài là tự khoá mình lâu thêm.
+
+        Dấu hết hạn theo thứ tự cũ nhất trước. Đang có N dấu trong cửa sổ; lượt
+        sau muốn lọt thì trước khi ghi phải còn <= limit-1, tức N-limit+1 dấu cũ
+        nhất phải rơi ra. Dấu thứ đó (bỏ qua N-limit dấu đầu) hết hạn lúc
+        created_at + window.
+        """
+        window_start = now_utc() - timedelta(seconds=window_seconds)
+        total = await self._count(key, window_seconds)
+        skip = max(total - limit, 0)
+        docs = await (
+            self.collection.find({"key": key, "created_at": {"$gte": window_start}})
+            .sort("created_at", 1)
+            .skip(skip)
+            .limit(1)
+            .to_list(length=1)
+        )
+        if not docs:
+            return 0
+        remaining = docs[0]["created_at"] + timedelta(seconds=window_seconds) - now_utc()
+        return max(int(remaining.total_seconds()) + 1, 1)
+
     async def check(self, key: str, limit: int, window_seconds: int) -> None:
         """Kiểm mà KHÔNG ghi dấu — dùng cho đăng nhập.
 
