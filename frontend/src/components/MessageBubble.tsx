@@ -1,3 +1,4 @@
+import { BotAvatar } from "./BotAvatar";
 import "./MessageBubble.css";
 
 export interface MessageBubbleProps {
@@ -17,7 +18,10 @@ export interface MessageBubbleProps {
  */
 export function MessageBubble({ role, text, pending, streaming }: MessageBubbleProps) {
   return (
-    <div className="bubble__wrap">
+    <div className={role === "bot" ? "bubble__wrap bubble__wrap--bot" : "bubble__wrap"}>
+      {/* Ảnh đại diện Salona đứng cạnh bong bóng bot; phía khách không có
+          ảnh — bên phải đã đủ tín hiệu "câu này của mình". */}
+      {role === "bot" && <BotAvatar />}
       <p className={role === "user" ? "bubble bubble--me" : "bubble bubble--bot"}>
         {text}
         {role === "bot" && streaming && <span className="caret" aria-hidden="true" />}
