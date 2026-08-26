@@ -15,11 +15,12 @@ interface MonthlyCustomerStatsProps {
  * - Bar width scale theo tỷ lệ max count.
  */
 export function MonthlyCustomerStats({ data }: MonthlyCustomerStatsProps) {
-  const { months, maxCount } = useMemo(() => {
+  const { months, maxCount, currentMonthKey } = useMemo(() => {
     const months = data.months;
     const counts = months.map((m) => m.customer_count);
     const maxCount = Math.max(0, ...counts);
-    return { months, maxCount };
+    const currentMonthKey = getCurrentVnMonthKey();
+    return { months, maxCount, currentMonthKey };
   }, [data.months]);
 
   return (
@@ -35,17 +36,23 @@ export function MonthlyCustomerStats({ data }: MonthlyCustomerStatsProps) {
           const label = formatMonthLabel(month);
           const widthPct =
             maxCount > 0 ? Math.round((customer_count / maxCount) * 100) : 0;
+          const isCurrent = month === currentMonthKey;
+          const isZero = customer_count === 0;
           return (
             <li
               key={month}
-              className="stats__row"
+              className={["stats__row", isCurrent ? "stats__row--current" : ""]
+                .filter(Boolean)
+                .join(" ")}
               aria-label={label.full}
               title={`${label.full}: ${customer_count} khách`}
             >
               <span className="stats__month">{label.short}</span>
               <div className="stats__bar-cell">
                 <span
-                  className="stats__bar"
+                  className={["stats__bar", isZero ? "stats__bar--zero" : ""]
+                    .filter(Boolean)
+                    .join(" ")}
                   style={{ width: `${widthPct}%` }}
                 />
               </div>
@@ -56,6 +63,19 @@ export function MonthlyCustomerStats({ data }: MonthlyCustomerStatsProps) {
       </ul>
     </section>
   );
+}
+
+/** Trả về tháng hiện tại theo giờ Việt Nam dạng `YYYY-MM` (không cần dependency). */
+function getCurrentVnMonthKey(): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  return `${year}-${month}`;
 }
 
 /**

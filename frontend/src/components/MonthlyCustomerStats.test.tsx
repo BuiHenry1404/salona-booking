@@ -64,4 +64,10 @@ describe("MonthlyCustomerStats", () => {
       expect(width).not.toContain("Infinity");
     });
   });
+
+  it("tháng có 0 khách được đánh dấu zero-bar", () => {
+    const { container } = render(<MonthlyCustomerStats data={allZeroData} />);
+    const zeroBars = container.querySelectorAll(".stats__bar--zero");
+    expect(zeroBars.length).toBe(12);
+  });
 });

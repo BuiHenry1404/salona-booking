@@ -68,6 +68,34 @@
   white-space: nowrap;
 }
 
+/* Tháng hiện tại: nhấn mạnh nhẹ bằng màu nền, không thay đổi text. */
+.stats__row--current {
+  background: var(--color-primary-weak);
+  border-radius: var(--r);
+  margin: 0 calc(-1 * var(--s2));
+  padding: var(--s1) var(--s2);
+}
+
+.stats__row--current .stats__month {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+/* Giá trị 0: vẫn để lại vạch nhỏ, dùng nét đứt để người dùng phân biệt. */
+.stats__bar--zero {
+  background: var(--color-fg-muted);
+  min-width: 4px;
+  border-radius: var(--r);
+}
+
+/* Tablet/desktop: tận dụng không gian rộng hơn một chút. */
+@media (min-width: 768px) {
+  .stats__row {
+    grid-template-columns: 80px 1fr 48px;
+    gap: var(--s3);
+  }
+}
+
 /* Mobile: label ngắn hơn để tránh xuống dòng */
 @media (max-width: 360px) {
   .stats__row {

@@ -1,0 +1,87 @@
+/* Màn chủ tiệm: rộng hơn một chút trên tablet/desktop để dễ quét,
+   nhưng vẫn giữ mobile-first. */
+.screen--admin {
+  --admin-max-width: 560px;
+}
+
+@media (min-width: 768px) {
+  .screen--admin {
+    --admin-max-width: 680px;
+  }
+}
+
+.screen--admin {
+  max-width: var(--admin-max-width);
+}
+
+.admin__title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: var(--s3);
+}
+
+.admin__section-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: var(--s3);
+  margin-top: var(--s4);
+}
+
+.admin__loading {
+  font-size: 19px;
+  color: var(--color-fg-muted);
+}
+
+.admin__empty {
+  font-size: 20px;
+  color: var(--color-fg-muted);
+  margin-bottom: var(--s3);
+}
+
+/* Nhóm hành động ít dùng: mỗi mục là một hàng/card rõ ràng, không chen ngang
+   nút bận/rảnh quan trọng ở trên. */
+.admin__actions {
+  margin-top: var(--s5);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.admin__action {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 var(--s3);
+  font-size: 20px;
+  text-decoration: none;
+  color: var(--color-primary);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.admin__action:last-child {
+  border-bottom: none;
+}
+
+.admin__action:hover:not(:disabled) {
+  background: var(--color-primary-weak);
+}
+
+.admin__action:focus-visible {
+  outline-offset: -3px;
+}
+
+/* Đăng xuất: nhấn mạnh yếu hơn, không giống hành động chính. */
+.admin__action--logout {
+  color: var(--color-fg-muted);
+}
+
+.admin__action--logout:hover:not(:disabled) {
+  background: var(--color-bg);
+}
