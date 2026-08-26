@@ -98,7 +98,8 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 56px; /* nằm trên BottomNav */
+  /* Nằm trên BottomNav; cộng thêm safe-area của iPhone để không bị chồng lấp. */
+  bottom: calc(var(--tap) + env(safe-area-inset-bottom));
   display: flex;
   gap: var(--s1);
   padding: var(--s2) var(--s3);
