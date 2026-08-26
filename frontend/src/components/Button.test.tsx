@@ -46,4 +46,13 @@ describe("Button", () => {
     render(<Button loading>Lưu</Button>);
     expect(screen.getByRole("button")).toHaveTextContent(/đang/i);
   });
+
+  it("giữ nguyên class mặc định khi nhận className tùy chỉnh", () => {
+    render(<Button className="custom-class">Bấm</Button>);
+    const button = screen.getByRole("button");
+    expect(button).toHaveClass("btn");
+    expect(button).toHaveClass("btn--primary");
+    expect(button).toHaveClass("btn--full");
+    expect(button).toHaveClass("custom-class");
+  });
 });

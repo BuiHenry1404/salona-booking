@@ -11,13 +11,17 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
-  { variant = "primary", fullWidth = true, loading = false, disabled, children, ...rest },
+  { variant = "primary", fullWidth = true, loading = false, disabled, children, className, ...rest },
   ref,
 ) {
+  const classes = ["btn", `btn--${variant}`, fullWidth ? "btn--full" : null, className]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <button
       ref={ref}
-      className={`btn btn--${variant}${fullWidth ? " btn--full" : ""}`}
+      className={classes}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...rest}

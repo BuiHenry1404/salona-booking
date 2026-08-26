@@ -45,10 +45,11 @@ describe("BusySwitch", () => {
     vi.unstubAllGlobals();
   });
 
-  it("1. trạng thái rảnh: nút kích hoạt là button, có thể focus bằng bàn phím", () => {
+  it("1. trạng thái rảnh: nút kích hoạt là button, ban đầu KHÔNG tự động focus", () => {
     renderSwitch();
     const trigger = screen.getByRole("button", { name: /tôi đang bận/i });
     expect(trigger).toBeInTheDocument();
+    expect(document.activeElement).not.toBe(trigger);
     trigger.focus();
     expect(document.activeElement).toBe(trigger);
   });
@@ -64,6 +65,7 @@ describe("BusySwitch", () => {
     expect(pickerId).toBeTruthy();
     const picker = document.getElementById(pickerId!);
     expect(picker).toBeInTheDocument();
+    expect(picker).toHaveAttribute("role", "group");
     expect(picker).toHaveAttribute("aria-labelledby");
   });
 
@@ -86,7 +88,17 @@ describe("BusySwitch", () => {
     }
   });
 
-  it("5. bấm 'Thôi, để sau' đóng picker và trả focus về nút kích hoạt", async () => {
+  it("5. picker có nhãn truy cập 'Bận khoảng bao lâu ?'", async () => {
+    renderSwitch();
+    await userEvent.click(screen.getByRole("button", { name: /tôi đang bận/i }));
+
+    const picker = document.getElementById("busy-duration-picker");
+    expect(picker).toBeInTheDocument();
+    const labelId = picker!.getAttribute("aria-labelledby");
+    expect(document.getElementById(labelId!)).toHaveTextContent("Bận khoảng bao lâu ạ?");
+  });
+
+  it("6. bấm 'Thôi, để sau' đóng picker và trả focus về nút kích hoạt", async () => {
     renderSwitch();
     const trigger = screen.getByRole("button", { name: /tôi đang bận/i });
 
@@ -99,7 +111,7 @@ describe("BusySwitch", () => {
     expect(screen.queryByRole("button", { name: "15 phút" })).not.toBeInTheDocument();
   });
 
-  it("6. bấm Escape đóng picker và trả focus về nút kích hoạt", async () => {
+  it("7. bấm Escape đóng picker và trả focus về nút kích hoạt", async () => {
     renderSwitch();
     const trigger = screen.getByRole("button", { name: /tôi đang bận/i });
 
@@ -112,7 +124,7 @@ describe("BusySwitch", () => {
     expect(screen.queryByRole("button", { name: "15 phút" })).not.toBeInTheDocument();
   });
 
-  it("7. chọn thời lượng gọi API đúng và áp dụng trạng thái", async () => {
+  it("8. chọn thời lượng gọi API đúng và áp dụng trạng thái", async () => {
     const fetchMock = mockStatusResponse(busyStatus);
     const { onApplied } = renderSwitch();
 
@@ -125,7 +137,7 @@ describe("BusySwitch", () => {
     expect(JSON.parse(call[1].body)).toEqual({ minutes: 60 });
   });
 
-  it("8. trạng thái bận hiển thị đúng và cho phép trở lại rảnh", async () => {
+  it("9. trạng thái bận hiển thị đúng và cho phép trở lại rảnh", async () => {
     mockStatusResponse(freeStatus);
     const { onApplied } = renderSwitch(busyStatus);
 

@@ -29,6 +29,7 @@ export function BusySwitch({
   const [error, setError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstDurationRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
 
   // Đóng bảng chọn khi trạng thái đã đổi, kể cả khi lệnh đến từ máy khác
   // qua broadcast `shop_status_changed`.
@@ -36,11 +37,14 @@ export function BusySwitch({
     if (status?.is_busy) setPicking(false);
   }, [status?.is_busy]);
 
-  // Quản lý focus khi mở/đóng bảng chọn.
+  // Quản lý focus khi mở/đóng bảng chọn. Dùng ref để KHÔNG tự động focus
+  // trigger khi component mới mount với picking === false.
   useEffect(() => {
     if (picking) {
+      wasOpenRef.current = true;
       firstDurationRef.current?.focus();
-    } else {
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
       triggerRef.current?.focus();
     }
   }, [picking]);
@@ -126,8 +130,9 @@ export function BusySwitch({
           <p id={PICKER_LABEL_ID} className="switch__ask">
             Bận khoảng bao lâu ạ?
           </p>
-          <fieldset
+          <div
             id={PICKER_ID}
+            role="group"
             aria-labelledby={PICKER_LABEL_ID}
             className="switch__grid"
             onKeyDown={(e) => {
@@ -151,7 +156,7 @@ export function BusySwitch({
                 {d.label}
               </Button>
             ))}
-          </fieldset>
+          </div>
           <Button variant="ghost" onClick={() => setPicking(false)}>
             Thôi, để sau
           </Button>
