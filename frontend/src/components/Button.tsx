@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import "./Button.css";
 
 type Variant = "primary" | "accent" | "danger" | "ghost";
@@ -10,16 +10,13 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
 }
 
-export function Button({
-  variant = "primary",
-  fullWidth = true,
-  loading = false,
-  disabled,
-  children,
-  ...rest
-}: Props) {
+export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
+  { variant = "primary", fullWidth = true, loading = false, disabled, children, ...rest },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       className={`btn btn--${variant}${fullWidth ? " btn--full" : ""}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
@@ -30,4 +27,4 @@ export function Button({
       {loading ? "Đang xử lý…" : children}
     </button>
   );
-}
+});

@@ -37,3 +37,16 @@
   gap: var(--s2);
   margin-bottom: var(--s2);
 }
+/* Ẩn nút kích hoạt khỏi mắt thường khi picker mở, nhưng vẫn giữ trong DOM để
+   aria-expanded và để trả focus sau khi đóng picker. */
+.switch__trigger--hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

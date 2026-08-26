@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { ShopStatus } from "../hooks/useShopStatus";
 import { formatViTime } from "../lib/viDate";
@@ -12,6 +12,9 @@ const DURATIONS: Array<{ label: string; minutes: number }> = [
   { label: "2 tiếng", minutes: 120 },
 ];
 
+const PICKER_ID = "busy-duration-picker";
+const PICKER_LABEL_ID = "busy-duration-label";
+
 /** Nút khổng lồ chiếm nửa trên màn hình. Đây là thứ chủ tiệm bấm nhiều nhất
  *  trong ngày, thường bằng một tay khi tay kia đang cầm kéo. */
 export function BusySwitch({
@@ -24,12 +27,23 @@ export function BusySwitch({
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstDurationRef = useRef<HTMLButtonElement>(null);
 
   // Đóng bảng chọn khi trạng thái đã đổi, kể cả khi lệnh đến từ máy khác
   // qua broadcast `shop_status_changed`.
   useEffect(() => {
     if (status?.is_busy) setPicking(false);
   }, [status?.is_busy]);
+
+  // Quản lý focus khi mở/đóng bảng chọn.
+  useEffect(() => {
+    if (picking) {
+      firstDurationRef.current?.focus();
+    } else {
+      triggerRef.current?.focus();
+    }
+  }, [picking]);
 
   async function run(call: () => Promise<ShopStatus>) {
     setBusy(true);
@@ -95,13 +109,38 @@ export function BusySwitch({
         </p>
       )}
 
-      {picking ? (
+      <Button
+        ref={triggerRef}
+        variant="danger"
+        onClick={() => setPicking(true)}
+        aria-expanded={picking}
+        aria-controls={PICKER_ID}
+        tabIndex={picking ? -1 : undefined}
+        className={picking ? "switch__trigger--hidden" : undefined}
+      >
+        Tôi đang bận
+      </Button>
+
+      {picking && (
         <>
-          <p className="switch__ask">Bận khoảng bao lâu ạ?</p>
-          <div className="switch__grid">
-            {DURATIONS.map((d) => (
+          <p id={PICKER_LABEL_ID} className="switch__ask">
+            Bận khoảng bao lâu ạ?
+          </p>
+          <fieldset
+            id={PICKER_ID}
+            aria-labelledby={PICKER_LABEL_ID}
+            className="switch__grid"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setPicking(false);
+              }
+            }}
+          >
+            {DURATIONS.map((d, i) => (
               <Button
                 key={d.minutes}
+                ref={i === 0 ? firstDurationRef : undefined}
                 variant="primary"
                 fullWidth={false}
                 loading={busy}
@@ -112,15 +151,11 @@ export function BusySwitch({
                 {d.label}
               </Button>
             ))}
-          </div>
+          </fieldset>
           <Button variant="ghost" onClick={() => setPicking(false)}>
             Thôi, để sau
           </Button>
         </>
-      ) : (
-        <Button variant="danger" onClick={() => setPicking(true)}>
-          Tôi đang bận
-        </Button>
       )}
     </section>
   );
