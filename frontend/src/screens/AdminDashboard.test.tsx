@@ -233,4 +233,32 @@ describe("AdminDashboard", () => {
       screen.queryByRole("button", { name: /tôi đang bận/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("13. hiển thị section 'Khách theo tháng'", () => {
+    renderScreen();
+    expect(
+      screen.getByRole("heading", { name: /khách theo tháng/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("14. hiển thị đúng 12 tháng", () => {
+    renderScreen();
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(12);
+  });
+
+  it("15. tháng hiện tại (mock) nằm cuối danh sách", () => {
+    renderScreen();
+    const rows = screen.getAllByRole("listitem");
+    const lastRow = rows[rows.length - 1];
+    expect(lastRow).toHaveTextContent("T8/26");
+    expect(lastRow).toHaveTextContent("32");
+  });
+
+  it("16. hiển thị đúng số khách cho một tháng cụ thể", () => {
+    renderScreen();
+    // T5/2026 có 35 khách theo mock
+    const row = screen.getByTitle(/tháng 5\/2026/i);
+    expect(row).toHaveTextContent("35");
+  });
 });
