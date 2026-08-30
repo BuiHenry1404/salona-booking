@@ -14,7 +14,7 @@
 
 - `VALID_ROUTES` sau khi sửa đúng ba nhãn: `booking`, `shop`, `social`. Nhãn cũ `status` và `refuse` phải biến mất khỏi codebase.
 - Nhãn lạ (model trả rác) vẫn fallback về `booking` — hành vi cũ, giữ nguyên.
-- `REFUSE_MESSAGE` bị xoá hoàn toàn. Sau Task 4, `grep -rn "REFUSE_MESSAGE" app/ tests/` không được còn kết quả.
+- `REFUSE_MESSAGE` bị xoá hoàn toàn. Sau Task 5, `grep -rn "REFUSE_MESSAGE" app/ tests/` không được còn kết quả.
 - Ràng buộc nghiệp vụ **"chỉ làm tóc và làm nail"** phải sống sót dưới dạng **ví dụ cụ thể bằng tiếng Việt** trong `SOCIAL_PROMPT`, không được viết chung chung.
 - Nhánh **đồng ý** của `confirm` giữ nguyên **0 lượt LLM** — đó là nhánh ghi DB, phải tất định. Chỉ nhánh chưa-đồng-ý mới được đi qua LLM.
 - **Không tool nào ghi lịch.** `propose_appointment` chỉ giữ chỗ tạm; lịch chỉ ghi ở `confirm` sau khi khách đồng ý ở lượt sau.
@@ -39,18 +39,19 @@ Task 1 và các bước đo thủ công cần **backend đang chạy ở cổng 
 |---|---|---|
 | `scripts/probe_supervisor.py` (create) | In bảng phân loại của supervisor cho một bộ câu mẫu | 1 |
 | `scripts/chat_e2e_transcript.py` (modify) | Nâng từ 1 lên 4 kịch bản, chọn bằng `--scenario` | 1 |
-| `app/agents/booking_graph/context.py` (modify) | `derive_address`, `address_phrase`, `display_name`, `format_vi_hhmm`, `_clock_phrase`; khối bối cảnh chốt cách gọi | 2, 3 |
-| `app/agents/booking_graph/tools.py` (modify) | Bỏ `xung_ho`; `make_status_tools` → `make_shop_tools` + `get_shop_hours`; nhận rule từ prompt về docstring | 2, 3, 6 |
-| `app/agents/booking_graph/confirm.py` (modify) | Tự tính xưng hô; nhánh chưa-đồng-ý báo cho graph định tuyến sang `booking` | 2, 5 |
-| `app/agents/booking_graph/prompts.py` (modify) | `STATUS_PROMPT`→`SHOP_PROMPT`; thêm `SOCIAL_PROMPT`; xoá `REFUSE_MESSAGE`; sửa `SUPERVISOR_PROMPT`; cắt `BOOKING_PROMPT` | 2, 3, 4, 6 |
-| `app/agents/booking_graph/supervisor.py` (modify) | `VALID_ROUTES` 3 nhãn mới; xoá hàm `refuse` | 4 |
-| `app/agents/booking_graph/graph.py` (modify) | Node `shop`, node `social`, cạnh `confirm → booking` | 3, 4, 5 |
-| `tests/test_context_block.py` (modify) | Test `derive_address` và khối bối cảnh | 2 |
-| `tests/test_tools.py` (modify) | Test `get_shop_hours`, test `propose_appointment` hết `xung_ho` | 2, 3 |
-| `tests/test_supervisor.py` (modify) | Test 3 route mới, test nhãn cũ đã chết | 4 |
-| `tests/test_prompts.py` (modify) | Test `SOCIAL_PROMPT`, xoá test `REFUSE_MESSAGE` | 4, 6 |
-| `tests/test_confirm.py` (modify) | Test nhánh chưa-đồng-ý sang `booking` | 5 |
-| `tests/test_graph_events.py` (modify) | Test graph có đúng node và cạnh | 3, 4, 5 |
+| `app/agents/booking_graph/context.py` (modify) | `derive_address`, `address_phrase`, `display_name`, `format_vi_hhmm`, `_clock_phrase`; khối bối cảnh chốt cách gọi | 3, 4 |
+| `app/agents/booking_graph/tools.py` (modify) | Đổi tên biến; bỏ `xung_ho`; `make_status_tools` → `make_shop_tools` + `get_shop_hours`; nhận rule từ prompt về docstring | 2, 3, 4, 7 |
+| `app/agents/booking_graph/confirm.py` (modify) | `strip_dau`→`strip_diacritics`; tự tính xưng hô; nhánh chưa-đồng-ý báo cho graph định tuyến sang `booking` | 2, 3, 6 |
+| `app/agents/booking_graph/prompts.py` (modify) | `STATUS_PROMPT`→`SHOP_PROMPT`; thêm `SOCIAL_PROMPT`; xoá `REFUSE_MESSAGE`; sửa `SUPERVISOR_PROMPT`; cắt `BOOKING_PROMPT` | 3, 4, 5, 7 |
+| `app/agents/booking_graph/supervisor.py` (modify) | `VALID_ROUTES` 3 nhãn mới; xoá hàm `refuse` | 5 |
+| `app/agents/booking_graph/graph.py` (modify) | Node `shop`, node `social`, cạnh `confirm → booking` | 4, 5, 6 |
+| `app/services/socketio_service.py` (modify) | Đổi tên biến `khi_nao` → `when` | 2 |
+| `tests/test_context_block.py` (modify) | Test `derive_address`, `format_vi_hhmm` và khối bối cảnh | 3, 4 |
+| `tests/test_tools.py` (modify) | Test `get_shop_hours`, test `propose_appointment` hết `xung_ho` | 3, 4 |
+| `tests/test_supervisor.py` (modify) | Test 3 route mới, test nhãn cũ đã chết | 5 |
+| `tests/test_prompts.py` (modify) | Test `SOCIAL_PROMPT`, xoá test `REFUSE_MESSAGE` | 5, 7 |
+| `tests/test_confirm.py` (modify) | Test nhánh chưa-đồng-ý sang `booking` | 6 |
+| `tests/test_graph_events.py` (modify) | Test graph có đúng node và cạnh | 6 |
 
 ---
 
@@ -105,17 +106,17 @@ PROBES = [
 
 async def main() -> None:
     model = build_chat_model(tags=["supervisor"], temperature=0.0)
-    sai = 0
-    for mong_doi, cau in PROBES:
+    wrong = 0
+    for expected, message in PROBES:
         reply = await model.ainvoke(
-            [SystemMessage(content=SUPERVISOR_PROMPT), HumanMessage(content=cau)]
+            [SystemMessage(content=SUPERVISOR_PROMPT), HumanMessage(content=message)]
         )
-        thuc_te = (reply.content or "").strip().lower()
-        dau = "  " if thuc_te == mong_doi else "✗ "
-        if thuc_te != mong_doi:
-            sai += 1
-        print(f"{dau}{thuc_te:10s} (mong đợi {mong_doi:8s}) <- {cau}")
-    print(f"\nlệch {sai}/{len(PROBES)}")
+        actual = (reply.content or "").strip().lower()
+        mark = "  " if actual == expected else "✗ "
+        if actual != expected:
+            wrong += 1
+        print(f"{mark}{actual:10s} (mong đợi {expected:8s}) <- {message}")
+    print(f"\nlệch {wrong}/{len(PROBES)}")
 
 
 if __name__ == "__main__":
@@ -194,7 +195,7 @@ Giữa hai kịch bản `await asyncio.sleep(3)` để không đụng trần `ch
 grep -c "STREAM: (rỗng" baseline-transcript.txt
 ```
 
-Ghi lại con số đếm được — đó là số lượt **không đi qua LLM**. Sau Task 6 con số này phải giảm mạnh (chỉ còn các lượt vào nhánh đồng-ý của `confirm`).
+Ghi lại con số đếm được — đó là số lượt **không đi qua LLM**. Sau Task 7 con số này phải giảm mạnh (chỉ còn các lượt vào nhánh đồng-ý của `confirm`).
 
 - [ ] **Step 5: Commit**
 
@@ -207,7 +208,95 @@ Hai file `baseline-*.txt` KHÔNG commit — chúng là kết quả chạy, khôn
 
 ---
 
-### Task 2: Xưng hô suy ra bằng code, bỏ tham số `xung_ho`
+### Task 2: Đổi tên định danh tiếng Việt sang tiếng Anh
+
+Code trong repo viết bằng tiếng Anh, nhưng có sáu chỗ định danh lọt tiếng
+Việt. Task này **thuần đổi tên, không đổi hành vi** — để riêng một commit thì
+diff của các task sau đọc được, và nếu có gì hỏng thì biết ngay không phải do
+đổi tên.
+
+Chỉ đổi **định danh** (tên biến, tên hàm). KHÔNG đụng chuỗi tiếng Việt (đó là
+lời thoại của AI) và KHÔNG đụng comment tiếng Việt (đó là quy ước của repo).
+
+**Files:**
+- Modify: `app/agents/booking_graph/tools.py`
+- Modify: `app/agents/booking_graph/confirm.py`
+- Modify: `app/services/socketio_service.py`
+- Test: không thêm test mới — bộ test hiện có là lưới an toàn
+
+**Interfaces:**
+- Produces: `strip_diacritics(text: str) -> bool` thay cho `strip_dau` (hàm
+  module-level, có thể có nơi khác import).
+
+- [ ] **Step 1: Chạy full suite lấy mốc**
+
+Run: `.venv/bin/python -m pytest -q`
+Expected: PASS. Ghi lại con số. Sau khi đổi tên xong phải ra **đúng con số đó**.
+
+- [ ] **Step 2: `tools.py` — hai biến trong `propose_appointment`**
+
+```python
+            nearest = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
+            suggestion = ", ".join(format_vi_datetime(s) for s in nearest)
+            return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {suggestion}."
+```
+
+- [ ] **Step 3: `confirm.py` — đổi `strip_dau` thành `strip_diacritics`**
+
+```python
+def strip_diacritics(text: str) -> str:
+```
+
+và chỗ gọi trong `is_affirmative`:
+
+```python
+    bare = strip_diacritics(cleaned)
+```
+
+Kiểm không còn chỗ nào gọi tên cũ:
+
+```bash
+grep -rn "strip_dau" app/ tests/ scripts/
+```
+
+Expected: không có kết quả.
+
+- [ ] **Step 4: `socketio_service.py` — biến trong `_too_fast_message`**
+
+```python
+        when = "1 tiếng" if minutes >= 60 else f"{minutes} phút"
+        return (
+            f"Anh chị nhắn hơi nhanh, khoảng {when} nữa nhắn lại giúp em nhé. "
+            "Gấp thì anh chị gọi thẳng cho tiệm ạ."
+        )
+```
+
+- [ ] **Step 5: Chạy lại full suite**
+
+Run: `.venv/bin/python -m pytest -q`
+Expected: PASS, **đúng con số ở Step 1**. Đổi tên mà số test đổi nghĩa là đã
+lỡ đổi hành vi.
+
+Kiểm không còn định danh tiếng Việt nào sót:
+
+```bash
+grep -rnE "\b(xung_ho|goi|loi_goi|goi_y|gan_nhat|khi_nao|strip_dau)\b" app/ --include=*.py
+```
+
+Expected: chỉ còn `xung_ho` ở `tools.py` và `confirm.py` — Task 3 xoá hẳn nó
+cùng với tham số của tool, nên không đổi tên ở đây làm gì.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/agents/booking_graph/tools.py app/agents/booking_graph/confirm.py \
+        app/services/socketio_service.py
+git commit -m "refactor: đổi định danh tiếng Việt sang tiếng Anh"
+```
+
+---
+
+### Task 3: Xưng hô suy ra bằng code, bỏ tham số `xung_ho`
 
 **Files:**
 - Modify: `app/agents/booking_graph/context.py`
@@ -223,7 +312,7 @@ Hai file `baseline-*.txt` KHÔNG commit — chúng là kết quả chạy, khôn
   - `display_name(full_name: Optional[str]) -> str` — tên hiển thị đã bỏ tiền tố.
   - `propose_appointment(start_at: str, note: Optional[str] = None) -> str` — **hết tham số `xung_ho`**.
 
-**Vì sao hard rule 6 phải xoá NGAY trong task này, không để tới Task 6:** rule 6 bảo model *"always pass `xung_ho`"*. Bỏ tham số khỏi tool mà để rule lại thì model vẫn cố truyền, LangChain nhận kwarg lạ và tool call lỗi. Hai thay đổi này buộc phải đi cùng một commit.
+**Vì sao hard rule 6 phải xoá NGAY trong task này, không để tới Task 7:** rule 6 bảo model *"always pass `xung_ho`"*. Bỏ tham số khỏi tool mà để rule lại thì model vẫn cố truyền, LangChain nhận kwarg lạ và tool call lỗi. Hai thay đổi này buộc phải đi cùng một commit.
 
 - [ ] **Step 1: Viết test thất bại**
 
@@ -363,14 +452,14 @@ def address_phrase(full_name: Optional[str]) -> str:
 
     Không ghép tên vào lời gọi trống: "anh chị Bảy" không ai nói.
     """
-    cach_goi, ten = derive_address(full_name)
-    return f"{cach_goi} {ten}" if ten and cach_goi != "anh chị" else cach_goi
+    address, name = derive_address(full_name)
+    return f"{address} {name}" if name and address != "anh chị" else address
 
 
 def display_name(full_name: Optional[str]) -> str:
     """Tên để hiển thị trong khối bối cảnh, đã bỏ tiền tố xưng hô."""
-    _, ten = derive_address(full_name)
-    return ten or full_name or "khách"
+    _, name = derive_address(full_name)
+    return name or full_name or "khách"
 ```
 
 - [ ] **Step 4: Chốt cách gọi vào khối bối cảnh**
@@ -420,19 +509,19 @@ Thay khối tính xưng hô (đang đọc `pending.get("xung_ho")`):
         # Suy từ full_name bằng code, không nhận từ model nữa: model quên
         # truyền là câu chốt mất lời gọi, mà nó quên thật — đó là lý do
         # hard rule 6 từng tồn tại.
-        goi = address_phrase(user.full_name)
+        address = address_phrase(user.full_name)
 ```
 
-Và bỏ biến `loi_goi`, dùng thẳng `goi` ở câu chốt:
+Và bỏ biến `loi_goi`, dùng thẳng `address` ở câu chốt:
 
 ```python
-        return {"answer": f"Xong rồi ạ. Hẹn gặp {goi} "
+        return {"answer": f"Xong rồi ạ. Hẹn gặp {address} "
                           f"{format_vi_datetime(appointment.start_at)} nhé."}
 ```
 
 - [ ] **Step 7: Xoá hard rule 6 khỏi `BOOKING_PROMPT`**
 
-Xoá trọn khối rule 6 trong `app/agents/booking_graph/prompts.py` (bắt đầu bằng `6. When you call propose_appointment, always pass \`xung_ho\``). Không đánh số lại các rule còn lại ở task này — Task 6 sẽ viết lại cả prompt.
+Xoá trọn khối rule 6 trong `app/agents/booking_graph/prompts.py` (bắt đầu bằng `6. When you call propose_appointment, always pass \`xung_ho\``). Không đánh số lại các rule còn lại ở task này — Task 7 sẽ viết lại cả prompt.
 
 - [ ] **Step 8: Chạy test cho chắc là pass**
 
@@ -452,7 +541,7 @@ git commit -m "fix: suy xưng hô bằng code từ full_name, bỏ tham số xun
 
 ---
 
-### Task 3: Node `shop` — đổi tên từ `status`, thêm `get_shop_hours`
+### Task 4: Node `shop` — đổi tên từ `status`, thêm `get_shop_hours`
 
 **Files:**
 - Modify: `app/agents/booking_graph/context.py` (tách `_clock_phrase`, thêm `format_vi_hhmm`)
@@ -622,12 +711,12 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         """Giờ mở cửa và ngày nghỉ của tiệm. Gọi khi khách hỏi tiệm mở mấy giờ,
         đóng mấy giờ, hay có làm ngày nào đó không."""
         hours = await ShopService(db).get_hours()
-        nghi = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
-                if 0 <= d < len(_CLOSED_DAY_NAMES)]
-        lich_nghi = f"Nghỉ {', '.join(nghi)}." if nghi else "Mở cả tuần."
+        closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
+                  if 0 <= d < len(_CLOSED_DAY_NAMES)]
+        closed_text = f"Nghỉ {', '.join(closed)}." if closed else "Mở cả tuần."
         return (
             f"Tiệm mở từ {format_vi_hhmm(hours.open_time)} "
-            f"đến {format_vi_hhmm(hours.close_time)}. {lich_nghi}"
+            f"đến {format_vi_hhmm(hours.close_time)}. {closed_text}"
         )
 ```
 
@@ -675,7 +764,7 @@ git commit -m "feat: node shop gánh cả giờ mở cửa, thay cho node status
 
 ---
 
-### Task 4: Node `social` thay `refuse`, supervisor đổi bộ nhãn
+### Task 5: Node `social` thay `refuse`, supervisor đổi bộ nhãn
 
 **Files:**
 - Modify: `app/agents/booking_graph/prompts.py` (thêm `SOCIAL_PROMPT`, xoá `REFUSE_MESSAGE`, sửa `SUPERVISOR_PROMPT`)
@@ -709,8 +798,8 @@ async def test_the_retired_labels_are_no_longer_valid(patch_model):
     """`status` và `refuse` đã chết. Nếu model lỡ trả nhãn cũ mà ta coi là
     hợp lệ, LangGraph sẽ nổ lúc chạy vì không có node tên đó — phải rơi về
     booking như mọi nhãn lạ khác."""
-    for nhan_cu in ("status", "refuse"):
-        patch_model(nhan_cu)
+    for retired in ("status", "refuse"):
+        patch_model(retired)
         assert (await supervise(a_state("gì đó")))["route"] == "booking"
 
 
@@ -853,7 +942,7 @@ git commit -m "feat: node social thay refuse, bỏ hẳn câu trả lời cứng
 
 ---
 
-### Task 5: Cạnh `confirm → booking` khi khách chưa đồng ý
+### Task 6: Cạnh `confirm → booking` khi khách chưa đồng ý
 
 **Files:**
 - Modify: `app/agents/booking_graph/confirm.py`
@@ -1012,7 +1101,7 @@ git commit -m "feat: khách chưa chốt thì confirm chuyển tiếp sang booki
 
 ---
 
-### Task 6: Cắt `BOOKING_PROMPT` — commit riêng, cuối cùng
+### Task 7: Cắt `BOOKING_PROMPT` — commit riêng, cuối cùng
 
 Đây là task duy nhất có rủi ro làm tụt chất lượng mà **không có test tự động nào bắt được**. Gom trọn vào một commit để revert được một mình.
 
@@ -1165,7 +1254,7 @@ git commit -m "refactor: chuyển rule của booking về docstring tool, bỏ k
 - [ ] `.venv/bin/python -m pytest -q` xanh (Mongo đang chạy).
 - [ ] `grep -rn "REFUSE_MESSAGE\|make_status_tools\|STATUS_PROMPT\|def refuse" app/ tests/` không còn kết quả.
 - [ ] `.venv/bin/python scripts/probe_supervisor.py` — lệch 0/14, hoặc phần lệch đã được ghi nhận và giải thích.
-- [ ] `after-transcript.txt` đọc bằng mắt, đủ bốn điều ở Task 6 Step 6.
+- [ ] `after-transcript.txt` đọc bằng mắt, đủ bốn điều ở Task 7 Step 6.
 - [ ] Số lượt `STREAM: (rỗng` giảm so với `baseline-transcript.txt`, và những lượt còn lại đều là nhánh đồng-ý của `confirm`.
 
 ## Git flow
@@ -1176,7 +1265,7 @@ Theo quy ước repo (việc → `henry/develop` → `main`, không commit thẳ
 git checkout henry/develop && git pull --ff-only
 git checkout feat/agent-routing-redesign
 git rebase henry/develop        # nếu henry/develop đã chạy trước
-# ... Task 1..6 ...
+# ... Task 1..7 ...
 git checkout henry/develop
 git merge --no-ff feat/agent-routing-redesign
 git push origin henry/develop
