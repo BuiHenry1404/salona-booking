@@ -20,6 +20,9 @@ class StatsService:
         Khung tháng do lịch VIỆT NAM quyết định chứ không do dữ liệu: tiệm mới
         mở hoặc tháng ế vẫn phải hiện thành cột 0. Trả mảng ngắn đi thì biểu đồ
         bên React lệch trục, chủ tiệm nhìn tưởng tháng đó biến mất.
+
+        `months` phải >= 1 — chưa có caller nào truyền giá trị khác nên không
+        kiểm tra ở đây, nhưng 0 hoặc âm cho ra cửa sổ và danh sách tháng vô nghĩa.
         """
         now = now_utc()
         start, end = month_window_bounds(months, now)

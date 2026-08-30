@@ -56,8 +56,8 @@ vi.mock("../hooks/useShopStatus", () => ({ useShopStatus: () => shop }));
 vi.mock("../hooks/useAdminFeed", () => ({ useAdminFeed: () => feed }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => auth }));
 
-/** Hình dạng thật của useMonthlyCustomerStats() — data là null khi đang nạp
- * hoặc khi request hỏng. */
+/** Double giữ `data` KHÔNG null cả khi loading/error — cố ý, để test 17/18
+ * thật sự kiểm tra guard !loading && !error chứ không pass nhờ data null. */
 const stats = {
   data: {
     months: [
@@ -297,6 +297,7 @@ describe("AdminDashboard", () => {
     expect(
       screen.queryByRole("heading", { name: /khách theo tháng/i }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("Đang xem thống kê…")).toBeInTheDocument();
   });
 
   it("18. lỗi tải thống kê: báo bằng chữ, không vẽ 12 cột số 0", () => {

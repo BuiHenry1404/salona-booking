@@ -35,6 +35,8 @@ export function AdminDashboard() {
       {/* Loading hoặc lỗi thì KHÔNG vẽ biểu đồ — kể cả nếu data còn giữ giá
           trị cũ, 12 cột số cũ trông y hệt số liệu thật, gây hiểu lầm chủ
           tiệm rằng mọi thứ vẫn ổn. */}
+      {monthlyStats.loading && <p style={{ fontSize: 19 }}>Đang xem thống kê…</p>}
+
       {!monthlyStats.loading && !monthlyStats.error && monthlyStats.data && (
         <MonthlyCustomerStats data={monthlyStats.data} />
       )}
