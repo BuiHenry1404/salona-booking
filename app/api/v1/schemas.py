@@ -59,6 +59,17 @@ class AppointmentResponse(BaseModel):
     phone: Optional[str] = None
 
 
+class MonthlyCustomerStat(BaseModel):
+    """Một cột của biểu đồ khách theo tháng. `month` là 'YYYY-MM' giờ VN."""
+
+    month: str
+    customer_count: int = Field(..., ge=0)
+
+
+class MonthlyCustomerStatsResponse(BaseModel):
+    months: List[MonthlyCustomerStat]
+
+
 class ShopStatusResponse(BaseModel):
     is_busy: bool
     busy_until: Optional[datetime] = None
