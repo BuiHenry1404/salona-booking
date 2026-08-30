@@ -19,7 +19,8 @@
 - Nhánh **đồng ý** của `confirm` giữ nguyên **0 lượt LLM** — đó là nhánh ghi DB, phải tất định. Chỉ nhánh chưa-đồng-ý mới được đi qua LLM.
 - **Không tool nào ghi lịch.** `propose_appointment` chỉ giữ chỗ tạm; lịch chỉ ghi ở `confirm` sau khi khách đồng ý ở lượt sau.
 - `ShopHours.closed_days` theo quy ước **0 = Chủ Nhật … 6 = Thứ Bảy** (`app/models/shop.py:8`) — **ngược với `datetime.weekday()`** của Python (0 = Thứ Hai).
-- Comment và docstring trong repo viết bằng tiếng Việt, giải thích **TẠI SAO** chứ không mô tả code làm gì.
+- **Docstring của tool viết bằng tiếng Anh**, ví dụ và chuỗi trả về giữ tiếng Việt. Docstring đi thẳng vào tool schema gửi cho model — nó là prompt. `CONTEXT.md:94`: *"Prompt nay viết bằng tiếng Anh, câu mẫu giữ tiếng Việt."*
+- **Comment giữ tiếng Việt**, giải thích **TẠI SAO** chứ không mô tả code làm gì. LLM lúc chạy không đọc comment, và `AGENTS.md:80` chốt repo dùng tiếng Việt. Docstring của hàm KHÔNG phải tool (helper, service) cũng giữ tiếng Việt.
 - Giờ đồng hồ luôn viết theo cách người ta đọc: "3 giờ chiều", "9 giờ rưỡi sáng". Không bao giờ viết "15:00".
 - Hard rule 2b của `BOOKING_PROMPT` (cấm đụng lịch người khác) **giữ nguyên văn** — đó là rule bảo mật.
 
@@ -40,14 +41,14 @@ Task 1 và các bước đo thủ công cần **backend đang chạy ở cổng 
 | `scripts/probe_supervisor.py` (create) | In bảng phân loại của supervisor cho một bộ câu mẫu | 1 |
 | `scripts/chat_e2e_transcript.py` (modify) | Nâng từ 1 lên 4 kịch bản, chọn bằng `--scenario` | 1 |
 | `app/agents/booking_graph/context.py` (modify) | `derive_address`, `address_phrase`, `display_name`, `format_vi_hhmm`, `_clock_phrase`; khối bối cảnh chốt cách gọi | 3, 4 |
-| `app/agents/booking_graph/tools.py` (modify) | Đổi tên biến; bỏ `xung_ho`; `make_status_tools` → `make_shop_tools` + `get_shop_hours`; nhận rule từ prompt về docstring | 2, 3, 4, 7 |
+| `app/agents/booking_graph/tools.py` (modify) | Đổi tên biến + docstring tool sang tiếng Anh; bỏ `xung_ho`; `make_status_tools` → `make_shop_tools` + `get_shop_hours`; nhận rule từ prompt về docstring | 2, 3, 4, 7 |
 | `app/agents/booking_graph/confirm.py` (modify) | `strip_dau`→`strip_diacritics`; tự tính xưng hô; nhánh chưa-đồng-ý báo cho graph định tuyến sang `booking` | 2, 3, 6 |
 | `app/agents/booking_graph/prompts.py` (modify) | `STATUS_PROMPT`→`SHOP_PROMPT`; thêm `SOCIAL_PROMPT`; xoá `REFUSE_MESSAGE`; sửa `SUPERVISOR_PROMPT`; cắt `BOOKING_PROMPT` | 3, 4, 5, 7 |
 | `app/agents/booking_graph/supervisor.py` (modify) | `VALID_ROUTES` 3 nhãn mới; xoá hàm `refuse` | 5 |
 | `app/agents/booking_graph/graph.py` (modify) | Node `shop`, node `social`, cạnh `confirm → booking` | 4, 5, 6 |
 | `app/services/socketio_service.py` (modify) | Đổi tên biến `khi_nao` → `when` | 2 |
 | `tests/test_context_block.py` (modify) | Test `derive_address`, `format_vi_hhmm` và khối bối cảnh | 3, 4 |
-| `tests/test_tools.py` (modify) | Test `get_shop_hours`, test `propose_appointment` hết `xung_ho` | 3, 4 |
+| `tests/test_tools.py` (modify) | Test docstring tiếng Anh, `get_shop_hours`, `propose_appointment` hết `xung_ho` | 2, 3, 4 |
 | `tests/test_supervisor.py` (modify) | Test 3 route mới, test nhãn cũ đã chết | 5 |
 | `tests/test_prompts.py` (modify) | Test `SOCIAL_PROMPT`, xoá test `REFUSE_MESSAGE` | 5, 7 |
 | `tests/test_confirm.py` (modify) | Test nhánh chưa-đồng-ý sang `booking` | 6 |
@@ -208,21 +209,33 @@ Hai file `baseline-*.txt` KHÔNG commit — chúng là kết quả chạy, khôn
 
 ---
 
-### Task 2: Đổi tên định danh tiếng Việt sang tiếng Anh
+### Task 2: Đổi định danh và docstring của tool sang tiếng Anh
 
-Code trong repo viết bằng tiếng Anh, nhưng có sáu chỗ định danh lọt tiếng
-Việt. Task này **thuần đổi tên, không đổi hành vi** — để riêng một commit thì
-diff của các task sau đọc được, và nếu có gì hỏng thì biết ngay không phải do
-đổi tên.
+Hai việc cùng bản chất "chỗ nào là tiếng Anh thì phải là tiếng Anh", gộp một
+commit **thuần đổi chữ, không đổi hành vi**.
 
-Chỉ đổi **định danh** (tên biến, tên hàm). KHÔNG đụng chuỗi tiếng Việt (đó là
-lời thoại của AI) và KHÔNG đụng comment tiếng Việt (đó là quy ước của repo).
+**a) Định danh.** Code viết bằng tiếng Anh nhưng có sáu chỗ lọt tiếng Việt.
+
+**b) Docstring của tool.** Docstring đi thẳng vào tool schema gửi cho model —
+nó LÀ prompt, chỉ khác chỗ đặt. `CONTEXT.md:94` đã chốt bài học này:
+*"Prompt nay viết bằng tiếng Anh, câu mẫu giữ tiếng Việt."* Để docstring tiếng
+Việt là đang phá chính quy ước đó.
+
+**Ranh giới, đừng vượt:**
+
+- Đổi: định danh, và **câu lệnh** trong docstring của `@tool`.
+- KHÔNG đổi: **ví dụ** trong docstring (`"mai 3h chiều"`, `"thứ Năm tuần sau"`
+  là dữ liệu khách gõ — dịch sang tiếng Anh thì ví dụ vô nghĩa).
+- KHÔNG đổi: **chuỗi tool trả về** (model chép lại cho khách đọc).
+- KHÔNG đổi: **comment** — LLM lúc chạy không đọc, và `AGENTS.md:80` chốt repo
+  dùng tiếng Việt.
+- KHÔNG đổi: docstring của hàm không phải tool (helper, service, repository).
 
 **Files:**
-- Modify: `app/agents/booking_graph/tools.py`
+- Modify: `app/agents/booking_graph/tools.py` (định danh + toàn bộ docstring `@tool`)
 - Modify: `app/agents/booking_graph/confirm.py`
 - Modify: `app/services/socketio_service.py`
-- Test: không thêm test mới — bộ test hiện có là lưới an toàn
+- Test: `tests/test_tools.py`
 
 **Interfaces:**
 - Produces: `strip_diacritics(text: str) -> bool` thay cho `strip_dau` (hàm
@@ -271,11 +284,85 @@ Expected: không có kết quả.
         )
 ```
 
-- [ ] **Step 5: Chạy lại full suite**
+- [ ] **Step 5: Dịch docstring của cả 6 tool sang tiếng Anh**
+
+Giữ nguyên mọi ví dụ tiếng Việt và mọi chuỗi `return`. Chỉ dịch câu lệnh.
+
+`get_shop_status` — giữ nguyên nội dung, dịch câu lệnh sang tiếng Anh.
+
+`parse_time`:
+
+```python
+        """Turn what the customer said about time into a concrete date and time.
+        Call this BEFORE find_free_slots and propose_appointment, every time the
+        customer mentions a time. Never compute a date yourself.
+        `text` must be the FULL phrase, joining what the customer said on earlier
+        turns: if they said "sáng mai" then answered "9 giờ", pass
+        "sáng mai 9 giờ", not "9 giờ". This tool reads only the string you give
+        it — it cannot see earlier turns.
+        Example `text`: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai"."""
+```
+
+`find_free_slots`:
+
+```python
+        """Free slots on one day. `day` is YYYY-MM-DD, taken from the
+        "Bây giờ là..." line in the context block — never guess the date."""
+```
+
+`propose_appointment`:
+
+```python
+        """Hold the slot temporarily and prepare the confirmation question.
+        `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
+        `xung_ho` is how you addressed the customer in the sentence you just
+        wrote: "chị Lan", "anh Ba". The closing sentence on the next turn is
+        assembled in code, not by you; omit this and that sentence will not
+        address the customer by name.
+        Call this tool, then ask the customer to confirm. NO tool writes an
+        appointment directly — it is written only when the customer agrees on
+        the NEXT turn."""
+```
+
+`list_my_appointments`:
+
+```python
+        """The customer's own upcoming appointments. Call this before cancelling,
+        to get the appointment id."""
+```
+
+`cancel_appointment`:
+
+```python
+        """Cancel one appointment. Call list_my_appointments first to get the id.
+        If the customer has two or more, ask which one before cancelling."""
+```
+
+- [ ] **Step 6: Test docstring đã sang tiếng Anh**
+
+Thêm vào `tests/test_tools.py`:
+
+```python
+async def test_tool_descriptions_are_english(test_db):
+    """Docstring của tool đi vào tool schema gửi cho model — nó là prompt.
+    CONTEXT.md:94: prompt viết tiếng Anh, câu mẫu giữ tiếng Việt."""
+    from app.agents.booking_graph.tools import make_booking_tools
+
+    user = await a_user(test_db)
+    by_name = {t.name: t.description for t in make_booking_tools(test_db, user)}
+
+    assert by_name["parse_time"].startswith("Turn what the customer said")
+    assert "Call this BEFORE find_free_slots" in by_name["parse_time"]
+    # Ví dụ PHẢI còn tiếng Việt — dịch đi thì ví dụ vô nghĩa.
+    assert "mai 3h chiều" in by_name["parse_time"]
+    assert "NO tool writes an appointment directly" in by_name["propose_appointment"]
+```
+
+- [ ] **Step 7: Chạy lại full suite**
 
 Run: `.venv/bin/python -m pytest -q`
-Expected: PASS, **đúng con số ở Step 1**. Đổi tên mà số test đổi nghĩa là đã
-lỡ đổi hành vi.
+Expected: PASS, **đúng con số ở Step 1 cộng đúng 1** (test mới ở Step 6).
+Lệch nhiều hơn thế nghĩa là đã lỡ đổi hành vi chứ không chỉ đổi chữ.
 
 Kiểm không còn định danh tiếng Việt nào sót:
 
@@ -286,12 +373,12 @@ grep -rnE "\b(xung_ho|goi|loi_goi|goi_y|gan_nhat|khi_nao|strip_dau)\b" app/ --in
 Expected: chỉ còn `xung_ho` ở `tools.py` và `confirm.py` — Task 3 xoá hẳn nó
 cùng với tham số của tool, nên không đổi tên ở đây làm gì.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add app/agents/booking_graph/tools.py app/agents/booking_graph/confirm.py \
-        app/services/socketio_service.py
-git commit -m "refactor: đổi định danh tiếng Việt sang tiếng Anh"
+        app/services/socketio_service.py tests/test_tools.py
+git commit -m "refactor: định danh và docstring tool sang tiếng Anh"
 ```
 
 ---
@@ -478,13 +565,17 @@ Trong `build_context_block`, thay dòng danh tính:
 
 Trong `app/agents/booking_graph/tools.py`, đổi chữ ký và docstring:
 
+Task 2 đã dịch docstring này sang tiếng Anh; ở đây chỉ **xoá đoạn nói về
+`xung_ho`** đi:
+
 ```python
     @tool
     async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
-        """Giữ chỗ tạm thời và chuẩn bị câu hỏi xác nhận cho khách.
-        `start_at` dạng ISO 8601, lấy NGUYÊN từ kết quả parse_time.
-        Gọi tool này rồi hỏi khách xác nhận. KHÔNG có tool nào ghi lịch trực tiếp —
-        lịch chỉ được ghi khi khách trả lời đồng ý ở lượt sau."""
+        """Hold the slot temporarily and prepare the confirmation question.
+        `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
+        Call this tool, then ask the customer to confirm. NO tool writes an
+        appointment directly — it is written only when the customer agrees on
+        the NEXT turn."""
 ```
 
 và bỏ `xung_ho` khỏi payload lưu pending:
@@ -708,8 +799,8 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 ```python
     @tool
     async def get_shop_hours() -> str:
-        """Giờ mở cửa và ngày nghỉ của tiệm. Gọi khi khách hỏi tiệm mở mấy giờ,
-        đóng mấy giờ, hay có làm ngày nào đó không."""
+        """Opening hours and closed days. Call this when the customer asks what
+        time the salon opens or closes, or whether it is open on a given day."""
         hours = await ShopService(db).get_hours()
         closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
                   if 0 <= d < len(_CLOSED_DAY_NAMES)]
@@ -1148,35 +1239,36 @@ Expected: FAIL — prompt vẫn còn khuôn câu cứng và vẫn dài hơn 3000
 
 - [ ] **Step 3: Chuyển rule về docstring của tool**
 
-`parse_time` — nhận rule 5, thêm vào cuối docstring hiện có:
+Docstring đã là tiếng Anh sau Task 2 — phần thêm vào cũng viết tiếng Anh,
+ví dụ tiếng Việt giữ nguyên.
+
+`parse_time` — nhận rule 5, thêm vào cuối docstring:
 
 ```
-        Gọi tool này TRƯỚC find_free_slots và propose_appointment, mỗi khi
-        khách nhắc tới thời gian. Không tự tính ngày.
-        Kết quả có `start_at` -> truyền NGUYÊN chuỗi đó sang propose_appointment,
-        không sửa, không diễn giải lại, không gõ lại.
-        Kết quả có `missing` -> hỏi khách đúng MỘT mảnh còn thiếu đó, mỗi lượt
-        một mảnh. Thiếu ["sáng hay chiều"] thì hỏi "Dạ 3 giờ chiều hay 3 giờ
-        sáng ạ chị?" và không hỏi gì thêm.
+        Result has `missing` -> ask the customer for exactly that ONE missing
+        piece, one piece per turn. For missing ["sáng hay chiều"] ask
+        "Dạ 3 giờ chiều hay 3 giờ sáng ạ chị?" and nothing else.
 ```
 
 `find_free_slots` — nhận rule 3 và 4:
 
 ```
-        Chỉ dùng kết quả của tool này, TUYỆT ĐỐI không bịa giờ trống.
-        Giờ khách xin đã có người: mời hai mốc trống gần giờ đó nhất.
-        Khách nói rõ là tùy tiệm ("lúc nào vắng thì xếp em", "khi nào rảnh
-        cũng được") thì gọi cho hôm nay — hoặc mai nếu hôm nay đã hết giờ —
-        rồi mời hai ba mốc. Khách CHƯA nói ngày thì hỏi ngày trước, đừng tự
-        chọn hôm nay.
+        Use ONLY what this tool returns — never invent a free slot.
+        If the time they asked for is taken, offer the two free slots nearest
+        to it.
+        Only when the customer says the salon may choose ("lúc nào vắng thì
+        xếp em", "khi nào rảnh cũng được") call this for today — or tomorrow
+        if today is finished — then offer two or three slots. If they have NOT
+        named a day, ask which day first. Never assume today.
 ```
 
-`list_my_appointments` và `cancel_appointment` — rule 2 đã có sẵn phần lớn, bổ sung cho đủ:
+`list_my_appointments` — nhận rule 2:
 
 ```
-        Khách hỏi về lịch của chính họ ("chị có lịch lúc nào", "xem giùm em")
-        thì gọi tool này NGAY, đừng hỏi ngày trước — tool tự lọc theo khách
-        đang đăng nhập. Không có lịch nào thì nói thẳng.
+        When the customer asks about their OWN appointments ("chị có lịch lúc
+        nào", "xem giùm em"), call this IMMEDIATELY — never ask for a date
+        first, the tool filters by the logged-in customer. If they have none,
+        say so plainly.
 ```
 
 - [ ] **Step 4: Viết lại `BOOKING_PROMPT`**
