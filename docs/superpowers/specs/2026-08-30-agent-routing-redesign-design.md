@@ -60,8 +60,8 @@ model cũng không có trường giới tính, nên model không có căn cứ n
 
 **Trong phạm vi:**
 
-1. Thêm route `shop` (gộp bận/rảnh + giờ mở cửa) và route `social` (chào
-   hỏi, cảm ơn).
+1. `status` → `shop` (gộp bận/rảnh + giờ mở cửa); `refuse` → `social`
+   (chào hỏi, cảm ơn, **và cả từ chối** — bỏ hẳn `REFUSE_MESSAGE`).
 2. Suy ra xưng hô bằng code từ `full_name`, chốt vào khối bối cảnh.
 3. Nhánh "khách không đồng ý" của `confirm` đi tiếp sang `booking` thay vì
    trả một câu cứng.
@@ -77,25 +77,24 @@ model cũng không có trường giới tính, nên model không có căn cứ n
 
 ## Kiến trúc sau khi sửa
 
-`VALID_ROUTES` và `SUPERVISOR_PROMPT` lên 4 nhãn:
+`VALID_ROUTES` và `SUPERVISOR_PROMPT` vẫn 3 nhãn, nhưng là 3 nhãn khác:
 
 ```
 booking : đặt / đổi / hủy lịch, hỏi giờ trống, tra lịch của chính mình
 shop    : tiệm bận hay rảnh, khi nào xong, mấy giờ mở/đóng cửa, nghỉ ngày nào
-social  : chào hỏi, cảm ơn, tạm biệt
-refuse  : còn lại — quảng cáo, kiến thức chung, việc khác
+social  : còn lại — chào hỏi, cảm ơn, tạm biệt, và cả câu ngoài phạm vi
 ```
 
-Graph 6 node, trong đó **2 subagent có tool**:
+Graph 5 node, trong đó **2 subagent có tool**:
 
 | Node | Loại | Tool | Thay đổi |
 |---|---|---|---|
-| `supervisor` | LLM, trả 1 từ | 0 | prompt: 3 → 4 nhãn |
+| `supervisor` | LLM, trả 1 từ | 0 | nhãn `status` → `shop`, `refuse` → `social` |
 | `booking` | subagent | 5 | prompt gọn lại, bỏ tham số `xung_ho` |
 | `shop` | subagent | **2** | đổi tên từ `status`, thêm `get_shop_hours` |
-| `social` | LLM | **0** | **mới** |
+| `social` | LLM | **0** | **mới** — thay chỗ `refuse` |
 | `confirm` | code thuần | — | nhánh không-đồng-ý nối sang `booking` |
-| `refuse` | hằng số | — | giữ nguyên |
+| ~~`refuse`~~ | ~~hằng số~~ | — | **xoá cả node lẫn `REFUSE_MESSAGE`** |
 
 ### Sơ đồ luồng
 
@@ -111,31 +110,31 @@ flowchart TD
 
     SV -->|booking| BK["<b>booking</b><br/>subagent · 5 tool"]
     SV -->|shop| SH["<b>shop</b><br/>subagent · 2 tool<br/>(đổi tên từ status)"]
-    SV -->|social| SO["<b>social</b><br/>LLM · 0 tool<br/>(MỚI)"]
-    SV -->|refuse| RF["<b>refuse</b><br/>hằng số · 0 LLM"]
+    SV -->|social| SO["<b>social</b><br/>LLM · 0 tool<br/>(MỚI — thay refuse)"]
 
     DB --> OUT(["Trả lời khách"])
     BK --> OUT
     SH --> OUT
     SO --> OUT
-    RF --> OUT
 
     classDef agent stroke:#2563eb,stroke-width:3px
     classDef llm stroke:#7c3aed,stroke-width:2px
     classDef code stroke:#059669,stroke-width:2px,stroke-dasharray:4 3
-    classDef fixed stroke:#9ca3af,stroke-width:2px,stroke-dasharray:2 3
 
     class BK,SH agent
     class SV,SO llm
     class CF code
-    class RF fixed
 ```
 
 Viền **xanh dương đậm** = subagent có tool. **Tím** = có LLM nhưng không
-tool. **Xanh lá đứt** = code thuần, không LLM. **Xám đứt** = chuỗi cố định.
+tool. **Xanh lá đứt** = code thuần, không LLM.
 
 Chỉ **2 node là subagent thật** (`booking`, `shop`) — đó là những node duy
 nhất được dựng qua `make_subagent_node(...)` kèm danh sách tool.
+
+**Không còn chuỗi cứng nào trong graph.** Chỗ duy nhất còn ghép câu bằng
+code là nhánh đồng-ý của `confirm`, và chỗ đó bắt buộc phải tất định vì nó
+ghi DB.
 
 ### Tool của từng subagent
 
@@ -181,21 +180,19 @@ flowchart LR
         direction TB
         N1["booking<br/>subagent · 5 tool"]
         N2["status<br/>subagent · 1 tool"]
-        N3["refuse<br/>hằng số"]
+        N3["refuse<br/>hằng số · 0 LLM"]
     end
 
-    subgraph next["Sau khi sửa — 4 route"]
+    subgraph next["Sau khi sửa — vẫn 3 route"]
         direction TB
         M1["booking<br/>subagent · 5 tool"]
         M2["shop<br/>subagent · 2 tool"]
         M3["social<br/>LLM · 0 tool"]
-        M4["refuse<br/>hằng số"]
     end
 
     N1 -.->|giữ nguyên| M1
-    N2 -.->|đổi tên + 1 tool| M2
-    N3 -.->|tách xã giao ra| M3
-    N3 -.->|phần còn lại| M4
+    N2 -.->|"đổi tên + thêm get_shop_hours"| M2
+    N3 -.->|"hằng số → LLM sinh câu"| M3
 
     classDef agent stroke:#2563eb,stroke-width:3px
     classDef llm stroke:#7c3aed,stroke-width:2px
@@ -203,11 +200,12 @@ flowchart LR
 
     class N1,N2,M1,M2 agent
     class M3 llm
-    class N3,M4 fixed
+    class N3 fixed
 ```
 
-Số subagent-có-tool **không đổi: vẫn là 2**. Thứ thêm vào là một route và
-một node không tool.
+**Số node và số route không đổi.** Thay đổi nằm ở chỗ khác: `status` nở ra
+thành `shop` để ôm giờ mở cửa, và `refuse` từ một chuỗi cứng trở thành
+`social` biết sinh câu. Số subagent-có-tool vẫn là **2**.
 
 ### Vì sao không tách `booking` dù nó có 5 tool
 
@@ -224,18 +222,37 @@ Prompt gấp 3,8 lần `status`. Và tách ra sẽ đẻ lỗi mới: **"đổi 
 riêng, câu *"dời lịch mai sang thứ Năm"* rơi vào một agent thiếu mất một nửa
 số tool cần dùng, và supervisor không có cách nào route đúng.
 
-### Vì sao `social` là node riêng, không gộp vào `refuse`
+### Vì sao xoá hẳn `refuse` thay vì giữ nó song song với `social`
 
-Hai hành vi ngược nhau: xã giao cần ấm và kéo về việc đặt lịch, từ chối cần
-dứt khoát. Gộp lại thì prompt phải tự mâu thuẫn.
+Một lễ tân thật vừa chào niềm nở vừa từ chối khéo — đó là **một** tính cách
+nhất quán, không phải hai. Câu "Dạ em chỉ lo đặt lịch thôi ạ, anh chị cần
+đặt ngày nào không ạ?" nói bằng giọng ấm thì vừa là từ chối vừa là xã giao.
+Tách làm hai node là tách một việc.
 
-`refuse` **giữ nguyên hằng số** — nó là hàng rào phạm vi, rẻ và cứng là
-đúng. Chỉ những câu ngoài phạm vi thật (quảng cáo, kiến thức chung) mới còn
-rơi vào đó.
+Thêm nữa: **ít nhãn thì supervisor phân loại chính xác hơn**, mà `refuse`
+đang chính là nhãn bị lạm dụng nhất trong bản hiện tại.
 
-`social` vẫn dựng bằng `make_subagent_node(SOCIAL_PROMPT, [], tag=RESPOND_TAG)`
+`social` dựng bằng `make_subagent_node(SOCIAL_PROMPT, [], tag=RESPOND_TAG)`
 với danh sách tool rỗng, để token stream ra màn hình như các node khác. Trả
 thẳng chuỗi sẽ rơi lại đúng cái bẫy `refuse` đang mắc.
+
+**Cái mất, nói thẳng:** `refuse` là chỗ duy nhất trong hệ mà câu ngoài phạm
+vi *chắc chắn* không sinh ra được văn bản từ LLM. Bỏ nó đi thì mọi tin nhắn
+đều tới được một node biết sinh chữ, và hậu quả cụ thể là **xài chùa ngân
+sách API** — biến chatbot tiệm thành ChatGPT miễn phí.
+
+Rủi ro này đã bị chặn sẵn hai lớp, nên chấp nhận được:
+
+- **Không có đăng ký tự do.** Tài khoản do chủ tiệm tạo tay
+  (`scripts/seed_dev_users.py`: *"Không có đăng ký tự do trong app"*). Kẻ
+  lạm dụng phải đã có tài khoản chủ tiệm tự cấp.
+- **`chat_max_per_hour = 30`**, tính theo user chứ không theo socket
+  (`socketio_service.py:104` — mở thêm tab không nhân đôi hạn mức).
+
+Và `social` **không có tool nào**, nên kể cả bị jailbreak cũng không đụng
+được dữ liệu: khối bối cảnh chỉ chứa thông tin của chính khách đang chat.
+
+Nếu về sau mở đăng ký tự do, phải xem lại quyết định này.
 
 ## Chi tiết từng thay đổi
 
@@ -262,14 +279,32 @@ dẫn cho `get_shop_hours`.
 
 ### B. Node `social`
 
-`SOCIAL_PROMPT` ngắn, không tool. Yêu cầu:
+`SOCIAL_PROMPT` ngắn, không tool. Node này gánh **cả hai** việc mà `refuse`
+và ý tưởng "node xã giao" từng định tách đôi:
 
-- Phân biệt chào đầu cuộc với cảm ơn / tạm biệt cuối cuộc — hai tình huống
-  khác nhau, không dùng chung một câu.
-- Một đến hai câu, rồi kéo về việc đặt lịch một cách tự nhiên.
+- **Xã giao:** phân biệt chào đầu cuộc với cảm ơn / tạm biệt cuối cuộc —
+  hai tình huống khác nhau, không dùng chung một câu. Một đến hai câu, rồi
+  kéo về việc đặt lịch một cách tự nhiên.
+- **Từ chối:** câu ngoài phạm vi (kiến thức chung, quảng cáo, nhờ dịch
+  thuật) thì từ chối ngắn gọn rồi lái về đặt lịch. Không giải thích dài,
+  không xin lỗi lê thê.
 - Kế thừa khối VOICE của các prompt khác (xưng "em", gọi khách theo dòng
   chốt trong khối bối cảnh).
-- Tuyệt đối không trả lời câu hỏi ngoài phạm vi — gặp thì lái về đặt lịch.
+
+**Ràng buộc phải sống sót khi bỏ `REFUSE_MESSAGE`:** chuỗi cũ không chỉ là
+câu chữ, nó chốt phạm vi nghiệp vụ **"chỉ tóc và nail"**.
+`tests/test_prompts.py` có class `TestHardWonRulesSurvive` với ghi chú *"mỗi
+luật dưới đây tương ứng một lỗi có thật đã gặp"*, và dòng 45 nói thẳng:
+*"Luật chung chung bị model bỏ qua; chỉ ăn khi có ví dụ."*
+
+Nên `SOCIAL_PROMPT` phải mang câu đó vào làm **ví dụ cụ thể bằng tiếng
+Việt**, không được viết chung chung kiểu "hãy từ chối lịch sự":
+
+> Ví dụ mẫu: "Dạ em chỉ lo đặt lịch làm tóc với làm nail thôi ạ. Anh chị
+> cần đặt ngày nào để em xem giúp ạ?"
+
+Test tương ứng chuyển từ assert `REFUSE_MESSAGE` sang assert
+`SOCIAL_PROMPT` chứa ví dụ đó.
 
 ### C. Xưng hô
 
@@ -355,7 +390,9 @@ và đấu dây test được sạch:
 | `derive_address()` | bảng 5 ca ở mục C |
 | Khối bối cảnh có dòng chốt xưng hô | assert chuỗi |
 | Tên khách không còn lọt tiền tố | assert khối bối cảnh không chứa "Cô ", "Chú ", "Bác " |
-| 4 route hợp lệ; nhãn lạ vẫn fallback `booking` | `patch_model("shop")`, `patch_model("rác")` |
+| 3 route hợp lệ; nhãn lạ vẫn fallback `booking` | `patch_model("shop")`, `patch_model("social")`, `patch_model("rác")` |
+| Nhãn cũ `status`/`refuse` KHÔNG còn hợp lệ | `patch_model("refuse")` phải rơi về `booking` |
+| `REFUSE_MESSAGE` đã bị xoá khỏi codebase | `grep` không còn kết quả; test cũ ở `test_prompts.py:30,142,143` gỡ bỏ |
 | `shop` nhận đúng 2 tool | assert danh sách tool |
 | `get_shop_hours` format ngày nghỉ | **quy ước 0 = Chủ nhật** — test riêng |
 | `confirm` đồng ý → ghi lịch, 0 LLM | test cũ, giữ nguyên |
@@ -378,7 +415,7 @@ shop     <- mấy giờ tiệm đóng cửa
 social   <- chào em
 social   <- cảm ơn em nhé
 booking  <- chị muốn làm tóc
-refuse   <- cho tôi công thức nấu phở
+social   <- cho tôi công thức nấu phở
 ```
 
 **Transcript nhiều kịch bản** — nâng `scripts/chat_e2e_transcript.py` lên 4
@@ -404,6 +441,6 @@ thì revert đúng một commit mà không mất phần định tuyến.
 1. Công cụ đo trước (probe + transcript nhiều kịch bản) — để có mốc đối chiếu.
 2. `derive_address` + khối bối cảnh + bỏ `xung_ho`.
 3. Node `shop` (đổi tên + tool `get_shop_hours`).
-4. Node `social` + supervisor 4 nhãn.
+4. Node `social` thay `refuse` + supervisor đổi bộ nhãn (`status`→`shop`, `refuse`→`social`).
 5. Cạnh `confirm → booking`.
 6. Cắt `BOOKING_PROMPT` — **commit riêng, cuối cùng**.
