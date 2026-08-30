@@ -436,6 +436,55 @@ gặp lỗi.
 Vì thế: **cắt prompt là task cuối và commit riêng**, để nếu chất lượng tụt
 thì revert đúng một commit mà không mất phần định tuyến.
 
+## Đích cuối: nói như người, không phải như máy
+
+Mục tiêu chủ tiệm đặt ra là *"trả lời tự nhiên như người"*. Các mục trên
+gỡ những chỗ sượng nặng nhất, nhưng đọc lại transcript với đúng câu hỏi
+"người thật có nói thế không" thì còn hai chỗ nữa, và cả hai đều là
+**hard-code trá hình**: không phải hằng số trong code, mà là khuôn câu ép
+sẵn trong prompt.
+
+### F. Câu xác nhận đang bị ép nguyên khuôn
+
+`BOOKING_PROMPT` hard rule 1 quy định nguyên văn:
+
+> `"Em đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không chị?"`
+
+Nên transcript lượt 5 và lượt 7 ra hai câu chỉ khác mỗi con số. Đây là câu
+khách nghe nhiều nhất trong cả cuộc, và cũng là câu lặp lại y hệt nhiều
+nhất.
+
+Đổi từ ràng buộc **chữ** sang ràng buộc **nội dung**: câu xác nhận phải
+nhắc lại đủ ngày, giờ, dịch vụ, và phải kết bằng một câu hỏi lại. Cách diễn
+đạt để model tự chọn.
+
+**Đánh đổi, nói thẳng:** khuôn cứng chắc chắn đủ thông tin hơn. Nới ra thì
+tự nhiên hơn nhưng có rủi ro model quên một mảnh (hay gặp nhất là quên
+ngày, chỉ nói giờ). Chấp nhận nới, vì transcript bắt được lỗi này ngay —
+đây chính là kịch bản số 1 của bộ transcript.
+
+### G. Tự ý chọn ngày hôm nay khi khách chưa nói ngày
+
+Transcript lượt 3: khách mới nói *"chị muốn làm tóc"*, chưa hề nhắc ngày,
+mà bot đã chào luôn "hôm nay em còn trống lúc 1 giờ 45 chiều...". Người
+thật sẽ hỏi "chị muốn làm hôm nào ạ?" trước.
+
+Nguyên nhân: hard rule 4 chỉ cho phép tự chọn ngày khi khách **nói rõ là
+tùy tiệm** (*"lúc nào vắng thì xếp em"*, *"khi nào rảnh cũng được"*), nhưng
+model áp rộng ra mọi câu không có mốc thời gian.
+
+Sửa trong cùng task cắt prompt: tách bạch hai tình huống, và chỉ khi khách
+nói rõ là tùy tiệm mới được gọi `find_free_slots` cho hôm nay.
+
+### Ngoài phạm vi: độ trễ
+
+Transcript cho thấy 8–11 giây mỗi lượt có gọi tool. Chậm so với nhịp nhắn
+tin của người, nhưng **không sửa được bằng prompt** — nó là số vòng gọi
+tool cộng với độ trễ của `gpt-4.1-nano`.
+
+Để riêng, có lý do: trộn việc chỉnh tốc độ vào việc chỉnh câu chữ thì khi
+chất lượng thay đổi sẽ không biết do cái nào. Đo lại sau đợt này rồi tính.
+
 ## Thứ tự triển khai
 
 1. Công cụ đo trước (probe + transcript nhiều kịch bản) — để có mốc đối chiếu.
@@ -443,4 +492,7 @@ thì revert đúng một commit mà không mất phần định tuyến.
 3. Node `shop` (đổi tên + tool `get_shop_hours`).
 4. Node `social` thay `refuse` + supervisor đổi bộ nhãn (`status`→`shop`, `refuse`→`social`).
 5. Cạnh `confirm → booking`.
-6. Cắt `BOOKING_PROMPT` — **commit riêng, cuối cùng**.
+6. Cắt `BOOKING_PROMPT`, gồm cả mục F và G — **commit riêng, cuối cùng**.
+
+Bước 6 gom mọi thay đổi có rủi ro làm tụt chất lượng vào một commit, để
+revert được một mình mà không mất năm bước trước.
