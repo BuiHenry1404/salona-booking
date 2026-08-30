@@ -97,16 +97,117 @@ Graph 6 node, trong đó **2 subagent có tool**:
 | `confirm` | code thuần | — | nhánh không-đồng-ý nối sang `booking` |
 | `refuse` | hằng số | — | giữ nguyên |
 
-Cạnh mới:
+### Sơ đồ luồng
 
+```mermaid
+flowchart TD
+    IN(["Khách nhắn tin"]) --> P{"Đang chờ<br/>xác nhận?"}
+
+    P -->|có| CF["<b>confirm</b><br/>code thuần · 0 LLM"]
+    P -->|không| SV["<b>supervisor</b><br/>LLM · trả đúng 1 từ"]
+
+    CF -->|"khách đồng ý"| DB[("Ghi lịch vào DB")]
+    CF -->|"khách chưa đồng ý<br/>(cạnh MỚI)"| BK
+
+    SV -->|booking| BK["<b>booking</b><br/>subagent · 5 tool"]
+    SV -->|shop| SH["<b>shop</b><br/>subagent · 2 tool<br/>(đổi tên từ status)"]
+    SV -->|social| SO["<b>social</b><br/>LLM · 0 tool<br/>(MỚI)"]
+    SV -->|refuse| RF["<b>refuse</b><br/>hằng số · 0 LLM"]
+
+    DB --> OUT(["Trả lời khách"])
+    BK --> OUT
+    SH --> OUT
+    SO --> OUT
+    RF --> OUT
+
+    classDef agent stroke:#2563eb,stroke-width:3px
+    classDef llm stroke:#7c3aed,stroke-width:2px
+    classDef code stroke:#059669,stroke-width:2px,stroke-dasharray:4 3
+    classDef fixed stroke:#9ca3af,stroke-width:2px,stroke-dasharray:2 3
+
+    class BK,SH agent
+    class SV,SO llm
+    class CF code
+    class RF fixed
 ```
-START ─ có pending? ─┬─ có ──→ confirm ─┬─ đồng ý ──→ ghi lịch (0 LLM) ──→ END
-                     │                  └─ không ───→ booking ──────────→ END
-                     └─ không ─→ supervisor ─┬─→ booking ──→ END
-                                             ├─→ shop ─────→ END
-                                             ├─→ social ───→ END
-                                             └─→ refuse ───→ END
+
+Viền **xanh dương đậm** = subagent có tool. **Tím** = có LLM nhưng không
+tool. **Xanh lá đứt** = code thuần, không LLM. **Xám đứt** = chuỗi cố định.
+
+Chỉ **2 node là subagent thật** (`booking`, `shop`) — đó là những node duy
+nhất được dựng qua `make_subagent_node(...)` kèm danh sách tool.
+
+### Tool của từng subagent
+
+```mermaid
+flowchart LR
+    BK["<b>booking</b><br/>5 tool"]
+    SH["<b>shop</b><br/>2 tool"]
+    SO["<b>social</b><br/>0 tool"]
+
+    BK --> T1["parse_time"]
+    BK --> T2["find_free_slots"]
+    BK --> T3["propose_appointment<br/><i>bỏ tham số xung_ho</i>"]
+    BK --> T4["list_my_appointments"]
+    BK --> T5["cancel_appointment"]
+
+    SH --> T6["get_shop_status"]
+    SH --> T7["get_shop_hours<br/><i>MỚI</i>"]
+
+    SO --> T8["(không cần dữ liệu gì)"]
+
+    classDef agent stroke:#2563eb,stroke-width:3px
+    classDef llm stroke:#7c3aed,stroke-width:2px
+    classDef tool stroke:#64748b,stroke-width:1px
+    classDef newtool stroke:#059669,stroke-width:2px
+    classDef none stroke:#9ca3af,stroke-width:1px,stroke-dasharray:2 3
+
+    class BK,SH agent
+    class SO llm
+    class T1,T2,T4,T5,T6 tool
+    class T3,T7 newtool
+    class T8 none
 ```
+
+**Không có tool nào ghi lịch.** `propose_appointment` chỉ giữ chỗ tạm; lịch
+chỉ được ghi ở node `confirm` bằng code, sau khi khách đồng ý ở lượt sau.
+Đây là ràng buộc cũ và thiết kế này giữ nguyên.
+
+### So với hiện tại
+
+```mermaid
+flowchart LR
+    subgraph now["Hiện tại — 3 route"]
+        direction TB
+        N1["booking<br/>subagent · 5 tool"]
+        N2["status<br/>subagent · 1 tool"]
+        N3["refuse<br/>hằng số"]
+    end
+
+    subgraph next["Sau khi sửa — 4 route"]
+        direction TB
+        M1["booking<br/>subagent · 5 tool"]
+        M2["shop<br/>subagent · 2 tool"]
+        M3["social<br/>LLM · 0 tool"]
+        M4["refuse<br/>hằng số"]
+    end
+
+    N1 -.->|giữ nguyên| M1
+    N2 -.->|đổi tên + 1 tool| M2
+    N3 -.->|tách xã giao ra| M3
+    N3 -.->|phần còn lại| M4
+
+    classDef agent stroke:#2563eb,stroke-width:3px
+    classDef llm stroke:#7c3aed,stroke-width:2px
+    classDef fixed stroke:#9ca3af,stroke-width:2px,stroke-dasharray:2 3
+
+    class N1,N2,M1,M2 agent
+    class M3 llm
+    class N3,M4 fixed
+```
+
+Số subagent-có-tool **không đổi: vẫn là 2**. Thứ thêm vào là một route và
+một node không tool.
 
 ### Vì sao không tách `booking` dù nó có 5 tool
 
