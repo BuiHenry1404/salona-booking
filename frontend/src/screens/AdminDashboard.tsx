@@ -2,8 +2,10 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AppointmentCard } from "../components/AppointmentCard";
 import { BusySwitch } from "../components/BusySwitch";
+import { MonthlyCustomerStats } from "../components/MonthlyCustomerStats";
 import { useAdminFeed } from "../hooks/useAdminFeed";
 import { useShopStatus } from "../hooks/useShopStatus";
+import { mockMonthlyCustomerStats } from "../mocks/monthlyCustomerStats";
 
 /**
  * Bảng điều khiển chủ tiệm — route `/chu-tiem` (RequireAuth role="admin").
@@ -22,6 +24,8 @@ export function AdminDashboard() {
       <h1 style={{ fontSize: 28, marginBottom: "var(--s3)" }}>Tiệm của tôi</h1>
 
       {loading ? <p style={{ fontSize: 19 }}>Đang xem…</p> : <BusySwitch status={status} onApplied={apply} />}
+
+      <MonthlyCustomerStats data={mockMonthlyCustomerStats} />
 
       <h2 style={{ fontSize: 24, marginBottom: "var(--s3)" }}>Lịch hôm nay</h2>
 
