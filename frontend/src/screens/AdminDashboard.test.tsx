@@ -56,6 +56,33 @@ vi.mock("../hooks/useShopStatus", () => ({ useShopStatus: () => shop }));
 vi.mock("../hooks/useAdminFeed", () => ({ useAdminFeed: () => feed }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => auth }));
 
+/** Hình dạng thật của useMonthlyCustomerStats() — data là null khi đang nạp
+ * hoặc khi request hỏng. */
+const stats = {
+  data: {
+    months: [
+      { month: "2025-09", customer_count: 14 },
+      { month: "2025-10", customer_count: 21 },
+      { month: "2025-11", customer_count: 18 },
+      { month: "2025-12", customer_count: 27 },
+      { month: "2026-01", customer_count: 24 },
+      { month: "2026-02", customer_count: 19 },
+      { month: "2026-03", customer_count: 31 },
+      { month: "2026-04", customer_count: 28 },
+      { month: "2026-05", customer_count: 35 },
+      { month: "2026-06", customer_count: 30 },
+      { month: "2026-07", customer_count: 26 },
+      { month: "2026-08", customer_count: 32 },
+    ],
+  } as { months: Array<{ month: string; customer_count: number }> } | null,
+  loading: false,
+  error: null as string | null,
+};
+
+vi.mock("../hooks/useMonthlyCustomerStats", () => ({
+  useMonthlyCustomerStats: () => stats,
+}));
+
 /** Lịch hẹn mẫu — đúng payload 5 field của appointment_created. */
 const appointment = {
   id: "a1",
@@ -87,6 +114,8 @@ beforeEach(() => {
   feed.appointments = [];
   feed.newIds = new Set();
   feed.error = null;
+  stats.loading = false;
+  stats.error = null;
   auth.logout.mockClear();
 });
 
@@ -260,5 +289,23 @@ describe("AdminDashboard", () => {
     // T5/2026 có 35 khách theo mock
     const row = screen.getByTitle(/tháng 5\/2026/i);
     expect(row).toHaveTextContent("35");
+  });
+
+  it("17. đang nạp thống kê: KHÔNG vẽ biểu đồ rỗng", () => {
+    stats.loading = true;
+    renderScreen();
+    expect(
+      screen.queryByRole("heading", { name: /khách theo tháng/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("18. lỗi tải thống kê: báo bằng chữ, không vẽ 12 cột số 0", () => {
+    // 12 cột 0 trông y hệt "tháng nào cũng ế" — nói sai còn tệ hơn không nói.
+    stats.error = "Phần này chỉ chủ tiệm mới xem được ạ.";
+    renderScreen();
+    expect(screen.getByText(/chỉ chủ tiệm mới xem được/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /khách theo tháng/i }),
+    ).not.toBeInTheDocument();
   });
 });

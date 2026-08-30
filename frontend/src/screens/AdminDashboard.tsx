@@ -4,8 +4,8 @@ import { AppointmentCard } from "../components/AppointmentCard";
 import { BusySwitch } from "../components/BusySwitch";
 import { MonthlyCustomerStats } from "../components/MonthlyCustomerStats";
 import { useAdminFeed } from "../hooks/useAdminFeed";
+import { useMonthlyCustomerStats } from "../hooks/useMonthlyCustomerStats";
 import { useShopStatus } from "../hooks/useShopStatus";
-import { mockMonthlyCustomerStats } from "../mocks/monthlyCustomerStats";
 
 /**
  * Bảng điều khiển chủ tiệm — route `/chu-tiem` (RequireAuth role="admin").
@@ -18,6 +18,7 @@ export function AdminDashboard() {
   const { status, loading, apply } = useShopStatus();
   const { appointments, newIds, error } = useAdminFeed();
   const { logout } = useAuth();
+  const monthlyStats = useMonthlyCustomerStats();
 
   return (
     <div className="screen">
@@ -25,7 +26,18 @@ export function AdminDashboard() {
 
       {loading ? <p style={{ fontSize: 19 }}>Đang xem…</p> : <BusySwitch status={status} onApplied={apply} />}
 
-      <MonthlyCustomerStats data={mockMonthlyCustomerStats} />
+      {monthlyStats.error && (
+        <p role="alert" className="alert alert--danger">
+          {monthlyStats.error}
+        </p>
+      )}
+
+      {/* Loading hoặc lỗi thì KHÔNG vẽ biểu đồ — kể cả nếu data còn giữ giá
+          trị cũ, 12 cột số cũ trông y hệt số liệu thật, gây hiểu lầm chủ
+          tiệm rằng mọi thứ vẫn ổn. */}
+      {!monthlyStats.loading && !monthlyStats.error && monthlyStats.data && (
+        <MonthlyCustomerStats data={monthlyStats.data} />
+      )}
 
       <h2 style={{ fontSize: 24, marginBottom: "var(--s3)" }}>Lịch hôm nay</h2>
 
