@@ -121,6 +121,21 @@ class TestHardWonRulesSurvive:
             assert "spoken words" in prompt.lower(), name
             assert "never write digits separated by a colon" in prompt.lower(), name
 
+    def test_shop_finish_time_must_be_absolute_not_a_countdown(self):
+        """Lỗi gốc: "còn 30 phút" nằm lại trong lịch sử chat rồi sai ngay sau
+        đó. Test cũ canh câu mẫu này bị xoá theo đợt bỏ câu mẫu tiếng Việt —
+        phục lại nhưng canh chữ tiếng Anh mô tả luật, không phải câu mẫu."""
+        assert "state the ABSOLUTE finish time" in SHOP_PROMPT
+        assert "Never give a countdown in minutes" in SHOP_PROMPT
+
+    def test_booking_narrows_to_one_choice_when_customer_still_deciding(self):
+        """Rule 5 của BOOKING_PROMPT: khi khách còn phải chọn giữa các lựa
+        chọn đã liệt kê, câu trả lời phải NGẮN LẠI và chỉ nói về lựa chọn đó —
+        không lặp lại toàn bộ các lựa chọn. Test cũ canh vế này cũng bị xoá
+        theo đợt bỏ câu mẫu tiếng Việt."""
+        assert "write a shorter sentence covering" in BOOKING_PROMPT
+        assert "only that choice" in BOOKING_PROMPT
+
     def test_the_prompt_does_not_ask_for_a_parameter_that_no_longer_exists(self):
         """Xưng hô giờ suy ra bằng code từ full_name. Bảo model truyền `xung_ho`
         trong khi tool đã bỏ tham số đó là làm hỏng tool call — LangChain nhận
@@ -219,10 +234,13 @@ class TestBookingPromptSlimmed:
     def test_the_prompt_actually_got_shorter(self):
         # Trước khi cắt: 4718 ký tự. Task 5 thêm `_NO_REPEAT` (~480 ký tự,
         # bắt buộc, giống hệt ở cả ba prompt) rồi mốc dưới nới ra 3500. Task 6
-        # (2026-09-13) bỏ câu mẫu tiếng Việt, đo được 3231 ký tự — mốc dưới ở
-        # đây bám theo số đo thật (làm tròn lên bội số 50 gần nhất) để hàng
-        # rào còn ý nghĩa, không phải một số tròn xa thực tế.
-        assert len(BOOKING_PROMPT) < 3250
+        # (2026-09-13) bỏ câu mẫu tiếng Việt, đo được 3231 ký tự. Đợt rà cuối
+        # cùng ngày 2026-09-13 thêm carve-out "khách xin nhắc lại" vào
+        # `_NO_REPEAT`, đo được 3451 ký tự — mốc dưới ở đây bám theo số đo
+        # thật (làm tròn lên bội số 100 gần nhất) để hàng rào còn ý nghĩa,
+        # không phải một số tròn xa thực tế và không trồi lên vì một sửa
+        # không liên quan.
+        assert len(BOOKING_PROMPT) < 3500
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

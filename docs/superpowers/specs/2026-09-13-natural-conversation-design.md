@@ -126,8 +126,11 @@ Vòng lặp hiện tại đi từ tin mới nhất lùi về và `break` khi h�
 có thể **giữ câu trả lời mà bỏ mất câu hỏi sinh ra nó**. Spec dòng 99 đòi giữ
 trọn cặp.
 
-Sửa: sau khi gom xong, nếu tin cũ nhất còn giữ có `role == "assistant"` thì bỏ
-luôn nó.
+Sửa: sau khi gom xong, nếu tin cũ nhất còn giữ có `role == "assistant"` **và
+ngân sách token thực sự đã cắt bớt tin (`truncated`)** thì bỏ luôn nó — bỏ vô
+điều kiện là sai: ca nửa đêm bot hỏi xác nhận lúc 23:58 rồi khách đáp lúc
+00:01, cửa sổ khi đó mở đầu bằng `assistant` một cách hợp lệ, không có gì bị
+cắt cả, nên không được bỏ. (Xem `app/services/conversation.py::history`.)
 
 ### QĐ-4: Lọc `full_name`
 

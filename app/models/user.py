@@ -37,16 +37,11 @@ class User(BaseDocument):
     @field_validator("full_name")
     @classmethod
     def _clean_full_name(cls, value: Optional[str]) -> Optional[str]:
-        """Làm sạch tên trước khi nó đi vào khối bối cảnh.
-
-        Khối bối cảnh mang vai HumanMessage và tự nói "hãy tin phần trên".
-        Tên chứa xuống dòng là một lối để khách tự ghi thêm luật vào prompt.
+        """Làm sạch tên trước khi nó đi vào khối bối cảnh (lý do cần lọc và
+        cách `single_line` lọc: xem `app/core/text.py::single_line`).
 
         Đặt ở MODEL chứ không ở schema tạo user: tên bẩn đã nằm sẵn trong DB
         cũng được làm sạch lúc đọc lên, không cần migrate.
-
-        `split()` không tham số gộp mọi loại khoảng trắng (space, \\n, \\r,
-        \\t) thành một dấu cách — đúng thứ cần, và ngắn hơn một regex.
         """
         return single_line(value, FULL_NAME_MAX)
 
