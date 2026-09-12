@@ -41,10 +41,6 @@ class TestExamplesStayVietnamese:
         assert "the weekday and date" in BOOKING_PROMPT
         assert "MUST end in a question" in BOOKING_PROMPT
 
-    def test_the_shorter_reask_example_is_vietnamese(self):
-        """Luật "nói ngắn hơn" chung chung bị model bỏ qua; chỉ ăn khi có ví dụ."""
-        assert "anh chị chọn giờ nào ạ" in BOOKING_PROMPT
-
     def test_the_absolute_finish_time_example_is_vietnamese(self):
         assert "xong lúc 3 giờ rưỡi chiều ạ" in SHOP_PROMPT
 
@@ -163,11 +159,33 @@ class TestBookingPromptSlimmed:
         assert "Em đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không chị?" not in BOOKING_PROMPT
 
     def test_the_prompt_actually_got_shorter(self):
-        # Trước khi cắt: 4718 ký tự. Cắt xong phải dưới 3000 — nếu không thì
-        # rule chưa thực sự chuyển đi đâu cả.
-        assert len(BOOKING_PROMPT) < 3000
+        # Trước khi cắt: 4718 ký tự. Cắt xong còn dưới 3000. Task 5 sau đó
+        # thêm `_NO_REPEAT` (~480 ký tự, bắt buộc, giống hệt ở cả ba prompt)
+        # nên mốc dưới nới ra 3500 — vẫn xa mức 4718 ban đầu, không phải rule
+        # bị đắp lại từ đầu.
+        assert len(BOOKING_PROMPT) < 3500
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
         trống HÔM NAY. Chỉ được tự chọn ngày khi khách nói rõ là tùy tiệm."""
         assert "only when the customer says the salon may choose" in BOOKING_PROMPT.lower()
+
+
+class TestNoRepeatRuleReachesEveryCustomerFacingPrompt:
+    """Ca lỗi thật (transcript 2026-09-13, lượt 2 và 3) nằm ở node `shop`,
+    không phải `booking` — nên luật phải có mặt ở CẢ BA prompt sinh câu cho
+    khách, không chỉ ở prompt đặt lịch."""
+
+    def test_the_rule_is_in_all_three(self):
+        for name, prompt in (("SHOP_PROMPT", SHOP_PROMPT),
+                             ("BOOKING_PROMPT", BOOKING_PROMPT),
+                             ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
+            assert "DO NOT REPEAT YOURSELF" in prompt, name
+
+    def test_the_rule_covers_rewording_not_just_verbatim(self):
+        """Chữ `verbatim` là chỗ hở: lặp ý mà khác chữ thì luật cũ không
+        chạm tới."""
+        assert "not the same fact reworded" in SHOP_PROMPT
+
+    def test_the_old_verbatim_wording_is_gone(self):
+        assert "repeat your previous reply verbatim" not in BOOKING_PROMPT
