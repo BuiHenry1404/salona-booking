@@ -142,8 +142,12 @@ dữ liệu đã nằm trong DB cũng được làm sạch lúc đọc lên. G�
 
 agentbox chống đúng thứ này bằng cách dán nhãn `untrustedMemoryLabel` lên mọi
 mục sinh từ ký ức (`memorycore/runtime.go:537`). Ta chọn cách rẻ hơn là làm
-sạch tại nguồn, vì khối bối cảnh của ta **hoàn toàn do code dựng** — `full_name`
-là lối vào duy nhất.
+sạch tại nguồn, vì khối bối cảnh của ta **hoàn toàn do code dựng** — nhưng
+`full_name` KHÔNG phải lối vào duy nhất: `appointment.note` cũng tới cùng
+khối bối cảnh (`context.py:138`) và tới kết quả tool `list_my_appointments`
+(`tools.py:175`), và lúc đó chưa có giới hạn độ dài hay lọc xuống dòng nào
+cả. Task 8 đóng nốt lối vào thứ hai này bằng hàm dùng chung
+`app/core/text.py::single_line`.
 
 ### QĐ-5: Bỏ câu mẫu tiếng Việt khỏi prompt
 

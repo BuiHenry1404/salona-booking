@@ -77,7 +77,7 @@ docs/superpowers/        specs + 4 plans; start at specs/2026-08-06-booking-nail
 - Health check URL needs the trailing slash: `/api/v1/health/` (307 otherwise).
 - `mongo-express` on :8081 (`admin`/`admin`) and Mongo exposed without auth are **dev-only**
   compose entries; prod split is planned (Plan 5), not done. Don't ship them as-is.
-- Repo is Vietnamese-language throughout (docs, commits, UI strings). Match that.
+- Repo is Vietnamese-language throughout (docs, comments, UI strings), except commit messages — those are English and short. Match that.
 - Plans 3 and 4 can run in parallel. After Plan 3: admin password reset via Telegram bot
   (`specs/2026-08-15-admin-password-reset-telegram-design.md`) — Zalo/SMS are permanently
   off the table, don't re-suggest them.

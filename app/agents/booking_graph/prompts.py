@@ -2,18 +2,22 @@
 
 Chỉ dẫn viết bằng TIẾNG ANH, câu trả khách viết bằng TIẾNG VIỆT.
 
-Lý do tách như vậy: tiếng Việt trong prompt từng gây lỗi thật. Câu "nhắc lại
-ngày cho khách nghe" và "hỏi lại đúng câu vừa hỏi" ý là "vẫn ở câu hỏi cũ",
-nhưng model đọc thành "in ra hai lần" và trả về câu lặp nguyên văn — khách nhìn
-thấy trực tiếp. Mệnh lệnh tiếng Anh không có khoảng mơ hồ đó.
+Từ 2026-09-13, prompt KHÔNG còn câu mẫu tiếng Việt. Quyết định của chủ dự
+án, đi ngược ghi chép cũ ở đây và ở `CONTEXT.md` bẫy #15, #16 — giữ lại lý
+do để lần sau đọc không tưởng là sơ suất: bản ghi cũ dựa trên đợt rà
+2026-08-23, đo được rằng luật kèm ví dụ thì model tuân thủ còn luật chung
+chung thì không.
 
-Quyết định 2026-09-13: bỏ câu MẪU tiếng Việt khỏi các prompt này (đo bằng
-`scripts/score_transcript.py`, xem `.superpowers/sdd/2026-09-13-natural-
-conversation/task-6-report.md`). Từ tiếng Việt còn lại trong khối VOICE
-("em", "anh", "chị", "cô", "chú", "bác") không phải câu mẫu — chúng là CHỦ THỂ
-của luật xưng hô, xoá đi thì luật rỗng nghĩa. Ngoại lệ: câu trả lời bảo mật ở
-`BOOKING_PROMPT` rule 4 giữ nguyên văn vì đó là đầu ra bắt buộc, không phải ví
-dụ.
+Hai thứ tiếng Việt VẪN ở lại, và chúng không phải ví dụ:
+
+- Câu trả lời bảo mật ở `BOOKING_PROMPT` rule 4. Prompt bắt model đáp đúng
+  chuỗi đó, nên nó là ĐẦU RA BẮT BUỘC.
+- Các đại từ xưng hô trong khối VOICE ("em", "anh", "chị", "con", "cô",
+  "chú", "bác"). Chúng là CHỦ THỂ của luật xưng hô; bỏ đi thì câu luật rỗng
+  nghĩa.
+
+Docstring của tool trong `tools.py` giữ nguyên ví dụ tiếng Việt — phạm vi
+quyết định chỉ gồm file này.
 """
 
 # Luật ngôn ngữ đặt riêng để không lọt: prompt tiếng Anh làm tăng khả năng model
