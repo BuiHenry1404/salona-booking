@@ -197,3 +197,16 @@ async def test_history_keeps_whole_pairs_when_the_budget_is_tiny(test_db):
     await svc.append("u1", "assistant", "a" * 30)
 
     assert await svc.history("u1", token_budget=1) == []
+
+
+async def test_a_truncated_window_of_three_still_drops_the_orphan(test_db):
+    """Ca mà luật đếm-độ-dài bỏ lọt: cắt còn ĐÚNG BA tin, tin đầu là câu đáp
+    mồ côi thật. Số học: mỗi tin 30 ký tự -> cost 10; budget 35 giữ 3 tin."""
+    svc = ConversationService(test_db)
+    for _ in range(3):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
+
+    history = await svc.history("u1", token_budget=35)
+
+    assert [m.role for m in history] == ["user", "assistant"]

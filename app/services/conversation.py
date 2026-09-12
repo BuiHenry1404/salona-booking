@@ -93,21 +93,21 @@ class ConversationService:
         messages = [m for m in all_messages if m.created_at >= cutoff]
         kept: List[ChatMessage] = []
         used = 0
+        truncated = False
         for message in reversed(messages):
             cost = max(1, len(message.content) // CHARS_PER_TOKEN)
             if used + cost > token_budget and kept:
+                truncated = True
                 break
             kept.append(message)
             used += cost
         kept.reverse()
-        # Vòng lặp trên đi từ tin mới nhất lùi về, nên chỗ cắt có thể rơi
-        # giữa một cặp và để lại câu ĐÁP mà không có câu HỎI sinh ra nó.
-        # Model đọc câu đáp mồ côi thì mất mạch. 04-agent.md:99 chốt phải
-        # giữ trọn cặp; bỏ đúng một tin là đủ. Nếu chỉ đủ một tin thì thà
-        # trả rỗng còn hơn trả một câu đáp mồ côi.
-        if kept and kept[0].role == "assistant":
-            if len(kept) == 1 or len(kept) >= 4:
-                kept.pop(0)
+        # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
+        # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
+        # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
+        # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
+        if truncated and kept and kept[0].role == "assistant":
+            kept.pop(0)
         return kept
 
     async def list_days(self, user_id: str) -> List[DaySummary]:
