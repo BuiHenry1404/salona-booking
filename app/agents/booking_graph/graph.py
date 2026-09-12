@@ -2,7 +2,8 @@ from langgraph.graph import END, START, StateGraph
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import make_subagent_node
-from app.agents.booking_graph.confirm import make_confirm_node
+from app.agents.booking_graph.confirm import (make_confirm_node,
+                                              route_after_confirm)
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
                                               SOCIAL_PROMPT)
 from app.agents.booking_graph.state import GraphState
@@ -49,7 +50,13 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
         {"booking": "booking", "shop": "shop", "social": "social"},
     )
 
-    for node in ("confirm", "social", "shop", "booking"):
+    # Nhánh chưa-đồng-ý của confirm không tự trả lời mà chuyển tiếp sang
+    # booking — chỉ nhánh đã ghi lịch mới đi thẳng ra END.
+    graph.add_conditional_edges(
+        "confirm", route_after_confirm, {"booking": "booking", "end": END}
+    )
+
+    for node in ("social", "shop", "booking"):
         graph.add_edge(node, END)
 
     return graph.compile()

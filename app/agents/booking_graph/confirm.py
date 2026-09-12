@@ -97,7 +97,11 @@ def make_confirm_node(
         address = address_phrase(user.full_name)
 
         if not is_affirmative(last_message):
-            return {"answer": f"Dạ vâng, vậy {address} muốn đặt ngày giờ nào ạ?"}
+            # Khách chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại",
+            # "thôi 10 giờ đi em", "đổi sang thứ Năm" đều là chuyện của
+            # booking. Node này không có LLM nên trả lời cứng chỗ nào cũng
+            # trật; đẩy sang agent có lịch sử và đủ tool.
+            return {"route": "booking"}
 
         try:
             appointment = await service.create(
@@ -113,3 +117,8 @@ def make_confirm_node(
                           f"{format_vi_datetime(appointment.start_at)} nhé."}
 
     return node
+
+
+def route_after_confirm(state: GraphState) -> str:
+    """Sau confirm: đã ghi lịch (có `answer`) thì xong; chưa chốt thì sang booking."""
+    return "booking" if state.get("route") == "booking" else "end"
