@@ -208,6 +208,14 @@ class TestBookingPromptSlimmed:
         phải là NỘI DUNG (đủ ngày, giờ, dịch vụ, có hỏi lại), không phải chữ."""
         assert "Em đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không chị?" not in BOOKING_PROMPT
 
+    def test_the_confirmation_rule_constrains_content_not_wording(self):
+        """Sống sót từ class TestExamplesStayVietnamese đã xoá. Nó KHÔNG canh
+        câu mẫu tiếng Việt — nó canh rule 2 bắt câu xác nhận phải đủ thứ/ngày,
+        giờ, dịch vụ và phải kết bằng câu hỏi. Ràng buộc đó là nội dung, không
+        phải chữ, nên nó sống tiếp sau khi câu mẫu bị gỡ."""
+        assert "the weekday and date" in BOOKING_PROMPT
+        assert "MUST end in a question" in BOOKING_PROMPT
+
     def test_the_prompt_actually_got_shorter(self):
         # Trước khi cắt: 4718 ký tự. Task 5 thêm `_NO_REPEAT` (~480 ký tự,
         # bắt buộc, giống hệt ở cả ba prompt) rồi mốc dưới nới ra 3500. Task 6
