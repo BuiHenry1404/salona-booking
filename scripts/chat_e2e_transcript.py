@@ -51,6 +51,27 @@ SCENARIOS = {
         "tiệm đang bận không em",
         "cho tôi công thức nấu phở",
     ],
+    # Hội thoại dài 16 lượt, đi qua MỌI nhánh của graph. Đây là kịch bản
+    # dùng để chấm rubric, nên 16 dòng dưới đây là MỐC SO SÁNH — sửa một
+    # chữ là mọi điểm cũ hết so được với điểm mới.
+    "dai": [
+        "chào em",
+        "tiệm mình mở cửa mấy giờ vậy em",
+        "chủ nhật có nghỉ không em",
+        "chị muốn làm tóc",
+        "mai được không em",
+        "3 giờ chiều",
+        "ừ chốt nha",
+        "chị đặt lúc mấy giờ vậy em nhắc lại giùm",
+        "khách nào đặt lúc 4 giờ vậy em",
+        "chị muốn đổi sang 4 giờ chiều mai",
+        "à thôi khoan để chị tính lại",
+        "chủ tiệm đang bận không em",
+        "cho chị xin công thức nấu phở",
+        "thôi hủy giùm chị cái lịch mai đi em",
+        "ừ hủy đi em",
+        "cảm ơn em nhé chị đi đây",
+    ],
 }
 
 
