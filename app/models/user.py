@@ -2,6 +2,7 @@ from typing import Literal, Optional
 
 from pydantic import ConfigDict, Field, field_validator
 
+from app.core.text import single_line
 from app.models.base import BaseDocument
 
 Role = Literal["user", "admin"]
@@ -47,10 +48,7 @@ class User(BaseDocument):
         `split()` không tham số gộp mọi loại khoảng trắng (space, \\n, \\r,
         \\t) thành một dấu cách — đúng thứ cần, và ngắn hơn một regex.
         """
-        if value is None:
-            return None
-        cleaned = " ".join(value.split())
-        return cleaned[:FULL_NAME_MAX] or None
+        return single_line(value, FULL_NAME_MAX)
 
     # Tăng mỗi lần đổi mật khẩu. Token mang `tv` khác giá trị này bị từ chối,
     # nếu không nạn nhân đổi lại mật khẩu mà token của kẻ chiếm vẫn sống tới
