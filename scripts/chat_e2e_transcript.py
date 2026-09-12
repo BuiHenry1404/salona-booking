@@ -1,7 +1,8 @@
-"""Chạy một cuộc trò chuyện đặt lịch dài qua Socket.IO như khách thật, ghi
+"""Chạy những cuộc trò chuyện đặt lịch dài qua Socket.IO như khách thật, ghi
 toàn bộ ra file txt để đọc lại bằng mắt.
 
-    .venv/bin/python scripts/chat_e2e_transcript.py [--out FILE] [--phone SDT]
+    PYTHONPATH=. .venv/bin/python scripts/chat_e2e_transcript.py \
+        [--scenario booking|doi_y|huy|thong_tin|all] [--out FILE] [--phone SDT]
 
 Đây là công cụ kiểm tay, KHÔNG phải test tự động: nó không assert gì cả. Mục
 đích là đọc xem câu trả lời của AI có tự nhiên không, nên nó ghi cả sự kiện
@@ -20,18 +21,37 @@ API = "http://localhost:8000"
 
 # Kịch bản cố tình đi vòng vèo: hỏi bâng quơ, đổi ý, hỏi lại giờ, rồi mới
 # chốt. Hội thoại thẳng tuột không lộ ra chỗ nào bị trả lời cứng.
-SCRIPT = [
-    "chào em",
-    "tiệm mình mở cửa mấy giờ vậy em",
-    "chị muốn làm tóc",
-    "mai chị rảnh buổi sáng",
-    "9 giờ được không em",
-    "à khoan, để chị xem lại",
-    "thôi 10 giờ đi em",
-    "ừ chốt luôn nha",
-    "chị đặt lúc mấy giờ vậy em nhắc lại giùm",
-    "cảm ơn em nhé",
-]
+SCENARIOS = {
+    # Đặt lịch suôn sẻ — kịch bản kiểm câu xác nhận có đủ ngày/giờ/dịch vụ không.
+    "booking": [
+        "chào em",
+        "chị muốn làm tóc",
+        "mai chị rảnh buổi sáng",
+        "9 giờ được không em",
+        "ừ chốt luôn nha",
+        "cảm ơn em nhé",
+    ],
+    # Đổi ý giữa chừng — đúng ca lượt 6 của transcript cũ, chỗ bot giục khách.
+    "doi_y": [
+        "chị muốn làm nail mai 9 giờ sáng",
+        "à khoan, để chị xem lại",
+        "thôi 10 giờ đi em",
+        "ừ được đó",
+    ],
+    # Hủy lịch — kiểm list_my_appointments chạy trước cancel.
+    "huy": [
+        "chị có lịch nào sắp tới không em",
+        "hủy giùm chị cái lịch đó",
+        "ừ hủy đi em",
+    ],
+    # Thông tin tiệm — kịch bản MỚI, hiện đang rơi hết vào refuse.
+    "thong_tin": [
+        "tiệm mình mở cửa mấy giờ vậy em",
+        "chủ nhật có làm không em",
+        "tiệm đang bận không em",
+        "cho tôi công thức nấu phở",
+    ],
+}
 
 
 def login(phone: str, password: str) -> str:
@@ -49,7 +69,13 @@ async def main() -> None:
     parser.add_argument("--out", default="chat_transcript.txt")
     parser.add_argument("--phone", default="0923456789")
     parser.add_argument("--password", default="matkhau123")
+    parser.add_argument(
+        "--scenario", default="all", choices=[*SCENARIOS, "all"],
+        help="chạy một kịch bản, hoặc 'all' để chạy hết vào cùng một file",
+    )
     args = parser.parse_args()
+
+    names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
 
     token = login(args.phone, args.password)
     sio = socketio.AsyncClient()
@@ -88,42 +114,50 @@ async def main() -> None:
         f"# tài khoản: {args.phone}",
         "",
     ]
+    total = 0
 
-    for i, message in enumerate(SCRIPT, 1):
-        turn.clear()
-        done.clear()
-        started = time.monotonic()
-        await sio.emit("send_message", {"message": message})
-        try:
-            await asyncio.wait_for(done.wait(), timeout=90)
-        except asyncio.TimeoutError:
-            turn["error"] = "(quá 90 giây không thấy trả lời)"
-        elapsed = time.monotonic() - started
+    for name in names:
+        lines += [f"##### KỊCH BẢN {name} #####", ""]
+        for i, message in enumerate(SCENARIOS[name], 1):
+            turn.clear()
+            done.clear()
+            started = time.monotonic()
+            await sio.emit("send_message", {"message": message})
+            try:
+                await asyncio.wait_for(done.wait(), timeout=90)
+            except asyncio.TimeoutError:
+                turn["error"] = "(quá 90 giây không thấy trả lời)"
+            elapsed = time.monotonic() - started
 
-        streamed = "".join(turn.get("tokens", []))
-        answer = turn.get("answer", "")
-        lines += [
-            f"===== LƯỢT {i} ({elapsed:.1f}s) =====",
-            f"KHÁCH : {message}",
-        ]
-        if turn.get("tools"):
-            lines.append("TOOL  : " + " | ".join(turn["tools"]))
-        else:
-            lines.append("TOOL  : (không gọi tool nào)")
-        # Streamed rỗng mà answer có chữ = câu này KHÔNG do LLM stream ra,
-        # tức là code trả thẳng. Đây là thứ cần soi.
-        lines.append(f"STREAM: {'(rỗng — câu trả lời không đi qua LLM)' if not streamed else repr(streamed[:200])}")
-        lines.append(f"BOT   : {answer or turn.get('error', '(không có)')}")
-        lines.append("")
+            streamed = "".join(turn.get("tokens", []))
+            answer = turn.get("answer", "")
+            lines += [
+                f"===== LƯỢT {i} ({elapsed:.1f}s) =====",
+                f"KHÁCH : {message}",
+            ]
+            if turn.get("tools"):
+                lines.append("TOOL  : " + " | ".join(turn["tools"]))
+            else:
+                lines.append("TOOL  : (không gọi tool nào)")
+            # Streamed rỗng mà answer có chữ = câu này KHÔNG do LLM stream ra,
+            # tức là code trả thẳng. Đây là thứ cần soi.
+            lines.append(f"STREAM: {'(rỗng — câu trả lời không đi qua LLM)' if not streamed else repr(streamed[:200])}")
+            lines.append(f"BOT   : {answer or turn.get('error', '(không có)')}")
+            lines.append("")
+            total += 1
 
-        # Nhắn dồn dập sẽ đụng trần chat_max_per_hour và làm hỏng kịch bản.
-        await asyncio.sleep(1.5)
+            # Nhắn dồn dập sẽ đụng trần chat_max_per_hour và làm hỏng kịch bản.
+            await asyncio.sleep(1.5)
+
+        # Nghỉ dài hơn giữa hai kịch bản: bốn kịch bản chạy liền nhau dễ chạm
+        # trần 30 tin/giờ mỗi khách, và kịch bản sau sẽ hỏng vì bị chặn.
+        await asyncio.sleep(3)
 
     await sio.disconnect()
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"đã ghi {args.out} ({len(SCRIPT)} lượt)")
+    print(f"đã ghi {args.out} ({total} lượt, {len(names)} kịch bản)")
 
 
 if __name__ == "__main__":
