@@ -224,3 +224,21 @@ async def test_parse_time_is_not_given_to_the_status_agent(test_db):
     user = await a_user(test_db)
     names = {t.name for t in make_status_tools(test_db, user)}
     assert "parse_time" not in names
+
+
+async def test_tool_descriptions_are_english(test_db):
+    """Docstring của tool đi vào tool schema gửi cho model — nó là prompt.
+    CONTEXT.md:94: prompt viết tiếng Anh, câu mẫu giữ tiếng Việt."""
+    user = await a_user(test_db)
+    # Gộp khoảng trắng: docstring xuống dòng giữa câu, so chuỗi thô thì một cụm
+    # bị ngắt dòng sẽ không khớp dù nội dung đúng.
+    descriptions = {
+        t.name: " ".join(t.description.split())
+        for t in make_booking_tools(test_db, user)
+    }
+
+    assert descriptions["parse_time"].startswith("Turn what the customer said")
+    assert "Call this BEFORE find_free_slots" in descriptions["parse_time"]
+    # Ví dụ PHẢI còn tiếng Việt — dịch đi thì ví dụ vô nghĩa.
+    assert "mai 3h chiều" in descriptions["parse_time"]
+    assert "NO tool writes an appointment directly" in descriptions["propose_appointment"]

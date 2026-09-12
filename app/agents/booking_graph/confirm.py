@@ -42,7 +42,7 @@ _NO_BARE = re.compile(
 )
 
 
-def strip_dau(text: str) -> str:
+def strip_diacritics(text: str) -> str:
     """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
 
     NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
@@ -60,7 +60,7 @@ def is_affirmative(text: str) -> bool:
     ra False. Sai hướng này chỉ mất một câu hỏi lại; sai hướng kia là đặt nhầm lịch.
     """
     cleaned = (text or "").strip()
-    bare = strip_dau(cleaned)
+    bare = strip_diacritics(cleaned)
     if bare == cleaned:
         # Khách gõ không dấu — nới luật ra.
         target, yes, no = bare, _YES_BARE, _NO_BARE
