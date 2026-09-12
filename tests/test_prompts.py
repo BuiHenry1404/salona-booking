@@ -9,8 +9,8 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
-from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REFUSE_MESSAGE,
-                                              SHOP_PROMPT, SUPERVISOR_PROMPT)
+from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
+                                              SOCIAL_PROMPT, SUPERVISOR_PROMPT)
 
 CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "SHOP_PROMPT": SHOP_PROMPT}
 
@@ -26,8 +26,8 @@ class TestOutputLanguageIsPinned:
             assert prompt.count("MUST be Vietnamese") >= 2, name
 
     def test_the_refusal_sentence_stays_vietnamese(self):
-        """Câu này gửi thẳng cho khách, không qua model."""
-        assert "Dạ em chỉ giúp được" in REFUSE_MESSAGE
+        """Câu từ chối giờ do SOCIAL_PROMPT sinh ra, không còn là hằng trả thẳng."""
+        assert "Dạ em chỉ lo đặt lịch làm tóc với làm nail" in SOCIAL_PROMPT
 
 
 class TestExamplesStayVietnamese:
@@ -83,10 +83,12 @@ class TestSupervisorStaysMachineReadable:
     def test_it_asks_for_exactly_one_word(self):
         assert "EXACTLY ONE word" in SUPERVISOR_PROMPT
 
-    def test_the_three_labels_are_unchanged(self):
+    def test_supervisor_lists_exactly_the_three_live_labels(self):
         """Ba nhãn này là giá trị code so khớp, không phải chữ cho người đọc."""
-        for label in ("booking", "status", "refuse"):
+        for label in ("booking", "shop", "social"):
             assert re.search(rf"^- {label}\b", SUPERVISOR_PROMPT, re.M), label
+        for retired in ("status", "refuse"):
+            assert retired not in SUPERVISOR_PROMPT, retired
 
     def test_the_tie_break_still_favours_booking(self):
         assert "output booking" in SUPERVISOR_PROMPT
@@ -140,6 +142,12 @@ class TestRegisterIsAnhChiEm:
             for cu in ("giúp con", "để con", "con xem giúp"):
                 assert cu not in prompt, f"{name} còn {cu!r}"
 
-    def test_the_refusal_sentence_uses_the_new_register(self):
-        assert "em" in REFUSE_MESSAGE
-        assert "cô chú" not in REFUSE_MESSAGE
+    def test_social_prompt_carries_the_scope_example_verbatim(self):
+        """Luật chung chung bị model bỏ qua; chỉ ăn khi có ví dụ — cùng lý do
+        với các luật khác trong class này. Hằng từ chối cũ chốt phạm vi
+        'chỉ tóc và nail'; ràng buộc đó phải sống tiếp ở đây."""
+        assert "chỉ lo đặt lịch làm tóc với làm nail" in SOCIAL_PROMPT
+
+    def test_social_prompt_is_vietnamese_and_polite(self):
+        assert "em" in SOCIAL_PROMPT
+        assert "cô chú" not in SOCIAL_PROMPT
