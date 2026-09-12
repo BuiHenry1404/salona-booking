@@ -99,7 +99,16 @@ class ConversationService:
                 break
             kept.append(message)
             used += cost
-        return list(reversed(kept))
+        kept.reverse()
+        # Vòng lặp trên đi từ tin mới nhất lùi về, nên chỗ cắt có thể rơi
+        # giữa một cặp và để lại câu ĐÁP mà không có câu HỎI sinh ra nó.
+        # Model đọc câu đáp mồ côi thì mất mạch. 04-agent.md:99 chốt phải
+        # giữ trọn cặp; bỏ đúng một tin là đủ. Nếu chỉ đủ một tin thì thà
+        # trả rỗng còn hơn trả một câu đáp mồ côi.
+        if kept and kept[0].role == "assistant":
+            if len(kept) == 1 or len(kept) >= 4:
+                kept.pop(0)
+        return kept
 
     async def list_days(self, user_id: str) -> List[DaySummary]:
         """Các ngày khách từng nhắn, mới nhất trước.
