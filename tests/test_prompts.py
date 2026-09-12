@@ -72,9 +72,11 @@ class TestHardWonRulesSurvive:
     def test_looking_up_own_appointments_must_call_the_tool(self):
         assert "list_my_appointments IMMEDIATELY" in BOOKING_PROMPT
 
-    def test_xung_ho_is_still_requested(self):
-        """Câu chốt lịch ghép bằng code; không có xung_ho thì nó không gọi tên khách."""
-        assert "xung_ho" in BOOKING_PROMPT
+    def test_the_prompt_does_not_ask_for_a_parameter_that_no_longer_exists(self):
+        """Xưng hô giờ suy ra bằng code từ full_name. Bảo model truyền `xung_ho`
+        trong khi tool đã bỏ tham số đó là làm hỏng tool call — LangChain nhận
+        kwarg lạ rồi báo lỗi."""
+        assert "xung_ho" not in BOOKING_PROMPT
 
 
 class TestSupervisorStaysMachineReadable:

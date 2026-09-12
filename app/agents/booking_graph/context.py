@@ -41,6 +41,44 @@ def format_vi_datetime(dt) -> str:
     return f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, {clock} {period}"
 
 
+# Tiền tố xưng hô nào cũng phải CẮT khỏi tên (prompt cấm nói cô/chú/bác),
+# nhưng chỉ một số cho biết giới tính để suy ra "anh" hay "chị".
+_HONORIFICS = {"cô", "chị", "bà", "chú", "anh", "ông", "bác", "em"}
+_GENDERED = {
+    "cô": "chị", "chị": "chị", "bà": "chị",
+    "chú": "anh", "anh": "anh", "ông": "anh",
+}
+
+
+def derive_address(full_name: Optional[str]) -> tuple[str, str]:
+    """Suy cách gọi khách từ tên. Trả (cách_gọi, tên_đã_bỏ_tiền_tố).
+
+    13/13 khách trong DB có full_name mang sẵn tiền tố ("Cô Lan", "Bác Bảy").
+    Đó là tín hiệu giới tính DUY NHẤT đang có — User model không có trường
+    giới tính — nên map nó thay vì vứt đi. "Bác" không cho biết giới nên lùi
+    về "anh chị", trùng với fallback vốn có ở confirm.py.
+    """
+    parts = (full_name or "").split()
+    if len(parts) >= 2 and parts[0].lower() in _HONORIFICS:
+        return _GENDERED.get(parts[0].lower(), "anh chị"), " ".join(parts[1:])
+    return "anh chị", ""
+
+
+def address_phrase(full_name: Optional[str]) -> str:
+    """'chị Lan', 'anh Hùng', hoặc 'anh chị' khi không đoán được giới tính.
+
+    Không ghép tên vào lời gọi trống: "anh chị Bảy" không ai nói.
+    """
+    address, name = derive_address(full_name)
+    return f"{address} {name}" if name and address != "anh chị" else address
+
+
+def display_name(full_name: Optional[str]) -> str:
+    """Tên để hiển thị trong khối bối cảnh, đã bỏ tiền tố xưng hô."""
+    _, name = derive_address(full_name)
+    return name or full_name or "khách"
+
+
 def build_context_block(
     user: User,
     status: ShopStatusView,
@@ -66,7 +104,11 @@ def build_context_block(
         # Kèm luôn dạng ISO để model khỏi phải tự cộng trừ ngày rồi tính nhầm.
         f"Bây giờ là {format_vi_datetime(local_now)} "
         f"(hôm nay là {local_now.date().isoformat()}, giờ Việt Nam).",
-        f"Bạn đang nói chuyện với: {user.full_name or 'khách'} ({user.phone}).",
+        f"Bạn đang nói chuyện với: {display_name(user.full_name)} ({user.phone}).",
+        # Chốt MỘT cách gọi cho cả cuộc. Không có dòng này thì model tự chọn
+        # lại mỗi lượt: transcript đã thấy cùng một khách bị gọi "chú Hùng"
+        # ở lượt 3 rồi "chị" ở lượt 5.
+        f"Gọi khách là: {address_phrase(user.full_name)}.",
     ]
 
     if status.is_busy:

@@ -148,33 +148,35 @@ class TestAffirmativeVariants:
 class TestConfirmUsesTheRightHonorific:
     """Câu chốt lịch phải gọi khách đúng như đã gọi lúc hỏi xác nhận.
 
-    Node confirm chạy 0 lượt LLM nên không tự suy ra được danh xưng: "Nguyễn
-    Thị Lan" không cho biết khách là cô, bác hay chú. Vì vậy danh xưng do model
-    điền lúc propose_appointment và lưu kèm pending — confirm chỉ đọc lại.
+    Node confirm chạy 0 lượt LLM, nhưng KHÔNG cần model mách nữa: danh xưng suy
+    ra bằng code từ `full_name`, vốn mang sẵn tiền tố ("Chú Ba", "Cô Lan"). Nhận
+    từ model là mong manh — model quên truyền thì câu chốt mất lời gọi.
 
-    Gọi "cô chú" cho một người khách vừa tự xưng "bác" nghe như đọc loa phường.
+    Tiền tố được MAP chứ không chép lại: "Chú Ba" thành "anh Ba". Prompt cấm
+    tuyệt đối nói "cô", "chú", "bác" — chúng không đi cùng giọng "em — anh/chị".
     """
 
-    async def test_the_honorific_from_the_proposal_is_used(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+    async def test_the_honorific_is_derived_from_the_customer_name(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         await ConversationService(test_db).set_pending(str(user.id), {
             "start_at": tomorrow_at(15).isoformat(),
             "note": "cắt tóc",
-            "xung_ho": "bác Ba",
         })
         node = make_confirm_node(test_db, user)
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": "cắt tóc", "xung_ho": "bác Ba"}})
+                              "note": "cắt tóc"}})
 
-        assert "bác Ba" in out["answer"]
+        assert "anh Ba" in out["answer"]
+        # "Chú" là tiền tố để SUY giới tính, không phải chữ để nói lại với khách.
+        assert "chú" not in out["answer"].lower()
         assert "cô chú" not in out["answer"]
 
-    async def test_without_an_honorific_it_does_not_invent_one(self, test_db):
-        """Thiếu danh xưng thì bỏ hẳn lời xưng hô, KHÔNG rơi về "cô chú" —
+    async def test_without_a_derivable_honorific_it_does_not_invent_one(self, test_db):
+        """Tên không có tiền tố thì lùi về "anh chị", KHÔNG rơi về "cô chú" —
         đoán sai còn tệ hơn không gọi."""
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Nguyễn Thị Lan")
         node = make_confirm_node(test_db, user)
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
@@ -189,7 +191,7 @@ class TestConfirmUsesTheRightHonorific:
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
+                              "note": None}})
 
         assert "3 giờ chiều" in out["answer"]
 
@@ -197,24 +199,24 @@ class TestConfirmUsesTheRightHonorific:
 class TestHonorificInTheOtherBranches:
     """Danh xưng phải dùng ở MỌI nhánh của confirm, không riêng nhánh thành công.
 
-    Khách nói "cắt tóc cho bác", AI đáp "đúng không bác?", rồi khách đổi ý — mà
-    câu tiếp theo gọi họ là "cô chú" thì công sức xưng hô ở trên đổ sông đổ bể.
+    Khách được gọi "anh Ba" suốt cuộc, rồi đổi ý — mà câu tiếp theo gọi họ là
+    "cô chú" thì công sức xưng hô ở trên đổ sông đổ bể.
     """
 
     async def test_declining_keeps_the_honorific(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         node = make_confirm_node(test_db, user)
-        out = await node({"messages": [HumanMessage(content="thôi khỏi con")],
+        out = await node({"messages": [HumanMessage(content="thôi khỏi")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
+                              "note": None}})
 
-        assert "bác Ba" in out["answer"]
+        assert "anh Ba" in out["answer"]
         assert "cô chú" not in out["answer"].lower()
 
     async def test_a_taken_slot_keeps_the_honorific(self, test_db):
         """Giờ vừa bị người khác đặt mất giữa hai lượt."""
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         other = await AuthService(test_db).create_user("0999888777", "matkhau123", "Người khác")
         await AppointmentService(test_db).create(other, tomorrow_at(15), "làm tóc")
 
@@ -222,12 +224,12 @@ class TestHonorificInTheOtherBranches:
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
+                              "note": None}})
 
         assert "cô chú" not in out["answer"].lower(), out["answer"]
 
     async def test_without_an_honorific_the_decline_branch_stays_polite(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Nguyễn Thị Lan")
         node = make_confirm_node(test_db, user)
         out = await node({"messages": [HumanMessage(content="thôi")],
                           "pending_confirmation": {

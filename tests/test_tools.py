@@ -242,3 +242,11 @@ async def test_tool_descriptions_are_english(test_db):
     # Ví dụ PHẢI còn tiếng Việt — dịch đi thì ví dụ vô nghĩa.
     assert "mai 3h chiều" in descriptions["parse_time"]
     assert "NO tool writes an appointment directly" in descriptions["propose_appointment"]
+
+
+async def test_propose_appointment_has_no_xung_ho_parameter(test_db):
+    """Xưng hô giờ suy ra bằng code từ full_name — model không cần truyền,
+    và không được phép truyền (kwarg lạ làm tool call lỗi)."""
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    tools = {t.name: t for t in make_booking_tools(test_db, user)}
+    assert "xung_ho" not in tools["propose_appointment"].args

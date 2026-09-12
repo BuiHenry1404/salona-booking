@@ -88,15 +88,9 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
 
     @tool
-    async def propose_appointment(
-        start_at: str, note: Optional[str] = None, xung_ho: Optional[str] = None
-    ) -> str:
+    async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
         """Hold the slot temporarily and prepare the confirmation question.
         `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
-        `xung_ho` is how you addressed the customer in the sentence you just
-        wrote: "chị Lan", "anh Ba". The closing sentence on the next turn is
-        assembled in code, not by you; omit this and that sentence will not
-        address the customer by name.
         Call this tool, then ask the customer to confirm. NO tool writes an
         appointment directly — it is written only when the customer agrees on
         the NEXT turn."""
@@ -127,8 +121,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
         # thể chép sai giờ giữa hai lượt.
         await conversations.set_pending(
-            str(user.id),
-            {"start_at": start.isoformat(), "note": note, "xung_ho": xung_ho},
+            str(user.id), {"start_at": start.isoformat(), "note": note},
         )
         note_text = f", {note}" if note else ""
         return (

@@ -115,11 +115,6 @@ HARD RULES:
      same question.
    Still say the date out loud to the customer before the appointment is written.
 
-6. When you call propose_appointment, always pass `xung_ho` — the exact form of
-   address you used in that sentence ("chị Lan", "anh Ba", "anh Hùng"). The
-   closing sentence on the next turn is assembled in code, not by you; omit this
-   and that sentence will not address the customer by name.
-
 7. Write exactly ONE reply per turn. Never write the same sentence twice in one
    reply.
 
