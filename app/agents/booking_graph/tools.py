@@ -87,7 +87,10 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         turns: if they said "sáng mai" then answered "9 giờ", pass
         "sáng mai 9 giờ", not "9 giờ". This tool reads only the string you give
         it — it cannot see earlier turns.
-        Example `text`: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai"."""
+        Example `text`: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai".
+        Result has `missing` -> ask the customer for exactly that ONE missing
+        piece, one piece per turn. For missing ["sáng hay chiều"] ask
+        "Dạ 3 giờ chiều hay 3 giờ sáng ạ chị?" and nothing else."""
         parsed: ParsedTime = await parse_vi_time(text, now_utc())
         # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
         # để chuyển thẳng sang propose_appointment, không được diễn giải lại.
@@ -98,7 +101,14 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     @tool
     async def find_free_slots(day: str) -> str:
         """Free slots on one day. `day` is YYYY-MM-DD, taken from the
-        "Bây giờ là..." line in the context block — never guess the date."""
+        "Bây giờ là..." line in the context block — never guess the date.
+        Use ONLY what this tool returns — never invent a free slot.
+        If the time they asked for is taken, offer the two free slots nearest
+        to it.
+        Only when the customer says the salon may choose ("lúc nào vắng thì
+        xếp em", "khi nào rảnh cũng được") call this for today — or tomorrow
+        if today is finished — then offer two or three slots. If they have NOT
+        named a day, ask which day first. Never assume today."""
         try:
             slots = await service.find_free_slots(date.fromisoformat(day))
         except ValueError:
@@ -152,7 +162,11 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     @tool
     async def list_my_appointments() -> str:
         """The customer's own upcoming appointments. Call this before cancelling,
-        to get the appointment id."""
+        to get the appointment id.
+        When the customer asks about their OWN appointments ("chị có lịch lúc
+        nào", "xem giùm em"), call this IMMEDIATELY — never ask for a date
+        first, the tool filters by the logged-in customer. If they have none,
+        say so plainly."""
         appointments = await service.upcoming_for(user)
         if not appointments:
             return "Khách chưa có lịch nào sắp tới."

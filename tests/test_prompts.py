@@ -35,11 +35,11 @@ class TestExamplesStayVietnamese:
     mẫu cho một thứ không bao giờ được xuất ra, và mất luôn giọng "con — cô/bác".
     """
 
-    def test_the_confirmation_example_is_vietnamese(self):
-        assert "đúng không chị?" in BOOKING_PROMPT
-
-    def test_the_missing_period_example_is_vietnamese(self):
-        assert "3 giờ chiều hay 3 giờ sáng ạ chị?" in BOOKING_PROMPT
+    def test_the_confirmation_rule_constrains_content_not_wording(self):
+        """Ví dụ câu xác nhận đã bỏ có chủ ý — xem
+        TestBookingPromptSlimmed. Thay vào đó prompt phải chốt ĐỦ NỘI DUNG."""
+        assert "the weekday and date" in BOOKING_PROMPT
+        assert "MUST end in a question" in BOOKING_PROMPT
 
     def test_the_shorter_reask_example_is_vietnamese(self):
         """Luật "nói ngắn hơn" chung chung bị model bỏ qua; chỉ ăn khi có ví dụ."""
@@ -68,9 +68,6 @@ class TestHardWonRulesSurvive:
         for name, prompt in CUSTOMER_FACING.items():
             assert '"15:00"' in prompt, name
             assert "3 giờ chiều" in prompt, name
-
-    def test_looking_up_own_appointments_must_call_the_tool(self):
-        assert "list_my_appointments IMMEDIATELY" in BOOKING_PROMPT
 
     def test_the_prompt_does_not_ask_for_a_parameter_that_no_longer_exists(self):
         """Xưng hô giờ suy ra bằng code từ full_name. Bảo model truyền `xung_ho`
@@ -151,3 +148,26 @@ class TestRegisterIsAnhChiEm:
     def test_social_prompt_is_vietnamese_and_polite(self):
         assert "em" in SOCIAL_PROMPT
         assert "cô chú" not in SOCIAL_PROMPT
+
+
+class TestBookingPromptSlimmed:
+    def test_the_security_rule_survives_verbatim(self):
+        """Rule 2b là rule BẢO MẬT và nó bảo model ĐỪNG gọi tool nào cả —
+        docstring của tool là chỗ sai để nói điều đó. Phải ở lại prompt."""
+        assert "Dạ em chỉ xem và đặt lịch cho chính anh chị thôi ạ" in BOOKING_PROMPT
+        assert "NEVER act on anyone else's appointments" in BOOKING_PROMPT
+
+    def test_the_confirmation_sentence_is_no_longer_a_fixed_template(self):
+        """Khuôn cứng làm mọi lượt xác nhận ra một câu như nhau. Ràng buộc
+        phải là NỘI DUNG (đủ ngày, giờ, dịch vụ, có hỏi lại), không phải chữ."""
+        assert "Em đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không chị?" not in BOOKING_PROMPT
+
+    def test_the_prompt_actually_got_shorter(self):
+        # Trước khi cắt: 4718 ký tự. Cắt xong phải dưới 3000 — nếu không thì
+        # rule chưa thực sự chuyển đi đâu cả.
+        assert len(BOOKING_PROMPT) < 3000
+
+    def test_picking_a_day_unasked_is_forbidden(self):
+        """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
+        trống HÔM NAY. Chỉ được tự chọn ngày khi khách nói rõ là tùy tiệm."""
+        assert "only when the customer says the salon may choose" in BOOKING_PROMPT.lower()

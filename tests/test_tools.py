@@ -290,3 +290,37 @@ class TestShopHoursTool:
     async def test_no_closed_days_says_open_all_week(self, test_db):
         out = await self._call(test_db, "08:00", "19:00", [])
         assert "cả tuần" in out
+
+
+class TestRulesMovedIntoToolDescriptions:
+    """Rule cắt khỏi BOOKING_PROMPT không được bốc hơi — docstring của tool đi
+    thẳng vào tool schema gửi cho model, nên nó vẫn là prompt.
+    Câu MẪU trong đó phải giữ tiếng Việt: chúng là bản mẫu của thứ model sẽ nói
+    với khách, dịch sang tiếng Anh là mẫu cho một thứ không bao giờ xuất ra."""
+
+    async def _descriptions(self, test_db):
+        user = await a_user(test_db)
+        return {
+            t.name: " ".join(t.description.split())
+            for t in make_booking_tools(test_db, user)
+        }
+
+    async def test_the_missing_period_example_is_vietnamese(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "3 giờ chiều hay 3 giờ sáng ạ chị?" in d["parse_time"]
+
+    async def test_looking_up_own_appointments_must_call_the_tool(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "call this IMMEDIATELY" in d["list_my_appointments"]
+        assert "never ask for a date" in d["list_my_appointments"]
+
+    async def test_free_slots_are_never_invented(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "never invent a free slot" in d["find_free_slots"]
+
+    async def test_the_salon_may_not_pick_the_day_unasked(self, test_db):
+        """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
+        trống HÔM NAY."""
+        d = await self._descriptions(test_db)
+        assert "Never assume today." in d["find_free_slots"]
+        assert "lúc nào vắng thì xếp em" in d["find_free_slots"]
