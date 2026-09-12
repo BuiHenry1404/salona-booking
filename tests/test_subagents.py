@@ -81,15 +81,47 @@ async def test_tool_result_is_fed_back_to_the_model(patch_model):
 
 @pytest.mark.asyncio
 async def test_context_block_is_the_last_message_before_the_question(patch_model):
-    """Bố cục prompt: khối bối cảnh đổi mỗi lượt nên phải đứng sát cuối,
-    không nhét vào system prompt — nếu không prompt cache không bao giờ trúng."""
+    """Bố cục prompt: System → lịch sử → bối cảnh → câu hỏi mới.
+
+    Đây là thứ tự `CONTEXT.md` bẫy #9 đã chốt. Lời khách phải là thứ CUỐI
+    model đọc: model bắt chước giọng người đối thoại, nên để một khối trạng
+    thái đứng cuối là nó sinh ra giọng biểu mẫu.
+
+    Tiền tố cache được vẫn chỉ là `SystemMessage` — lịch sử vốn đổi mỗi
+    lượt — nên đổi chỗ này không mất gì.
+    """
     model = patch_model([AIMessage(content="xong")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    await node(a_state())
+    await node(a_state("mai còn trống không em"))
 
     contents = [str(getattr(m, "content", "")) for m in model.calls[0]]
-    assert contents[0] == "prompt"                    # system đứng đầu, ổn định
-    assert "0912345678" in contents[-1]               # bối cảnh đứng cuối
+    assert contents[0] == "prompt"                       # system đứng đầu, ổn định
+    assert "0912345678" in contents[-2]                  # bối cảnh áp chót
+    assert contents[-1] == "mai còn trống không em"      # lời khách đứng cuối
+
+
+@pytest.mark.asyncio
+async def test_history_stays_in_order_before_the_context_block(patch_model):
+    """Lịch sử không được xáo: model đọc mạch hội thoại theo đúng thứ tự
+    xảy ra, rồi mới tới bối cảnh, rồi tới câu mới."""
+    model = patch_model([AIMessage(content="xong")])
+    node = make_subagent_node("prompt", [fake_lookup], tag="respond")
+    await node({
+        "messages": [
+            HumanMessage(content="câu cũ"),
+            AIMessage(content="đáp cũ"),
+            HumanMessage(content="câu mới"),
+        ],
+        "user_id": "u1",
+        "context_block": "Bạn đang nói chuyện với: Cô Lan (0912345678).",
+    })
+
+    contents = [str(getattr(m, "content", "")) for m in model.calls[0]]
+    assert contents == [
+        "prompt", "câu cũ", "đáp cũ",
+        "Bạn đang nói chuyện với: Cô Lan (0912345678).",
+        "câu mới",
+    ]
 
 
 @pytest.mark.asyncio
