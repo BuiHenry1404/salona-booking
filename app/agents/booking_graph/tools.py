@@ -4,7 +4,7 @@ from typing import List, Optional
 from langchain_core.tools import BaseTool, tool
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError
@@ -31,7 +31,14 @@ def _parse_local(value: str) -> datetime:
     return parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed
 
 
-def make_status_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
+# Index CHÍNH LÀ giá trị trong closed_days: 0 = Chủ Nhật (app/models/shop.py).
+# Ngược với datetime.weekday() của Python, nên tuyệt đối không dùng _WEEKDAYS.
+_CLOSED_DAY_NAMES = [
+    "Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy",
+]
+
+
+def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     shop = ShopService(db)
 
     @tool
@@ -46,7 +53,20 @@ def make_status_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # 30 phút" đọc lại sau một tiếng là sai hẳn, "3:30 chiều" thì vẫn đúng.
         return f"Chủ tiệm đang bận, xong lúc {format_vi_datetime(status.busy_until)}."
 
-    return [get_shop_status]
+    @tool
+    async def get_shop_hours() -> str:
+        """Opening hours and closed days. Call this when the customer asks what
+        time the salon opens or closes, or whether it is open on a given day."""
+        hours = await shop.get_hours()
+        closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
+                  if 0 <= d < len(_CLOSED_DAY_NAMES)]
+        closed_text = f"Nghỉ {', '.join(closed)}." if closed else "Mở cả tuần."
+        return (
+            f"Tiệm mở từ {format_vi_hhmm(hours.open_time)} "
+            f"đến {format_vi_hhmm(hours.close_time)}. {closed_text}"
+        )
+
+    return [get_shop_status, get_shop_hours]
 
 
 def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:

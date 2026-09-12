@@ -15,6 +15,34 @@ from app.services.shop import ShopService
 _WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
 
 
+def _clock_phrase(hour: int, minute: int) -> str:
+    """'3 giờ chiều', '9 giờ rưỡi sáng', '1 giờ 45 chiều'.
+
+    Dùng chung cho cả datetime lẫn chuỗi 'HH:MM' — hai chỗ mà lệch nhau một
+    chữ là khách nghe ra hai giọng khác nhau trong cùng một cuộc.
+    """
+    if hour < 12:
+        period, display = "sáng", hour
+    elif hour < 18:
+        period, display = "chiều", hour - 12 if hour > 12 else 12
+    else:
+        period, display = "tối", hour - 12
+
+    if minute == 0:
+        clock = f"{display} giờ"
+    elif minute == 30:
+        clock = f"{display} giờ rưỡi"      # không ai đọc "9 giờ 30"
+    else:
+        clock = f"{display} giờ {minute:02d}"
+    return f"{clock} {period}"
+
+
+def format_vi_hhmm(hhmm: str) -> str:
+    """'08:00' -> '8 giờ sáng'. Giờ mở cửa lưu dạng chuỗi, không phải datetime."""
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    return _clock_phrase(hour, minute)
+
+
 def format_vi_datetime(dt) -> str:
     """'Thứ Sáu 7/8, 3 giờ chiều' — cách người Việt lớn tuổi thực sự nói giờ.
 
@@ -23,22 +51,8 @@ def format_vi_datetime(dt) -> str:
     khối bối cảnh) nên nó phải đọc lên nghe được.
     """
     local = to_local(dt)
-    hour = local.hour
-    if hour < 12:
-        period, display = "sáng", hour
-    elif hour < 18:
-        period, display = "chiều", hour - 12 if hour > 12 else 12
-    else:
-        period, display = "tối", hour - 12
-
-    minute = local.minute
-    if minute == 0:
-        clock = f"{display} giờ"
-    elif minute == 30:
-        clock = f"{display} giờ rưỡi"      # không ai đọc "9 giờ 30"
-    else:
-        clock = f"{display} giờ {minute:02d}"
-    return f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, {clock} {period}"
+    return (f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, "
+            f"{_clock_phrase(local.hour, local.minute)}")
 
 
 # Tiền tố xưng hô nào cũng phải CẮT khỏi tên (prompt cấm nói cô/chú/bác),

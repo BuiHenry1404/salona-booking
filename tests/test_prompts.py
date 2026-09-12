@@ -10,9 +10,9 @@ không bị xoá mất trong một lần sửa prompt sau này.
 import re
 
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REFUSE_MESSAGE,
-                                              STATUS_PROMPT, SUPERVISOR_PROMPT)
+                                              SHOP_PROMPT, SUPERVISOR_PROMPT)
 
-CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "STATUS_PROMPT": STATUS_PROMPT}
+CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "SHOP_PROMPT": SHOP_PROMPT}
 
 
 class TestOutputLanguageIsPinned:
@@ -46,7 +46,7 @@ class TestExamplesStayVietnamese:
         assert "anh chị chọn giờ nào ạ" in BOOKING_PROMPT
 
     def test_the_absolute_finish_time_example_is_vietnamese(self):
-        assert "xong lúc 3 giờ rưỡi chiều ạ" in STATUS_PROMPT
+        assert "xong lúc 3 giờ rưỡi chiều ạ" in SHOP_PROMPT
 
 
 class TestHardWonRulesSurvive:

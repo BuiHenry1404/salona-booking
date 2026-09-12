@@ -3,12 +3,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import make_subagent_node
 from app.agents.booking_graph.confirm import make_confirm_node
-from app.agents.booking_graph.prompts import BOOKING_PROMPT, STATUS_PROMPT
+from app.agents.booking_graph.prompts import BOOKING_PROMPT, SHOP_PROMPT
 from app.agents.booking_graph.state import GraphState
 from app.agents.booking_graph.supervisor import (refuse, route_from_state,
                                                  supervise)
 from app.agents.booking_graph.tools import (make_booking_tools,
-                                            make_status_tools)
+                                            make_shop_tools)
 from app.models.user import User
 
 RESPOND_TAG = "respond"
@@ -26,8 +26,8 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     graph.add_node("refuse", refuse)
     graph.add_node("confirm", make_confirm_node(db, user))
     graph.add_node(
-        "status",
-        make_subagent_node(STATUS_PROMPT, make_status_tools(db, user), tag=RESPOND_TAG),
+        "shop",
+        make_subagent_node(SHOP_PROMPT, make_shop_tools(db, user), tag=RESPOND_TAG),
     )
     graph.add_node(
         "booking",
@@ -41,10 +41,10 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     graph.add_conditional_edges(
         "supervisor",
         lambda state: state["route"],
-        {"booking": "booking", "status": "status", "refuse": "refuse"},
+        {"booking": "booking", "shop": "shop", "refuse": "refuse"},
     )
 
-    for node in ("confirm", "refuse", "status", "booking"):
+    for node in ("confirm", "refuse", "shop", "booking"):
         graph.add_edge(node, END)
 
     return graph.compile()

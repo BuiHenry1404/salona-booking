@@ -3,7 +3,8 @@ from datetime import datetime
 from app.agents.booking_graph.context import (address_phrase,
                                               build_context_block,
                                               derive_address, display_name,
-                                              format_vi_datetime)
+                                              format_vi_datetime,
+                                              format_vi_hhmm)
 from app.core.clock import TZ
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
@@ -113,7 +114,7 @@ class TestFormatViDatetime:
             datetime(2026, 8, 7, 15, 0, tzinfo=TZ)) == "Thứ Sáu 7/8, 3 giờ chiều"
 
     def test_half_past_is_said_as_ruoi(self):
-        """Không ai nói "9 giờ 30" — người ta nói "9 rưỡi". STATUS_PROMPT cũng
+        """Không ai nói "9 giờ 30" — người ta nói "9 rưỡi". SHOP_PROMPT cũng
         đang lấy "3 giờ rưỡi chiều" làm ví dụ mẫu."""
         assert format_vi_datetime(
             datetime(2026, 8, 7, 9, 30, tzinfo=TZ)) == "Thứ Sáu 7/8, 9 giờ rưỡi sáng"
@@ -203,3 +204,26 @@ class TestContextBlockAddress:
         block = self._block("Bác Bảy")
         for cam in ("Cô ", "Chú ", "Bác "):
             assert cam not in block
+
+
+class TestFormatVietnameseHhmm:
+    """Giờ mở cửa lưu dạng chuỗi 'HH:MM', không phải datetime — nhưng đọc
+    lên vẫn phải nghe như người nói, không phải '08:00'."""
+
+    def test_morning(self):
+        assert format_vi_hhmm("08:00") == "8 giờ sáng"
+
+    def test_afternoon(self):
+        assert format_vi_hhmm("14:00") == "2 giờ chiều"
+
+    def test_noon_is_afternoon(self):
+        assert format_vi_hhmm("12:00") == "12 giờ chiều"
+
+    def test_evening(self):
+        assert format_vi_hhmm("19:00") == "7 giờ tối"
+
+    def test_half_past_reads_as_ruoi(self):
+        assert format_vi_hhmm("09:30") == "9 giờ rưỡi sáng"
+
+    def test_odd_minutes(self):
+        assert format_vi_hhmm("13:45") == "1 giờ 45 chiều"
