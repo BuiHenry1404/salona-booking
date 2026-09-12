@@ -376,28 +376,37 @@ async def test_history_never_starts_with_an_orphaned_answer(test_db):
 
     Model đọc một câu đáp không có câu hỏi thì mất mạch — đó đúng là điều
     04-agent.md:99 cấm.
+
+    Số học phải CHỐT CHẶT, không được để may rủi: giữ được số tin CHẴN thì
+    tin cũ nhất tình cờ là `user` và test xanh cả khi chưa sửa gì. Mỗi tin
+    dài đúng 30 ký tự -> cost = 30 // CHARS_PER_TOKEN = 10. Ngân sách 50 giữ
+    đúng 5 tin — số LẺ — nên tin cũ nhất chắc chắn là `assistant`.
     """
     svc = ConversationService(test_db)
-    for i in range(40):
-        await svc.append("u1", "user", f"khách hỏi câu {i} " * 6)
-        await svc.append("u1", "assistant", f"bot đáp câu {i} " * 6)
+    for _ in range(10):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
 
-    history = await svc.history("u1", token_budget=200)
+    history = await svc.history("u1", token_budget=50)
 
-    assert history, "ngân sách 200 token phải đủ cho ít nhất một cặp"
-    assert history[0].role == "user"
+    assert history, "ngân sách 50 token phải đủ cho ít nhất một cặp"
+    assert history[0].role == "user", [m.role for m in history]
+    # Bỏ đúng một tin mồ côi, không bỏ cả cặp còn lành.
+    assert len(history) == 4
 
 
 async def test_history_keeps_whole_pairs_when_the_budget_is_tiny(test_db):
     """Ngân sách nhỏ tới mức chỉ đủ một tin: thà trả rỗng còn hơn trả một
-    câu đáp mồ côi."""
+    câu đáp mồ côi.
+
+    Vòng lặp luôn giữ tin mới nhất dù vượt ngân sách (`and kept` chỉ chặn từ
+    tin thứ hai), nên chưa sửa thì hàm trả về đúng một `assistant` mồ côi.
+    """
     svc = ConversationService(test_db)
-    await svc.append("u1", "user", "câu hỏi rất dài " * 40)
-    await svc.append("u1", "assistant", "câu đáp rất dài " * 40)
+    await svc.append("u1", "user", "u" * 30)
+    await svc.append("u1", "assistant", "a" * 30)
 
-    history = await svc.history("u1", token_budget=10)
-
-    assert all(m.role == "user" for m in history[:1]) or history == []
+    assert await svc.history("u1", token_budget=1) == []
 ```
 
 - [ ] **Step 2: Chạy test cho chắc là fail**
