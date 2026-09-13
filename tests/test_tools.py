@@ -249,7 +249,7 @@ async def test_parse_time_is_not_given_to_the_status_agent(test_db):
 
 async def test_tool_descriptions_are_english(test_db):
     """Docstring của tool đi vào tool schema gửi cho model — nó là prompt.
-    CONTEXT.md:94: prompt viết tiếng Anh, câu mẫu giữ tiếng Việt."""
+    Từ 2026-09-13 nó là tiếng Anh TOÀN BỘ, kể cả ví dụ."""
     user = await a_user(test_db)
     # Gộp khoảng trắng: docstring xuống dòng giữa câu, so chuỗi thô thì một cụm
     # bị ngắt dòng sẽ không khớp dù nội dung đúng.
@@ -260,8 +260,6 @@ async def test_tool_descriptions_are_english(test_db):
 
     assert descriptions["parse_time"].startswith("Turn what the customer said")
     assert "Call this BEFORE find_free_slots" in descriptions["parse_time"]
-    # Ví dụ PHẢI còn tiếng Việt — dịch đi thì ví dụ vô nghĩa.
-    assert "mai 3h chiều" in descriptions["parse_time"]
     assert "NO tool writes an appointment directly" in descriptions["propose_appointment"]
 
 
@@ -314,8 +312,9 @@ class TestShopHoursTool:
 class TestRulesMovedIntoToolDescriptions:
     """Rule cắt khỏi BOOKING_PROMPT không được bốc hơi — docstring của tool đi
     thẳng vào tool schema gửi cho model, nên nó vẫn là prompt.
-    Câu MẪU trong đó phải giữ tiếng Việt: chúng là bản mẫu của thứ model sẽ nói
-    với khách, dịch sang tiếng Anh là mẫu cho một thứ không bao giờ xuất ra."""
+
+    Từ 2026-09-13 docstring là tiếng Anh toàn bộ, nên các test dưới đây canh
+    NỘI DUNG của rule chứ không canh câu mẫu tiếng Việt nữa."""
 
     async def _descriptions(self, test_db):
         user = await a_user(test_db)
@@ -324,9 +323,12 @@ class TestRulesMovedIntoToolDescriptions:
             for t in make_booking_tools(test_db, user)
         }
 
-    async def test_the_missing_period_example_is_vietnamese(self, test_db):
+    async def test_only_one_missing_piece_is_asked_per_turn(self, test_db):
+        """Luật này trước đây sống nhờ một câu mẫu tiếng Việt; câu mẫu bỏ rồi
+        thì luật phải tự đứng được bằng lời tiếng Anh."""
         d = await self._descriptions(test_db)
-        assert "3 giờ chiều hay 3 giờ sáng ạ chị?" in d["parse_time"]
+        assert "exactly that ONE missing piece" in d["parse_time"]
+        assert "one piece per turn" in d["parse_time"]
 
     async def test_looking_up_own_appointments_must_call_the_tool(self, test_db):
         d = await self._descriptions(test_db)
@@ -342,4 +344,4 @@ class TestRulesMovedIntoToolDescriptions:
         trống HÔM NAY."""
         d = await self._descriptions(test_db)
         assert "Never assume today." in d["find_free_slots"]
-        assert "lúc nào vắng thì xếp em" in d["find_free_slots"]
+        assert "ask which day first" in d["find_free_slots"]
