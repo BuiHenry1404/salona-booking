@@ -327,6 +327,14 @@ giới ngữ nghĩa thành phép so khớp từ.
 
 **Còn để ngỏ (chưa sửa):**
 
+- Hai lần từ chối liên tiếp (rule 4) ra câu gần y nhau. KHÔNG phải hard-code
+  — cả hai đều stream từ LLM, code không có chuỗi đó. Model chép lại câu của
+  chính nó trong lịch sử ở temperature 0.2. Đã thử: (1) thêm vế "không dùng
+  lại nguyên câu" vào `_NO_REPEAT` → không ăn, rule 4 viết hoa át nó; (2) đặt
+  vế đó NGAY TRONG rule 4 → chỉ khác vài chữ ("của chị" → "của chị Thắm").
+  Giữ (2) vì vô hại và có test canh. Muốn khác hẳn thì phải đụng temperature
+  của node respond — đổi hành vi toàn cục, chưa làm.
+
 - Parser thời gian không ổn định với "mai" sát nửa đêm: hai lần chạy cách nhau
   một phút, một lần ra 15/9 đúng, một lần ra 14/9 (hôm nay). Nhánh LLM của
   `parse_vi_time`, không phải regex.
