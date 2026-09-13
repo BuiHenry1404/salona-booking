@@ -290,3 +290,81 @@ class TestRightNow:
 
         assert result.start_at is None
         assert result.missing == ["ngày khác — giờ đó qua mất rồi"]
+
+
+class TestMissingIsAClosedVocabulary:
+    """`missing` là thứ lễ tân đọc lên để hỏi lại khách, nên nó phải là một bộ
+    câu hỏi ĐÓNG, không phải chuỗi tự do.
+
+    Ca thật ngày 2026-09-13: cùng một dạng câu, LLM trả hai kiểu khác nhau —
+    "thứ năm tuần sau" ra `partial_date=17/9, missing=["giờ cụ thể"]` (đúng),
+    còn "thứ ba tuần sau" ra `partial_date=None,
+    missing=["thứ ba tuần sau là ngày nào cụ thể"]` (hỏi ngược lại chính cái
+    ngày nó vừa tính được). Schema cũ cho `List[str]` nên không gì chặn.
+
+    Đóng enum là biến "đừng làm vậy" thành "không làm được" — cùng nguyên lý
+    với 'agent không có tool ghi lịch'.
+    """
+
+    def test_rejects_a_question_outside_the_vocabulary(self):
+        with pytest.raises(ValueError):
+            ParsedTime(missing=["thứ ba tuần sau là ngày nào cụ thể"])
+
+    @pytest.mark.parametrize("question", [
+        "giờ cụ thể",
+        "sáng hay chiều",
+        "ngày nào",
+        "tuần này hay tuần sau",
+        "ngày khác — giờ đó qua mất rồi",
+        "ngày gần hơn",
+    ])
+    def test_accepts_every_question_the_code_actually_asks(self, question):
+        """Sáu giá trị này đang được sinh ra thật — bốn từ LLM, hai từ `_guard`.
+        Bỏ sót một cái là `_guard` ném lỗi ngay giữa lượt chat của khách."""
+        assert ParsedTime(missing=[question]).missing == [question]
+
+
+class TestKnownDayIsNeverAskedAgain:
+    """Xác định được ngày rồi mà vẫn hỏi lại ngày là tự mâu thuẫn — đó đúng là
+    hình dạng của lỗi "thứ ba tuần sau".
+
+    ÉP về dạng đúng, KHÔNG ném lỗi. Ném thì `parse_vi_time` rơi vào nhánh
+    fail-soft và vứt luôn `partial_date` vừa giải được — đo thật thấy nó biến
+    ca "thứ năm tuần sau" từ đúng thành sai. Giữ ngày, bỏ câu hỏi thừa.
+    """
+
+    def test_the_day_question_is_dropped_when_the_day_is_known(self):
+        parsed = ParsedTime(partial_date=date(2026, 9, 15), missing=["ngày nào"])
+        assert parsed.partial_date == date(2026, 9, 15)
+        assert "ngày nào" not in parsed.missing
+
+    def test_the_week_question_is_dropped_too(self):
+        parsed = ParsedTime(
+            partial_date=date(2026, 9, 15), missing=["tuần này hay tuần sau"]
+        )
+        assert parsed.partial_date == date(2026, 9, 15)
+        assert "tuần này hay tuần sau" not in parsed.missing
+
+    def test_dropping_the_day_question_leaves_the_time_question(self):
+        """Biết ngày, chưa biết giờ — lễ tân vẫn phải có gì đó để hỏi, không thì
+        agent tưởng đã đủ thông tin."""
+        parsed = ParsedTime(partial_date=date(2026, 9, 15), missing=["ngày nào"])
+        assert parsed.missing == ["giờ cụ thể"]
+
+    def test_a_known_start_needs_no_question_at_all(self):
+        """Đã có start_at thì không thiếu gì cả — đừng chèn câu hỏi thừa."""
+        parsed = ParsedTime(
+            start_at=datetime(2026, 9, 15, 15, 0, tzinfo=TZ),
+            partial_date=date(2026, 9, 15),
+            missing=["ngày nào"],
+        )
+        assert parsed.missing == []
+
+    def test_allows_asking_the_time_when_the_day_is_known(self):
+        """Ca ĐÚNG của "thứ năm tuần sau" — biết ngày, còn thiếu giờ."""
+        parsed = ParsedTime(partial_date=date(2026, 9, 17), missing=["giờ cụ thể"])
+        assert parsed.partial_date == date(2026, 9, 17)
+        assert parsed.missing == ["giờ cụ thể"]
+
+    def test_allows_asking_which_day_when_no_day_is_known(self):
+        assert ParsedTime(missing=["ngày nào"]).missing == ["ngày nào"]

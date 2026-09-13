@@ -84,19 +84,63 @@ class TestPromptsCarryNoVietnameseSampleSentences:
         assert "hair and nail appointments" in SOCIAL_PROMPT
 
 
-class TestDocstringsKeepTheirVietnameseExamples:
-    """Phạm vi quyết định 2026-09-13 CHỈ gồm prompt. Docstring của tool giữ
-    nguyên ví dụ tiếng Việt — chúng là dữ liệu khách gõ, dịch đi thì ví dụ
-    vô nghĩa."""
+def _tool_descriptions():
+    """Mô tả THẬT gửi cho model, không phải mã nguồn — docstring đi vào tool
+    schema, còn chuỗi trả về cho khách thì không."""
+    from unittest.mock import MagicMock
 
-    def test_tools_module_still_has_them(self):
-        from pathlib import Path
-        source = Path("app/agents/booking_graph/tools.py").read_text(encoding="utf-8")
-        assert "mai 3h chiều" in source
-        # Câu mẫu này xuống dòng trong docstring gốc ("lúc nào vắng thì\n
-        # xếp em"), nên so từng cụm thay vì nguyên chuỗi có khoảng trắng cố định.
-        assert "lúc nào vắng thì" in source
-        assert "xếp em" in source
+    from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
+    from app.models.user import User
+
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    db = MagicMock()
+    return {
+        t.name: " ".join(t.description.split())
+        for f in (make_shop_tools, make_booking_tools)
+        for t in f(db, user)
+    }
+
+
+class TestToolDescriptionsAreFullyEnglish:
+    """Quyết định 2026-09-13 (mở rộng): mô tả tool KHÔNG còn câu mẫu tiếng Việt.
+
+    Docstring của tool đi thẳng vào tool schema — nó là prompt, chỉ khác chỗ
+    đặt. Bản ghi trước chốt ngược lại (giữ ví dụ tiếng Việt); chủ dự án đổi
+    phạm vi sang gồm cả docstring.
+
+    NGOẠI LỆ — hai thứ ở lại vì chúng KHÔNG phải ví dụ mà là tham chiếu tới
+    chuỗi CÓ THẬT trong hệ thống. Dịch chúng là trỏ vào thứ không tồn tại.
+    """
+
+    def test_no_vietnamese_sample_sentence_remains(self):
+        gone = [
+            "mai 3h chiều", "thứ Năm tuần sau", "sáng mai", "9 giờ",
+            "lúc nào vắng thì", "xếp em", "khi nào rảnh cũng được",
+            "chị có lịch lúc nào", "xem giùm em",
+            "Dạ 3 giờ chiều hay 3 giờ sáng ạ chị",
+        ]
+        for name, text in _tool_descriptions().items():
+            for sample in gone:
+                assert sample not in text, f"{name} còn câu mẫu {sample!r}"
+
+    def test_the_context_block_line_is_quoted_verbatim(self):
+        """"Bây giờ là..." là dòng ĐẦU TIÊN có thật của khối bối cảnh
+        (`build_context_block`). Docstring đang chỉ model đọc ngày ở đó — dịch
+        sang tiếng Anh là trỏ vào một dòng không tồn tại, và bẫy #6 (đặt lệch
+        cả năm) thì không test nào bắt được."""
+        assert "Bây giờ là" in _tool_descriptions()["find_free_slots"]
+
+    def test_the_enum_value_is_quoted_verbatim(self):
+        """"sáng hay chiều" là giá trị enum THẬT mà parse_time trả về
+        (`MissingPiece`), không phải ví dụ."""
+        assert "sáng hay chiều" in _tool_descriptions()["parse_time"]
+
+    def test_the_instructions_themselves_are_english(self):
+        d = _tool_descriptions()
+        assert d["parse_time"].startswith("Turn what the customer said")
+        assert "Call this BEFORE find_free_slots" in d["parse_time"]
+        assert "never invent a free slot" in d["find_free_slots"]
+        assert "call this IMMEDIATELY" in d["list_my_appointments"]
 
 
 class TestHardWonRulesSurvive:
