@@ -246,3 +246,34 @@ class TestUpcomingAppointmentsCarryTheirId:
         block = build_context_block(a_user(), ShopStatusView(is_busy=False), [appt])
         line = next(l for l in block.splitlines() if str(appt.id) in l)
         assert "Thứ Sáu 7/8" in line and "làm tóc" in line
+
+
+class TestLastReplyIsQuotedSoItIsNotRepeated:
+    """Chạy thật 2026-09-14: hai lượt từ chối liên tiếp ra nguyên một câu. Luật
+    trong prompt (kể cả viết hoa) và temperature 0.6 đều không đổi được — model
+    neo vào câu của chính nó trong lịch sử. Khối bối cảnh đứng ngay trước câu
+    khách, nên đặt lệnh "đừng nói lại nguyên câu này" ở đây, kèm chính câu đó.
+    """
+
+    def test_the_previous_reply_is_quoted_with_a_do_not_repeat_line(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [],
+                                    last_reply="Em chỉ xem lịch của chị Thắm thôi.")
+        assert "Em chỉ xem lịch của chị Thắm thôi." in block
+        assert "không nói lại nguyên văn" in block.lower()
+
+    def test_no_previous_reply_means_no_line(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
+        assert "nguyên văn" not in block.lower()
+
+    def test_a_long_reply_is_cut_and_flattened(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [],
+                                    last_reply="dòng một\ndòng hai " + "x" * 500)
+        line = next(l for l in block.splitlines() if "dòng một" in l)
+        assert "\n" not in line and len(line) < 320
+
+    def test_the_line_sits_before_the_trust_line(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [],
+                                    last_reply="Câu cũ.")
+        lines = block.splitlines()
+        assert lines.index(next(l for l in lines if "Câu cũ." in l)) < len(lines) - 1
+        assert lines[-1].startswith("Nếu có gì")
