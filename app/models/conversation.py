@@ -26,6 +26,19 @@ class DaySummary(BaseModel):
     preview: str
 
 
+class Digest(BaseModel):
+    """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
+    xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
+    document conversations. Xem spec 2026-09-14-conversation-digest-design.md.
+    """
+
+    day: date                        # ngày VN digest thuộc về; khác hôm nay là bỏ
+    covers_until: datetime           # created_at của tin CUỐI đã được nén
+    bullets: List[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=now_utc)
+    failures: int = 0                # cầu chì: nén hỏng liên tiếp
+
+
 class Conversation(BaseDocument):
     """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
 
@@ -40,3 +53,4 @@ class Conversation(BaseDocument):
     user_id: str
     messages: List[ChatMessage] = Field(default_factory=list)
     pending_confirmation: Optional[Dict[str, Any]] = None
+    digest: Optional[Digest] = None
