@@ -28,6 +28,11 @@ _NO = re.compile(
     r"\b(không|thôi|khỏi|đổi|khác|chưa|hủy)\b",
     re.IGNORECASE,
 )
+# Đang chốt HỦY thì "hủy" là đồng ý, không phải phủ định: "ừ hủy đi em".
+_NO_WHEN_CANCELLING = re.compile(
+    r"\b(không|thôi|khỏi|đổi|khác|chưa)\b",
+    re.IGNORECASE,
+)
 
 # Không dấu thì nới ra. Khách lớn tuổi gõ điện thoại phần lớn không bỏ dấu;
 # bắt họ gõ lại thì lần sau vẫn không dấu.
@@ -38,6 +43,10 @@ _YES_BARE = re.compile(
 )
 _NO_BARE = re.compile(
     r"\b(khong|ko|thoi|khoi|doi|khac|chua|huy)\b",
+    re.IGNORECASE,
+)
+_NO_BARE_WHEN_CANCELLING = re.compile(
+    r"\b(khong|ko|thoi|khoi|doi|khac|chua)\b",
     re.IGNORECASE,
 )
 
@@ -55,20 +64,34 @@ def strip_diacritics(text: str) -> str:
     )
 
 
-def is_affirmative(text: str) -> bool:
+def _sentence_start(phrase: str) -> str:
+    """Viết hoa chữ đầu mà KHÔNG hạ chữ tên: str.capitalize() biến "anh Hùng"
+    thành "Anh hùng"."""
+    return phrase[:1].upper() + phrase[1:]
+
+
+def is_affirmative(text: str, cancelling: bool = False) -> bool:
     """Phủ định thắng khẳng định: "dạ không" và "đúng rồi nhưng đổi giờ" đều phải
     ra False. Sai hướng này chỉ mất một câu hỏi lại; sai hướng kia là đặt nhầm lịch.
+
+    `cancelling`: câu hỏi đang chờ là "hủy lịch này đúng không?" — khi đó "hủy"
+    trong "ừ hủy đi" là đồng ý, không phải từ chối. Một bộ từ cho cả hai ngữ
+    cảnh là "ừ hủy đi em" bị đẩy về booking mãi và khách không hủy được.
     """
     cleaned = (text or "").strip()
     bare = strip_diacritics(cleaned)
     if bare == cleaned:
         # Khách gõ không dấu — nới luật ra.
-        target, yes, no = bare, _YES_BARE, _NO_BARE
+        target, yes = bare, _YES_BARE
+        no = _NO_BARE_WHEN_CANCELLING if cancelling else _NO_BARE
     else:
         # Khách có bỏ dấu — tin đúng cái họ gõ, không suy diễn thêm.
-        target, yes, no = cleaned, _YES, _NO
+        target, yes = cleaned, _YES
+        no = _NO_WHEN_CANCELLING if cancelling else _NO
     if no.search(target):
         return False
+    if cancelling and re.search(r"\b(hủy|huy)\b", target, re.IGNORECASE):
+        return True
     return bool(yes.search(target))
 
 
@@ -96,12 +119,27 @@ def make_confirm_node(
         # hard rule 6 từng tồn tại.
         address = address_phrase(user.full_name)
 
-        if not is_affirmative(last_message):
+        cancelling = pending.get("cancel_appointment_id")
+        if not is_affirmative(last_message, cancelling=bool(cancelling)):
             # Khách chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại",
             # "thôi 10 giờ đi em", "đổi sang thứ Năm" đều là chuyện của
             # booking. Node này không có LLM nên trả lời cứng chỗ nào cũng
             # trật; đẩy sang agent có lịch sử và đủ tool.
             return {"route": "booking"}
+
+        if cancelling:
+            # Hủy cũng đi qua đây, không hủy ngay trong tool: ràng buộc "hủy
+            # phải qua một bước xác nhận" áp cho cả chat, không riêng giao diện.
+            try:
+                await service.cancel(user, cancelling)
+            except AppError as exc:
+                return {"answer": f"Dạ {exc.message} ạ."}
+            try:
+                when = format_vi_datetime(datetime.fromisoformat(pending["start_at"]))
+            except (KeyError, ValueError):
+                return {"answer": f"Em hủy lịch xong rồi ạ, {address} cần gì cứ nhắn em nhé."}
+            return {"answer": f"Em hủy lịch {when} cho {address} xong rồi ạ. "
+                              "Cần đặt lại thì cứ nhắn em nhé."}
 
         # Có `replaces_appointment_id` là khách đang DỜI lịch: đi qua
         # `reschedule` để lịch cũ được hủy trong cùng một bước. Đi qua `create`
@@ -114,7 +152,7 @@ def make_confirm_node(
             else:
                 appointment = await service.create(user, start, pending.get("note"))
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. {address.capitalize()} chọn giờ khác giúp em nhé."}
+            return {"answer": f"Dạ {exc.message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé."}
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
             return {"answer": f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ."}

@@ -83,7 +83,7 @@ class AppointmentService:
         if not appt or appt.status != "booked":
             raise NotFoundError("Không tìm thấy lịch này")
         if appt.user_id != str(user.id) and user.role != "admin":
-            raise ForbiddenError("Chỉ sửa được lịch của chính mình")
+            raise ForbiddenError("Chỉ hủy hay dời được lịch của chính mình")
         return appt
 
     async def reschedule(

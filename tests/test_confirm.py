@@ -303,3 +303,72 @@ class TestConfirmReschedules:
         assert "có người" in out["answer"].lower()
         upcoming = await AppointmentService(test_db).upcoming_for(user)
         assert [a.start_at.astimezone(TZ) for a in upcoming] == [tomorrow_at(9)]
+
+
+class TestConfirmCancels:
+    """Pending mang `cancel_appointment_id`: "ừ" mới hủy thật."""
+
+    def _pending(self, appt):
+        return {"cancel_appointment_id": str(appt.id), "start_at": appt.start_at.isoformat()}
+
+    async def test_yes_cancels_and_says_so(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Hùng")
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "ừ", self._pending(appt)))
+
+        assert await AppointmentService(test_db).upcoming_for(user) == []
+        assert "hủy" in out["answer"].lower()
+        assert "anh Hùng" in out["answer"] and "3 giờ chiều" in out["answer"]
+        assert await ConversationService(test_db).get_pending(str(user.id)) is None
+
+    async def test_u_huy_di_counts_as_yes_when_cancelling(self, test_db):
+        """"hủy" nằm trong bộ từ PHỦ ĐỊNH của is_affirmative (đúng khi đang chốt
+        ĐẶT: "thôi hủy đi" là không đặt). Đang chốt HỦY thì chính chữ đó là đồng
+        ý — không tách hai ngữ cảnh là "ừ hủy đi" bị đẩy về booking mãi."""
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "ừ hủy đi em", self._pending(appt)))
+
+        assert "answer" in out
+        assert await AppointmentService(test_db).upcoming_for(user) == []
+
+    async def test_no_keeps_the_appointment_and_hands_over(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "thôi khoan, giữ lại đi", self._pending(appt)))
+
+        assert out == {"route": "booking"}
+        assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
+
+    async def test_already_gone_appointment_gets_a_friendly_answer(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+        await AppointmentService(test_db).cancel(user, str(appt.id))
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "ừ", self._pending(appt)))
+        assert "không tìm thấy" in out["answer"].lower()
+
+
+class TestIsAffirmativeWhileCancelling:
+    @pytest.mark.parametrize("text", ["ừ hủy đi", "hủy đi em", "u huy di", "dạ hủy"])
+    def test_huy_is_yes_when_cancelling(self, text):
+        assert is_affirmative(text, cancelling=True) is True
+
+    @pytest.mark.parametrize("text", ["thôi hủy đi", "ừ hủy đi", "huy di"])
+    def test_huy_stays_no_when_booking(self, text):
+        assert is_affirmative(text) is False
+
+    @pytest.mark.parametrize("text", ["không hủy nữa", "thôi khỏi hủy", "khong huy"])
+    def test_a_real_negative_still_wins_when_cancelling(self, text):
+        assert is_affirmative(text, cancelling=True) is False
+
+
+def test_sentence_start_keeps_the_name_capitalised():
+    """str.capitalize() hạ chữ tên: "anh Hùng" -> "Anh hùng". Lỗi có sẵn ở nhánh
+    báo giờ đã có người, lộ ra khi thêm nhánh hủy."""
+    from app.agents.booking_graph.confirm import _sentence_start
+    assert _sentence_start("anh Hùng") == "Anh Hùng"
+    assert _sentence_start("anh chị") == "Anh chị"

@@ -52,8 +52,9 @@ SCENARIOS = {
         "cho tôi công thức nấu phở",
     ],
     # Dời lịch rồi hủy Ở LƯỢT SAU — tái hiện BUG-1 và BUG-2 của checkpoint
-    # 2026-09-14. Đúng: sau lượt 4 DB còn ĐÚNG MỘT lịch (10 giờ), và lượt 6-7
-    # hủy được mà không cần gọi list_my_appointments cùng lượt.
+    # 2026-09-14. Đúng: sau lượt 4 DB còn ĐÚNG MỘT lịch (10 giờ); lượt 6 bot HỎI
+    # xác nhận hủy (không hủy ngay, không cần list_my_appointments cùng lượt),
+    # lượt 7 "ừ hủy đi" mới hủy thật — do node confirm, không qua LLM.
     "doi_lich": [
         "anh muốn cắt tóc mai 9 giờ sáng",
         "ừ",
