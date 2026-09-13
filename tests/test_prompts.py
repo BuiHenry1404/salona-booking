@@ -385,3 +385,11 @@ class TestNoRepeatCoversWording:
         """Đặt NGAY TRONG rule 4 (viết hoa): một vế chung ở `_NO_REPEAT` đã
         thử và không ăn — model bám rule 4 và bỏ qua luật thường bên dưới."""
         assert "NEVER THE SAME SENTENCE TWICE" in BOOKING_PROMPT
+
+
+class TestNoRepeatKnowsAboutTheDigest:
+    def test_digest_facts_count_as_already_said(self):
+        for name, prompt in (("SHOP_PROMPT", SHOP_PROMPT),
+                             ("BOOKING_PROMPT", BOOKING_PROMPT),
+                             ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
+            assert "conversation digest count as already said" in prompt, name

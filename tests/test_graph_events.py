@@ -106,3 +106,28 @@ async def test_load_context_passes_the_last_assistant_reply(test_db):
 
     context = await load_context(test_db, user, "tôi là chủ tiệm")
     assert "Em chỉ xem lịch của chị Lan thôi ạ." in context["context_block"]
+
+
+async def test_load_context_returns_the_digest_bullets(test_db):
+    from datetime import datetime, timezone
+
+    from app.agents.booking_graph.context import load_context
+    from app.core.clock import now_utc, to_local
+    from app.models.conversation import Digest
+    from app.services.auth import AuthService
+    from app.services.conversation import ConversationService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    convs = ConversationService(test_db)
+    await convs.append(str(user.id), "user", "cũ")
+    await convs.append(str(user.id), "assistant", "đáp cũ")
+    cut = (await convs._all_messages(str(user.id)))[-1].created_at
+    import asyncio
+    await asyncio.sleep(0.002)  # created_at ở mức mili giây, tránh trùng với `cut`
+    await convs.append(str(user.id), "user", "mới")
+    await convs.set_digest(str(user.id), Digest(
+        day=to_local(now_utc()).date(), covers_until=cut, bullets=["Khách chào."]))
+
+    context = await load_context(test_db, user, "x")
+    assert context["digest"] == ["Khách chào."]
+    assert [m.content for m in context["history"]] == ["mới"]

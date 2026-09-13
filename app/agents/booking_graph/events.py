@@ -68,6 +68,7 @@ async def run_turn(
             "messages": [*history, HumanMessage(content=question)],
             "user_id": user_id,
             "context_block": context["context_block"],
+            "digest": context.get("digest", []),
             "pending_confirmation": context["pending_confirmation"],
         }
 
