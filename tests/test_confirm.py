@@ -92,7 +92,9 @@ async def test_no_clears_the_flag_without_booking(test_db):
 
     assert await AppointmentService(test_db).upcoming_for(user) == []
     assert await ConversationService(test_db).get_pending(str(user.id)) is None
-    assert result["answer"]
+    # Cờ pending phải được xoá TRƯỚC khi chuyển tiếp, không thì lượt sau lại
+    # rơi vào confirm thay vì booking và khách kẹt trong vòng lặp.
+    assert result == {"route": "booking"}
 
 
 async def test_taken_slot_produces_a_friendly_message_not_a_crash(test_db):
@@ -148,33 +150,35 @@ class TestAffirmativeVariants:
 class TestConfirmUsesTheRightHonorific:
     """Câu chốt lịch phải gọi khách đúng như đã gọi lúc hỏi xác nhận.
 
-    Node confirm chạy 0 lượt LLM nên không tự suy ra được danh xưng: "Nguyễn
-    Thị Lan" không cho biết khách là cô, bác hay chú. Vì vậy danh xưng do model
-    điền lúc propose_appointment và lưu kèm pending — confirm chỉ đọc lại.
+    Node confirm chạy 0 lượt LLM, nhưng KHÔNG cần model mách nữa: danh xưng suy
+    ra bằng code từ `full_name`, vốn mang sẵn tiền tố ("Chú Ba", "Cô Lan"). Nhận
+    từ model là mong manh — model quên truyền thì câu chốt mất lời gọi.
 
-    Gọi "cô chú" cho một người khách vừa tự xưng "bác" nghe như đọc loa phường.
+    Tiền tố được MAP chứ không chép lại: "Chú Ba" thành "anh Ba". Prompt cấm
+    tuyệt đối nói "cô", "chú", "bác" — chúng không đi cùng giọng "em — anh/chị".
     """
 
-    async def test_the_honorific_from_the_proposal_is_used(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+    async def test_the_honorific_is_derived_from_the_customer_name(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         await ConversationService(test_db).set_pending(str(user.id), {
             "start_at": tomorrow_at(15).isoformat(),
             "note": "cắt tóc",
-            "xung_ho": "bác Ba",
         })
         node = make_confirm_node(test_db, user)
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": "cắt tóc", "xung_ho": "bác Ba"}})
+                              "note": "cắt tóc"}})
 
-        assert "bác Ba" in out["answer"]
+        assert "anh Ba" in out["answer"]
+        # "Chú" là tiền tố để SUY giới tính, không phải chữ để nói lại với khách.
+        assert "chú" not in out["answer"].lower()
         assert "cô chú" not in out["answer"]
 
-    async def test_without_an_honorific_it_does_not_invent_one(self, test_db):
-        """Thiếu danh xưng thì bỏ hẳn lời xưng hô, KHÔNG rơi về "cô chú" —
+    async def test_without_a_derivable_honorific_it_does_not_invent_one(self, test_db):
+        """Tên không có tiền tố thì lùi về "anh chị", KHÔNG rơi về "cô chú" —
         đoán sai còn tệ hơn không gọi."""
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Nguyễn Thị Lan")
         node = make_confirm_node(test_db, user)
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
@@ -189,7 +193,7 @@ class TestConfirmUsesTheRightHonorific:
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
+                              "note": None}})
 
         assert "3 giờ chiều" in out["answer"]
 
@@ -197,24 +201,13 @@ class TestConfirmUsesTheRightHonorific:
 class TestHonorificInTheOtherBranches:
     """Danh xưng phải dùng ở MỌI nhánh của confirm, không riêng nhánh thành công.
 
-    Khách nói "cắt tóc cho bác", AI đáp "đúng không bác?", rồi khách đổi ý — mà
-    câu tiếp theo gọi họ là "cô chú" thì công sức xưng hô ở trên đổ sông đổ bể.
+    Nhánh ghi hụt (giờ vừa bị người khác đặt mất) vẫn phải gọi khách đúng —
+    gọi họ là "cô chú" ở đó thì công sức xưng hô ở trên đổ sông đổ bể.
     """
-
-    async def test_declining_keeps_the_honorific(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
-        node = make_confirm_node(test_db, user)
-        out = await node({"messages": [HumanMessage(content="thôi khỏi con")],
-                          "pending_confirmation": {
-                              "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
-
-        assert "bác Ba" in out["answer"]
-        assert "cô chú" not in out["answer"].lower()
 
     async def test_a_taken_slot_keeps_the_honorific(self, test_db):
         """Giờ vừa bị người khác đặt mất giữa hai lượt."""
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         other = await AuthService(test_db).create_user("0999888777", "matkhau123", "Người khác")
         await AppointmentService(test_db).create(other, tomorrow_at(15), "làm tóc")
 
@@ -222,16 +215,57 @@ class TestHonorificInTheOtherBranches:
         out = await node({"messages": [HumanMessage(content="ừ")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(),
-                              "note": None, "xung_ho": "bác Ba"}})
+                              "note": None}})
 
         assert "cô chú" not in out["answer"].lower(), out["answer"]
 
-    async def test_without_an_honorific_the_decline_branch_stays_polite(self, test_db):
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    async def test_the_decline_branch_hands_over_instead_of_answering(self, test_db):
+        """Nhánh chưa-đồng-ý không còn câu nào để xưng hô: nó chuyển tiếp sang
+        booking, nơi LLM tự viết câu bằng lịch sử và khối bối cảnh."""
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Ba")
         node = make_confirm_node(test_db, user)
-        out = await node({"messages": [HumanMessage(content="thôi")],
+        out = await node({"messages": [HumanMessage(content="thôi khỏi")],
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(), "note": None}})
 
-        assert out["answer"].strip()
-        assert "  " not in out["answer"]   # không để lại khoảng trắng đôi khi bỏ xưng hô
+        assert out == {"route": "booking"}
+
+
+class TestNotAffirmativeGoesToBooking:
+    """Khách nói "khoan để chị xem lại" thì vẫn đang đặt lịch — đẩy sang
+    booking để nó trả lời bằng lịch sử và đủ tool, thay vì đọc một câu cứng
+    giục khách chọn giờ."""
+
+    async def test_hesitation_does_not_write_an_appointment(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        node = make_confirm_node(test_db, user)
+        state = {
+            "messages": [HumanMessage(content="à khoan, để chị xem lại")],
+            "user_id": str(user.id),
+            "pending_confirmation": {"start_at": "2026-09-01T02:00:00+00:00", "note": "làm tóc"},
+        }
+
+        result = await node(state)
+
+        assert result.get("route") == "booking"
+        assert "answer" not in result
+        assert await test_db["appointments"].count_documents({}) == 0
+
+    async def test_affirmative_still_writes_and_answers_without_llm(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        node = make_confirm_node(test_db, user)
+        start = (datetime.now(TZ) + timedelta(days=1)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        state = {
+            "messages": [HumanMessage(content="ừ chốt luôn nha")],
+            "user_id": str(user.id),
+            "pending_confirmation": {"start_at": start.isoformat(), "note": "làm tóc"},
+        }
+
+        result = await node(state)
+
+        assert "Xong rồi ạ" in result["answer"]
+        assert "chị Lan" in result["answer"]
+        assert result.get("route") is None
+        assert await test_db["appointments"].count_documents({}) == 1

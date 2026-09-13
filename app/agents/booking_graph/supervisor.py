@@ -1,13 +1,13 @@
 from langchain_core.messages import SystemMessage
 
-from app.agents.booking_graph.prompts import REFUSE_MESSAGE, SUPERVISOR_PROMPT
+from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-VALID_ROUTES = {"booking", "status", "refuse"}
+VALID_ROUTES = {"booking", "shop", "social"}
 SUPERVISOR_HISTORY_TURNS = 4
 
 
@@ -37,8 +37,3 @@ async def supervise(state: GraphState) -> dict:
 
     return {"route": route}
 
-
-async def refuse(state: GraphState) -> dict:
-    """Câu ngoài chủ đề không bao giờ tới subagent — đây là lớp thứ nhất của
-    ràng buộc 'AI chỉ để đặt lịch'."""
-    return {"answer": REFUSE_MESSAGE}

@@ -1,3 +1,5 @@
+import pytest
+
 from app.agents.booking_graph.events import (RESPOND_TAG, AgentEvent,
                                              translate_langchain_event)
 
@@ -70,3 +72,21 @@ def test_agent_event_is_json_serialisable():
     import json
     event = AgentEvent(type="token", data={"text": "Dạ"})
     assert json.loads(json.dumps(event.data)) == {"text": "Dạ"}
+
+
+@pytest.mark.asyncio
+async def test_graph_has_the_three_live_routes_and_no_refuse(test_db):
+    """Nếu graph thiếu node mà supervisor trả nhãn đó, LangGraph nổ lúc chạy
+    chứ không phải lúc test — nên chốt danh sách node ở đây.
+
+    Phải truyền `test_db` thật, KHÔNG truyền None: BaseRepository.__init__
+    làm `db[collection_name]` ngay lúc dựng, nên None nổ TypeError.
+    """
+    from app.agents.booking_graph.graph import build_graph
+    from app.models.user import User
+
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    nodes = set(build_graph(test_db, user).get_graph().nodes)
+    for expected in ("supervisor", "booking", "shop", "social", "confirm"):
+        assert expected in nodes
+    assert "refuse" not in nodes

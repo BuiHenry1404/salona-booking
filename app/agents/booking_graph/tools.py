@@ -4,7 +4,7 @@ from typing import List, Optional
 from langchain_core.tools import BaseTool, tool
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError
@@ -31,12 +31,19 @@ def _parse_local(value: str) -> datetime:
     return parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed
 
 
-def make_status_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
+# Index CHÍNH LÀ giá trị trong closed_days: 0 = Chủ Nhật (app/models/shop.py).
+# Ngược với datetime.weekday() của Python, nên tuyệt đối không dùng _WEEKDAYS.
+_CLOSED_DAY_NAMES = [
+    "Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy",
+]
+
+
+def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     shop = ShopService(db)
 
     @tool
     async def get_shop_status() -> str:
-        """Xem chủ tiệm đang bận hay đang rảnh, và nếu bận thì mấy giờ xong."""
+        """Whether the owner is busy or free, and if busy, what time they finish."""
         status = await shop.get_status()
         if not status.is_busy:
             return "Chủ tiệm đang rảnh."
@@ -46,7 +53,20 @@ def make_status_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # 30 phút" đọc lại sau một tiếng là sai hẳn, "3:30 chiều" thì vẫn đúng.
         return f"Chủ tiệm đang bận, xong lúc {format_vi_datetime(status.busy_until)}."
 
-    return [get_shop_status]
+    @tool
+    async def get_shop_hours() -> str:
+        """Opening hours and closed days. Call this when the customer asks what
+        time the salon opens or closes, or whether it is open on a given day."""
+        hours = await shop.get_hours()
+        closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
+                  if 0 <= d < len(_CLOSED_DAY_NAMES)]
+        closed_text = f"Nghỉ {', '.join(closed)}." if closed else "Mở cả tuần."
+        return (
+            f"Tiệm mở từ {format_vi_hhmm(hours.open_time)} "
+            f"đến {format_vi_hhmm(hours.close_time)}. {closed_text}"
+        )
+
+    return [get_shop_status, get_shop_hours]
 
 
 def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
@@ -60,14 +80,17 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def parse_time(text: str) -> str:
-        """Quy câu nói về thời gian của khách ra ngày giờ chuẩn.
-        Gọi tool này TRƯỚC find_free_slots và propose_appointment, mỗi khi khách
-        nhắc tới thời gian. Không tự tính ngày.
-        `text` phải là cụm ĐẦY ĐỦ, ghép cả những gì khách đã nói ở lượt trước:
-        khách nói "sáng mai" rồi đáp "9 giờ" thì truyền "sáng mai 9 giờ", không
-        truyền "9 giờ". Tool này chỉ đọc đúng chuỗi bạn đưa, nó không thấy
-        những lượt trước.
-        Ví dụ text: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai"."""
+        """Turn what the customer said about time into a concrete date and time.
+        Call this BEFORE find_free_slots and propose_appointment, every time the
+        customer mentions a time. Never compute a date yourself.
+        `text` must be the FULL phrase, joining what the customer said on earlier
+        turns: if they said "sáng mai" then answered "9 giờ", pass
+        "sáng mai 9 giờ", not "9 giờ". This tool reads only the string you give
+        it — it cannot see earlier turns.
+        Example `text`: "mai 3h chiều", "thứ Năm tuần sau", "sáng mai".
+        Result has `missing` -> ask the customer for exactly that ONE missing
+        piece, one piece per turn. For missing ["sáng hay chiều"] ask
+        "Dạ 3 giờ chiều hay 3 giờ sáng ạ chị?" and nothing else."""
         parsed: ParsedTime = await parse_vi_time(text, now_utc())
         # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
         # để chuyển thẳng sang propose_appointment, không được diễn giải lại.
@@ -77,8 +100,15 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def find_free_slots(day: str) -> str:
-        """Xem các giờ còn trống trong một ngày. `day` theo định dạng YYYY-MM-DD,
-        tính từ mốc "Bây giờ là..." trong phần bối cảnh — không được đoán ngày."""
+        """Free slots on one day. `day` is YYYY-MM-DD, taken from the
+        "Bây giờ là..." line in the context block — never guess the date.
+        Use ONLY what this tool returns — never invent a free slot.
+        If the time they asked for is taken, offer the two free slots nearest
+        to it.
+        Only when the customer says the salon may choose ("lúc nào vắng thì
+        xếp em", "khi nào rảnh cũng được") call this for today — or tomorrow
+        if today is finished — then offer two or three slots. If they have NOT
+        named a day, ask which day first. Never assume today."""
         try:
             slots = await service.find_free_slots(date.fromisoformat(day))
         except ValueError:
@@ -88,16 +118,12 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
 
     @tool
-    async def propose_appointment(
-        start_at: str, note: Optional[str] = None, xung_ho: Optional[str] = None
-    ) -> str:
-        """Giữ chỗ tạm thời và chuẩn bị câu hỏi xác nhận cho khách.
-        `start_at` dạng ISO 8601, lấy NGUYÊN từ kết quả parse_time.
-        `xung_ho` là cách bạn gọi khách trong câu vừa nói: "chị Lan", "anh Ba",
-        "anh Hùng". Câu chốt lịch ở lượt sau được ghép sẵn bằng code chứ không
-        qua bạn nữa, nên không truyền thì câu đó sẽ không gọi tên khách.
-        Gọi tool này rồi hỏi khách xác nhận. KHÔNG có tool nào ghi lịch trực tiếp —
-        lịch chỉ được ghi khi khách trả lời đồng ý ở lượt sau."""
+    async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
+        """Hold the slot temporarily and prepare the confirmation question.
+        `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
+        Call this tool, then ask the customer to confirm. NO tool writes an
+        appointment directly — it is written only when the customer agrees on
+        the NEXT turn."""
         try:
             start = _parse_local(start_at)
         except ValueError:
@@ -117,16 +143,15 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
                 return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
             # Gợi ý ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày:
             # khách xin 4 giờ chiều mà gợi ý 8, 8:15, 8:30 sáng là gợi ý vô ích.
-            gan_nhat = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
-            goi_y = ", ".join(format_vi_datetime(s) for s in gan_nhat)
-            return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {goi_y}."
+            nearest = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
+            suggestion = ", ".join(format_vi_datetime(s) for s in nearest)
+            return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {suggestion}."
 
         # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
         # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
         # thể chép sai giờ giữa hai lượt.
         await conversations.set_pending(
-            str(user.id),
-            {"start_at": start.isoformat(), "note": note, "xung_ho": xung_ho},
+            str(user.id), {"start_at": start.isoformat(), "note": note},
         )
         note_text = f", {note}" if note else ""
         return (
@@ -136,8 +161,12 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def list_my_appointments() -> str:
-        """Xem các lịch sắp tới của chính khách đang chat. Gọi tool này trước khi
-        hủy lịch, để lấy đúng mã lịch."""
+        """The customer's own upcoming appointments. Call this before cancelling,
+        to get the appointment id.
+        When the customer asks about their OWN appointments ("chị có lịch lúc
+        nào", "xem giùm em"), call this IMMEDIATELY — never ask for a date
+        first, the tool filters by the logged-in customer. If they have none,
+        say so plainly."""
         appointments = await service.upcoming_for(user)
         if not appointments:
             return "Khách chưa có lịch nào sắp tới."
@@ -149,8 +178,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:
-        """Hủy một lịch. Phải gọi list_my_appointments trước để lấy mã lịch.
-        Nếu khách có từ hai lịch trở lên, phải hỏi rõ hủy lịch nào."""
+        """Cancel one appointment. Call list_my_appointments first to get the id.
+        If the customer has two or more, ask which one before cancelling."""
         try:
             await service.cancel(user, appointment_id)
         except AppError as exc:

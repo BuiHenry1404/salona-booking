@@ -5,7 +5,7 @@ from typing import Awaitable, Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.agents.booking_graph.state import GraphState
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -42,7 +42,7 @@ _NO_BARE = re.compile(
 )
 
 
-def strip_dau(text: str) -> str:
+def strip_diacritics(text: str) -> str:
     """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
 
     NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
@@ -60,7 +60,7 @@ def is_affirmative(text: str) -> bool:
     ra False. Sai hướng này chỉ mất một câu hỏi lại; sai hướng kia là đặt nhầm lịch.
     """
     cleaned = (text or "").strip()
-    bare = strip_dau(cleaned)
+    bare = strip_diacritics(cleaned)
     if bare == cleaned:
         # Khách gõ không dấu — nới luật ra.
         target, yes, no = bare, _YES_BARE, _NO_BARE
@@ -91,28 +91,34 @@ def make_confirm_node(
 
         await conversations.set_pending(user_id, None)
 
-        # Danh xưng do model điền lúc propose_appointment: node này chạy 0 lượt
-        # LLM nên không tự suy ra được "cô Lan" hay "bác Ba" từ "Nguyễn Thị Lan".
-        # Thiếu thì lùi về "anh chị" ở những câu BẮT BUỘC phải xưng hô, và bỏ hẳn
-        # lời gọi ở câu chốt — chỗ đó không xưng hô vẫn đọc trôi.
-        xung_ho = (pending.get("xung_ho") or "").strip()
-        goi = xung_ho or "anh chị"
-        loi_goi = f" {xung_ho}" if xung_ho else ""
+        # Suy từ full_name bằng code, không nhận từ model nữa: model quên
+        # truyền là câu chốt mất lời gọi, mà nó quên thật — đó là lý do
+        # hard rule 6 từng tồn tại.
+        address = address_phrase(user.full_name)
 
         if not is_affirmative(last_message):
-            return {"answer": f"Dạ vâng, vậy {goi} muốn đặt ngày giờ nào ạ?"}
+            # Khách chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại",
+            # "thôi 10 giờ đi em", "đổi sang thứ Năm" đều là chuyện của
+            # booking. Node này không có LLM nên trả lời cứng chỗ nào cũng
+            # trật; đẩy sang agent có lịch sử và đủ tool.
+            return {"route": "booking"}
 
         try:
             appointment = await service.create(
                 user, datetime.fromisoformat(pending["start_at"]), pending.get("note")
             )
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. {goi.capitalize()} chọn giờ khác giúp em nhé."}
+            return {"answer": f"Dạ {exc.message} ạ. {address.capitalize()} chọn giờ khác giúp em nhé."}
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return {"answer": f"Dạ em nhầm mất rồi, {goi} nhắc lại ngày giờ giúp em ạ."}
+            return {"answer": f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ."}
 
-        return {"answer": f"Xong rồi ạ. Hẹn gặp{loi_goi} "
+        return {"answer": f"Xong rồi ạ. Hẹn gặp {address} "
                           f"{format_vi_datetime(appointment.start_at)} nhé."}
 
     return node
+
+
+def route_after_confirm(state: GraphState) -> str:
+    """Sau confirm: đã ghi lịch (có `answer`) thì xong; chưa chốt thì sang booking."""
+    return "booking" if state.get("route") == "booking" else "end"

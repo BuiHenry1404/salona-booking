@@ -1,7 +1,10 @@
 from datetime import datetime
 
-from app.agents.booking_graph.context import (build_context_block,
-                                              format_vi_datetime)
+from app.agents.booking_graph.context import (address_phrase,
+                                              build_context_block,
+                                              derive_address, display_name,
+                                              format_vi_datetime,
+                                              format_vi_hhmm)
 from app.core.clock import TZ
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
@@ -111,7 +114,7 @@ class TestFormatViDatetime:
             datetime(2026, 8, 7, 15, 0, tzinfo=TZ)) == "Thứ Sáu 7/8, 3 giờ chiều"
 
     def test_half_past_is_said_as_ruoi(self):
-        """Không ai nói "9 giờ 30" — người ta nói "9 rưỡi". STATUS_PROMPT cũng
+        """Không ai nói "9 giờ 30" — người ta nói "9 rưỡi". SHOP_PROMPT cũng
         đang lấy "3 giờ rưỡi chiều" làm ví dụ mẫu."""
         assert format_vi_datetime(
             datetime(2026, 8, 7, 9, 30, tzinfo=TZ)) == "Thứ Sáu 7/8, 9 giờ rưỡi sáng"
@@ -130,3 +133,97 @@ class TestFormatViDatetime:
             for minute in (0, 15, 30, 45):
                 out = format_vi_datetime(datetime(2026, 8, 7, hour, minute, tzinfo=TZ))
                 assert ":" not in out, out
+
+
+class TestDeriveAddress:
+    """Tiền tố trong full_name là tín hiệu giới tính DUY NHẤT đang có —
+    User model không có trường giới tính. Map nó, đừng vứt đi."""
+
+    def test_co_maps_to_chi(self):
+        assert derive_address("Cô Lan") == ("chị", "Lan")
+
+    def test_ba_maps_to_chi(self):
+        assert derive_address("Bà Sáu") == ("chị", "Sáu")
+
+    def test_chu_maps_to_anh(self):
+        assert derive_address("Chú Hùng") == ("anh", "Hùng")
+
+    def test_ong_maps_to_anh(self):
+        assert derive_address("Ông Tư") == ("anh", "Tư")
+
+    def test_bac_is_ambiguous_but_prefix_still_stripped(self):
+        # "Bác" không cho biết giới tính, nhưng vẫn phải cắt khỏi tên —
+        # prompt cấm tuyệt đối nói "bác".
+        assert derive_address("Bác Bảy") == ("anh chị", "Bảy")
+
+    def test_name_without_prefix_falls_back(self):
+        assert derive_address("Nguyễn Thị Lan") == ("anh chị", "")
+
+    def test_none_falls_back(self):
+        assert derive_address(None) == ("anh chị", "")
+
+    def test_single_word_name_falls_back(self):
+        assert derive_address("Lan") == ("anh chị", "")
+
+
+class TestAddressPhrase:
+    def test_gendered_prefix_keeps_the_name(self):
+        assert address_phrase("Cô Lan") == "chị Lan"
+        assert address_phrase("Chú Hùng") == "anh Hùng"
+
+    def test_ambiguous_drops_the_name(self):
+        # "anh chị Bảy" không ai nói. Mơ hồ thì gọi trống.
+        assert address_phrase("Bác Bảy") == "anh chị"
+        assert address_phrase(None) == "anh chị"
+
+
+class TestDisplayName:
+    def test_prefix_is_stripped(self):
+        assert display_name("Cô Lan") == "Lan"
+        assert display_name("Bác Bảy") == "Bảy"
+
+    def test_name_without_prefix_kept_whole(self):
+        assert display_name("Nguyễn Thị Lan") == "Nguyễn Thị Lan"
+
+    def test_missing_name(self):
+        assert display_name(None) == "khách"
+
+
+class TestContextBlockAddress:
+    def _block(self, full_name):
+        user = User(phone="0912345678", hashed_password="x", full_name=full_name)
+        return build_context_block(user, ShopStatusView(is_busy=False), [])
+
+    def test_block_pins_one_form_of_address(self):
+        # Model chỉ việc chép dòng này, không tự chọn register mỗi lượt.
+        assert "Gọi khách là: chị Lan" in self._block("Cô Lan")
+
+    def test_block_never_leaks_the_forbidden_register(self):
+        # BOOKING_PROMPT cấm nói "cô/chú/bác"; khối bối cảnh không được
+        # đưa chính những chữ đó vào miệng model.
+        block = self._block("Bác Bảy")
+        for cam in ("Cô ", "Chú ", "Bác "):
+            assert cam not in block
+
+
+class TestFormatVietnameseHhmm:
+    """Giờ mở cửa lưu dạng chuỗi 'HH:MM', không phải datetime — nhưng đọc
+    lên vẫn phải nghe như người nói, không phải '08:00'."""
+
+    def test_morning(self):
+        assert format_vi_hhmm("08:00") == "8 giờ sáng"
+
+    def test_afternoon(self):
+        assert format_vi_hhmm("14:00") == "2 giờ chiều"
+
+    def test_noon_is_afternoon(self):
+        assert format_vi_hhmm("12:00") == "12 giờ chiều"
+
+    def test_evening(self):
+        assert format_vi_hhmm("19:00") == "7 giờ tối"
+
+    def test_half_past_reads_as_ruoi(self):
+        assert format_vi_hhmm("09:30") == "9 giờ rưỡi sáng"
+
+    def test_odd_minutes(self):
+        assert format_vi_hhmm("13:45") == "1 giờ 45 chiều"

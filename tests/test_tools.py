@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.agents.booking_graph.tools import make_booking_tools, make_status_tools
+from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
 from app.core.clock import TZ
 from app.models.user import User
 from app.services.auth import AuthService
@@ -25,7 +25,9 @@ def by_name(tools, name):
 
 async def test_tool_names_are_exactly_as_specified(test_db):
     user = await a_user(test_db)
-    assert [t.name for t in make_status_tools(test_db, user)] == ["get_shop_status"]
+    assert sorted(t.name for t in make_shop_tools(test_db, user)) == [
+        "get_shop_hours", "get_shop_status",
+    ]
     assert sorted(t.name for t in make_booking_tools(test_db, user)) == [
         "cancel_appointment", "find_free_slots", "list_my_appointments",
         "parse_time", "propose_appointment",
@@ -46,7 +48,7 @@ async def test_there_is_NO_tool_that_writes_an_appointment(test_db):
 
 async def test_shop_status_reads_free(test_db):
     user = await a_user(test_db)
-    tool = by_name(make_status_tools(test_db, user), "get_shop_status")
+    tool = by_name(make_shop_tools(test_db, user), "get_shop_status")
     assert "rảnh" in (await tool.ainvoke({})).lower()
 
 
@@ -57,7 +59,7 @@ async def test_shop_status_reads_busy_with_finish_time(test_db):
 
     user = await a_user(test_db)
     await ShopService(test_db).set_busy(30)
-    tool = by_name(make_status_tools(test_db, user), "get_shop_status")
+    tool = by_name(make_shop_tools(test_db, user), "get_shop_status")
     result = await tool.ainvoke({})
 
     assert "bận" in result.lower()
@@ -222,5 +224,103 @@ async def test_parse_time_is_not_given_to_the_status_agent(test_db):
     """"chủ tiệm rảnh không" chẳng có gì để parse. Cấp thừa tool là thêm chỗ
     cho model gọi nhầm và tốn thêm một lượt."""
     user = await a_user(test_db)
-    names = {t.name for t in make_status_tools(test_db, user)}
+    names = {t.name for t in make_shop_tools(test_db, user)}
     assert "parse_time" not in names
+
+
+async def test_tool_descriptions_are_english(test_db):
+    """Docstring của tool đi vào tool schema gửi cho model — nó là prompt.
+    CONTEXT.md:94: prompt viết tiếng Anh, câu mẫu giữ tiếng Việt."""
+    user = await a_user(test_db)
+    # Gộp khoảng trắng: docstring xuống dòng giữa câu, so chuỗi thô thì một cụm
+    # bị ngắt dòng sẽ không khớp dù nội dung đúng.
+    descriptions = {
+        t.name: " ".join(t.description.split())
+        for t in make_booking_tools(test_db, user)
+    }
+
+    assert descriptions["parse_time"].startswith("Turn what the customer said")
+    assert "Call this BEFORE find_free_slots" in descriptions["parse_time"]
+    # Ví dụ PHẢI còn tiếng Việt — dịch đi thì ví dụ vô nghĩa.
+    assert "mai 3h chiều" in descriptions["parse_time"]
+    assert "NO tool writes an appointment directly" in descriptions["propose_appointment"]
+
+
+async def test_propose_appointment_has_no_xung_ho_parameter(test_db):
+    """Xưng hô giờ suy ra bằng code từ full_name — model không cần truyền,
+    và không được phép truyền (kwarg lạ làm tool call lỗi)."""
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    tools = {t.name: t for t in make_booking_tools(test_db, user)}
+    assert "xung_ho" not in tools["propose_appointment"].args
+
+
+class TestShopHoursTool:
+    """closed_days theo quy ước 0 = Chủ Nhật … 6 = Thứ Bảy
+    (app/models/shop.py). NGƯỢC với datetime.weekday() của Python
+    (0 = Thứ Hai) — đây là chỗ dễ lệch nhất trong cả tính năng."""
+
+    async def _call(self, test_db, open_time, close_time, closed_days):
+        from app.services.shop import ShopService
+
+        await ShopService(test_db).set_hours(open_time, close_time, closed_days)
+        user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+        tools = {t.name: t for t in make_shop_tools(test_db, user)}
+        return await tools["get_shop_hours"].ainvoke({})
+
+    async def test_shop_tools_has_exactly_two_tools(self, test_db):
+        user = User(phone="0912345678", hashed_password="x")
+        names = {t.name for t in make_shop_tools(test_db, user)}
+        assert names == {"get_shop_status", "get_shop_hours"}
+
+    async def test_open_and_close_are_spoken_not_digits(self, test_db):
+        out = await self._call(test_db, "08:00", "19:00", [])
+        assert "8 giờ sáng" in out
+        assert "7 giờ tối" in out
+        assert "08:00" not in out
+
+    async def test_zero_means_sunday_not_monday(self, test_db):
+        out = await self._call(test_db, "08:00", "19:00", [0])
+        assert "Chủ Nhật" in out
+        assert "Thứ Hai" not in out
+
+    async def test_six_means_saturday(self, test_db):
+        out = await self._call(test_db, "08:00", "19:00", [6])
+        assert "Thứ Bảy" in out
+
+    async def test_no_closed_days_says_open_all_week(self, test_db):
+        out = await self._call(test_db, "08:00", "19:00", [])
+        assert "cả tuần" in out
+
+
+class TestRulesMovedIntoToolDescriptions:
+    """Rule cắt khỏi BOOKING_PROMPT không được bốc hơi — docstring của tool đi
+    thẳng vào tool schema gửi cho model, nên nó vẫn là prompt.
+    Câu MẪU trong đó phải giữ tiếng Việt: chúng là bản mẫu của thứ model sẽ nói
+    với khách, dịch sang tiếng Anh là mẫu cho một thứ không bao giờ xuất ra."""
+
+    async def _descriptions(self, test_db):
+        user = await a_user(test_db)
+        return {
+            t.name: " ".join(t.description.split())
+            for t in make_booking_tools(test_db, user)
+        }
+
+    async def test_the_missing_period_example_is_vietnamese(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "3 giờ chiều hay 3 giờ sáng ạ chị?" in d["parse_time"]
+
+    async def test_looking_up_own_appointments_must_call_the_tool(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "call this IMMEDIATELY" in d["list_my_appointments"]
+        assert "never ask for a date" in d["list_my_appointments"]
+
+    async def test_free_slots_are_never_invented(self, test_db):
+        d = await self._descriptions(test_db)
+        assert "never invent a free slot" in d["find_free_slots"]
+
+    async def test_the_salon_may_not_pick_the_day_unasked(self, test_db):
+        """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
+        trống HÔM NAY."""
+        d = await self._descriptions(test_db)
+        assert "Never assume today." in d["find_free_slots"]
+        assert "lúc nào vắng thì xếp em" in d["find_free_slots"]
