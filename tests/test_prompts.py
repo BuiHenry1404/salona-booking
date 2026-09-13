@@ -305,8 +305,10 @@ class TestBookingPromptSlimmed:
         # không liên quan. 2026-09-14: thêm luật dời lịch (BUG-1, lấy id từ
         # khối bối cảnh) và siết luật viết số (BUG-3), đo được 3977 ký tự —
         # mốc lên 4000. Cùng ngày thêm vế loại trừ cho rule 4 (lịch của chính
-        # họ nhưng không có), đo được 4109 — mốc lên 4200.
-        assert len(BOOKING_PROMPT) < 4200
+        # họ nhưng không có), đo được 4109 — mốc lên 4200. Bỏ câu bảo mật
+        # nguyên văn, viết hoa rule 4 và thêm vế "từ chối lần hai nói khác":
+        # đo được 4320 — mốc lên 4400.
+        assert len(BOOKING_PROMPT) < 4400
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -372,3 +374,14 @@ class TestRuleFourDoesNotFireOnAnEmptyCalendar:
     def test_the_carve_out_is_stated(self):
         assert "have none" in BOOKING_PROMPT
         assert "is NOT this case" in BOOKING_PROMPT
+
+
+class TestNoRepeatCoversWording:
+    """Chạy thật 2026-09-14: hai lượt từ chối liên tiếp ra NGUYÊN một câu —
+    model chép lại câu của chính nó trong lịch sử. `_NO_REPEAT` chỉ cấm lặp
+    THÔNG TIN; phải cấm cả dùng lại nguyên câu cho một tình huống lặp lại."""
+
+    def test_a_second_refusal_must_be_worded_differently(self):
+        """Đặt NGAY TRONG rule 4 (viết hoa): một vế chung ở `_NO_REPEAT` đã
+        thử và không ăn — model bám rule 4 và bỏ qua luật thường bên dưới."""
+        assert "NEVER THE SAME SENTENCE TWICE" in BOOKING_PROMPT
