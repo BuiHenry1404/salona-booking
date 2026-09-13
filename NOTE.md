@@ -16,7 +16,7 @@ React frontend, đã merge vào `main`.
 > **Checkpoint 2026-09-14** ở cuối [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã
 > làm gì, còn dở gì, và ba bug tồn đọng kèm cách tái hiện.
 
-- **588 test backend + 252 test frontend xanh**, frontend build sạch.
+- **590 test backend + 252 test frontend xanh**, frontend build sạch.
 - `scripts/live_e2e.py` — 31/31 pass trên server thật.
 - `scripts/chat_scenarios.py` — 8 kịch bản hội thoại đúng.
 - `scripts/llm_scenarios.py` — diễn lại kịch bản `LLM-xx`, dùng để bắt lỗi
@@ -35,8 +35,9 @@ nhận — merge lên `main` khi nào bạn thấy sẵn sàng.
 lịch thành đặt thêm, hủy hụt vì mất id, viết số bằng chữ) **đã sửa cùng ngày**
 trên `fix/reschedule-and-cancel`, rồi đợt hai `fix/cancel-confirm-and-prompts`
 (hủy qua bước xác nhận, rule 4 hết bắn nhầm khi hết lịch, note chỉ là dịch vụ);
-cả hai đã merge vào `henry/develop`. Chi tiết ở Checkpoint trong `CONTEXT.md`
-(bẫy #19).
+rồi `fix/rule4-english` (bỏ câu thoại sẵn cuối cùng trong prompt — rule 4 giờ
+là mô tả tiếng Anh viết hoa); cả ba đã merge vào `henry/develop`. Chi tiết ở
+Checkpoint trong `CONTEXT.md` (bẫy #19).
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
 cho khách thật:
