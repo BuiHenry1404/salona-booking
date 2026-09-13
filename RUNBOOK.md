@@ -170,6 +170,28 @@ docker compose -f docker-compose.langfuse.yml up -d
 Tắt: `docker compose -f docker-compose.langfuse.yml down` (stack này nặng: Postgres
 + ClickHouse + Redis + MinIO + web + worker).
 
+## 8b. Kiểm digest (nén hội thoại trong phiên)
+
+Xem digest hiện có của một khách:
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); printjson(db.conversations.findOne({user_id:String(u._id)},{digest:1}))'
+```
+
+Log cần theo dõi: `digest_compacted` (nén thành công, kèm số bullet và số tin
+đã nén), `digest_skipped` (cầu chì đã bật, 3 lần hỏng liên tiếp), `digest_failed`
+(LLM lỗi/timeout, `failures` tăng, digest cũ giữ nguyên). Cả ba đều log qua
+`structlog`, không ném lỗi ra khách.
+
+Trace Langfuse của lượt nén mang tag `digest` (khác tag `respond` của lượt
+chat chính) — lọc theo tag đó để tách chi phí nén khỏi chi phí trả lời.
+
+Ngưỡng nén mặc định `COMPACT_THRESHOLD_TOKENS = 800` (`app/services/digest.py`)
+— kịch bản `dai` (16 lượt, câu ngắn) không luôn đủ để kích nén; muốn xác nhận
+luồng đầu-cuối nhanh thì hạ tạm ngưỡng (vd. 300), chạy lại, rồi **khôi phục
+về 800** trước khi commit bất cứ gì.
+
 ## 9. Trục trặc hay gặp
 
 | Hiện tượng | Nguyên nhân |

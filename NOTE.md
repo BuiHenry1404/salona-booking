@@ -16,7 +16,9 @@ React frontend, đã merge vào `main`.
 > **Checkpoint 2026-09-14** ở cuối [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã
 > làm gì, còn dở gì, và ba bug tồn đọng kèm cách tái hiện.
 
-- **590 test backend + 252 test frontend xanh**, frontend build sạch.
+- **630 test backend + 252 test frontend xanh**, frontend build sạch. (Tăng từ
+  590 vì nhánh `feat/conversation-digest`, Task 1–6 — xem checkpoint cuối
+  `CONTEXT.md`.)
 - `scripts/live_e2e.py` — 31/31 pass trên server thật.
 - `scripts/chat_scenarios.py` — 8 kịch bản hội thoại đúng.
 - `scripts/llm_scenarios.py` — diễn lại kịch bản `LLM-xx`, dùng để bắt lỗi
@@ -27,6 +29,11 @@ React frontend, đã merge vào `main`.
 `main` chỉ nhận bằng cách merge `henry/develop`. Không commit thẳng lên `main`.
 
 ## Việc tiếp theo — đã chốt
+
+**Tầng digest xong** trên `feat/conversation-digest` (Task 1–6): `Digest`
+model, `DigestService.maybe_compact`, `context_window`, chạy nền sau mỗi lượt,
+đo thật kịch bản `dai` + rubric — xem checkpoint cuối `CONTEXT.md`. Nhánh này
+**chưa merge vào `henry/develop`** — quyết định merge thuộc chủ dự án.
 
 **Ba nhánh đã merge vào `henry/develop` và đã push** (2026-09-14). `main` chưa
 nhận — merge lên `main` khi nào bạn thấy sẵn sàng.
