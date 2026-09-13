@@ -103,18 +103,26 @@ def make_confirm_node(
             # trật; đẩy sang agent có lịch sử và đủ tool.
             return {"route": "booking"}
 
+        # Có `replaces_appointment_id` là khách đang DỜI lịch: đi qua
+        # `reschedule` để lịch cũ được hủy trong cùng một bước. Đi qua `create`
+        # ở đây là ra hai lịch (BUG-1).
+        replaces = pending.get("replaces_appointment_id")
         try:
-            appointment = await service.create(
-                user, datetime.fromisoformat(pending["start_at"]), pending.get("note")
-            )
+            start = datetime.fromisoformat(pending["start_at"])
+            if replaces:
+                appointment = await service.reschedule(user, replaces, start, pending.get("note"))
+            else:
+                appointment = await service.create(user, start, pending.get("note"))
         except AppError as exc:
             return {"answer": f"Dạ {exc.message} ạ. {address.capitalize()} chọn giờ khác giúp em nhé."}
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
             return {"answer": f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ."}
 
-        return {"answer": f"Xong rồi ạ. Hẹn gặp {address} "
-                          f"{format_vi_datetime(appointment.start_at)} nhé."}
+        when = format_vi_datetime(appointment.start_at)
+        if replaces:
+            return {"answer": f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé."}
+        return {"answer": f"Xong rồi ạ. Hẹn gặp {address} {when} nhé."}
 
     return node
 

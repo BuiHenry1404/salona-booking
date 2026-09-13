@@ -283,8 +283,10 @@ class TestBookingPromptSlimmed:
         # `_NO_REPEAT`, đo được 3451 ký tự — mốc dưới ở đây bám theo số đo
         # thật (làm tròn lên bội số 100 gần nhất) để hàng rào còn ý nghĩa,
         # không phải một số tròn xa thực tế và không trồi lên vì một sửa
-        # không liên quan.
-        assert len(BOOKING_PROMPT) < 3500
+        # không liên quan. 2026-09-14: thêm luật dời lịch (BUG-1, lấy id từ
+        # khối bối cảnh) và siết luật viết số (BUG-3), đo được 3977 ký tự —
+        # mốc lên 4000.
+        assert len(BOOKING_PROMPT) < 4000
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -310,3 +312,32 @@ class TestNoRepeatRuleReachesEveryCustomerFacingPrompt:
 
     def test_the_old_verbatim_wording_is_gone(self):
         assert "repeat your previous reply verbatim" not in BOOKING_PROMPT
+
+
+class TestRescheduleAndCancelRules:
+    """BUG-1 và BUG-2 (CONTEXT.md, checkpoint 2026-09-14)."""
+
+    def test_booking_prompt_tells_the_model_how_to_move_an_appointment(self):
+        """Không có luật này thì "chuyển qua 10 giờ" là propose_appointment
+        thường, và chốt xong là hai lịch."""
+        assert "replaces_appointment_id" in BOOKING_PROMPT
+        assert "second appointment" in BOOKING_PROMPT.lower()
+
+    def test_booking_prompt_says_where_the_ids_are(self):
+        assert "[id:" in BOOKING_PROMPT
+
+
+class TestNumbersStayDigits:
+    """BUG-3: model viết "ngày mười chín tháng chín, lúc chín giờ" trong khi
+    code viết "Thứ Bảy 19/9, 9 giờ sáng". Luật "spoken words" bị đọc thành
+    "đánh vần chữ số bằng chữ". Phải nói rõ: chữ số là CHỮ SỐ, chỉ có phần
+    'giờ' và buổi là chữ — và chép đúng dạng tool đã trả về."""
+
+    def test_the_format_rule_forbids_number_words(self):
+        for name, prompt in CUSTOMER_FACING.items():
+            assert "number words" in prompt.lower(), name
+            assert "digits" in prompt.lower(), name
+
+    def test_the_format_rule_points_at_the_tool_output_as_the_reference(self):
+        for name, prompt in CUSTOMER_FACING.items():
+            assert "exactly as the tool" in prompt.lower() or "same format" in prompt.lower(), name

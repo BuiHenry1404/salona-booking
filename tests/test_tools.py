@@ -345,3 +345,73 @@ class TestRulesMovedIntoToolDescriptions:
         d = await self._descriptions(test_db)
         assert "Never assume today." in d["find_free_slots"]
         assert "ask which day first" in d["find_free_slots"]
+
+
+class TestProposeCanReplaceAnExistingAppointment:
+    """BUG-1: "chuyển giùm anh qua 10 giờ, đừng để 9 giờ nữa" từng ra HAI lịch.
+
+    `propose_appointment` nhận thêm `replaces_appointment_id`; node confirm sẽ
+    dời thay vì đặt thêm. Vẫn đúng nguyên tắc: tool KHÔNG ghi gì, chỉ giữ chỗ.
+    """
+
+    async def _booked(self, db, user, start):
+        from app.services.appointment import AppointmentService
+        return await AppointmentService(db).create(user, start, note="làm tóc")
+
+    async def test_the_old_id_is_kept_in_pending_for_confirm(self, test_db):
+        from app.services.conversation import ConversationService
+        user = await a_user(test_db)
+        old = await self._booked(test_db, user, tomorrow_at(9))
+        tools = make_booking_tools(test_db, user)
+
+        out = await by_name(tools, "propose_appointment").ainvoke(
+            {"start_at": tomorrow_at(10).isoformat(),
+             "replaces_appointment_id": str(old.id)}
+        )
+
+        pending = await ConversationService(test_db).get_pending(str(user.id))
+        assert pending["replaces_appointment_id"] == str(old.id)
+        assert "dời" in out.lower()
+        # Chưa ghi gì: lịch cũ vẫn là lịch duy nhất.
+        assert await test_db["appointments"].count_documents({"status": "booked"}) == 1
+
+    async def test_an_unknown_id_is_refused_before_holding_anything(self, test_db):
+        from app.services.conversation import ConversationService
+        user = await a_user(test_db)
+        tools = make_booking_tools(test_db, user)
+
+        out = await by_name(tools, "propose_appointment").ainvoke(
+            {"start_at": tomorrow_at(10).isoformat(),
+             "replaces_appointment_id": "id bịa"}
+        )
+
+        assert "không tìm thấy" in out.lower()
+        assert await ConversationService(test_db).get_pending(str(user.id)) is None
+
+    async def test_someone_elses_id_is_refused(self, test_db):
+        owner = await a_user(test_db)
+        intruder = await a_user(test_db, phone="0938111222", name="Người lạ")
+        old = await self._booked(test_db, owner, tomorrow_at(9))
+
+        out = await by_name(make_booking_tools(test_db, intruder), "propose_appointment").ainvoke(
+            {"start_at": tomorrow_at(10).isoformat(),
+             "replaces_appointment_id": str(old.id)}
+        )
+        assert "chính mình" in out.lower()
+
+    async def test_the_description_tells_the_model_when_to_pass_it(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "propose_appointment").description.split())
+        assert "replaces_appointment_id" in desc
+        assert "move" in desc.lower() or "reschedul" in desc.lower()
+
+
+class TestCancelKnowsWhereTheIdLives:
+    """BUG-2: id giờ nằm sẵn trong khối bối cảnh mỗi lượt. Docstring phải chỉ
+    model tới đó thay vì bắt nó gọi list_my_appointments cùng lượt."""
+
+    async def test_cancel_description_points_to_the_context_block(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
+        assert "context block" in desc
+        assert "never invent" in desc.lower() or "never guess" in desc.lower()

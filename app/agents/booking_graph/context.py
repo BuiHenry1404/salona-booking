@@ -134,9 +134,13 @@ def build_context_block(
 
     if upcoming:
         lines.append("Lịch sắp tới của khách:")
+        # Kèm id để hủy/dời được ngay trong lượt này. Lịch sử chat chỉ lưu câu
+        # hỏi và câu đáp, không lưu kết quả tool — nên id tool trả ở lượt trước
+        # sang lượt sau là mất, model từng bịa id rồi hủy hụt (BUG-2). Khối này
+        # dựng lại từ DB mỗi lượt nên id ở đây luôn có và luôn đúng.
         for appt in upcoming[:5]:
             note = f" — {appt.note}" if appt.note else ""
-            lines.append(f"  - {format_vi_datetime(appt.start_at)}{note}")
+            lines.append(f"  - {format_vi_datetime(appt.start_at)}{note} [id: {appt.id}]")
     else:
         lines.append("Khách chưa có lịch nào sắp tới.")
 
