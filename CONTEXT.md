@@ -77,6 +77,8 @@ biên bản, không phải mẫu để chép.
 7. Đúng **5 tool**: `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`. Thêm `create_appointment` là phá cả hai lớp bảo vệ.
 8. Chỉ stream token mang tag `respond`. Parser thời gian phải `tags=["timeparse"]` + `streaming=False`, không thì JSON chạy ngang màn hình khách.
 9. Khối bối cảnh **không nằm trong system prompt** — nó đổi mỗi lượt, đặt đầu là cache không bao giờ trúng. Thứ tự: System → lịch sử → bối cảnh → tin mới.
+Thứ tự này từng bị code làm ngược (bối cảnh rơi xuống sau câu hỏi mới) và có
+một test khoá chặt cái sai đó lại; sửa ngày 2026-09-13.
 10. Timeout parser **8 giây**. Ngưỡng cũ 2s mà Azure thật mất 2,2–2,4s → nhánh LLM chưa từng chạy. `test_timeout_leaves_room_for_a_real_azure_call` chốt.
 11. **Đừng nới regex parser** — nó chỉ trả lời khi khớp trọn vẹn. Thêm mẫu "thứ Năm" là nuốt luôn "thứ Năm tuần sau". `TestRegexDefers` canh.
 
@@ -91,10 +93,33 @@ biên bản, không phải mẫu để chép.
 
 **Bẫy prompt (mới, 2026-08-23)** — xem `docs/test-scenarios/03-llm-live-run-2026-08-23.md`
 
-15. **Prompt tự bảo model lặp thì model sẽ lặp.** "nhắc lại" / "hỏi lại đúng câu vừa hỏi" ý là "vẫn ở câu hỏi cũ", model đọc thành "in ra hai lần". Prompt nay viết bằng **tiếng Anh**, câu mẫu giữ tiếng Việt.
-16. **Luật prompt chung chung không ăn, phải kèm ví dụ.** "Nói ngắn hơn lần đầu" bị bỏ qua; thêm một câu ví dụ thì ăn ngay.
+15. **Prompt tự bảo model lặp thì model sẽ lặp.** "nhắc lại" / "hỏi lại đúng câu vừa hỏi" ý là "vẫn ở câu hỏi cũ", model đọc thành "in ra hai lần". Prompt viết bằng **tiếng Anh**.
+
+16. **Từ 2026-09-13 prompt KHÔNG còn câu mẫu tiếng Việt.** Bản ghi cũ ở đây nói ngược lại ("luật chung chung không ăn, phải kèm ví dụ" — đo ở đợt rà 2026-08-23). Chủ dự án quyết đổi; tình huống nay mô tả bằng tiếng Anh thay vì dẫn câu mẫu. Vẫn ở lại: câu trả lời bảo mật ở `BOOKING_PROMPT` rule 4 (đầu ra bắt buộc) và các đại từ xưng hô trong khối VOICE (chủ thể của luật). **Docstring của tool giữ ví dụ tiếng Việt.** Kết quả đo — rubric `dai` (16 lượt, Azure gpt-5.4-mini):
+
+  | | mốc | sau tasks 2,3,4,5 | sau task 6 |
+  |---|---|---|---|
+  | lap_y | 2/5 | 2/5 | 2/5 |
+  | giong_may | 3/5 | 3/5 | 3/5 |
+  | hoi_lai_da_biet | 2/5 | 2/5 | 2/5 |
+  | xung_ho | 2/5 | 2/5 | 2/5 |
+  | tu_nhien | 3/5 | 3/5 | 3/5 |
+  | **TỔNG** | **2.4/5** | **2.4/5** | **2.4/5** |
+
+  Ba lần đo ra **cùng một con số** — đây KHÔNG phải bằng chứng các thay đổi vô
+  ích. Rubric ở độ hạt này đã bão hoà, không phân giải được khác biệt giữa ba
+  bản prompt khác hẳn nhau. Cái rubric đo được: lỗi cụ thể bị nhắm tới đã hết —
+  ở mốc, lượt 3 ("chủ nhật có nghỉ không em") nhắc lại nguyên giờ mở cửa vừa
+  nói; sau task 5 chỉ trả lời phần Chủ nhật. Bỏ câu mẫu tiếng Việt (task 6)
+  cũng không tốn gì đo được: probe supervisor (`scripts/probe_supervisor.py`,
+  14 mẫu) lệch **0/14 cả trước và sau** task 6, rubric không tụt. Cả ba lần
+  chấm, giám khảo đều chê **cùng một câu** — câu trả lời bảo mật cứng
+  `"Dạ em chỉ xem và đặt lịch cho chính anh chị thôi ạ. Anh chị cần đặt lịch
+  hay xem lịch của mình không ạ?"` — vì nó xưng "anh chị" chung chung trong khi
+  mọi lượt khác đều gọi đúng "chị Thắm". Đây là quan sát để ngỏ, có bằng chứng
+  đo được — **không sửa câu đó**, quyết định thuộc chủ dự án.
 17. **Prompt chặt hơn khuếch đại cả luật viết ẩu.** Luật "gọi tool NGAY" sống được với prompt lỏng, nhưng thành lỗ hổng quyền riêng tư khi model tuân thủ sát chữ.
-18. **`pytest` không bắt được nhóm lỗi này.** 413 test xanh trong khi máy đang lặp câu với khách. Đổi prompt phải chạy `scripts/llm_scenarios.py`.
+18. **`pytest` không bắt được nhóm lỗi này.** 413 test xanh trong khi máy đang lặp câu với khách. Đổi prompt phải chạy `scripts/llm_scenarios.py`, và chấm bằng `scripts/score_transcript.py` trên kịch bản `dai` của `scripts/chat_e2e_transcript.py`. Rubric này bắt được lỗi thô nhưng KHÔNG phân giải được khác biệt nhỏ hơn trong đợt việc này — ba lần chấm ba bản prompt khác nhau ra cùng 2.4/5 (xem bẫy #16).
 
 ## Ràng buộc giao diện — không được phá
 
@@ -128,3 +153,4 @@ khôi phục qua Telegram, spec ở `docs/superpowers/specs/2026-08-15-*.md`.
 - **P1 trong `REPO_AUDIT.md`**: SEC-01 (Socket.IO chưa kiểm `token_version`), SEC-03 (tách compose prod). SEC-02 và REL-02 đã xong.
 - **Vận hành**: sao lưu Mongo, HTTPS, CI — toàn bộ ở `PROD_CHECKLIST.md`.
 - **Avatar chatbot** chưa sinh; mockup trỏ `ai-avatar.jpg` không có trong git (ảnh Gemini bị `.gitignore` bỏ vì ~6MB, ai clone mới sẽ thấy mockup vỡ ảnh).
+- **Tầng digest** (nén lịch sử trong phiên) đã thiết kế nhưng **hoãn** — xem `docs/superpowers/specs/2026-09-13-natural-conversation-design.md` QĐ-6. Chỉ làm nếu trục `lap_y` của rubric vẫn thấp.

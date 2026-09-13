@@ -25,28 +25,78 @@ class TestOutputLanguageIsPinned:
         for name, prompt in CUSTOMER_FACING.items():
             assert prompt.count("MUST be Vietnamese") >= 2, name
 
-    def test_the_refusal_sentence_stays_vietnamese(self):
-        """Câu từ chối giờ do SOCIAL_PROMPT sinh ra, không còn là hằng trả thẳng."""
-        assert "Dạ em chỉ lo đặt lịch làm tóc với làm nail" in SOCIAL_PROMPT
+    def test_the_refusal_rule_states_the_scope(self):
+        """Câu từ chối giờ do model tự viết; prompt chỉ chốt PHẠM VI."""
+        assert "hair and nail appointments" in SOCIAL_PROMPT
 
 
-class TestExamplesStayVietnamese:
-    """Câu mẫu là bản mẫu của thứ model sẽ nói với khách. Dịch sang tiếng Anh là
-    mẫu cho một thứ không bao giờ được xuất ra, và mất luôn giọng "con — cô/bác".
+class TestPromptsCarryNoVietnameseSampleSentences:
+    """Quyết định 2026-09-13: prompt không còn câu mẫu tiếng Việt.
+
+    Đi ngược `CONTEXT.md` bẫy #15 và #16 (đo được ở đợt rà 2026-08-23: luật
+    chung chung bị bỏ qua, thêm ví dụ thì ăn ngay). Hiệu quả thật được đo
+    bằng `scripts/score_transcript.py`, không bằng test này.
+
+    NGOẠI LỆ: câu bảo mật ở rule 4 — prompt bắt model đáp NGUYÊN VĂN chuỗi
+    đó, nên nó là đầu ra bắt buộc chứ không phải ví dụ.
     """
 
-    def test_the_confirmation_rule_constrains_content_not_wording(self):
-        """Ví dụ câu xác nhận đã bỏ có chủ ý — xem
-        TestBookingPromptSlimmed. Thay vào đó prompt phải chốt ĐỦ NỘI DUNG."""
-        assert "the weekday and date" in BOOKING_PROMPT
-        assert "MUST end in a question" in BOOKING_PROMPT
+    SECURITY_REPLY = (
+        "Dạ em chỉ xem và đặt lịch cho chính anh chị thôi ạ. Anh chị cần đặt lịch hay\n"
+        "   xem lịch của mình không ạ?"
+    )
 
-    def test_the_shorter_reask_example_is_vietnamese(self):
-        """Luật "nói ngắn hơn" chung chung bị model bỏ qua; chỉ ăn khi có ví dụ."""
-        assert "anh chị chọn giờ nào ạ" in BOOKING_PROMPT
+    def test_the_security_reply_is_still_there_verbatim(self):
+        assert self.SECURITY_REPLY in BOOKING_PROMPT
 
-    def test_the_absolute_finish_time_example_is_vietnamese(self):
-        assert "xong lúc 3 giờ rưỡi chiều ạ" in SHOP_PROMPT
+    def test_no_sample_sentences_remain(self):
+        """Mỗi chuỗi dưới đây là một câu mẫu đã bị bỏ ở task này."""
+        gone = [
+            "xong lúc 3 giờ rưỡi chiều ạ",
+            "3 giờ chiều", "9 giờ rưỡi sáng", "1 giờ 45 chiều",
+            "15:00",
+            "thứ Năm tuần sau",
+            "lúc nào vắng thì xếp em", "khi nào rảnh cũng được",
+            "khách đặt lúc 3 giờ là ai", "cho xem số",
+            "anh chị chọn giờ nào ạ",
+            "chào em", "cảm ơn em nhé", "chị đi nha",
+            "Dạ em chỉ lo đặt lịch làm tóc với làm nail",
+            "chị muốn làm tóc", "em làm nail nha",
+        ]
+        for prompt_name, prompt in (("SUPERVISOR_PROMPT", SUPERVISOR_PROMPT),
+                                    ("SHOP_PROMPT", SHOP_PROMPT),
+                                    ("BOOKING_PROMPT", BOOKING_PROMPT),
+                                    ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
+            body = prompt.replace(self.SECURITY_REPLY, "")
+            for sample in gone:
+                assert sample not in body, f"{prompt_name} còn câu mẫu {sample!r}"
+
+    def test_the_pronouns_the_rules_are_about_are_kept(self):
+        """`em`, `anh`, `chị`, `cô`, `chú`, `bác` KHÔNG phải ví dụ — chúng là
+        chủ thể của luật xưng hô. Bỏ đi thì câu luật rỗng nghĩa."""
+        for prompt in (SHOP_PROMPT, BOOKING_PROMPT, SOCIAL_PROMPT):
+            assert 'call yourself "em"' in prompt
+            assert '"cô", "chú" or "bác"' in prompt
+
+    def test_the_business_scope_survives_in_english(self):
+        """Ràng buộc "chỉ tóc và nail" từng sống bằng câu mẫu tiếng Việt;
+        giờ phải sống bằng tiếng Anh."""
+        assert "hair and nail appointments" in SOCIAL_PROMPT
+
+
+class TestDocstringsKeepTheirVietnameseExamples:
+    """Phạm vi quyết định 2026-09-13 CHỈ gồm prompt. Docstring của tool giữ
+    nguyên ví dụ tiếng Việt — chúng là dữ liệu khách gõ, dịch đi thì ví dụ
+    vô nghĩa."""
+
+    def test_tools_module_still_has_them(self):
+        from pathlib import Path
+        source = Path("app/agents/booking_graph/tools.py").read_text(encoding="utf-8")
+        assert "mai 3h chiều" in source
+        # Câu mẫu này xuống dòng trong docstring gốc ("lúc nào vắng thì\n
+        # xếp em"), nên so từng cụm thay vì nguyên chuỗi có khoảng trắng cố định.
+        assert "lúc nào vắng thì" in source
+        assert "xếp em" in source
 
 
 class TestHardWonRulesSurvive:
@@ -64,10 +114,27 @@ class TestHardWonRulesSurvive:
         for name, prompt in CUSTOMER_FACING.items():
             assert "ONE reply per turn" in prompt, name
 
-    def test_clock_format_is_pinned(self):
+    def test_clock_format_rule_forbids_digits(self):
+        """Ví dụ giờ nói ("3 giờ chiều"...) đã bị bỏ ở task 2026-09-13; luật
+        giờ phải sống bằng mô tả tiếng Anh, không phải câu mẫu."""
         for name, prompt in CUSTOMER_FACING.items():
-            assert '"15:00"' in prompt, name
-            assert "3 giờ chiều" in prompt, name
+            assert "spoken words" in prompt.lower(), name
+            assert "never write digits separated by a colon" in prompt.lower(), name
+
+    def test_shop_finish_time_must_be_absolute_not_a_countdown(self):
+        """Lỗi gốc: "còn 30 phút" nằm lại trong lịch sử chat rồi sai ngay sau
+        đó. Test cũ canh câu mẫu này bị xoá theo đợt bỏ câu mẫu tiếng Việt —
+        phục lại nhưng canh chữ tiếng Anh mô tả luật, không phải câu mẫu."""
+        assert "state the ABSOLUTE finish time" in SHOP_PROMPT
+        assert "Never give a countdown in minutes" in SHOP_PROMPT
+
+    def test_booking_narrows_to_one_choice_when_customer_still_deciding(self):
+        """Rule 5 của BOOKING_PROMPT: khi khách còn phải chọn giữa các lựa
+        chọn đã liệt kê, câu trả lời phải NGẮN LẠI và chỉ nói về lựa chọn đó —
+        không lặp lại toàn bộ các lựa chọn. Test cũ canh vế này cũng bị xoá
+        theo đợt bỏ câu mẫu tiếng Việt."""
+        assert "write a shorter sentence covering" in BOOKING_PROMPT
+        assert "only that choice" in BOOKING_PROMPT
 
     def test_the_prompt_does_not_ask_for_a_parameter_that_no_longer_exists(self):
         """Xưng hô giờ suy ra bằng code từ full_name. Bảo model truyền `xung_ho`
@@ -139,12 +206,6 @@ class TestRegisterIsAnhChiEm:
             for cu in ("giúp con", "để con", "con xem giúp"):
                 assert cu not in prompt, f"{name} còn {cu!r}"
 
-    def test_social_prompt_carries_the_scope_example_verbatim(self):
-        """Luật chung chung bị model bỏ qua; chỉ ăn khi có ví dụ — cùng lý do
-        với các luật khác trong class này. Hằng từ chối cũ chốt phạm vi
-        'chỉ tóc và nail'; ràng buộc đó phải sống tiếp ở đây."""
-        assert "chỉ lo đặt lịch làm tóc với làm nail" in SOCIAL_PROMPT
-
     def test_social_prompt_is_vietnamese_and_polite(self):
         assert "em" in SOCIAL_PROMPT
         assert "cô chú" not in SOCIAL_PROMPT
@@ -162,12 +223,46 @@ class TestBookingPromptSlimmed:
         phải là NỘI DUNG (đủ ngày, giờ, dịch vụ, có hỏi lại), không phải chữ."""
         assert "Em đặt Thứ Năm 7/8, 3 giờ chiều, làm tóc — đúng không chị?" not in BOOKING_PROMPT
 
+    def test_the_confirmation_rule_constrains_content_not_wording(self):
+        """Sống sót từ class TestExamplesStayVietnamese đã xoá. Nó KHÔNG canh
+        câu mẫu tiếng Việt — nó canh rule 2 bắt câu xác nhận phải đủ thứ/ngày,
+        giờ, dịch vụ và phải kết bằng câu hỏi. Ràng buộc đó là nội dung, không
+        phải chữ, nên nó sống tiếp sau khi câu mẫu bị gỡ."""
+        assert "the weekday and date" in BOOKING_PROMPT
+        assert "MUST end in a question" in BOOKING_PROMPT
+
     def test_the_prompt_actually_got_shorter(self):
-        # Trước khi cắt: 4718 ký tự. Cắt xong phải dưới 3000 — nếu không thì
-        # rule chưa thực sự chuyển đi đâu cả.
-        assert len(BOOKING_PROMPT) < 3000
+        # Trước khi cắt: 4718 ký tự. Task 5 thêm `_NO_REPEAT` (~480 ký tự,
+        # bắt buộc, giống hệt ở cả ba prompt) rồi mốc dưới nới ra 3500. Task 6
+        # (2026-09-13) bỏ câu mẫu tiếng Việt, đo được 3231 ký tự. Đợt rà cuối
+        # cùng ngày 2026-09-13 thêm carve-out "khách xin nhắc lại" vào
+        # `_NO_REPEAT`, đo được 3451 ký tự — mốc dưới ở đây bám theo số đo
+        # thật (làm tròn lên bội số 100 gần nhất) để hàng rào còn ý nghĩa,
+        # không phải một số tròn xa thực tế và không trồi lên vì một sửa
+        # không liên quan.
+        assert len(BOOKING_PROMPT) < 3500
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
         trống HÔM NAY. Chỉ được tự chọn ngày khi khách nói rõ là tùy tiệm."""
         assert "only when the customer says the salon may choose" in BOOKING_PROMPT.lower()
+
+
+class TestNoRepeatRuleReachesEveryCustomerFacingPrompt:
+    """Ca lỗi thật (transcript 2026-09-13, lượt 2 và 3) nằm ở node `shop`,
+    không phải `booking` — nên luật phải có mặt ở CẢ BA prompt sinh câu cho
+    khách, không chỉ ở prompt đặt lịch."""
+
+    def test_the_rule_is_in_all_three(self):
+        for name, prompt in (("SHOP_PROMPT", SHOP_PROMPT),
+                             ("BOOKING_PROMPT", BOOKING_PROMPT),
+                             ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
+            assert "DO NOT REPEAT YOURSELF" in prompt, name
+
+    def test_the_rule_covers_rewording_not_just_verbatim(self):
+        """Chữ `verbatim` là chỗ hở: lặp ý mà khác chữ thì luật cũ không
+        chạm tới."""
+        assert "not the same fact reworded" in SHOP_PROMPT
+
+    def test_the_old_verbatim_wording_is_gone(self):
+        assert "repeat your previous reply verbatim" not in BOOKING_PROMPT

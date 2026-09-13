@@ -8,6 +8,8 @@ from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError
+from app.core.text import single_line
+from app.models.appointment import NOTE_MAX
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
@@ -124,6 +126,11 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         Call this tool, then ask the customer to confirm. NO tool writes an
         appointment directly — it is written only when the customer agrees on
         the NEXT turn."""
+        # `note` ở đây do model tự gõ lại theo lời khách, và được lưu vào
+        # `pending_confirmation` + in thẳng vào chuỗi trả về — cả hai đường
+        # này không đi qua `Appointment`, nên cái cap ở `Appointment._clean_note`
+        # (single_line + NOTE_MAX) không tự động áp dụng. Phải lọc lại ở đây.
+        note = single_line(note, NOTE_MAX)
         try:
             start = _parse_local(start_at)
         except ValueError:

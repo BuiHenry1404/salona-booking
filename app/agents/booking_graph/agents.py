@@ -27,11 +27,20 @@ def make_subagent_node(
         model = build_chat_model(tags=[tag], temperature=0.2).bind_tools(tools)
 
         # Bố cục theo độ ổn định: system (tĩnh, được cache) → lịch sử →
-        # khối bối cảnh (đổi mỗi lượt) đặt sát cuối, ngay trước câu hỏi mới.
+        # khối bối cảnh (đổi mỗi lượt) → câu hỏi mới.
+        #
+        # Lời khách phải là thứ CUỐI model đọc. Model bắt chước giọng người
+        # đối thoại; để khối trạng thái đứng cuối là nó đáp lại bằng giọng
+        # biểu mẫu ("em giữ chỗ cho dịch vụ làm tóc"). Đây cũng đúng thứ tự
+        # `CONTEXT.md` bẫy #9 đã chốt từ đầu.
+        #
+        # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
+        history, question = state["messages"][:-1], state["messages"][-1:]
         messages = [
             SystemMessage(content=prompt),
-            *state["messages"],
+            *history,
             HumanMessage(content=state.get("context_block", "")),
+            *question,
         ]
 
         for _ in range(MAX_TOOL_ROUNDS):

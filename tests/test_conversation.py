@@ -158,3 +158,55 @@ async def test_clearing_pending(test_db):
     await svc.set_pending("u1", {"start_at": "x", "note": None})
     await svc.set_pending("u1", None)
     assert await svc.get_pending("u1") is None
+
+
+async def test_history_never_starts_with_an_orphaned_answer(test_db):
+    """Cắt theo ngân sách đi từ tin mới nhất lùi về, nên chỗ cắt có thể rơi
+    giữa một cặp và giữ lại câu trả lời mà bỏ mất câu hỏi sinh ra nó.
+
+    Model đọc một câu đáp không có câu hỏi thì mất mạch — đó đúng là điều
+    04-agent.md:99 cấm.
+
+    Số học phải CHỐT CHẶT, không được để may rủi: giữ được số tin CHẴN thì
+    tin cũ nhất tình cờ là `user` và test xanh cả khi chưa sửa gì. Mỗi tin
+    dài đúng 30 ký tự -> cost = 30 // CHARS_PER_TOKEN = 10. Ngân sách 50 giữ
+    đúng 5 tin — số LẺ — nên tin cũ nhất chắc chắn là `assistant`.
+    """
+    svc = ConversationService(test_db)
+    for _ in range(10):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
+
+    history = await svc.history("u1", token_budget=50)
+
+    assert history, "ngân sách 50 token phải đủ cho ít nhất một cặp"
+    assert history[0].role == "user", [m.role for m in history]
+    # Bỏ đúng một tin mồ côi, không bỏ cả cặp còn lành.
+    assert len(history) == 4
+
+
+async def test_history_keeps_whole_pairs_when_the_budget_is_tiny(test_db):
+    """Ngân sách nhỏ tới mức chỉ đủ một tin: thà trả rỗng còn hơn trả một
+    câu đáp mồ côi.
+
+    Vòng lặp luôn giữ tin mới nhất dù vượt ngân sách (`and kept` chỉ chặn từ
+    tin thứ hai), nên chưa sửa thì hàm trả về đúng một `assistant` mồ côi.
+    """
+    svc = ConversationService(test_db)
+    await svc.append("u1", "user", "u" * 30)
+    await svc.append("u1", "assistant", "a" * 30)
+
+    assert await svc.history("u1", token_budget=1) == []
+
+
+async def test_a_truncated_window_of_three_still_drops_the_orphan(test_db):
+    """Ca mà luật đếm-độ-dài bỏ lọt: cắt còn ĐÚNG BA tin, tin đầu là câu đáp
+    mồ côi thật. Số học: mỗi tin 30 ký tự -> cost 10; budget 35 giữ 3 tin."""
+    svc = ConversationService(test_db)
+    for _ in range(3):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
+
+    history = await svc.history("u1", token_budget=35)
+
+    assert [m.role for m in history] == ["user", "assistant"]
