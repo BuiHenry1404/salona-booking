@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List
 
@@ -9,8 +10,14 @@ from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
 from app.models.user import User
 from app.services.conversation import ConversationService
+from app.services.digest import DigestService
 
 logger = get_logger(__name__)
+
+
+def schedule_compaction(db: AsyncIOMotorDatabase, user_id: str) -> None:
+    """Nén nền, không await: khách đã nhận complete. maybe_compact tự nuốt lỗi."""
+    asyncio.create_task(DigestService(db).maybe_compact(user_id))
 
 
 @dataclass
@@ -95,6 +102,14 @@ async def run_turn(
             await conversations.append(user_id, "assistant", answer)
 
         yield AgentEvent("complete", {"answer": answer})
+
+        if answer:
+            # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không
+            # được biến thành sự kiện error cho một lượt đã xong.
+            try:
+                schedule_compaction(db, user_id)
+            except Exception as exc:
+                logger.warning("digest_schedule_failed", extra={"user_id": user_id, "error": str(exc)})
 
     except Exception as exc:
         logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})

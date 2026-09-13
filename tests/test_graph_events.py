@@ -131,3 +131,45 @@ async def test_load_context_returns_the_digest_bullets(test_db):
     context = await load_context(test_db, user, "x")
     assert context["digest"] == ["Khách chào."]
     assert [m.content for m in context["history"]] == ["mới"]
+
+
+async def test_run_turn_schedules_compaction_after_complete(test_db, monkeypatch):
+    """Nén chạy NỀN: khách nhận complete trước, không chờ LLM nén."""
+    from app.agents.booking_graph import events
+    from app.services.auth import AuthService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+    scheduled = []
+    monkeypatch.setattr(events, "schedule_compaction",
+                        lambda db, user_id: scheduled.append(user_id))
+
+    seen = [e.type async for e in events.run_turn(test_db, user, "chào em")]
+
+    assert seen[-1] == "complete"
+    assert scheduled == [str(user.id)]
+
+
+async def test_compaction_error_never_reaches_the_customer(test_db, monkeypatch):
+    from app.agents.booking_graph import events
+    from app.services.auth import AuthService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+
+    def boom(db, user_id):
+        raise RuntimeError("scheduler broken")
+    monkeypatch.setattr(events, "schedule_compaction", boom)
+
+    seen = [e.type async for e in events.run_turn(test_db, user, "chào em")]
+    assert "error" not in seen and seen[-1] == "complete"
