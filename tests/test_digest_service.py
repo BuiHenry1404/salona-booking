@@ -77,9 +77,36 @@ def test_split_window_keeps_the_last_turns_verbatim():
     assert older == list(range(0, 20 - 2 * KEEP_RECENT_TURNS))
 
 
+def test_split_window_boundary_exactly_the_keep_window():
+    keep = 2 * KEEP_RECENT_TURNS
+    msgs = list(range(keep))
+    older, recent = split_window(msgs, covers_until=None)
+    assert older == []
+    assert recent == msgs
+
+
+def test_split_window_boundary_one_more_than_the_keep_window():
+    keep = 2 * KEEP_RECENT_TURNS
+    msgs = list(range(keep + 1))
+    older, recent = split_window(msgs, covers_until=None)
+    assert older == [0]
+    assert recent == msgs[1:]
+
+
 async def test_short_session_does_not_call_the_model(test_db, patch_model):
     model = patch_model()
     await _seed(test_db, 3)
+    assert await DigestService(test_db).maybe_compact("u1") is False
+    assert model.kwargs is None
+
+
+async def test_older_messages_under_threshold_do_not_call_the_model(test_db, patch_model):
+    """5 lượt = 10 tin, giữ 8 tin gần nhất (KEEP_RECENT_TURNS=4) → older chỉ
+    còn 2 tin. Với nội dung NGẮN, older không rỗng nhưng chưa vượt ngưỡng
+    token — phải bỏ qua nhánh estimate_tokens(older) < COMPACT_THRESHOLD_TOKENS
+    mà không gọi model."""
+    model = patch_model()
+    await _seed(test_db, 5, text="ok")
     assert await DigestService(test_db).maybe_compact("u1") is False
     assert model.kwargs is None
 
