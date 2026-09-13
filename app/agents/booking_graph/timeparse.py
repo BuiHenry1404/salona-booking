@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agents.llm import build_chat_model
 from app.core.clock import TZ
@@ -22,20 +22,65 @@ PARSE_TIMEOUT_SECONDS = 8.0
 MAX_DAYS_AHEAD = 90
 
 
+# Bộ câu hỏi ĐÓNG mà lễ tân được phép hỏi lại khách.
+#
+# Schema này đi thẳng vào `with_structured_output`, tức nó là một phần của
+# prompt: để `List[str]` thì model viết gì cũng hợp lệ, và nó đã viết sai thật —
+# "thứ ba tuần sau" ra missing "thứ ba tuần sau là ngày nào cụ thể", tức hỏi
+# ngược lại chính cái ngày nó vừa tính được, trong khi "thứ năm tuần sau" cùng
+# lúc đó lại trả đúng. Đóng enum là biến "đừng làm vậy" thành "không làm được".
+#
+# Hai giá trị cuối do `_guard` sinh ra, không phải LLM — bỏ sót chúng là `_guard`
+# ném lỗi giữa lượt chat của khách.
+MissingPiece = Literal[
+    "giờ cụ thể",
+    "sáng hay chiều",
+    "ngày nào",
+    "tuần này hay tuần sau",
+    "ngày khác — giờ đó qua mất rồi",
+    "ngày gần hơn",
+]
+
+# Xác định được ngày rồi thì hai câu này thành vô nghĩa.
+_DAY_QUESTIONS = {"ngày nào", "tuần này hay tuần sau"}
+
+
 class ParsedTime(BaseModel):
     """Kết quả quy đổi. `start_at` khác None nghĩa là dùng được ngay."""
 
     start_at: Optional[datetime] = Field(
         default=None, description="Thời điểm ISO 8601 kèm múi giờ, hoặc null nếu chưa đủ thông tin"
     )
-    missing: List[str] = Field(
+    missing: List[MissingPiece] = Field(
         default_factory=list,
-        description="Còn thiếu thông tin gì, viết bằng tiếng Việt cho lễ tân hỏi lại khách",
+        description="Còn thiếu thông tin gì, chọn trong danh sách cho sẵn",
     )
     partial_date: Optional[date] = Field(
         default=None, description="Ngày đã xác định được, dùng khi chưa biết giờ"
     )
     source: Literal["regex", "llm"] = "llm"
+
+    @model_validator(mode="after")
+    def _a_known_day_is_never_asked_again(self):
+        """Biết ngày rồi mà vẫn hỏi lại ngày là tự mâu thuẫn — đó đúng là hình
+        dạng của lỗi "thứ ba tuần sau".
+
+        ÉP về dạng đúng chứ KHÔNG ném lỗi. Bản đầu tiên của luật này ném
+        ValueError, và đo thật cho thấy nó tệ hơn bệnh: `parse_vi_time` bắt mọi
+        Exception rồi rơi vào fail-soft, nên cả `partial_date` vừa giải được
+        cũng bị vứt — ca "thứ năm tuần sau" đang đúng thành sai.
+
+        Bỏ câu hỏi thừa mà vẫn còn thiếu giờ thì phải thay bằng câu hỏi giờ,
+        không thì `missing` rỗng và agent tưởng đã đủ thông tin để đặt lịch.
+        """
+        if not (self.partial_date and _DAY_QUESTIONS & set(self.missing)):
+            return self
+
+        kept = [m for m in self.missing if m not in _DAY_QUESTIONS]
+        if not kept and self.start_at is None:
+            kept = ["giờ cụ thể"]
+        self.missing = kept
+        return self
 
 
 def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
@@ -158,10 +203,12 @@ Tiệm mở cửa 8 giờ sáng đến 7 giờ tối.
 Quy tắc:
 - Mọi giờ đều là giờ Việt Nam, offset +07:00.
 - Đủ ngày và giờ thì điền start_at. Ví dụ: "thứ Năm tuần sau lúc 2 giờ chiều".
-- THIẾU thông tin thì để start_at null và ghi rõ thiếu gì vào missing.
+- THIẾU thông tin thì để start_at null và chọn missing trong ĐÚNG bộ cho sẵn.
+  Xác định được ngày thì PHẢI điền partial_date, và khi đó không được
+  hỏi lại ngày nữa — chỉ hỏi giờ.
   "sáng mai" → partial_date là ngày mai, missing là ["giờ cụ thể"].
   "3 giờ" → missing là ["sáng hay chiều"].
-  "thứ Năm" → missing là ["thứ Năm tuần này hay tuần sau"].
+  "thứ Năm" → missing là ["tuần này hay tuần sau"].
 - TUYỆT ĐỐI không đoán thay khách. Đoán sai thì cụ già tới tiệm lúc không ai mở cửa.
 - "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ em qua được không" đều nghĩa
   là NGAY LÚC NÀY: điền start_at đúng {hour:02d}:{minute:02d} hôm nay, missing rỗng.
