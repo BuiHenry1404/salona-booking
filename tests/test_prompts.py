@@ -285,8 +285,9 @@ class TestBookingPromptSlimmed:
         # không phải một số tròn xa thực tế và không trồi lên vì một sửa
         # không liên quan. 2026-09-14: thêm luật dời lịch (BUG-1, lấy id từ
         # khối bối cảnh) và siết luật viết số (BUG-3), đo được 3977 ký tự —
-        # mốc lên 4000.
-        assert len(BOOKING_PROMPT) < 4000
+        # mốc lên 4000. Cùng ngày thêm vế loại trừ cho rule 4 (lịch của chính
+        # họ nhưng không có), đo được 4109 — mốc lên 4200.
+        assert len(BOOKING_PROMPT) < 4200
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -341,3 +342,14 @@ class TestNumbersStayDigits:
     def test_the_format_rule_points_at_the_tool_output_as_the_reference(self):
         for name, prompt in CUSTOMER_FACING.items():
             assert "exactly as the tool" in prompt.lower() or "same format" in prompt.lower(), name
+
+
+class TestRuleFourDoesNotFireOnAnEmptyCalendar:
+    """Chạy thật 2026-09-14: khách "ừ hủy đi" khi đã hết lịch, model đáp bằng
+    câu bảo mật rule 4 — sai ngữ cảnh. Bẫy #17: luật viết rộng thì model bám
+    chữ khi bối rối. Rule 4 phải nói rõ ca "lịch của chính họ nhưng không có"
+    KHÔNG thuộc luật này."""
+
+    def test_the_carve_out_is_stated(self):
+        assert "have none" in BOOKING_PROMPT
+        assert "is NOT this case" in BOOKING_PROMPT

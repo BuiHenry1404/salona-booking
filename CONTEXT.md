@@ -23,7 +23,7 @@ gì **không được phá**. Chi tiết nằm ở file khác, đã ghi kèm t�
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
 **Trạng thái 2026-09-14:** cả 4 plan gốc xong (backend, agent, Telegram,
-React). **568 test backend** + 252 frontend xanh. Chạy thật với Azure
+React). **588 test backend** + 252 frontend xanh. Chạy thật với Azure
 `gpt-5.4-mini`, Langfuse có trace và có chi phí.
 
 Ba nhánh xếp chồng đã merge vào `henry/develop`; ba bug nghiệp vụ của
@@ -35,7 +35,7 @@ checkpoint cũng đã sửa cùng ngày — xem [Checkpoint 2026-09-14](#checkpo
 | Chủ đề | Chốt | Vì sao |
 |---|---|---|
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
-| Ghi lịch | **Agent không có tool ghi lịch** | `propose_appointment` giữ chỗ, node `confirm` mới ghi. Giá trị lấy từ DB, không từ chuỗi model gõ lại |
+| Ghi lịch | **Agent không có tool ghi lịch — và từ 2026-09-14 cũng không hủy ngay** | `propose_appointment` giữ chỗ, `cancel_appointment` giữ ý hủy; node `confirm` mới ghi/hủy khi khách "ừ". Giá trị lấy từ DB, không từ chuỗi model gõ lại |
 | Memory | **2 tầng** (danh tính + lịch sử), bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
 | Bot Telegram | **Không có AI**, 4 nút | Tất định, không tốn token, test không cần LLM |
@@ -130,6 +130,9 @@ rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất là giờ m
 lịch cũ: phải nhả cũ trước, nhưng đã kiểm quá khứ/giờ mở cửa/hạn mức xong.
 Id để dời và hủy nằm ở đuôi `[id: ...]` mỗi dòng "Lịch sắp tới" trong khối
 bối cảnh — dựng từ DB mỗi lượt, nên không phụ thuộc lượt trước gọi tool gì.
+**Hủy cũng qua `confirm`** (pending mang `cancel_appointment_id`), và khi đang
+chốt hủy thì chữ "hủy" trong "ừ hủy đi" là ĐỒNG Ý — `is_affirmative(...,
+cancelling=True)`; dùng chung bộ từ phủ định là khách không bao giờ hủy được.
 
 18. **`pytest` không bắt được nhóm lỗi này.** 413 test xanh trong khi máy đang lặp câu với khách. Đổi prompt phải chạy `scripts/llm_scenarios.py`, và chấm bằng `scripts/score_transcript.py` trên kịch bản `dai` của `scripts/chat_e2e_transcript.py`. Rubric này bắt được lỗi thô nhưng KHÔNG phân giải được khác biệt nhỏ hơn trong đợt việc này — ba lần chấm ba bản prompt khác nhau ra cùng 2.4/5 (xem bẫy #16).
 
@@ -309,15 +312,25 @@ giới ngữ nghĩa thành phép so khớp từ.
   2026-09-14: có lượt model tự diễn đạt lại câu này và gọi đúng tên — tức nó
   không luôn tuân thủ "reply exactly", và không test nào canh điều đó.)*
 
-**Quan sát thêm khi chạy thật 2026-09-14 (chưa sửa, ngoài phạm vi đợt này):**
+**Đợt hai cùng ngày (`fix/cancel-confirm-and-prompts`), từ transcript chạy thật:**
+
+- *Đã sửa* — "ừ hủy đi" khi đã hết lịch có lượt bị đáp bằng câu bảo mật rule 4:
+  thêm vế loại trừ vào rule 4 ("their OWN appointment when they have none is
+  NOT this case").
+- *Đã sửa* — bot hủy NGAY khi khách nói "hủy lịch đó": giờ `cancel_appointment`
+  chỉ giữ ý định, `confirm` mới hủy (xem bẫy #19).
+- *Đã sửa* — note lưu "cắt tóc mai": docstring `propose_appointment` nói rõ
+  `note` là dịch vụ, không phải thời gian.
+- *Đã sửa* — `str.capitalize()` hạ chữ tên ("Anh hùng") ở câu báo lỗi của
+  `confirm`; thay bằng `_sentence_start`.
+
+**Còn để ngỏ (chưa sửa):**
 
 - Parser thời gian không ổn định với "mai" sát nửa đêm: hai lần chạy cách nhau
   một phút, một lần ra 15/9 đúng, một lần ra 14/9 (hôm nay). Nhánh LLM của
   `parse_vi_time`, không phải regex.
 - Khách nói "ừ" khi bot đang hỏi thiếu một mảnh ("sáng hay chiều", "ngày nào")
   thì bot hỏi lại nguyên câu — hợp lý nhưng lặp.
-- Khách bảo "ừ hủy đi" khi đã hết lịch, có lượt model đáp bằng câu bảo mật
-  rule 4 (sai ngữ cảnh), có lượt đáp đúng "chưa có lịch nào để hủy".
 
 ### Cách chạy lại phép đo
 

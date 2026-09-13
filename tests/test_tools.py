@@ -157,10 +157,14 @@ async def test_list_then_cancel(test_db):
     assert "làm tóc" in listed
 
     appointment_id = listed.split("[id:")[1].split("]")[0].strip()
-    cancelled = await by_name(tools, "cancel_appointment").ainvoke({"appointment_id": appointment_id})
-    assert "hủy" in cancelled.lower()
+    held = await by_name(tools, "cancel_appointment").ainvoke({"appointment_id": appointment_id})
+    assert "hủy" in held.lower()
 
-    assert "chưa có lịch" in (await by_name(tools, "list_my_appointments").ainvoke({})).lower()
+    # Tool chỉ GIỮ ý hủy — lịch vẫn còn cho tới khi khách "ừ" ở node confirm.
+    assert "làm tóc" in await by_name(tools, "list_my_appointments").ainvoke({})
+    from app.services.conversation import ConversationService
+    pending = await ConversationService(test_db).get_pending(str(user.id))
+    assert pending["cancel_appointment_id"] == appointment_id
 
 
 async def test_tool_cannot_touch_another_users_appointment(test_db):
@@ -177,7 +181,7 @@ async def test_tool_cannot_touch_another_users_appointment(test_db):
     result = await by_name(make_booking_tools(test_db, intruder), "cancel_appointment").ainvoke(
         {"appointment_id": appointment_id}
     )
-    assert "chỉ hủy được lịch của chính mình" in result.lower()
+    assert "của chính mình" in result.lower()
 
 
 async def test_free_slots_never_include_3am(test_db):
@@ -415,3 +419,56 @@ class TestCancelKnowsWhereTheIdLives:
         desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
         assert "context block" in desc
         assert "never invent" in desc.lower() or "never guess" in desc.lower()
+
+
+class TestCancelGoesThroughConfirm:
+    """Hủy giống đặt: tool chỉ giữ ý định, node confirm mới hủy thật.
+
+    Chạy thật 2026-09-14: khách "thôi hủy lịch đó giùm anh" → bot hủy NGAY, trong
+    khi ràng buộc giao diện chốt "hủy phải qua một bước xác nhận" và kịch bản
+    `huy` vốn có lượt "ừ hủy đi em". Trước đây bot hỏi lại chỉ vì vô tình phải
+    gọi list_my_appointments; có id trong khối bối cảnh là nó hủy thẳng.
+    """
+
+    async def test_cancel_holds_the_intent_and_keeps_the_appointment(self, test_db):
+        from app.services.appointment import AppointmentService
+        from app.services.conversation import ConversationService
+        user = await a_user(test_db)
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+
+        out = await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
+            {"appointment_id": str(appt.id)}
+        )
+
+        assert (await AppointmentService(test_db).repo.get_by_id(str(appt.id))).status == "booked"
+        pending = await ConversationService(test_db).get_pending(str(user.id))
+        assert pending == {"cancel_appointment_id": str(appt.id),
+                           "start_at": appt.start_at.isoformat(),
+                           "asked_at": pending["asked_at"]}
+        assert "3 giờ chiều" in out and "xác nhận" in out
+
+    async def test_a_bad_id_holds_nothing(self, test_db):
+        from app.services.conversation import ConversationService
+        user = await a_user(test_db)
+        out = await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
+            {"appointment_id": "bịa"}
+        )
+        assert "không tìm thấy" in out.lower()
+        assert await ConversationService(test_db).get_pending(str(user.id)) is None
+
+    async def test_the_description_says_the_customer_confirms_next_turn(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
+        assert "NEXT turn" in desc
+        assert "already cancelled" in desc.lower() or "is cancelled" in desc.lower()
+
+
+class TestNoteIsTheServiceOnly:
+    """Chạy thật: note lưu thành "cắt tóc mai" — chữ "mai" là thời gian, không
+    phải dịch vụ, và nó chảy vào khối bối cảnh lẫn tin Telegram cho chủ tiệm."""
+
+    async def test_propose_description_forbids_time_words_in_note(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "propose_appointment").description.split())
+        assert "`note`" in desc
+        assert "service" in desc.lower() and "never the time" in desc.lower()

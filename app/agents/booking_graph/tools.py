@@ -130,6 +130,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         Call this tool, then ask the customer to confirm. NO tool writes an
         appointment directly — it is written only when the customer agrees on
         the NEXT turn.
+        `note` is the service only (what they want done) — never the time or
+        the day; those live in `start_at`.
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
         (reschedule) an appointment they already have. Copy the id from the
         `[id: ...]` tag on that appointment's line in the context block. When
@@ -214,16 +216,26 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:
-        """Cancel one appointment. `appointment_id` is the `[id: ...]` tag on
-        that appointment's line in the context block — copy it exactly. Never
-        invent or guess an id; if the context block shows none, call
-        list_my_appointments first. If the customer has two or more
-        appointments, ask which one before cancelling."""
+        """Prepare to cancel one appointment. Nothing is cancelled yet: call
+        this, then ask the customer to confirm — the appointment is cancelled
+        only when they agree on the NEXT turn. Never say it is already
+        cancelled before that.
+        `appointment_id` is the `[id: ...]` tag on that appointment's line in
+        the context block — copy it exactly. Never invent or guess an id; if
+        the context block shows none, call list_my_appointments first. If the
+        customer has two or more appointments, ask which one first."""
+        # Không hủy ở đây. Hủy giống đặt: tool giữ ý định, node confirm mới
+        # làm thật khi khách "ừ". Kiểm id trước để không giữ một ý hủy vô nghĩa.
         try:
-            await service.cancel(user, appointment_id)
+            appt = await service.own_booked(user, appointment_id)
         except AppError as exc:
             return exc.message
-        return "Đã hủy lịch."
+        await conversations.set_pending(
+            str(user.id),
+            {"cancel_appointment_id": str(appt.id), "start_at": appt.start_at.isoformat()},
+        )
+        return (f"Sẽ hủy lịch {format_vi_datetime(appt.start_at)}. "
+                "Hãy hỏi khách xác nhận trước khi hủy.")
 
     return [
         parse_time,
