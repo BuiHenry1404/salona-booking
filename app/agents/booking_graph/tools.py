@@ -120,12 +120,21 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
 
     @tool
-    async def propose_appointment(start_at: str, note: Optional[str] = None) -> str:
+    async def propose_appointment(
+        start_at: str,
+        note: Optional[str] = None,
+        replaces_appointment_id: Optional[str] = None,
+    ) -> str:
         """Hold the slot temporarily and prepare the confirmation question.
         `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
         Call this tool, then ask the customer to confirm. NO tool writes an
         appointment directly — it is written only when the customer agrees on
-        the NEXT turn."""
+        the NEXT turn.
+        `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
+        (reschedule) an appointment they already have. Copy the id from the
+        `[id: ...]` tag on that appointment's line in the context block. When
+        they confirm, the old appointment is moved to the new time instead of
+        a second one being added. Leave it out for a brand-new booking."""
         # `note` ở đây do model tự gõ lại theo lời khách, và được lưu vào
         # `pending_confirmation` + in thẳng vào chuỗi trả về — cả hai đường
         # này không đi qua `Appointment`, nên cái cap ở `Appointment._clean_note`
@@ -136,6 +145,15 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         except ValueError:
             return "Thời gian không hợp lệ."
 
+        # Dời lịch: kiểm id TRƯỚC khi giữ chỗ. Id bịa mà vẫn giữ chỗ thì khách
+        # chốt "ừ" xong là lại ra hai lịch — đúng cái BUG-1 đang sửa.
+        old = None
+        if replaces_appointment_id:
+            try:
+                old = await service.own_booked(user, replaces_appointment_id)
+            except AppError as exc:
+                return exc.message
+
         # Kiểm trước khi hỏi khách. Hỏi "3 giờ chiều đúng không chị?" rồi mới báo
         # giờ đó có người là bắt khách chọn lại hai lần.
         # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
@@ -144,7 +162,11 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # `limit` phải phủ TRỌN ngày. Mặc định của service là 12 mốc, tức chỉ
         # tới gần 11 giờ trưa; để nguyên thì mọi giờ chiều đều bị báo "không đặt
         # được" dù còn trống.
-        free = await service.find_free_slots(to_local(start).date(), limit=WHOLE_DAY)
+        # Đang dời thì các mốc của chính lịch cũ tính là trống (9:00 → 9:15).
+        free = await service.find_free_slots(
+            to_local(start).date(), limit=WHOLE_DAY,
+            ignore_appointment_id=str(old.id) if old else None,
+        )
         if start not in free:
             if not free:
                 return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
@@ -157,10 +179,17 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
         # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
         # thể chép sai giờ giữa hai lượt.
-        await conversations.set_pending(
-            str(user.id), {"start_at": start.isoformat(), "note": note},
-        )
+        payload = {"start_at": start.isoformat(), "note": note}
+        if old:
+            payload["replaces_appointment_id"] = str(old.id)
+        await conversations.set_pending(str(user.id), payload)
         note_text = f", {note}" if note else ""
+        if old:
+            return (
+                f"Đã giữ chỗ {format_vi_datetime(start)}{note_text} để dời lịch "
+                f"{format_vi_datetime(old.start_at)} sang đó. "
+                "Hãy nhắc lại đầy đủ ngày giờ mới và hỏi khách xác nhận."
+            )
         return (
             f"Đã giữ chỗ {format_vi_datetime(start)}{note_text}. "
             "Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận."
@@ -168,8 +197,9 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def list_my_appointments() -> str:
-        """The customer's own upcoming appointments. Call this before cancelling,
-        to get the appointment id.
+        """The customer's own upcoming appointments, each with its id.
+        The context block already lists them with the same `[id: ...]` tags;
+        call this only when the appointment you need is not shown there.
         When the customer asks about their OWN appointments, call this
         IMMEDIATELY — never ask for a date first, the tool filters by the
         logged-in customer. If they have none, say so plainly."""
@@ -184,8 +214,11 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:
-        """Cancel one appointment. Call list_my_appointments first to get the id.
-        If the customer has two or more, ask which one before cancelling."""
+        """Cancel one appointment. `appointment_id` is the `[id: ...]` tag on
+        that appointment's line in the context block — copy it exactly. Never
+        invent or guess an id; if the context block shows none, call
+        list_my_appointments first. If the customer has two or more
+        appointments, ask which one before cancelling."""
         try:
             await service.cancel(user, appointment_id)
         except AppError as exc:

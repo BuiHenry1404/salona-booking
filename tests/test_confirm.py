@@ -269,3 +269,37 @@ class TestNotAffirmativeGoesToBooking:
         assert "chị Lan" in result["answer"]
         assert result.get("route") is None
         assert await test_db["appointments"].count_documents({}) == 1
+
+
+class TestConfirmReschedules:
+    """BUG-1: chốt "ừ" sau khi giữ chỗ giờ mới CÓ `replaces_appointment_id`
+    phải dời lịch — không đặt thêm."""
+
+    async def test_yes_moves_instead_of_adding(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Chú Hùng")
+        old = await AppointmentService(test_db).create(user, tomorrow_at(9), "làm tóc")
+        pending = {"start_at": tomorrow_at(10).isoformat(), "note": None,
+                   "replaces_appointment_id": str(old.id)}
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
+
+        upcoming = await AppointmentService(test_db).upcoming_for(user)
+        assert [a.start_at.astimezone(TZ) for a in upcoming] == [tomorrow_at(10)]
+        assert upcoming[0].note == "làm tóc"
+        assert "dời" in out["answer"].lower()
+        assert "anh Hùng" in out["answer"]
+        assert "10 giờ sáng" in out["answer"]
+
+    async def test_a_taken_new_time_keeps_the_old_appointment(self, test_db):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        other = await AuthService(test_db).create_user("0938111222", "x", "Cô Hoa")
+        old = await AppointmentService(test_db).create(user, tomorrow_at(9), "làm tóc")
+        await AppointmentService(test_db).create(other, tomorrow_at(10), None)
+        pending = {"start_at": tomorrow_at(10).isoformat(), "note": None,
+                   "replaces_appointment_id": str(old.id)}
+
+        out = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
+
+        assert "có người" in out["answer"].lower()
+        upcoming = await AppointmentService(test_db).upcoming_for(user)
+        assert [a.start_at.astimezone(TZ) for a in upcoming] == [tomorrow_at(9)]

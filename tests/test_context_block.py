@@ -227,3 +227,22 @@ class TestFormatVietnameseHhmm:
 
     def test_odd_minutes(self):
         assert format_vi_hhmm("13:45") == "1 giờ 45 chiều"
+
+
+class TestUpcomingAppointmentsCarryTheirId:
+    """BUG-2 (CONTEXT.md, checkpoint 2026-09-14): `cancel_appointment` cần id,
+    mà lịch sử chat chỉ lưu câu hỏi và câu đáp — sang lượt mới model không còn
+    id nào và tự bịa. Khối bối cảnh dựng lại mỗi lượt từ DB, nên id ở đây là
+    luôn đúng và luôn có, không phụ thuộc lượt trước gọi tool gì.
+    """
+
+    def test_each_upcoming_line_ends_with_the_id(self):
+        appt = an_appointment()
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [appt])
+        assert f"[id: {appt.id}]" in block
+
+    def test_the_id_sits_on_the_same_line_as_the_time(self):
+        appt = an_appointment()
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [appt])
+        line = next(l for l in block.splitlines() if str(appt.id) in l)
+        assert "Thứ Sáu 7/8" in line and "làm tóc" in line

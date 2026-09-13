@@ -23,11 +23,12 @@ gì **không được phá**. Chi tiết nằm ở file khác, đã ghi kèm t�
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
 **Trạng thái 2026-09-14:** cả 4 plan gốc xong (backend, agent, Telegram,
-React). **545 test backend** + 252 frontend xanh. Chạy thật với Azure
+React). **568 test backend** + 252 frontend xanh. Chạy thật với Azure
 `gpt-5.4-mini`, Langfuse có trace và có chi phí.
 
-Đang có **ba nhánh xếp chồng chưa merge** — xem mục
-[Checkpoint 2026-09-14](#checkpoint-2026-09-14) ở cuối file trước khi làm gì.
+Ba nhánh xếp chồng đã merge vào `henry/develop`; ba bug nghiệp vụ của
+checkpoint cũng đã sửa cùng ngày — xem [Checkpoint 2026-09-14](#checkpoint-2026-09-14)
+ở cuối file trước khi làm gì.
 
 ## Chốt cứng — đừng mở lại
 
@@ -122,6 +123,14 @@ một test khoá chặt cái sai đó lại; sửa ngày 2026-09-13.
   mọi lượt khác đều gọi đúng "chị Thắm". Đây là quan sát để ngỏ, có bằng chứng
   đo được — **không sửa câu đó**, quyết định thuộc chủ dự án.
 17. **Prompt chặt hơn khuếch đại cả luật viết ẩu.** Luật "gọi tool NGAY" sống được với prompt lỏng, nhưng thành lỗ hổng quyền riêng tư khi model tuân thủ sát chữ.
+19. **Dời lịch KHÔNG phải đặt thêm.** `propose_appointment` nhận
+`replaces_appointment_id`; node `confirm` gọi `AppointmentService.reschedule`
+— **đặt mới trước, hủy cũ sau** (đặt hụt thì khách vẫn còn lịch cũ; hủy trước
+rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất là giờ mới chồng lên chính
+lịch cũ: phải nhả cũ trước, nhưng đã kiểm quá khứ/giờ mở cửa/hạn mức xong.
+Id để dời và hủy nằm ở đuôi `[id: ...]` mỗi dòng "Lịch sắp tới" trong khối
+bối cảnh — dựng từ DB mỗi lượt, nên không phụ thuộc lượt trước gọi tool gì.
+
 18. **`pytest` không bắt được nhóm lỗi này.** 413 test xanh trong khi máy đang lặp câu với khách. Đổi prompt phải chạy `scripts/llm_scenarios.py`, và chấm bằng `scripts/score_transcript.py` trên kịch bản `dai` của `scripts/chat_e2e_transcript.py`. Rubric này bắt được lỗi thô nhưng KHÔNG phân giải được khác biệt nhỏ hơn trong đợt việc này — ba lần chấm ba bản prompt khác nhau ra cùng 2.4/5 (xem bẫy #16).
 
 ## Ràng buộc giao diện — không được phá
@@ -223,15 +232,22 @@ Spec + plan ở `docs/superpowers/{specs,plans}/2026-09-13-natural-conversation*
 
 ### ĐANG LÀM
 
-Không có việc nào dở giữa chừng. Mọi thay đổi đã merge vào `henry/develop` và
-đã push; cây sạch, 546 test xanh.
+Không có việc nào dở giữa chừng. Ba bug dưới đây đã sửa trên nhánh
+`fix/reschedule-and-cancel` (merge vào `henry/develop` cùng ngày), 568 test
+xanh. Việc kế tiếp: merge `henry/develop` lên `main`, rồi P1 trong
+`REPO_AUDIT.md`.
 
-Việc kế tiếp là **ba bug nghiệp vụ dưới đây** — hoặc merge `henry/develop` lên
-`main` nếu muốn chốt phần đã xong trước.
+### BA BUG NGHIỆP VỤ — ĐÃ SỬA 2026-09-14
 
-### CÒN DANG DỞ / BUG TỒN ĐỌNG
+Mô tả gốc giữ nguyên bên dưới để tra lại cách tái hiện; phần **Sửa** ghi cách
+đã làm. Đã chạy thật với Azure (kịch bản `doi_lich` mới trong
+`scripts/chat_e2e_transcript.py`, gieo sẵn lịch 9 giờ): dời ra đúng một lịch,
+hủy ở lượt sau không cần `list_my_appointments`, ngày giờ toàn chữ số.
 
 **BUG-1 — "dời lịch" tạo ra lịch thứ hai. Nặng nhất, đã tái hiện 2 lần.**
+
+> **Sửa:** `AppointmentService.reschedule` + tham số `replaces_appointment_id`
+> của `propose_appointment` + nhánh dời trong `confirm`. Xem bẫy #19.
 
 Khách xin đổi giờ, bot gọi `propose_appointment` cho giờ mới mà **không đụng
 lịch cũ**. Chốt xong là có hai lịch, bot vẫn nói "Xong rồi ạ".
@@ -247,6 +263,10 @@ DB:  09:00 booked  +  10:00 booked
 
 **BUG-2 — huỷ lịch hay thất bại giữa chừng.**
 
+> **Sửa:** khối bối cảnh in `[id: ...]` cuối mỗi dòng lịch sắp tới; docstring
+> `cancel_appointment` chỉ model lấy id ở đó, cấm bịa. Không lưu kết quả tool
+> vào lịch sử — lịch sử là thứ khách đọc lại được.
+
 `cancel_appointment` cần `appointment_id`, mà `events.py` chỉ lưu **câu hỏi và
 câu trả lời** vào lịch sử — **không lưu kết quả tool**. Sang lượt mới model
 không còn mã lịch nào nên gọi cancel với mã tự bịa → lỗi. Chỉ chạy đúng khi nó
@@ -254,6 +274,10 @@ gọi `list_my_appointments` **cùng lượt**. Có lần khách phải nói 4 l
 được.
 
 **BUG-3 — LLM viết số bằng chữ, không nhất quán.**
+
+> **Sửa:** luật định dạng ở `BOOKING_PROMPT` rule 6 và `SHOP_PROMPT` rule 3
+> nói rõ: chép đúng dạng tool trả về, ngày/tháng/giờ là CHỮ SỐ, "never number
+> words". Vẫn không có câu mẫu tiếng Việt — tham chiếu là chính đầu ra của tool.
 
 > *"em giữ chỗ thứ bảy **ngày mười chín tháng chín**, lúc **chín giờ** sáng"*
 
@@ -285,8 +309,15 @@ giới ngữ nghĩa thành phép so khớp từ.
   2026-09-14: có lượt model tự diễn đạt lại câu này và gọi đúng tên — tức nó
   không luôn tuân thủ "reply exactly", và không test nào canh điều đó.)*
 
-**Thứ tự đề nghị:** BUG-1 → BUG-2 → BUG-3. Hai cái đầu là nghiệp vụ, khách gặp
-ngay tuần đầu. BUG-3 chỉ là giọng văn.
+**Quan sát thêm khi chạy thật 2026-09-14 (chưa sửa, ngoài phạm vi đợt này):**
+
+- Parser thời gian không ổn định với "mai" sát nửa đêm: hai lần chạy cách nhau
+  một phút, một lần ra 15/9 đúng, một lần ra 14/9 (hôm nay). Nhánh LLM của
+  `parse_vi_time`, không phải regex.
+- Khách nói "ừ" khi bot đang hỏi thiếu một mảnh ("sáng hay chiều", "ngày nào")
+  thì bot hỏi lại nguyên câu — hợp lý nhưng lặp.
+- Khách bảo "ừ hủy đi" khi đã hết lịch, có lượt model đáp bằng câu bảo mật
+  rule 4 (sai ngữ cảnh), có lượt đáp đúng "chưa có lịch nào để hủy".
 
 ### Cách chạy lại phép đo
 

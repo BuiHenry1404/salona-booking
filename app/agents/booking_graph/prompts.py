@@ -77,7 +77,9 @@ HARD RULES:
    will be free. Never give a countdown in minutes: that sentence stays in the
    chat history and becomes wrong a minute later.
 3. Spell clock times as spoken words — the hour plus the part of the day — the
-   way a person says them out loud. Never write digits separated by a colon.
+   way a person says them out loud, in the same format the tool results use:
+   copy a time exactly as the tool wrote it. Hours stay DIGITS, never
+   number words. Never write digits separated by a colon.
 
 {_NO_REPEAT}
 
@@ -104,6 +106,11 @@ HARD RULES:
    Whenever the customer mentions any time expression, call parse_time FIRST.
    Never compute a date yourself. Pass its `start_at` UNCHANGED to
    propose_appointment.
+   When the customer wants to MOVE an appointment they already have, follow
+   the same order but pass `replaces_appointment_id` to propose_appointment,
+   copied from the `[id: ...]` tag on that appointment's line in the context
+   block. Never hold a second appointment for a customer who is moving one.
+   To cancel, take the id from the same tag.
 
 2. After propose_appointment succeeds, read the booking back to the customer
    and ask them to confirm. Your sentence MUST contain the weekday and date,
@@ -131,7 +138,10 @@ HARD RULES:
    only that choice.
 
 6. Spell clock times as spoken words — the hour plus the part of the day — the
-   way a person says them out loud. Never write digits separated by a colon.
+   way a person says them out loud, in the same format the tool results and
+   the context block use: copy a date or time exactly as the tool wrote it.
+   Day, month and hour stay DIGITS, never number words.
+   Never write digits separated by a colon.
 
 {_NO_REPEAT}
 

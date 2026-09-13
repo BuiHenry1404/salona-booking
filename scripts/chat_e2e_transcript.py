@@ -51,6 +51,18 @@ SCENARIOS = {
         "tiệm đang bận không em",
         "cho tôi công thức nấu phở",
     ],
+    # Dời lịch rồi hủy Ở LƯỢT SAU — tái hiện BUG-1 và BUG-2 của checkpoint
+    # 2026-09-14. Đúng: sau lượt 4 DB còn ĐÚNG MỘT lịch (10 giờ), và lượt 6-7
+    # hủy được mà không cần gọi list_my_appointments cùng lượt.
+    "doi_lich": [
+        "anh muốn cắt tóc mai 9 giờ sáng",
+        "ừ",
+        "em ơi chuyển giùm anh qua 10 giờ sáng nha, đừng để 9 giờ nữa",
+        "ừ",
+        "vậy anh còn mấy lịch em",
+        "thôi hủy lịch đó giùm anh",
+        "ừ hủy đi",
+    ],
     # Hội thoại dài 16 lượt, đi qua MỌI nhánh của graph. Đây là kịch bản
     # dùng để chấm rubric, nên 16 dòng dưới đây là MỐC SO SÁNH — sửa một
     # chữ là mọi điểm cũ hết so được với điểm mới.
