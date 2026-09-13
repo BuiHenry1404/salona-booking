@@ -5,6 +5,7 @@ from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import now_utc, to_local
+from app.core.text import single_line
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
 from app.models.user import User
@@ -13,6 +14,10 @@ from app.services.conversation import ConversationService
 from app.services.shop import ShopService
 
 _WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+
+# Câu đáp trước được trích vào khối bối cảnh; đủ để nhận ra câu, không đủ để
+# lấn át phần còn lại của khối.
+LAST_REPLY_MAX = 200
 
 
 def _clock_phrase(hour: int, minute: int) -> str:
@@ -98,6 +103,7 @@ def build_context_block(
     status: ShopStatusView,
     upcoming: List[Appointment],
     now: Optional[datetime] = None,
+    last_reply: Optional[str] = None,
 ) -> str:
     """Khối bối cảnh dựng hoàn toàn bằng code — LLM không bao giờ sinh ra nó.
 
@@ -144,6 +150,17 @@ def build_context_block(
     else:
         lines.append("Khách chưa có lịch nào sắp tới.")
 
+    if last_reply:
+        # Chống lặp bằng bối cảnh, không bằng luật: hai lượt từ chối liên tiếp
+        # từng ra nguyên một câu, và cả luật viết hoa trong prompt lẫn
+        # temperature 0.6 đều không đổi được — model neo vào câu của chính nó
+        # trong lịch sử. Trích đúng câu đó ra đây, ngay trước câu khách, để
+        # "cái không được chép" là thứ cuối cùng nó đọc.
+        lines.append(
+            f"Câu em vừa trả lời ở lượt trước: «{single_line(last_reply, LAST_REPLY_MAX)}». "
+            "Không nói lại nguyên văn câu này; cùng ý thì phải diễn đạt khác."
+        )
+
     # Dòng chốt: nếu lịch sử chat nói khác (khách nhắc tên con cháu, nhắc một
     # giờ hẹn đã đổi), thì phần này mới là đúng.
     lines.append(
@@ -165,8 +182,9 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         conversations.get_pending(user_id),
     )
 
+    last_reply = history[-1].content if history and history[-1].role == "assistant" else None
     return {
-        "context_block": build_context_block(user, status, upcoming),
+        "context_block": build_context_block(user, status, upcoming, last_reply=last_reply),
         "history": history,
         "pending_confirmation": pending,
     }
