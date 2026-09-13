@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.clock import now_utc
 from app.models.base import BaseDocument
@@ -37,6 +37,13 @@ class Digest(BaseModel):
     bullets: List[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=now_utc)
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
+
+    @field_validator("day", mode="before")
+    @classmethod
+    def _datetime_to_date(cls, value):
+        # Mongo lưu `day` dạng datetime (không có kiểu date riêng) — đọc lên
+        # phải tự ép về date, Pydantic v2 không làm việc này mặc định.
+        return value.date() if isinstance(value, datetime) else value
 
 
 class Conversation(BaseDocument):
