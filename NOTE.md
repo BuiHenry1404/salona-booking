@@ -4,14 +4,19 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-08-23
+Cập nhật: 2026-09-14
 
 ## Đang ở đâu
 
-**Cả 4 plan đã xong** — backend, agent/memory/streaming, Telegram bot, React
-frontend. Tất cả đã merge vào `main`.
+**Cả 4 plan gốc đã xong** — backend, agent/memory/streaming, Telegram bot,
+React frontend, đã merge vào `main`.
 
-- **436 test backend + 252 test frontend xanh**, frontend build sạch.
+> ⚠️ **Từ đó tới nay có thêm BA nhánh chưa merge, xếp chồng lên nhau.** Trước
+> khi làm bất cứ gì, đọc mục **Checkpoint 2026-09-14** ở cuối
+> [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã làm gì, còn dở gì, và ba bug tồn
+> đọng kèm cách tái hiện.
+
+- **545 test backend + 252 test frontend xanh**, frontend build sạch.
 - `scripts/live_e2e.py` — 31/31 pass trên server thật.
 - `scripts/chat_scenarios.py` — 8 kịch bản hội thoại đúng.
 - `scripts/llm_scenarios.py` — diễn lại kịch bản `LLM-xx`, dùng để bắt lỗi
@@ -22,6 +27,14 @@ frontend. Tất cả đã merge vào `main`.
 `main` chỉ nhận bằng cách merge `henry/develop`. Không commit thẳng lên `main`.
 
 ## Việc tiếp theo — đã chốt
+
+**Trước hết: quyết định merge ba nhánh đang treo** (xem Checkpoint trong
+`CONTEXT.md`). PR #5 đang mở; hai nhánh kia xếp chồng lên nó nên phải merge
+đúng thứ tự.
+
+**Rồi tới ba bug nghiệp vụ** tìm được khi chạy hội thoại thật ngày 2026-09-13/14
+— BUG-1 (xin dời lịch thành đặt thêm lịch) là nặng nhất, đã tái hiện hai lần.
+Chi tiết và cách tái hiện ở Checkpoint.
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
 cho khách thật:

@@ -22,9 +22,12 @@ gì **không được phá**. Chi tiết nằm ở file khác, đã ghi kèm t�
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-**Trạng thái 2026-08-23:** cả 4 plan xong (backend, agent, Telegram, React).
-436 test backend + 252 frontend xanh. Chạy thật với Azure `gpt-5.4-mini`,
-Langfuse có trace và có chi phí.
+**Trạng thái 2026-09-14:** cả 4 plan gốc xong (backend, agent, Telegram,
+React). **545 test backend** + 252 frontend xanh. Chạy thật với Azure
+`gpt-5.4-mini`, Langfuse có trace và có chi phí.
+
+Đang có **ba nhánh xếp chồng chưa merge** — xem mục
+[Checkpoint 2026-09-14](#checkpoint-2026-09-14) ở cuối file trước khi làm gì.
 
 ## Chốt cứng — đừng mở lại
 
@@ -58,7 +61,7 @@ Tài liệu có ghi ngày (`REPO_AUDIT.md`, `docs/SYSTEM_PROMPTS_EVALUATION.md`,
 `docs/test-scenarios/03-llm-live-run-*.md`, `docs/superpowers/`) **giữ vai cũ** —
 biên bản, không phải mẫu để chép.
 
-## 14 cái bẫy — đã trả giá, đừng "sửa cho gọn"
+## 18 cái bẫy — đã trả giá, đừng "sửa cho gọn"
 
 **Dữ liệu**
 
@@ -95,7 +98,7 @@ một test khoá chặt cái sai đó lại; sửa ngày 2026-09-13.
 
 15. **Prompt tự bảo model lặp thì model sẽ lặp.** "nhắc lại" / "hỏi lại đúng câu vừa hỏi" ý là "vẫn ở câu hỏi cũ", model đọc thành "in ra hai lần". Prompt viết bằng **tiếng Anh**.
 
-16. **Từ 2026-09-13 prompt KHÔNG còn câu mẫu tiếng Việt.** Bản ghi cũ ở đây nói ngược lại ("luật chung chung không ăn, phải kèm ví dụ" — đo ở đợt rà 2026-08-23). Chủ dự án quyết đổi; tình huống nay mô tả bằng tiếng Anh thay vì dẫn câu mẫu. Vẫn ở lại: câu trả lời bảo mật ở `BOOKING_PROMPT` rule 4 (đầu ra bắt buộc) và các đại từ xưng hô trong khối VOICE (chủ thể của luật). **Docstring của tool giữ ví dụ tiếng Việt.** Kết quả đo — rubric `dai` (16 lượt, Azure gpt-5.4-mini):
+16. **Từ 2026-09-13 prompt KHÔNG còn câu mẫu tiếng Việt.** Bản ghi cũ ở đây nói ngược lại ("luật chung chung không ăn, phải kèm ví dụ" — đo ở đợt rà 2026-08-23). Chủ dự án quyết đổi; tình huống nay mô tả bằng tiếng Anh thay vì dẫn câu mẫu. Vẫn ở lại: câu trả lời bảo mật ở `BOOKING_PROMPT` rule 4 (đầu ra bắt buộc) và các đại từ xưng hô trong khối VOICE (chủ thể của luật). **Từ 2026-09-14 docstring của tool cũng tiếng Anh toàn bộ** — trừ hai chuỗi là THAM CHIẾU chứ không phải ví dụ: dòng `"Bây giờ là..."` của khối bối cảnh, và giá trị enum `"sáng hay chiều"` do chính `parse_time` trả về. Kết quả đo — rubric `dai` (16 lượt, Azure gpt-5.4-mini):
 
   | | mốc | sau tasks 2,3,4,5 | sau task 6 |
   |---|---|---|---|
@@ -154,3 +157,149 @@ khôi phục qua Telegram, spec ở `docs/superpowers/specs/2026-08-15-*.md`.
 - **Vận hành**: sao lưu Mongo, HTTPS, CI — toàn bộ ở `PROD_CHECKLIST.md`.
 - **Avatar chatbot** chưa sinh; mockup trỏ `ai-avatar.jpg` không có trong git (ảnh Gemini bị `.gitignore` bỏ vì ~6MB, ai clone mới sẽ thấy mockup vỡ ảnh).
 - **Tầng digest** (nén lịch sử trong phiên) đã thiết kế nhưng **hoãn** — xem `docs/superpowers/specs/2026-09-13-natural-conversation-design.md` QĐ-6. Chỉ làm nếu trục `lap_y` của rubric vẫn thấp.
+
+---
+
+## Checkpoint 2026-09-14
+
+Viết để phiên mới đọc là làm tiếp được ngay. Ba phần: đã làm, đang làm, còn dở.
+
+### Ba nhánh xếp chồng, chưa nhánh nào merge
+
+```
+henry/develop                 98bd2ae
+  └── feat/agent-routing-redesign   890c022   +7   ← PR #5 ĐANG MỞ
+        └── feat/natural-conversation   ad369da  +15
+              └── fix/timeparse-closed-schema  d4fe46c  +2   ← HEAD hiện tại
+```
+
+Nhánh sau tách từ nhánh trước, nên **merge theo đúng thứ tự đó**. Mỗi nhánh đã
+review xong và test xanh; chỉ chờ quyết định merge.
+
+### ĐÃ LÀM / ĐÃ FIX
+
+**PR #5 — `feat/agent-routing-redesign` (7 commit).** Bỏ hết câu trả lời cứng
+trong graph chat.
+
+- `status` → `shop` (thêm tool `get_shop_hours`); `refuse` → `social` (LLM sinh
+  câu, không tool). `VALID_ROUTES` còn ba nhãn `booking`/`shop`/`social`.
+- Xưng hô suy bằng code từ `full_name`, bỏ tham số `xung_ho`.
+- Nhánh chưa-đồng-ý của `confirm` chuyển tiếp sang `booking`.
+- `BOOKING_PROMPT` 4718 → 2975 ký tự, rule chuyển về docstring tool.
+- Đo: probe định tuyến **lệch 10/14 → 0/14**. Test 461 → 499.
+
+**`feat/natural-conversation` (15 commit).** Làm hội thoại bớt giọng máy.
+Spec + plan ở `docs/superpowers/{specs,plans}/2026-09-13-natural-conversation*`.
+
+- **Thứ tự tin nhắn**: `system → lịch sử → bối cảnh → câu khách`. Trước đó khối
+  bối cảnh rơi xuống **sau** câu hỏi, nên thứ cuối model đọc là một bản báo cáo
+  trạng thái và nó bắt chước giọng đó. Đây là code đã trôi khỏi bẫy #9.
+- **`_NO_REPEAT`** dùng chung ba prompt: cấm nói lại thông tin đã nói, kể cả
+  diễn đạt khác. Có mệnh đề trừ khi khách **xin** nhắc lại.
+- **`history()`** chỉ bỏ câu đáp mồ côi khi ngân sách **thực sự** cắt — luật vô
+  điều kiện phá ca nửa đêm (bot hỏi 23:58, khách "ừ" lúc 00:01).
+- **Lọc `full_name` và `appointment.note`** qua `app/core/text.py::single_line`
+  (gộp khoảng trắng, cắt độ dài) vì cả hai chảy vào khối bối cảnh.
+- **Bỏ câu mẫu tiếng Việt khỏi prompt.** Giữ câu bảo mật rule 4 (đầu ra bắt
+  buộc) và đại từ xưng hô trong VOICE (chủ thể của luật).
+- Đo: rubric **2.4/5 ở cả ba lần** (xem cảnh báo ở bẫy #16 — rubric bão hoà,
+  KHÔNG phải "vô ích"). Test 499 → 530.
+
+**`fix/timeparse-closed-schema` (2 commit).**
+
+- **Đóng schema `ParsedTime`**: `missing` thành enum sáu giá trị (`MissingPiece`),
+  cộng validator **ép** — biết ngày rồi thì bỏ câu hỏi về ngày. Chữa lỗi thật:
+  "thứ ba tuần sau" từng bị hỏi ngược lại chính cái ngày nó vừa tính ra, mất 4
+  lượt mới đặt xong; giờ 2 lượt.
+  ⚠️ Bản đầu **ném `ValueError`** và làm mọi thứ tệ hơn: `parse_vi_time` bắt mọi
+  Exception rồi fail-soft, nên vứt luôn `partial_date` vừa giải được. Khi lớp
+  dưới có fail-soft, validator nghiêm khắc là cách đắt nhất để mất dữ liệu tốt.
+  **Ép, đừng từ chối.**
+- **Docstring tool tiếng Anh toàn bộ.** Giữ đúng hai chuỗi tiếng Việt vì chúng
+  là **tham chiếu**, không phải ví dụ: dòng `"Bây giờ là..."` của khối bối cảnh,
+  và giá trị enum `"sáng hay chiều"` do chính tool trả về.
+- Test 530 → **545**.
+
+### ĐANG LÀM
+
+Không có việc nào dở giữa chừng. Mọi thay đổi đã commit, cây sạch, test xanh.
+Việc kế tiếp là **quyết định merge ba nhánh trên**.
+
+### CÒN DANG DỞ / BUG TỒN ĐỌNG
+
+**BUG-1 — "dời lịch" tạo ra lịch thứ hai. Nặng nhất, đã tái hiện 2 lần.**
+
+Khách xin đổi giờ, bot gọi `propose_appointment` cho giờ mới mà **không đụng
+lịch cũ**. Chốt xong là có hai lịch, bot vẫn nói "Xong rồi ạ".
+
+```
+"em ơi chuyển giùm anh qua 10 giờ nha, đừng để 9 giờ nữa"  → "ừ"
+DB:  09:00 booked  +  10:00 booked
+```
+
+`AppointmentService.create` chỉ chống trùng **cùng một mốc giờ**
+(`find_active_at`), nên hai mốc khác nhau là hai lịch. Hệ thống **không có luồng
+đổi lịch**; "đổi" phải là huỷ + đặt và không chỗ nào nói vậy.
+
+**BUG-2 — huỷ lịch hay thất bại giữa chừng.**
+
+`cancel_appointment` cần `appointment_id`, mà `events.py` chỉ lưu **câu hỏi và
+câu trả lời** vào lịch sử — **không lưu kết quả tool**. Sang lượt mới model
+không còn mã lịch nào nên gọi cancel với mã tự bịa → lỗi. Chỉ chạy đúng khi nó
+gọi `list_my_appointments` **cùng lượt**. Có lần khách phải nói 4 lượt mới huỷ
+được.
+
+**BUG-3 — LLM viết số bằng chữ, không nhất quán.**
+
+> *"em giữ chỗ thứ bảy **ngày mười chín tháng chín**, lúc **chín giờ** sáng"*
+
+Trong khi cùng cuộc đó, câu do **code** sinh (`format_vi_datetime`, node
+`confirm`) viết đúng: `"Thứ Bảy 19/9, 9 giờ sáng"`. Lúc đúng lúc sai — hên xui.
+Hệ quả của việc bỏ ví dụ `"3 giờ chiều"` khỏi luật định dạng giờ.
+
+**Sắc thái quan trọng về ví dụ trong prompt** (đo được 2026-09-13/14, đừng quên):
+
+| Loại luật | Ví dụ có lợi hay hại |
+|---|---|
+| **Định dạng** (viết giờ thế nào) | **Có lợi** — bỏ đi thì model viết "ngày mười chín tháng chín" |
+| **Phân loại** (câu nào thuộc loại nào) | **Có hại** — ví dụ `"khi nào rảnh cũng được"` khiến câu *"chưa biết bữa nào **rảnh**"* bị khớp nhầm thành "tiệm tự chọn ngày". Bỏ ví dụ đi thì **hết lỗi** |
+
+Tức bẫy #16 đúng với luật định dạng, sai với luật phân loại. Ví dụ biến ranh
+giới ngữ nghĩa thành phép so khớp từ.
+
+**Đã park có chủ ý (không phải quên):**
+
+- **Tiêm prompt cùng dòng** vẫn mở: tên ≤60 và ghi chú ≤80 ký tự vẫn nhét vừa
+  một câu mệnh lệnh không cần xuống dòng, và nó rơi đúng vào dòng `Gọi khách là:`
+  của khối bối cảnh. Thử thật thì model **không** mắc bẫy. Vá thật đòi đổi cấu
+  trúc khối (dán nhãn untrusted như agentbox, hoặc bỏ dòng "hãy tin phần trên").
+  Bán kính thiệt hại: khách chỉ lái được câu trả lời cho **chính họ**.
+- **Tầng digest** — xem mục dưới.
+- **Câu bảo mật rule 4** xưng "anh chị" chung chung trong khi mọi lượt khác gọi
+  đúng tên; ba lần chấm rubric đều chê đúng câu này. Sửa bằng `address_phrase()`
+  là một dòng, nhưng spec QĐ-5 chốt giữ nguyên văn nên chưa đụng. *(Quan sát
+  2026-09-14: có lượt model tự diễn đạt lại câu này và gọi đúng tên — tức nó
+  không luôn tuân thủ "reply exactly", và không test nào canh điều đó.)*
+
+**Thứ tự đề nghị:** BUG-1 → BUG-2 → BUG-3. Hai cái đầu là nghiệp vụ, khách gặp
+ngay tuần đầu. BUG-3 chỉ là giọng văn.
+
+### Cách chạy lại phép đo
+
+```bash
+docker compose up -d mongo
+PYTHONPATH=. .venv/bin/python -m uvicorn main:app --port 8000
+PYTHONPATH=. .venv/bin/python scripts/probe_supervisor.py          # định tuyến, 14 mẫu
+PYTHONPATH=. .venv/bin/python scripts/chat_e2e_transcript.py --scenario dai \
+    --phone <SĐT MỚI> --password khachhang123 --out after.txt
+PYTHONPATH=. .venv/bin/python scripts/score_transcript.py baseline-dai.txt after.txt
+```
+
+Trần chat **30 tin/giờ mỗi khách**, kịch bản `dai` dài 16 lượt → **mỗi lần chạy
+phải tạo tài khoản mới**. Tên phải mang tiền tố ("Cô", "Chú") vì xưng hô suy từ
+đó. Dọn: `db.users.deleteMany({phone: /^0986/})` kèm appointments và
+conversations của họ.
+
+**Đừng chỉ tin rubric.** Nó bão hoà (xem bẫy #16) và bỏ sót cả BUG-1 lẫn BUG-3.
+Hai lỗi đó chỉ lộ ra khi **hội thoại thật, đi vòng vèo, đọc từng câu rồi mới
+nghĩ câu sau** — không phải khi phát lại kịch bản đóng hộp.
