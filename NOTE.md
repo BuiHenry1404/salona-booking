@@ -11,10 +11,10 @@ Cập nhật: 2026-09-14
 **Cả 4 plan gốc đã xong** — backend, agent/memory/streaming, Telegram bot,
 React frontend, đã merge vào `main`.
 
-> ⚠️ **Từ đó tới nay có thêm BA nhánh chưa merge, xếp chồng lên nhau.** Trước
-> khi làm bất cứ gì, đọc mục **Checkpoint 2026-09-14** ở cuối
-> [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã làm gì, còn dở gì, và ba bug tồn
-> đọng kèm cách tái hiện.
+> ⚠️ **Từ đó tới nay có thêm ba đợt việc, đã merge vào `henry/develop`
+> ngày 2026-09-14 nhưng `main` CHƯA nhận.** Trước khi làm bất cứ gì, đọc mục
+> **Checkpoint 2026-09-14** ở cuối [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã
+> làm gì, còn dở gì, và ba bug tồn đọng kèm cách tái hiện.
 
 - **545 test backend + 252 test frontend xanh**, frontend build sạch.
 - `scripts/live_e2e.py` — 31/31 pass trên server thật.
@@ -28,11 +28,10 @@ React frontend, đã merge vào `main`.
 
 ## Việc tiếp theo — đã chốt
 
-**Trước hết: quyết định merge ba nhánh đang treo** (xem Checkpoint trong
-`CONTEXT.md`). PR #5 đang mở; hai nhánh kia xếp chồng lên nó nên phải merge
-đúng thứ tự.
+**Ba nhánh đã merge vào `henry/develop` và đã push** (2026-09-14). `main` chưa
+nhận — merge lên `main` khi nào bạn thấy sẵn sàng.
 
-**Rồi tới ba bug nghiệp vụ** tìm được khi chạy hội thoại thật ngày 2026-09-13/14
+**Việc thật tiếp theo là ba bug nghiệp vụ** tìm được khi chạy hội thoại thật ngày 2026-09-13/14
 — BUG-1 (xin dời lịch thành đặt thêm lịch) là nặng nhất, đã tái hiện hai lần.
 Chi tiết và cách tái hiện ở Checkpoint.
 

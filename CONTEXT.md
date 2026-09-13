@@ -164,21 +164,22 @@ khôi phục qua Telegram, spec ở `docs/superpowers/specs/2026-08-15-*.md`.
 
 Viết để phiên mới đọc là làm tiếp được ngay. Ba phần: đã làm, đang làm, còn dở.
 
-### Ba nhánh xếp chồng, chưa nhánh nào merge
+### Ba nhánh đã merge vào `henry/develop` ngày 2026-09-14
 
 ```
-henry/develop                 98bd2ae
-  └── feat/agent-routing-redesign   890c022   +7   ← PR #5 ĐANG MỞ
-        └── feat/natural-conversation   ad369da  +15
-              └── fix/timeparse-closed-schema  d4fe46c  +2   ← HEAD hiện tại
+henry/develop  a2aa358   ← đã push, 546 test xanh trên cây đã merge
+  ├── feat/agent-routing-redesign   +7    (PR #5, đã MERGED)
+  ├── feat/natural-conversation     +15
+  └── fix/timeparse-closed-schema   +3
 ```
 
-Nhánh sau tách từ nhánh trước, nên **merge theo đúng thứ tự đó**. Mỗi nhánh đã
-review xong và test xanh; chỉ chờ quyết định merge.
+Merge tuần tự đúng thứ tự xếp chồng, mỗi nhánh một merge commit `--no-ff` nên
+vẫn tra ngược được từng đơn vị công việc. **`main` chưa nhận** — theo quy ước
+repo, `main` chỉ nhận bằng cách merge `henry/develop`.
 
 ### ĐÃ LÀM / ĐÃ FIX
 
-**PR #5 — `feat/agent-routing-redesign` (7 commit).** Bỏ hết câu trả lời cứng
+**`feat/agent-routing-redesign` (7 commit, PR #5 đã merged).** Bỏ hết câu trả lời cứng
 trong graph chat.
 
 - `status` → `shop` (thêm tool `get_shop_hours`); `refuse` → `social` (LLM sinh
@@ -222,8 +223,11 @@ Spec + plan ở `docs/superpowers/{specs,plans}/2026-09-13-natural-conversation*
 
 ### ĐANG LÀM
 
-Không có việc nào dở giữa chừng. Mọi thay đổi đã commit, cây sạch, test xanh.
-Việc kế tiếp là **quyết định merge ba nhánh trên**.
+Không có việc nào dở giữa chừng. Mọi thay đổi đã merge vào `henry/develop` và
+đã push; cây sạch, 546 test xanh.
+
+Việc kế tiếp là **ba bug nghiệp vụ dưới đây** — hoặc merge `henry/develop` lên
+`main` nếu muốn chốt phần đã xong trước.
 
 ### CÒN DANG DỞ / BUG TỒN ĐỌNG
 
