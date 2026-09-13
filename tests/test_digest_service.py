@@ -186,6 +186,47 @@ async def test_three_failures_stop_further_attempts(test_db, patch_model):
     assert len(model.structured.prompts) == calls_before == MAX_FAILURES
 
 
+async def test_empty_digest_does_not_advance_covers_until(test_db, patch_model):
+    """Model trả về 0 bullet hợp lệ → coi như hỏng: covers_until KHÔNG dời,
+    digest cũ (nếu có) giữ nguyên, failures tăng, và context_window vẫn trả về
+    TOÀN BỘ tin hôm nay nguyên văn (không mất gì)."""
+    patch_model(reply=DigestBullets(bullets=["", "-", "  "]))
+    all_msgs = await _seed(test_db, 12)
+
+    assert await DigestService(test_db).maybe_compact("u1") is False
+
+    conv = ConversationService(test_db)
+    digest = await conv.get_digest("u1")
+    assert digest.bullets == []
+    assert digest.failures == 1
+
+    bullets, msgs = await conv.context_window("u1")
+    assert bullets == []
+    # token_budget lớn để tách riêng khỏi cắt-theo-ngân-sách: điều test này
+    # canh là covers_until KHÔNG dời, không phải chuyện cắt bớt vì dài.
+    full = await conv.history("u1", after=digest.covers_until, token_budget=10**6)
+    assert [m.content for m in full] == [m.content for m in all_msgs]
+
+
+async def test_empty_digest_keeps_the_old_digest_and_bumps_the_fuse(test_db, patch_model):
+    patch_model()
+    all_first = await _seed(test_db, 12)
+    svc = DigestService(test_db)
+    assert await svc.maybe_compact("u1") is True
+
+    conv = ConversationService(test_db)
+    before = await conv.get_digest("u1")
+
+    patch_model(reply=DigestBullets(bullets=["", "-", "  "]))
+    await _seed(test_db, 12)
+    assert await DigestService(test_db).maybe_compact("u1") is False
+
+    after = await conv.get_digest("u1")
+    assert after.bullets == before.bullets
+    assert after.covers_until == before.covers_until
+    assert after.failures == before.failures + 1
+
+
 async def test_never_raises(test_db, monkeypatch):
     """Chạy nền sau complete — lỗi gì cũng phải nuốt và log."""
     async def boom(*a, **k):

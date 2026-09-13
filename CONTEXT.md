@@ -439,3 +439,7 @@ nền sau `complete`, rồi đo thật ở task này. **630 test backend xanh**
 appointments/conversations của họ đã xoá bằng lệnh regex `phone:/^0986/` ở
 `RUNBOOK.md`; uvicorn nền đã `pkill`; `git diff app/services/digest.py` rỗng
 trước khi commit tài liệu này.
+
+**Còn để ngỏ (chưa đo được):** mục tiêu "tiết kiệm token phiên dài" CHƯA đo
+được vì Langfuse không lên trong lần chạy 2026-09-14; đo lại khi Langfuse sống
+(tag `digest`, so input tokens/lượt trước–sau).

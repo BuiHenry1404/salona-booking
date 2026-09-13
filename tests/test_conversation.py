@@ -247,6 +247,7 @@ class TestDigestStorage:
         await svc.bump_digest_failures("u1")
         got = await svc.get_digest("u1")
         assert got.failures == 1 and got.bullets == []
+        assert got.covers_until == datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class TestContextWindow:
@@ -291,3 +292,13 @@ class TestContextWindow:
         all_msgs = await self._seed(svc, 2)
         kept = await svc.history("u1", after=all_msgs[1].created_at)
         assert [m.content for m in kept] == [m.content for m in all_msgs[2:]]
+
+    async def test_session_messages_untrimmed_unlike_history_with_tiny_budget(self, test_db):
+        svc = ConversationService(test_db)
+        all_msgs = await self._seed(svc, 5)
+
+        session = await svc.session_messages("u1")
+        assert [m.content for m in session] == [m.content for m in all_msgs]
+
+        trimmed = await svc.history("u1", token_budget=1)
+        assert len(trimmed) < len(all_msgs)

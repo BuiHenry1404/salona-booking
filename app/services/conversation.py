@@ -51,6 +51,21 @@ class ConversationService:
             return []
         return [ChatMessage(**m) for m in doc.get("messages", [])]
 
+    def _session_cutoff(self) -> datetime:
+        """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+
+        Một mốc, hai chỗ đọc (`history()` và `session_messages()`) — lệch nhau
+        là có tin rơi vào khe giữa digest và phần nguyên văn.
+        """
+        day_start, _ = local_day_bounds(to_local(now_utc()).date())
+        return min(day_start, now_utc() - timedelta(minutes=CARRY_OVER_MINUTES))
+
+    async def session_messages(self, user_id: str) -> List[ChatMessage]:
+        """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
+        vào cho digest."""
+        cutoff = self._session_cutoff()
+        return [m for m in await self._all_messages(user_id) if m.created_at >= cutoff]
+
     async def history(
         self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET,
         after: Optional[datetime] = None,
@@ -90,9 +105,7 @@ class ConversationService:
         if not all_messages:
             return []
 
-        day_start, _ = local_day_bounds(to_local(now_utc()).date())
-        carry_over = now_utc() - timedelta(minutes=CARRY_OVER_MINUTES)
-        cutoff = min(day_start, carry_over)
+        cutoff = self._session_cutoff()
 
         # `after`: mốc covers_until của digest — tin đã nén không gửi nguyên văn.
         messages = [
@@ -227,7 +240,5 @@ class ConversationService:
     async def context_window(self, user_id: str) -> tuple[List[str], List[ChatMessage]]:
         """Thứ LLM đọc: (dữ kiện đã nén, tin nguyên văn sau mốc nén)."""
         digest = await self.get_digest(user_id)
-        if digest is None or not digest.bullets:
-            after = digest.covers_until if digest else None
-            return [], await self.history(user_id, after=after)
-        return digest.bullets, await self.history(user_id, after=digest.covers_until)
+        after = digest.covers_until if digest else None
+        return (digest.bullets if digest else []), await self.history(user_id, after=after)

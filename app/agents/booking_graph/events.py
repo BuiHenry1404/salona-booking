@@ -116,7 +116,9 @@ async def run_turn(
             try:
                 schedule_compaction(db, user_id)
             except Exception as exc:
-                logger.warning("digest_schedule_failed", extra={"user_id": user_id, "error": str(exc)})
+                logger.warning("digest_schedule_failed", extra={
+                    "user_id": user_id, "error": str(exc), "error_type": type(exc).__name__,
+                })
 
     except Exception as exc:
         logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})

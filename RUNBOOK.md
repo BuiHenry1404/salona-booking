@@ -179,10 +179,18 @@ docker compose exec -T mongo mongosh salon_booking --quiet --eval \
   'var u=db.users.findOne({phone:"<SĐT>"}); printjson(db.conversations.findOne({user_id:String(u._id)},{digest:1}))'
 ```
 
-Log cần theo dõi: `digest_compacted` (nén thành công, kèm số bullet và số tin
-đã nén), `digest_skipped` (cầu chì đã bật, 3 lần hỏng liên tiếp), `digest_failed`
-(LLM lỗi/timeout, `failures` tăng, digest cũ giữ nguyên). Cả ba đều log qua
-`structlog`, không ném lỗi ra khách.
+Log cần theo dõi (cả năm đều log qua `structlog`, không ném lỗi ra khách):
+
+- `digest_compacted` — nén thành công, kèm số bullet và số tin đã nén.
+- `digest_skipped` — cầu chì đã bật (3 lần hỏng liên tiếp), bỏ qua tới hết ngày.
+- `digest_empty` — model trả về 0 bullet hợp lệ; coi như hỏng, `covers_until`
+  KHÔNG advance, digest cũ (nếu có) giữ nguyên, `failures` tăng.
+- `digest_llm_failed` — lời gọi LLM lỗi hoặc timeout; `failures` tăng (bump cầu
+  chì), digest cũ giữ nguyên.
+- `digest_failed` — lỗi ngoài dự kiến, NGOÀI lời gọi LLM (vd. Mongo down);
+  không bump cầu chì.
+- `digest_schedule_failed` — lên lịch nén nền thất bại sau khi lượt chat đã
+  trả lời khách xong; kèm `error_type`.
 
 Trace Langfuse của lượt nén mang tag `digest` (khác tag `respond` của lượt
 chat chính) — lọc theo tag đó để tách chi phí nén khỏi chi phí trả lời.

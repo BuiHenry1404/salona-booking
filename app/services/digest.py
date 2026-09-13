@@ -3,19 +3,18 @@
 Spec: docs/superpowers/specs/2026-09-14-conversation-digest-design.md.
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, field_validator
 
 from app.agents.llm import build_chat_model
-from app.core.clock import local_day_bounds, now_utc, to_local
+from app.core.clock import now_utc, to_local
 from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.conversation import ChatMessage, Digest
-from app.services.conversation import (CARRY_OVER_MINUTES, CHARS_PER_TOKEN,
-                                       ConversationService)
+from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
 logger = get_logger(__name__)
 
@@ -93,12 +92,9 @@ class DigestService:
         self.conversations = ConversationService(db)
 
     async def _todays_messages(self, user_id: str) -> List[ChatMessage]:
-        """Cùng luật cắt với ConversationService.history(): ngày VN + 30 phút
-        gần nhất, KHÔNG cắt theo ngân sách token (đây là đầu vào để nén)."""
-        day_start, _ = local_day_bounds(to_local(now_utc()).date())
-        cutoff = min(day_start, now_utc() - timedelta(minutes=CARRY_OVER_MINUTES))
-        return [m for m in await self.conversations._all_messages(user_id)
-                if m.created_at >= cutoff]
+        """Cùng mốc cắt với ConversationService.history() — chủ sở hữu công
+        thức là `ConversationService._session_cutoff()`, không lặp lại ở đây."""
+        return await self.conversations.session_messages(user_id)
 
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
@@ -121,8 +117,11 @@ class DigestService:
             return False
 
         existing = "\n".join(f"- {b}" for b in digest.bullets) if digest and digest.bullets else "(none)"
+        # 400 ký tự/tin là chặn có chủ ý trên ĐẦU VÀO của lượt nén: một tin
+        # khách viết rất dài bị cắt trước khi đưa vào prompt, để một tin
+        # không nuốt hết chỗ của cả transcript.
         transcript = "\n".join(
-            f"{'customer' if m.role == 'user' else 'salon'}: {single_line(m.content, 400)}"
+            f"{'customer' if m.role == 'user' else 'salon'}: {single_line(m.content, 400) or ''}"
             for m in older
         )
         prompt = DIGEST_PROMPT.format(
@@ -138,7 +137,15 @@ class DigestService:
                 timeout=DIGEST_TIMEOUT_SECONDS,
             )
         except Exception as exc:
-            logger.warning("digest_failed", extra={"user_id": user_id, "error": str(exc)})
+            logger.warning("digest_llm_failed", extra={"user_id": user_id, "error": str(exc)})
+            await self.conversations.bump_digest_failures(user_id)
+            return False
+
+        if not result.bullets:
+            # Nén "thành công" mà rỗng thì cũng là hỏng: advance covers_until
+            # là mất luôn ~800 token ngữ cảnh mà không có log. Coi như một
+            # lần hỏng để cầu chì đếm, và digest cũ (nếu có) giữ nguyên.
+            logger.warning("digest_empty", extra={"user_id": user_id})
             await self.conversations.bump_digest_failures(user_id)
             return False
 
