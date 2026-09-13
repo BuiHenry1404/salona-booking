@@ -173,3 +173,26 @@ async def test_compaction_error_never_reaches_the_customer(test_db, monkeypatch)
 
     seen = [e.type async for e in events.run_turn(test_db, user, "chào em")]
     assert "error" not in seen and seen[-1] == "complete"
+
+
+async def test_schedule_compaction_keeps_a_strong_reference_until_done(test_db, monkeypatch):
+    """Không giữ task lại thì event loop chỉ giữ weak-ref, GC có thể huỷ tác vụ
+    nén giữa chừng mà không ai hay biết."""
+    import asyncio
+
+    from app.agents.booking_graph import events
+    from app.services.digest import DigestService
+
+    async def fake_maybe_compact(self, user_id):
+        return False
+
+    monkeypatch.setattr(DigestService, "maybe_compact", fake_maybe_compact)
+
+    events.schedule_compaction(test_db, "u1")
+
+    assert len(events._PENDING_COMPACTIONS) == 1
+    task = next(iter(events._PENDING_COMPACTIONS))
+    await task
+    await asyncio.sleep(0)
+
+    assert events._PENDING_COMPACTIONS == set()

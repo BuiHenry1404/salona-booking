@@ -15,9 +15,16 @@ from app.services.digest import DigestService
 logger = get_logger(__name__)
 
 
+# Giữ tham chiếu mạnh: event loop chỉ giữ weak-ref, tác vụ nền không ai giữ
+# có thể bị GC giữa chừng — mất lượt nén mà không có dòng log nào.
+_PENDING_COMPACTIONS: set = set()
+
+
 def schedule_compaction(db: AsyncIOMotorDatabase, user_id: str) -> None:
     """Nén nền, không await: khách đã nhận complete. maybe_compact tự nuốt lỗi."""
-    asyncio.create_task(DigestService(db).maybe_compact(user_id))
+    task = asyncio.create_task(DigestService(db).maybe_compact(user_id))
+    _PENDING_COMPACTIONS.add(task)
+    task.add_done_callback(_PENDING_COMPACTIONS.discard)
 
 
 @dataclass
