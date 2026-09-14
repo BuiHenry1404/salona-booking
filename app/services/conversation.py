@@ -1,10 +1,10 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import local_day_bounds, now_utc, to_local
-from app.models.conversation import ChatMessage, Conversation, DaySummary
+from app.models.conversation import ChatMessage, Conversation, DaySummary, Digest
 
 # Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
 # đếm token thật cần tokenizer của model và không đáng cho việc này.
@@ -51,8 +51,24 @@ class ConversationService:
             return []
         return [ChatMessage(**m) for m in doc.get("messages", [])]
 
+    def _session_cutoff(self) -> datetime:
+        """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+
+        Một mốc, hai chỗ đọc (`history()` và `session_messages()`) — lệch nhau
+        là có tin rơi vào khe giữa digest và phần nguyên văn.
+        """
+        day_start, _ = local_day_bounds(to_local(now_utc()).date())
+        return min(day_start, now_utc() - timedelta(minutes=CARRY_OVER_MINUTES))
+
+    async def session_messages(self, user_id: str) -> List[ChatMessage]:
+        """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
+        vào cho digest."""
+        cutoff = self._session_cutoff()
+        return [m for m in await self._all_messages(user_id) if m.created_at >= cutoff]
+
     async def history(
-        self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET
+        self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET,
+        after: Optional[datetime] = None,
     ) -> List[ChatMessage]:
         """Lịch sử của PHIÊN HÔM NAY, cắt thêm theo ngân sách token.
 
@@ -81,16 +97,21 @@ class ConversationService:
         đời cookie quyết định (30 ngày), không phải một mốc có nghĩa trong hội
         thoại: khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói, còn
         khách giữ đăng nhập nửa năm thì không bao giờ có ranh giới nào.
+
+        `after` (tuỳ chọn): chỉ giữ tin SAU mốc này — dùng cho digest: tin đã
+        được nén thành dữ kiện thì không gửi nguyên văn nữa.
         """
         all_messages = await self._all_messages(user_id)
         if not all_messages:
             return []
 
-        day_start, _ = local_day_bounds(to_local(now_utc()).date())
-        carry_over = now_utc() - timedelta(minutes=CARRY_OVER_MINUTES)
-        cutoff = min(day_start, carry_over)
+        cutoff = self._session_cutoff()
 
-        messages = [m for m in all_messages if m.created_at >= cutoff]
+        # `after`: mốc covers_until của digest — tin đã nén không gửi nguyên văn.
+        messages = [
+            m for m in all_messages
+            if m.created_at >= cutoff and (after is None or m.created_at > after)
+        ]
         kept: List[ChatMessage] = []
         used = 0
         truncated = False
@@ -175,3 +196,49 @@ class ConversationService:
         if now_utc() - asked_at > timedelta(minutes=max_age_minutes):
             return None
         return pending
+
+    async def get_digest(self, user_id: str) -> Optional[Digest]:
+        """Digest của HÔM NAY (giờ VN). Ngày khác coi như không có — cắt lúc
+        đọc, cùng nguyên tắc với history()."""
+        doc = await self.collection.find_one({"user_id": user_id}, {"digest": 1})
+        raw = (doc or {}).get("digest")
+        if not raw:
+            return None
+        digest = Digest(**raw)
+        if digest.day != to_local(now_utc()).date():
+            return None
+        if digest.covers_until.tzinfo is None:
+            digest = digest.model_copy(
+                update={"covers_until": digest.covers_until.replace(tzinfo=now_utc().tzinfo)}
+            )
+        return digest
+
+    async def set_digest(self, user_id: str, digest: Digest) -> None:
+        payload = digest.model_dump()
+        # Mongo không lưu `date` — ghi dạng datetime nửa đêm UTC, đọc lên Pydantic ép về date.
+        payload["day"] = datetime(digest.day.year, digest.day.month, digest.day.day)
+        await self.collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"digest": payload, "updated_at": now_utc()},
+             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
+            upsert=True,
+        )
+
+    async def bump_digest_failures(self, user_id: str) -> None:
+        """Cầu chì. Chưa có digest hôm nay thì tạo digest rỗng để đếm."""
+        if await self.get_digest(user_id) is None:
+            await self.set_digest(user_id, Digest(
+                day=to_local(now_utc()).date(),
+                covers_until=datetime(1970, 1, 1, tzinfo=now_utc().tzinfo),
+                bullets=[], failures=1,
+            ))
+            return
+        await self.collection.update_one(
+            {"user_id": user_id}, {"$inc": {"digest.failures": 1}}
+        )
+
+    async def context_window(self, user_id: str) -> tuple[List[str], List[ChatMessage]]:
+        """Thứ LLM đọc: (dữ kiện đã nén, tin nguyên văn sau mốc nén)."""
+        digest = await self.get_digest(user_id)
+        after = digest.covers_until if digest else None
+        return (digest.bullets if digest else []), await self.history(user_id, after=after)

@@ -47,7 +47,8 @@ full opening hours — answer ONLY the new part. Do not restate the facts
 from your earlier reply.
 This rule is about volunteering facts they did not ask for. If the customer
 explicitly asks you to repeat something or remind them of it, tell them
-again — answering that request is not the repetition this rule forbids."""
+again — answering that request is not the repetition this rule forbids.
+Facts listed under the conversation digest count as already said."""
 
 
 SUPERVISOR_PROMPT = """Classify the customer's intent at a Vietnamese nail and

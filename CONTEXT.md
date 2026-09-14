@@ -23,7 +23,7 @@ gì **không được phá**. Chi tiết nằm ở file khác, đã ghi kèm t�
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
 **Trạng thái 2026-09-14:** cả 4 plan gốc xong (backend, agent, Telegram,
-React). **590 test backend** + 252 frontend xanh. Chạy thật với Azure
+React). **630 test backend** + 252 frontend xanh. Chạy thật với Azure
 `gpt-5.4-mini`, Langfuse có trace và có chi phí.
 
 Ba nhánh xếp chồng đã merge vào `henry/develop`; ba bug nghiệp vụ của
@@ -36,7 +36,7 @@ checkpoint cũng đã sửa cùng ngày — xem [Checkpoint 2026-09-14](#checkpo
 |---|---|---|
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
 | Ghi lịch | **Agent không có tool ghi lịch — và từ 2026-09-14 cũng không hủy ngay** | `propose_appointment` giữ chỗ, `cancel_appointment` giữ ý hủy; node `confirm` mới ghi/hủy khi khách "ừ". Giá trị lấy từ DB, không từ chuỗi model gõ lại |
-| Memory | **2 tầng** (danh tính + lịch sử), bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách |
+| Memory | **2 tầng + digest trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. Digest là bản nén của tầng 2 (spec 2026-09-14), không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
 | Bot Telegram | **Không có AI**, 4 nút | Tất định, không tốn token, test không cần LLM |
 | Số worker | **Đúng 1** | Telegram chỉ cho một `getUpdates` mỗi token → mỗi lần deploy đều downtime |
@@ -62,7 +62,7 @@ Tài liệu có ghi ngày (`REPO_AUDIT.md`, `docs/SYSTEM_PROMPTS_EVALUATION.md`,
 `docs/test-scenarios/03-llm-live-run-*.md`, `docs/superpowers/`) **giữ vai cũ** —
 biên bản, không phải mẫu để chép.
 
-## 18 cái bẫy — đã trả giá, đừng "sửa cho gọn"
+## 20 cái bẫy — đã trả giá, đừng "sửa cho gọn"
 
 **Dữ liệu**
 
@@ -136,6 +136,10 @@ cancelling=True)`; dùng chung bộ từ phủ định là khách không bao gi�
 
 18. **`pytest` không bắt được nhóm lỗi này.** 413 test xanh trong khi máy đang lặp câu với khách. Đổi prompt phải chạy `scripts/llm_scenarios.py`, và chấm bằng `scripts/score_transcript.py` trên kịch bản `dai` của `scripts/chat_e2e_transcript.py`. Rubric này bắt được lỗi thô nhưng KHÔNG phân giải được khác biệt nhỏ hơn trong đợt việc này — ba lần chấm ba bản prompt khác nhau ra cùng 2.4/5 (xem bẫy #16).
 
+20. **Digest chỉ ghi diễn biến, không ghi trạng thái lịch — khối bối cảnh
+thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng
+cách bỏ cầu chì.
+
 ## Ràng buộc giao diện — không được phá
 
 Khách bấm điện thoại ngoài đường hoặc trong tiệm ồn. Đây không phải thẩm mỹ.
@@ -168,7 +172,10 @@ khôi phục qua Telegram, spec ở `docs/superpowers/specs/2026-08-15-*.md`.
 - **P1 trong `REPO_AUDIT.md`**: SEC-01 (Socket.IO chưa kiểm `token_version`), SEC-03 (tách compose prod). SEC-02 và REL-02 đã xong.
 - **Vận hành**: sao lưu Mongo, HTTPS, CI — toàn bộ ở `PROD_CHECKLIST.md`.
 - **Avatar chatbot** chưa sinh; mockup trỏ `ai-avatar.jpg` không có trong git (ảnh Gemini bị `.gitignore` bỏ vì ~6MB, ai clone mới sẽ thấy mockup vỡ ảnh).
-- **Tầng digest** (nén lịch sử trong phiên) đã thiết kế nhưng **hoãn** — xem `docs/superpowers/specs/2026-09-13-natural-conversation-design.md` QĐ-6. Chỉ làm nếu trục `lap_y` của rubric vẫn thấp.
+- **Tầng digest** (nén lịch sử trong phiên) **đã làm xong** trên nhánh
+  `feat/conversation-digest` — spec `docs/superpowers/specs/2026-09-14-conversation-digest-design.md`,
+  plan cùng thư mục `docs/superpowers/plans/`. Xem "Checkpoint — nhánh
+  `feat/conversation-digest`" ở cuối file.
 
 ---
 
@@ -364,3 +371,75 @@ conversations của họ.
 **Đừng chỉ tin rubric.** Nó bão hoà (xem bẫy #16) và bỏ sót cả BUG-1 lẫn BUG-3.
 Hai lỗi đó chỉ lộ ra khi **hội thoại thật, đi vòng vèo, đọc từng câu rồi mới
 nghĩ câu sau** — không phải khi phát lại kịch bản đóng hộp.
+
+---
+
+## Checkpoint — nhánh `feat/conversation-digest` (2026-09-14)
+
+Tầng digest (spec `docs/superpowers/specs/2026-09-14-conversation-digest-design.md`,
+plan `docs/superpowers/plans/2026-09-14-conversation-digest.md`) đã cài xong
+qua 6 task: `Digest` model, `DigestService.maybe_compact` (ngưỡng, cầu chì,
+schema đóng), `context_window` + thứ tự tin nhắn, `schedule_compaction` chạy
+nền sau `complete`, rồi đo thật ở task này. **630 test backend xanh**
+(`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 test LLM bị loại bởi
+`-m "not llm"` như cũ) — tăng từ 590 vì Task 1–5 thêm test cho digest.
+
+**Chạy thật, kịch bản `dai` (16 lượt, Azure `gpt-5.4-mini`):**
+
+- Ở ngưỡng mặc định `COMPACT_THRESHOLD_TOKENS = 800`, kịch bản `dai` (16 lượt,
+  câu ngắn) **KHÔNG** đủ token ngoài cửa sổ để kích nén — không log
+  `digest_compacted`/`digest_skipped` nào, `conversations.digest` vẫn rỗng sau
+  toàn bộ 16 lượt. Đây không phải lỗi: 800 token ước lượng (~3 ký tự/token)
+  cần một phiên dài hơn 16 lượt ngắn của `dai`.
+- Hạ tạm ngưỡng xuống `300` (tài khoản mới, chạy lại từ đầu) để xác nhận luồng
+  đầu-cuối: `digest_compacted` lên log sau lượt 10
+  (`{'user_id': ..., 'bullets': 7, 'compacted': 22}`), và Mongo có:
+
+  ```
+  bullets: [
+    'Khách muốn làm tóc.',
+    'Tiệm mở 8:00–19:00, mở cả tuần; chủ nhật vẫn mở bình thường.',
+    'Khách hỏi lịch của người khác lúc 4 giờ; salon chỉ xem/đặt lịch của chị Thắm.',
+    'Salon đã hỏi ngày, giờ cụ thể cho làm tóc; khách đã nêu mai lúc 3 giờ chiều rồi đổi ý.',
+    'Salon từng giữ chỗ Thứ Ba 15/9, 3 giờ chiều và sau đó đề nghị dời sang 4 giờ chiều.',
+    'Khách chưa chốt việc dời sang 4 giờ chiều, đang tính lại.',
+    'Salon nói giữ nguyên lịch cũ.'
+  ]
+  ```
+
+  Đúng ràng buộc thiết kế: tiếng Việt, ≤ 8 dòng, không trích câu thoại, không
+  ghi "đã đặt/đã hủy". Ngưỡng đã **khôi phục về 800** ngay sau khi xác nhận
+  (`git diff app/services/digest.py` rỗng) — không đổi hằng số để "qua bài đo".
+- **Đọc tay lượt 8** ("chị đặt lúc mấy giờ vậy em nhắc lại giùm"): bot trả lời
+  bằng cách gọi `list_my_appointments` (khối bối cảnh/DB), không lấy từ digest
+  — đúng như thiết kế "digest chỉ bổ sung, khối bối cảnh thắng" (bẫy #20).
+- **Rubric** (`scripts/score_transcript.py`, so `baseline-dai.txt` với bản có
+  digest ở ngưỡng 300):
+
+  | trục | mốc (`baseline-dai.txt`) | sau digest |
+  |---|---|---|
+  | lap_y | 2/5 | 2/5 |
+  | giong_may | 3/5 | 3/5 |
+  | hoi_lai_da_biet | 2/5 | 3/5 |
+  | xung_ho | 2/5 | 2/5 |
+  | tu_nhien | 3/5 | 3/5 |
+  | **TỔNG** | **2.4/5** | **2.6/5** |
+
+  Nhích nhẹ, không đổi câu tệ nhất (vẫn câu từ chối rule 4 xưng "anh chị"
+  chung chung, xem bẫy #16) — **đừng đọc quá tay con số này**, rubric đã bão
+  hoà. Cái đáng tin là đọc tay lượt 8 ở trên và log `digest_compacted`, không
+  phải điểm rubric.
+- **Token/Langfuse**: Langfuse tự dựng (`http://localhost:3100`) **không kiểm
+  được** trong phiên đo này — service không phản hồi
+  (`curl -m 3 .../api/public/health` không kết nối được). Log uvicorn cũng
+  không có số token per-turn. Không có số trước–sau để ghi; ghi nhận là còn
+  thiếu, không phải bỏ qua có chủ ý.
+
+**Dọn sau đo:** hai tài khoản test (`0986000201`, `0986000202`) cùng
+appointments/conversations của họ đã xoá bằng lệnh regex `phone:/^0986/` ở
+`RUNBOOK.md`; uvicorn nền đã `pkill`; `git diff app/services/digest.py` rỗng
+trước khi commit tài liệu này.
+
+**Còn để ngỏ (chưa đo được):** mục tiêu "tiết kiệm token phiên dài" CHƯA đo
+được vì Langfuse không lên trong lần chạy 2026-09-14; đo lại khi Langfuse sống
+(tag `digest`, so input tokens/lượt trước–sau).

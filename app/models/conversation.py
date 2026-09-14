@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.clock import now_utc
 from app.models.base import BaseDocument
@@ -26,6 +26,26 @@ class DaySummary(BaseModel):
     preview: str
 
 
+class Digest(BaseModel):
+    """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
+    xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
+    document conversations. Xem spec 2026-09-14-conversation-digest-design.md.
+    """
+
+    day: date                        # ngày VN digest thuộc về; khác hôm nay là bỏ
+    covers_until: datetime           # created_at của tin CUỐI đã được nén
+    bullets: List[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=now_utc)
+    failures: int = 0                # cầu chì: nén hỏng liên tiếp
+
+    @field_validator("day", mode="before")
+    @classmethod
+    def _datetime_to_date(cls, value):
+        # Mongo lưu `day` dạng datetime (không có kiểu date riêng) — đọc lên
+        # phải tự ép về date, Pydantic v2 không làm việc này mặc định.
+        return value.date() if isinstance(value, datetime) else value
+
+
 class Conversation(BaseDocument):
     """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
 
@@ -40,3 +60,4 @@ class Conversation(BaseDocument):
     user_id: str
     messages: List[ChatMessage] = Field(default_factory=list)
     pending_confirmation: Optional[Dict[str, Any]] = None
+    digest: Optional[Digest] = None

@@ -106,3 +106,93 @@ async def test_load_context_passes_the_last_assistant_reply(test_db):
 
     context = await load_context(test_db, user, "tôi là chủ tiệm")
     assert "Em chỉ xem lịch của chị Lan thôi ạ." in context["context_block"]
+
+
+async def test_load_context_returns_the_digest_bullets(test_db):
+    from datetime import datetime, timezone
+
+    from app.agents.booking_graph.context import load_context
+    from app.core.clock import now_utc, to_local
+    from app.models.conversation import Digest
+    from app.services.auth import AuthService
+    from app.services.conversation import ConversationService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    convs = ConversationService(test_db)
+    await convs.append(str(user.id), "user", "cũ")
+    await convs.append(str(user.id), "assistant", "đáp cũ")
+    cut = (await convs._all_messages(str(user.id)))[-1].created_at
+    import asyncio
+    await asyncio.sleep(0.002)  # created_at ở mức mili giây, tránh trùng với `cut`
+    await convs.append(str(user.id), "user", "mới")
+    await convs.set_digest(str(user.id), Digest(
+        day=to_local(now_utc()).date(), covers_until=cut, bullets=["Khách chào."]))
+
+    context = await load_context(test_db, user, "x")
+    assert context["digest"] == ["Khách chào."]
+    assert [m.content for m in context["history"]] == ["mới"]
+
+
+async def test_run_turn_schedules_compaction_after_complete(test_db, monkeypatch):
+    """Nén chạy NỀN: khách nhận complete trước, không chờ LLM nén."""
+    from app.agents.booking_graph import events
+    from app.services.auth import AuthService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+    scheduled = []
+    monkeypatch.setattr(events, "schedule_compaction",
+                        lambda db, user_id: scheduled.append(user_id))
+
+    seen = [e.type async for e in events.run_turn(test_db, user, "chào em")]
+
+    assert seen[-1] == "complete"
+    assert scheduled == [str(user.id)]
+
+
+async def test_compaction_error_never_reaches_the_customer(test_db, monkeypatch):
+    from app.agents.booking_graph import events
+    from app.services.auth import AuthService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+
+    def boom(db, user_id):
+        raise RuntimeError("scheduler broken")
+    monkeypatch.setattr(events, "schedule_compaction", boom)
+
+    seen = [e.type async for e in events.run_turn(test_db, user, "chào em")]
+    assert "error" not in seen and seen[-1] == "complete"
+
+
+async def test_schedule_compaction_keeps_a_strong_reference_until_done(test_db, monkeypatch):
+    """Không giữ task lại thì event loop chỉ giữ weak-ref, GC có thể huỷ tác vụ
+    nén giữa chừng mà không ai hay biết."""
+    import asyncio
+
+    from app.agents.booking_graph import events
+    from app.services.digest import DigestService
+
+    async def fake_maybe_compact(self, user_id):
+        return False
+
+    monkeypatch.setattr(DigestService, "maybe_compact", fake_maybe_compact)
+
+    events.schedule_compaction(test_db, "u1")
+
+    assert len(events._PENDING_COMPACTIONS) == 1
+    task = next(iter(events._PENDING_COMPACTIONS))
+    await task
+    await asyncio.sleep(0)
+
+    assert events._PENDING_COMPACTIONS == set()
