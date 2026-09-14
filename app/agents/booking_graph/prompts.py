@@ -212,10 +212,8 @@ a different register and does not go with "anh"/"chị".
 # Anh, không câu mẫu; "anh"/"chị" là chủ thể luật, không phải ví dụ.
 VIOLATION_HINTS = {
     "repeat": "It repeats a sentence you already said in this conversation; say it differently.",
-    "address": "It addresses the customer with the wrong pronoun; use exactly the form given below.",
-    "register": "It uses the wrong register (a word for elders or a child speaker); stay in the em — anh/chị register.",
+    "pronoun": "It addresses the customer with the wrong pronoun or the wrong register (a word for elders, or a child speaker); use exactly the form given below, in the em — anh/chị register.",
     "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do.",
-    "language": "It is not Vietnamese; every word must be Vietnamese.",
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
 }
 

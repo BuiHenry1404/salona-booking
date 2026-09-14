@@ -47,7 +47,7 @@ class TestGuardNode:
 
     async def test_violation_on_first_pass_requests_a_rewrite(self):
         out = await make_guard_node(USER)(a_state("Chị hỏi chủ tiệm giúp em nhé."))
-        assert out["violations"] == ["address"]
+        assert out["violations"] == ["pronoun"]
         assert "answer" not in out
         assert route_after_guard({**a_state("x"), **out}) == "rewrite"
 
@@ -78,17 +78,17 @@ class TestGuardNode:
 class TestRewriteNode:
     async def test_rewrites_with_the_violation_hints_and_previous_reply(self, patch_model):
         model = patch_model("Dạ anh Tám, phần giá để chủ tiệm báo anh nhé.")
-        state = a_state("Chị hỏi chủ tiệm giúp em nhé.", previous=["Câu trước."], violations=["address", "repeat"])
+        state = a_state("Chị hỏi chủ tiệm giúp em nhé.", previous=["Câu trước."], violations=["pronoun", "repeat"])
         out = await make_rewrite_node()(state)
         assert out == {"draft": "Dạ anh Tám, phần giá để chủ tiệm báo anh nhé.",
                        "original_draft": "Chị hỏi chủ tiệm giúp em nhé.", "rewritten": True}
         prompt = model.calls[0][0].content
-        assert "address" in prompt and "repeat" in prompt and "Câu trước." in prompt
+        assert "pronoun" in prompt and "repeat" in prompt and "Câu trước." in prompt
         assert model.kwargs["tags"] == [REWRITE_TAG] and model.kwargs["streaming"] is False
 
     async def test_model_failure_keeps_the_draft_and_marks_rewritten(self, patch_model):
         patch_model("", fail=True)
-        out = await make_rewrite_node()(a_state("Chị ơi.", violations=["address"]))
+        out = await make_rewrite_node()(a_state("Chị ơi.", violations=["pronoun"]))
         assert out == {"rewritten": True}
 
     async def test_rewrite_tag_is_never_respond(self):

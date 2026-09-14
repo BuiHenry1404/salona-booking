@@ -1,8 +1,7 @@
 """Tầng gác là code tất định — mỗi phép kiểm có ca dương và ca âm."""
 import pytest
 
-from app.agents.booking_graph.guard import (check_address, check_clock,
-                                            check_language, check_register,
+from app.agents.booking_graph.guard import (check_clock, check_pronoun,
                                             content_kept,
                                             customer_asked_to_repeat,
                                             find_violations, normalize,
@@ -64,47 +63,45 @@ def test_ordinary_text_is_not_a_repeat_request():
     assert customer_asked_to_repeat("mai 9 giờ được không") is False
 
 
-class TestAddress:
+class TestPronoun:
     def test_wrong_pronoun_at_sentence_start_for_a_male_customer(self):
-        assert check_address("Chị hỏi bên chủ tiệm giúp em nhé.", "anh Tám", "Tám") is True
+        assert check_pronoun("Chị hỏi bên chủ tiệm giúp em nhé.", "anh Tám", "Tám") is True
 
     def test_wrong_pronoun_before_the_name(self):
-        assert check_address("Em giữ chỗ cho chị Tám rồi ạ.", "anh Tám", "Tám") is True
+        assert check_pronoun("Em giữ chỗ cho chị Tám rồi ạ.", "anh Tám", "Tám") is True
 
     def test_chi_chu_tiem_is_not_a_violation(self):
         """"Chị chủ" là cách gọi chủ tiệm, không phải gọi khách."""
-        assert check_address("Chị chủ sẽ trả lời phần giá ạ. Anh Tám muốn đặt gì ạ?", "anh Tám", "Tám") is False
+        assert check_pronoun("Chị chủ sẽ trả lời phần giá ạ. Anh Tám muốn đặt gì ạ?", "anh Tám", "Tám") is False
 
     def test_correct_pronoun_passes(self):
-        assert check_address("Dạ anh Tám, mai 9 giờ sáng ạ.", "anh Tám", "Tám") is False
+        assert check_pronoun("Dạ anh Tám, mai 9 giờ sáng ạ.", "anh Tám", "Tám") is False
 
     def test_female_customer_called_anh_is_a_violation(self):
-        assert check_address("Anh Lan muốn đặt giờ nào ạ?", "chị Lan", "Lan") is True
+        assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", "chị Lan", "Lan") is True
 
     def test_ambiguous_address_never_flags(self):
-        assert check_address("Chị muốn đặt giờ nào ạ?", "anh chị", "") is False
+        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is False
 
-
-class TestRegister:
     @pytest.mark.parametrize("draft", ["Cô muốn đặt giờ nào ạ?", "Để con xem lịch giúp cô.", "Chú Ba đặt 3 giờ nhé."])
     def test_forbidden_register_is_flagged(self, draft):
-        assert check_register(draft) is True
+        assert check_pronoun(draft, "anh chị", "") is True
 
     def test_anh_chi_em_register_passes(self):
-        assert check_register("Dạ anh Tám, em xem lịch giúp anh nhé.") is False
+        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is False
 
     def test_booking_for_the_customers_child_is_not_a_violation(self):
         """"cho con chị" = đặt hộ con của khách, không phải xưng hô sai."""
-        assert check_register("Dạ em đặt cho con chị lúc 3 giờ chiều ạ.") is False
+        assert check_pronoun("Dạ em đặt cho con chị lúc 3 giờ chiều ạ.", "anh chị", "") is False
 
     def test_con_as_subject_of_a_receptionist_verb_is_still_flagged(self):
-        assert check_register("Để con xem lịch giúp cô.") is True
+        assert check_pronoun("Để con xem lịch giúp cô.", "anh chị", "") is True
 
     def test_con_as_subject_without_de_giup_is_still_flagged(self):
-        assert check_register("Con giữ chỗ cho cô rồi ạ.") is True
+        assert check_pronoun("Con giữ chỗ cho cô rồi ạ.", "anh chị", "") is True
 
     def test_capitalised_mid_sentence_register_before_name_is_flagged(self):
-        assert check_register("Dạ, Chú Tám ơi, em giữ chỗ rồi ạ.") is True
+        assert check_pronoun("Dạ, Chú Tám ơi, em giữ chỗ rồi ạ.", "anh chị", "") is True
 
 
 class TestClock:
@@ -120,15 +117,12 @@ class TestClock:
         assert check_clock("Dạ anh Ba, em chào anh.") is False
 
 
-class TestLanguage:
-    def test_english_reply_is_flagged(self):
-        assert check_language("Sure, I can book that appointment for you tomorrow.") is True
-
-    def test_vietnamese_passes(self):
-        assert check_language("Dạ em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho anh Tám rồi ạ.") is False
-
-    def test_short_reply_without_diacritics_passes(self):
-        assert check_language("Da anh Tam.") is False
+def test_language_is_no_longer_checked():
+    """Câu tiếng Anh dài, không lỗi lặp/đại từ/giờ → không sinh mã nào."""
+    assert find_violations(
+        "Sure, I can book that appointment for you tomorrow at your convenience.",
+        previous_replies=[], address="anh chị", name="", customer_text="",
+    ) == []
 
 
 class TestContentKept:
@@ -144,7 +138,7 @@ class TestFindViolations:
     def test_collects_codes_in_fixed_order(self):
         codes = find_violations("Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé.",
                                 previous_replies=[], address="anh Tám", name="Tám", customer_text="giá bao nhiêu")
-        assert codes == ["address", "clock"]
+        assert codes == ["pronoun", "clock"]
 
     def test_repeat_is_skipped_when_the_customer_asked_for_it(self):
         prev = ["Dạ anh Tám, mai 9 giờ sáng cắt tóc ạ, em đã giữ chỗ rồi."]
