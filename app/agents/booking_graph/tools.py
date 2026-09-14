@@ -216,10 +216,12 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:
-        """Prepare to cancel one appointment. Nothing is cancelled yet: call
-        this, then ask the customer to confirm — the appointment is cancelled
-        only when they agree on the NEXT turn. Never say it is already
-        cancelled before that.
+        """Prepare to cancel one appointment. Call this AS SOON AS the customer
+        asks to cancel — do not ask them to confirm before calling it. Nothing
+        is cancelled yet: the tool only records the intent; after it returns,
+        ask the customer to confirm, and the appointment is cancelled only when
+        they agree on the NEXT turn. Never say it is already cancelled before
+        that.
         `appointment_id` is the `[id: ...]` tag on that appointment's line in
         the context block — copy it exactly. Never invent or guess an id; if
         the context block shows none, call list_my_appointments first. If the

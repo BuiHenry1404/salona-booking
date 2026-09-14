@@ -472,3 +472,14 @@ class TestNoteIsTheServiceOnly:
         desc = " ".join(by_name(make_booking_tools(test_db, user), "propose_appointment").description.split())
         assert "`note`" in desc
         assert "service" in desc.lower() and "never the time" in desc.lower()
+
+
+class TestCancelDescriptionSaysCallFirst:
+    """Lượt 11 chạy thật 2026-09-14: model hỏi xác nhận trước khi gọi tool, nên
+    lượt sau không có pending để chốt. Docstring phải nói rõ thứ tự."""
+
+    async def test_description_orders_tool_call_before_the_question(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
+        assert "as soon as the customer asks to cancel" in desc.lower()
+        assert "before asking" in desc.lower() or "do not ask" in desc.lower()

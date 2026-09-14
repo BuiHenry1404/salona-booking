@@ -307,8 +307,10 @@ class TestBookingPromptSlimmed:
         # mốc lên 4000. Cùng ngày thêm vế loại trừ cho rule 4 (lịch của chính
         # họ nhưng không có), đo được 4109 — mốc lên 4200. Bỏ câu bảo mật
         # nguyên văn, viết hoa rule 4 và thêm vế "từ chối lần hai nói khác":
-        # đo được 4320 — mốc lên 4400.
-        assert len(BOOKING_PROMPT) < 4400
+        # đo được 4320 — mốc lên 4400. Sau chạy thật 2026-09-14 thêm hai vế:
+        # hủy phải gọi tool trước, và giá/dịch vụ không phải ca rule 4 — đo
+        # được 4780 — mốc lên 4900.
+        assert len(BOOKING_PROMPT) < 4900
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -393,3 +395,39 @@ class TestNoRepeatKnowsAboutTheDigest:
                              ("BOOKING_PROMPT", BOOKING_PROMPT),
                              ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
             assert "conversation digest count as already said" in prompt, name
+
+
+class TestLiveChat20260914:
+    """Ba lỗi lộ ra khi TRÒ CHUYỆN THẬT (không kịch bản) ngày 2026-09-14 với
+    tài khoản "Chú Tám" — xem CONTEXT.md checkpoint."""
+
+    def test_cancel_must_call_the_tool_before_asking(self):
+        """Lượt 11–12: model tự hỏi "anh xác nhận để em hủy nhé?" mà CHƯA gọi
+        cancel_appointment → không có pending → "ừ hủy đi" rơi về booking → tool
+        được gọi lúc này và hỏi xác nhận LẦN HAI. Khách chào về, lịch còn nguyên.
+        Cùng bài học với propose_appointment: gọi tool trước, hỏi sau."""
+        assert "call cancel_appointment FIRST" in BOOKING_PROMPT
+        assert "never ask them to confirm a cancellation before calling it" in BOOKING_PROMPT.lower()
+
+    def test_price_and_service_questions_are_not_a_security_case(self):
+        """Lượt 10: "tiệm có nhuộm tóc bạc không, giá bao nhiêu" → câu bảo mật
+        rule 4. Supervisor xếp "nhuộm tóc" vào booking (dịch vụ = đặt lịch) rồi
+        rule 4 bắt nhầm. Giá/dịch vụ là chuyện của chủ tiệm, không phải của
+        khách khác."""
+        assert "prices or which services" in BOOKING_PROMPT.lower() or "prices or services" in BOOKING_PROMPT.lower()
+        assert "owner will answer" in BOOKING_PROMPT.lower()
+
+    def test_supervisor_routes_open_right_now_to_shop(self):
+        """Lượt 1: "tiệm còn làm không" → social → bot tự khẳng định "còn làm"
+        không tra gì. Câu hỏi tiệm đang mở/đóng là việc của node shop."""
+        assert "open right now" in SUPERVISOR_PROMPT.lower()
+
+    def test_social_never_asserts_the_salon_is_open(self):
+        assert "never say whether the salon is open" in SOCIAL_PROMPT.lower()
+
+    def test_shop_must_check_hours_for_open_right_now(self):
+        """Dò lại sau khi sửa supervisor: cả 4 cách nói "còn mở không" đều đã
+        vào shop, nhưng bot vẫn "em còn làm ạ" không tool — SHOP_PROMPT không có
+        luật cho câu "đang mở không", chỉ có "mở/đóng lúc mấy giờ"."""
+        assert "open right now" in SHOP_PROMPT.lower()
+        assert "never answer that from memory" in SHOP_PROMPT.lower()
