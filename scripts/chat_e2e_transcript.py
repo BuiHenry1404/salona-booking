@@ -85,6 +85,20 @@ SCENARIOS = {
         "ừ hủy đi em",
         "cảm ơn em nhé chị đi đây",
     ],
+    # Bốn ca của spec 2026-09-14-natural-voice-guard: câu kép, dời lịch chỉ
+    # nói giờ, hủy qua xác nhận, hỏi giá. Gieo sẵn lịch 9 giờ sáng mai trước khi chạy.
+    "tu_nhien": [
+        "alo em, tiệm còn làm không",
+        "mấy giờ đóng cửa vậy, chiều nay anh qua cắt tóc được không",
+        "khách nào đặt lúc 4 giờ chiều vậy em",
+        "tiệm có nhuộm tóc bạc không, giá bao nhiêu",
+        "à mà lịch mai của anh chuyển qua 10 giờ được không",
+        "ừ",
+        "vậy anh còn mấy lịch",
+        "thôi hủy giùm anh",
+        "ừ hủy đi",
+        "cảm ơn em",
+    ],
 }
 
 

@@ -45,6 +45,7 @@ checkpoint cũng đã sửa cùng ngày — xem [Checkpoint 2026-09-14](#checkpo
 | Quan sát | **Langfuse tự dựng**, compose riêng | Dữ liệu khách không ra khỏi máy. Nặng nên tách khỏi `docker-compose.yml` |
 | Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate |
 | Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn |
+| Câu trả lời | **Mọi câu qua guard (code) trước khi phát; rewrite tối đa 1 lần; câu chốt LLM viết, số liệu code cấp** | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
 
 ## Xưng hô — chốt 2026-08-23
 
@@ -139,6 +140,11 @@ cancelling=True)`; dùng chung bộ từ phủ định là khách không bao gi�
 20. **Digest chỉ ghi diễn biến, không ghi trạng thái lịch — khối bối cảnh
 thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng
 cách bỏ cầu chì.
+
+21. **Guard là code, không phải rubric.** 5 phép kiểm tất định + kiểm số liệu.
+Thêm phép kiểm mờ ("câu này có tự nhiên không") là biến guard thành LLM chấm —
+bẫy #16 đã đo là không phân giải được. Rewrite chỉ một lần; lần hai hỏng thì
+trả draft GỐC, không trả bản rewrite.
 
 ## Ràng buộc giao diện — không được phá
 
@@ -451,3 +457,61 @@ trước khi commit tài liệu này.
 **Còn để ngỏ (chưa đo được):** mục tiêu "tiết kiệm token phiên dài" CHƯA đo
 được vì Langfuse không lên trong lần chạy 2026-09-14; đo lại khi Langfuse sống
 (tag `digest`, so input tokens/lượt trước–sau).
+
+---
+
+## Checkpoint — nhánh `feat/natural-voice-guard` (2026-09-14, Task 6)
+
+Spec `docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`, 6 task.
+Nhánh mọc từ `henry/develop` ở `13bfa4e` (630 test nền). Đã cài xong: node
+`guard` (3 phép kiểm tất định — `repeat`, `pronoun`, `clock` — cộng `content`
+sau rewrite; **`address`/`register` gộp vào `pronoun`, `language` bị bỏ hẳn**,
+quyết định của chủ dự án, khác con số "5 phép kiểm" ghi ở spec gốc), node
+`rewrite` (một lần, tag `rewrite`, không stream), node `phrase` sau `confirm`
+(LLM viết câu chốt theo mạch, số liệu và địa chỉ do `guard` ép), `apply_anchor`
+trong `parse_time` (neo = lịch đang dời hoặc giờ vừa đề nghị, tự điền ngày/buổi
+thiếu), và `booking` với 7 tool (5 lịch + 2 đọc shop) để trả lời câu kép
+shop+lịch. Sơ đồ: `supervisor → {booking,shop,social} → guard → (rewrite →
+guard) → END`; `confirm → phrase → guard → END`.
+
+**Test:** `PYTHONPATH=. .venv/bin/python -m pytest -q` → **721 passed, 14
+deselected** (14 test cần Azure thật, loại bởi `-m "not llm"`).
+
+**Chạy thật (Azure `gpt-5.4-mini`), hai kịch bản, hai tài khoản mới
+`0986000401`/`0986000402`:**
+
+- `tu_nhien` (10 lượt, tài khoản `Chú Tám`, gieo sẵn lịch 9 giờ sáng mai) — cả
+  8 điểm kiểm của brief đều **đúng**: lượt 2 trả lời cả giờ đóng cửa (7 giờ
+  tối) lẫn giữ chỗ giờ trống cùng câu; lượt 3 từ chối xem lịch người khác,
+  không gọi tool; lượt 4 (hỏi giá nhuộm tóc) không rơi vào câu bảo mật cứng,
+  chỉ đẩy sang chủ tiệm; lượt 5 (chỉ nói "chuyển qua 10 giờ", không nói buổi)
+  **không hỏi lại "sáng hay chiều"** — neo lấy từ lịch 9 giờ sáng mai, tự suy
+  ra 10 giờ SÁNG; lượt 6 câu chốt do LLM viết, có đủ "Thứ Ba 15/9, 10 giờ
+  sáng" và "anh Tám"; lượt 8–9 hủy chỉ hỏi xác nhận đúng một lần; không câu
+  nào lặp nguyên văn khi đọc cả 10 lượt bằng mắt.
+- `dai` (16 lượt, tài khoản `Cô Thắm`) so với `baseline-dai.txt` bằng
+  `scripts/score_transcript.py`: **2.2/5** (chấm lại baseline) → **2.4/5**
+  (sau task 6). Giám khảo LLM có nhiễu giữa các lần chấm cùng một baseline
+  (bẫy #16 đã ghi 2.4/2.4/2.4 ba lần trước; lần này chấm lại ra 2.2) — đọc số
+  tổng này cẩn trọng, đừng coi 2.2→2.4 là "cải thiện" chắc chắn. Xưng hô "chị
+  Thắm" nhất quán suốt 16 lượt, không thấy lại câu bảo mật cứng "anh chị"
+  chung chung ở lần chạy này.
+- **Log tầng gác** cộng cả hai kịch bản (26 lượt LLM tổng): `guard_violation`
+  **1 lượt** (`codes: ['repeat']`), theo sau là `guard_gave_up` — rewrite chạy
+  nhưng bản viết lại vẫn phạm `repeat` nên guard trả **draft gốc** (đúng thiết
+  kế bẫy #21: rewrite hỏng thì KHÔNG phát bản hỏng). Không có `guard_rewritten`,
+  `rewrite_failed`, `phrase_fallback`, `phrase_failed`, `anchor_ignored`,
+  `anchor_bad_hour` nào trong log — tầng gác gần như im lặng ở 26 lượt hội
+  thoại tự nhiên này; tỷ lệ rewrite-qua đo được là 0/1 (mẫu quá nhỏ để kết
+  luận ngưỡng `REPEAT_RATIO` cần đổi).
+- **Probe supervisor** (`scripts/probe_supervisor.py`, 18 mẫu — không chạy lại
+  trong đợt đo Task 6 này vì không đổi prompt định tuyến; mốc gần nhất vẫn là
+  0/14 ghi ở bẫy #16 với bộ 14 mẫu cũ, bộ 18 mẫu hiện tại đã thêm 4 câu kép
+  shop+booking từ Task 5).
+- **Langfuse**: không kết nối được (`curl -m 3 localhost:3100/api/public/health`
+  không phản hồi) — bỏ qua số token, giống lần đo digest.
+
+**Dọn sau đo:** `db.users.deleteMany({phone:/^0986/})` cùng appointments/
+conversations của hai tài khoản đã xoá; uvicorn nền dừng bằng
+`fuser -k -TERM 8000/tcp`; `git status` chỉ còn thay đổi tài liệu + script +
+hai transcript mới trước khi commit.
