@@ -9,6 +9,13 @@ import re
 from difflib import SequenceMatcher
 from typing import List, Sequence
 
+from app.agents.booking_graph.context import address_phrase, derive_address
+from app.agents.booking_graph.state import GraphState
+from app.core.logging import get_logger
+from app.models.user import User
+
+logger = get_logger(__name__)
+
 REPEAT_RATIO = 0.85          # điểm khởi đầu — khoá sau khi duyệt scripts/probe_repeats.py
 REPEAT_MIN_WORDS = 6
 REPEAT_LOOKBACK = 3
@@ -157,3 +164,46 @@ def find_violations(draft: str, *, previous_replies: Sequence[str], address: str
     if check_language(draft):
         codes.append("language")
     return codes
+
+
+def make_guard_node(user: User):
+    """Nơi DUY NHẤT set `answer`. Lần 1: vi phạm → xin rewrite. Lần 2: vi phạm
+    (kể cả mất số liệu) → trả draft GỐC, không phải bản rewrite đã sai."""
+    address = address_phrase(user.full_name)
+    _, name = derive_address(user.full_name)
+
+    async def node(state: GraphState) -> dict:
+        draft = state.get("draft") or ""
+        fact = state.get("phrase_fact")
+        if fact:
+            return _guard_phrase(state, draft, fact, address)          # Task 4
+
+        codes = find_violations(
+            draft, previous_replies=state.get("previous_replies") or [],
+            address=address, name=name, customer_text=state.get("customer_text") or "",
+        )
+        if state.get("rewritten"):
+            original = state.get("original_draft") or draft
+            if not content_kept(original, draft):
+                codes.append("content")
+            if codes:
+                logger.warning("guard_gave_up", extra={"codes": codes})
+                return {"answer": original, "answer_source": "llm", "violations": codes}
+            logger.info("guard_rewritten")
+            return {"answer": draft, "answer_source": "llm", "violations": []}
+
+        if codes:
+            logger.info("guard_violation", extra={"codes": codes})
+            return {"violations": codes}
+        return {"answer": draft, "answer_source": "llm", "violations": []}
+
+    return node
+
+
+def _guard_phrase(state, draft, fact, address):
+    """Thay ở Task 4. Task 2: chưa có phrase — không bao giờ tới đây."""
+    return {"answer": draft, "answer_source": "llm", "violations": []}
+
+
+def route_after_guard(state: GraphState) -> str:
+    return "end" if "answer" in state and state.get("answer") else "rewrite"

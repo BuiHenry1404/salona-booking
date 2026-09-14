@@ -196,3 +196,28 @@ async def test_schedule_compaction_keeps_a_strong_reference_until_done(test_db, 
     await asyncio.sleep(0)
 
     assert events._PENDING_COMPACTIONS == set()
+
+
+async def test_run_turn_records_answer_source_and_previous_llm_replies(test_db, monkeypatch):
+    from app.agents.booking_graph import events
+    from app.services.auth import AuthService
+    from app.services.conversation import ConversationService
+
+    user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    convs = ConversationService(test_db)
+    await convs.append(str(user.id), "assistant", "câu llm cũ")
+    await convs.append(str(user.id), "assistant", "câu code cũ", source="code")
+    seen_state = {}
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            seen_state.update(state)
+            yield {"event": "on_chain_end", "data": {"output": {"answer": "Xong.", "answer_source": "code"}}}
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+    monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
+    [e async for e in events.run_turn(test_db, user, "ừ")]
+
+    assert seen_state["previous_replies"] == ["câu llm cũ"]
+    assert seen_state["customer_text"] == "ừ"
+    assert (await convs._all_messages(str(user.id)))[-1].source == "code"

@@ -4,8 +4,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.booking_graph.agents import make_subagent_node
 from app.agents.booking_graph.confirm import (make_confirm_node,
                                               route_after_confirm)
+from app.agents.booking_graph.guard import make_guard_node, route_after_guard
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
                                               SOCIAL_PROMPT)
+from app.agents.booking_graph.rewrite import make_rewrite_node
 from app.agents.booking_graph.state import GraphState
 from app.agents.booking_graph.supervisor import route_from_state, supervise
 from app.agents.booking_graph.tools import (make_booking_tools,
@@ -39,6 +41,8 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
         "booking",
         make_subagent_node(BOOKING_PROMPT, make_booking_tools(db, user), tag=RESPOND_TAG),
     )
+    graph.add_node("guard", make_guard_node(user))
+    graph.add_node("rewrite", make_rewrite_node())
 
     # Nhánh tắt: có pending_confirmation thì bỏ qua supervisor hoàn toàn.
     graph.add_conditional_edges(
@@ -56,7 +60,11 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
         "confirm", route_after_confirm, {"booking": "booking", "end": END}
     )
 
+    # Mọi câu LLM đi qua guard ĐÚNG MỘT lần trước khi ra END; rewrite tối đa
+    # một lần rồi quay lại guard để kiểm, không viết lại lần hai.
     for node in ("social", "shop", "booking"):
-        graph.add_edge(node, END)
+        graph.add_edge(node, "guard")
+    graph.add_conditional_edges("guard", route_after_guard, {"rewrite": "rewrite", "end": END})
+    graph.add_edge("rewrite", "guard")
 
     return graph.compile()

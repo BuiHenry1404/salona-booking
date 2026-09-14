@@ -206,3 +206,32 @@ points. Never call yourself "con" and never say "cô", "chú" or "bác" — that
 a different register and does not go with "anh"/"chị".
 
 {_VIETNAMESE_ONLY}"""
+
+
+# Mã vi phạm do guard.py phát hiện → một dòng giải thích cho rewrite. Tiếng
+# Anh, không câu mẫu; "anh"/"chị" là chủ thể luật, không phải ví dụ.
+VIOLATION_HINTS = {
+    "repeat": "It repeats a sentence you already said in this conversation; say it differently.",
+    "address": "It addresses the customer with the wrong pronoun; use exactly the form given below.",
+    "register": "It uses the wrong register (a word for elders or a child speaker); stay in the em — anh/chị register.",
+    "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do.",
+    "language": "It is not Vietnamese; every word must be Vietnamese.",
+    "content": "It dropped a date, time or number that the original contained; keep every one of them.",
+}
+
+REWRITE_PROMPT = """You are fixing ONE reply written by a salon receptionist to a customer.
+Rewrite it in Vietnamese so that it says the same thing with the same dates,
+times and numbers, but without the problems listed. Change wording only —
+never add facts, never remove a date, time or number. Reply with the new
+sentence only, nothing else.
+
+Problems:
+{violations}
+
+Address the customer as: {address}
+
+Your previous reply to the customer (do not repeat it):
+{previous}
+
+Reply to fix:
+{draft}"""

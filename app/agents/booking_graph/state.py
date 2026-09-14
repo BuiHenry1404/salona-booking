@@ -15,3 +15,12 @@ class GraphState(TypedDict, total=False):
     pending_confirmation: Optional[Dict[str, Any]]
     route: str
     answer: str
+    draft: str                       # câu LLM vừa viết, chưa qua guard
+    original_draft: str              # draft trước rewrite — dùng khi rewrite vẫn hỏng
+    violations: List[str]
+    rewritten: bool
+    previous_replies: List[str]      # câu đáp LLM gần nhất (source == "llm")
+    customer_text: str
+    answer_source: str               # "llm" | "code" — ghi vào ChatMessage.source
+    fallback: Optional[str]          # câu cứng của confirm (Task 4)
+    phrase_fact: Optional[Dict[str, Any]]

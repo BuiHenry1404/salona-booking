@@ -58,7 +58,7 @@ def a_state(text="mai còn trống không con"):
 async def test_answers_without_calling_tools_when_not_needed(patch_model):
     patch_model([AIMessage(content="Dạ chủ tiệm đang rảnh ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    assert (await node(a_state()))["answer"] == "Dạ chủ tiệm đang rảnh ạ."
+    assert (await node(a_state()))["draft"] == "Dạ chủ tiệm đang rảnh ạ."
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_runs_a_tool_then_answers(patch_model):
     patch_model([tool_call_message(), AIMessage(content="Dạ mai còn trống 3 giờ chiều ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
     result = await node(a_state())
-    assert result["answer"] == "Dạ mai còn trống 3 giờ chiều ạ."
+    assert result["draft"] == "Dạ mai còn trống 3 giờ chiều ạ."
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_tool_loop_stops_at_the_limit(patch_model):
     patch_model([tool_call_message() for _ in range(MAX_TOOL_ROUNDS + 3)])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
     result = await node(a_state())
-    assert result["answer"]
+    assert result["draft"]
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_unknown_tool_name_does_not_crash(patch_model):
     bad = AIMessage(content="", tool_calls=[{"name": "khong_ton_tai", "args": {}, "id": "c1"}])
     patch_model([bad, AIMessage(content="Dạ con xin lỗi ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    assert (await node(a_state()))["answer"] == "Dạ con xin lỗi ạ."
+    assert (await node(a_state()))["draft"] == "Dạ con xin lỗi ạ."
 
 
 @pytest.mark.asyncio
@@ -184,3 +184,10 @@ async def test_no_digest_keeps_the_old_order_exactly(patch_model):
     sent = model.calls[0]
     assert [type(m) for m in sent] == [SystemMessage, HumanMessage, HumanMessage]
     assert sent[1].content.startswith("Bạn đang nói chuyện với")
+
+
+@pytest.mark.asyncio
+async def test_llm_node_returns_a_draft_not_an_answer(patch_model):
+    patch_model([AIMessage(content="Dạ.")])
+    out = await make_subagent_node("prompt", [], tag="respond")(a_state("chào"))
+    assert out == {"draft": "Dạ."}
