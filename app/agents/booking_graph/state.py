@@ -23,4 +23,5 @@ class GraphState(TypedDict, total=False):
     customer_text: str
     answer_source: str               # "llm" | "code" — ghi vào ChatMessage.source
     fallback: Optional[str]          # câu cứng của confirm (Task 4)
+    confirm_fact: Optional[Dict[str, Any]]   # số liệu confirm vừa ghi (Task 4)
     phrase_fact: Optional[Dict[str, Any]]

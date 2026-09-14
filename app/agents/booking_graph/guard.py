@@ -156,7 +156,7 @@ def make_guard_node(user: User):
 
     async def node(state: GraphState) -> dict:
         draft = state.get("draft") or ""
-        fact = state.get("phrase_fact")
+        fact = state.get("phrase_fact") or state.get("confirm_fact")
         if fact:
             return _guard_phrase(state, draft, fact, address)          # Task 4
 
@@ -183,8 +183,23 @@ def make_guard_node(user: User):
 
 
 def _guard_phrase(state, draft, fact, address):
-    """Thay ở Task 4. Task 2: chưa có phrase — không bao giờ tới đây."""
-    return {"answer": draft, "answer_source": "llm", "violations": []}
+    """Khoảnh khắc chốt lịch: sai số liệu là dùng câu cứng ngay, không rewrite."""
+    fallback = state.get("fallback") or draft
+    when, kind, error = fact.get("when"), fact.get("kind"), fact.get("error")
+    bad = []
+    if when and when not in draft:
+        bad.append("when")
+    if address != "anh chị" and address.lower() not in draft.lower():
+        bad.append("address")
+    if kind == "failed" and error and error.lower() not in draft.lower():
+        bad.append("error")
+    bad += find_violations(draft, previous_replies=[], address=address,
+                           name=(address.split()[1] if address != "anh chị" and len(address.split()) > 1 else ""),
+                           customer_text=state.get("customer_text") or "")
+    if bad:
+        logger.info("phrase_fallback", extra={"codes": bad})
+        return {"answer": fallback, "answer_source": "code", "violations": bad}
+    return {"answer": draft, "answer_source": "code" if draft == fallback else "llm", "violations": []}
 
 
 def route_after_guard(state: GraphState) -> str:

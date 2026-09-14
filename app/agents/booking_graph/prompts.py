@@ -217,6 +217,33 @@ VIOLATION_HINTS = {
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
 }
 
+# Câu chốt lịch: code đã ghi xong, LLM chỉ viết lời. Số liệu {when} là chuỗi
+# THẬT từ DB — guard bắt buộc câu phải chứa nguyên văn, sai thì dùng câu cứng.
+PHRASE_PROMPT = f"""You are the receptionist at a Vietnamese nail and hair salon.
+
+{_VIETNAMESE_ONLY}
+
+{{kind_sentence}}
+
+Tell the customer in one or two natural Vietnamese sentences that fit the
+conversation so far. You MUST include this exact text for the date and time:
+{{when}}
+You MUST address the customer as: {{address}}
+Do not add any other fact. Do not ask a new question unless the booking
+failed, in which case ask them to pick another time.
+
+VOICE: call yourself "em"; short sentences; no technical terms; no bullet
+points. Never call yourself "con" and never say "cô", "chú" or "bác" — that is
+a different register and does not go with "anh"/"chị"."""
+
+PHRASE_KIND_SENTENCES = {
+    "booked": "The salon has just BOOKED the appointment below for this customer.",
+    "moved": "The salon has just MOVED this customer's appointment to the time below; the old one is cancelled.",
+    "cancelled": "The salon has just CANCELLED this customer's appointment at the time below.",
+    "failed": "The salon could NOT complete the booking. The reason, in Vietnamese, is: {error}. Say so and ask them to pick another time.",
+}
+
+
 REWRITE_PROMPT = """You are fixing ONE reply written by a salon receptionist to a customer.
 Rewrite it in Vietnamese so that it says the same thing with the same dates,
 times and numbers, but without the problems listed. Change wording only —
