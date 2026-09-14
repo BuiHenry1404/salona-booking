@@ -332,6 +332,14 @@ giới ngữ nghĩa thành phép so khớp từ.
 - *Đã sửa* — `str.capitalize()` hạ chữ tên ("Anh hùng") ở câu báo lỗi của
   `confirm`; thay bằng `_sentence_start`.
 
+**Trò chuyện thật không kịch bản 2026-09-14 (tài khoản tạo qua API admin, 13 lượt tự nghĩ) — 3 lỗi, đã sửa trên `fix/live-chat-2026-09-14`:**
+
+- Khách xin hủy → model **tự hỏi xác nhận trước khi gọi `cancel_appointment`** → không có pending → "ừ hủy đi" rơi về booking → tool được gọi lúc này và hỏi xác nhận lần hai; khách chào về, lịch còn nguyên. Sửa: rule 1 `BOOKING_PROMPT` + docstring tool: gọi tool TRƯỚC, hỏi SAU (cùng bài học `propose_appointment`).
+- "tiệm có nhuộm tóc bạc không, giá bao nhiêu" → câu bảo mật rule 4. Supervisor xếp "nhuộm tóc" vào booking (dịch vụ = đặt lịch), rule 4 bắt nhầm. Sửa: thêm vế loại trừ — giá/dịch vụ là chuyện chủ tiệm trả lời.
+- "tiệm còn làm không" → bot "còn làm ạ" **không tra gì**. Dò supervisor: đã vào `shop` đúng; lỗi ở `SHOP_PROMPT` không có luật "đang mở không" (chỉ có "mở/đóng lúc mấy giờ"). Sửa: gọi `get_shop_hours` rồi so với giờ trong khối bối cảnh; `SOCIAL_PROMPT` cấm khẳng định mở/đóng. Đã chạy lại: `get_shop_hours` được gọi, trả "còn làm đến 7 giờ tối".
+
+Quan sát chưa sửa: câu hỏi kép ("mấy giờ đóng cửa, chiều nay còn giờ nào") chỉ được trả lời một nửa — một lượt chỉ vào một node; cần thiết kế riêng.
+
 **Còn để ngỏ (chưa sửa):**
 
 - Hai lần từ chối liên tiếp (rule 4) ra câu gần y nhau. KHÔNG phải hard-code
