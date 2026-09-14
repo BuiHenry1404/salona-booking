@@ -483,3 +483,23 @@ class TestCancelDescriptionSaysCallFirst:
         desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
         assert "as soon as the customer asks to cancel" in desc.lower()
         assert "before asking" in desc.lower() or "do not ask" in desc.lower()
+
+
+class TestParseTimeAnchor:
+    async def test_bad_anchor_is_ignored_not_fatal(self, test_db):
+        user = await a_user(test_db)
+        out = await by_name(make_booking_tools(test_db, user), "parse_time").ainvoke(
+            {"text": "chuyển qua 10 giờ", "anchor": "không phải iso"})
+        assert '"missing"' in out          # vẫn là JSON ParsedTime, không crash
+
+    async def test_description_explains_the_anchor(self, test_db):
+        user = await a_user(test_db)
+        desc = " ".join(by_name(make_booking_tools(test_db, user), "parse_time").description.split())
+        assert "`anchor`" in desc and "already on the table" in desc
+
+    async def test_propose_returns_the_iso_for_the_next_turn(self, test_db):
+        user = await a_user(test_db)
+        start = tomorrow_at(15)
+        out = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
+            {"start_at": start.isoformat(), "note": "làm tóc"})
+        assert f"(iso: {start.isoformat()})" in out

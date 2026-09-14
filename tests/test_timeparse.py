@@ -3,8 +3,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from app.agents.booking_graph.timeparse import (ParsedTime, _guard,
-                                                _match_regex, parse_vi_time)
+                                                _match_regex, apply_anchor,
+                                                parse_vi_time)
 from app.core.clock import TZ
+from app.models.shop import ShopHours
 
 NOW = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)   # Thứ Sáu 7/8/2026, 2:30 chiều
 
@@ -368,3 +370,57 @@ class TestKnownDayIsNeverAskedAgain:
 
     def test_allows_asking_which_day_when_no_day_is_known(self):
         assert ParsedTime(missing=["ngày nào"]).missing == ["ngày nào"]
+
+
+HOURS = ShopHours(open_time="08:00", close_time="19:00")
+ANCHOR_MORNING = datetime(2026, 9, 15, 9, 0, tzinfo=TZ)
+ANCHOR_AFTERNOON = datetime(2026, 9, 15, 15, 0, tzinfo=TZ)
+
+
+class TestApplyAnchor:
+    """Bảng ca của spec mục 3. Chỉ chạy khi start_at chưa có và có neo."""
+
+    def test_no_anchor_changes_nothing(self):
+        c = ParsedTime(missing=["ngày nào"], partial_hour=10)
+        assert apply_anchor(c, None, HOURS) == c
+
+    def test_missing_day_takes_the_anchor_day(self):
+        c = ParsedTime(missing=["ngày nào"], partial_hour=10, partial_minute=0)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ) and out.missing == []
+
+    def test_missing_period_follows_the_anchor_period(self):
+        """"chuyển qua 10 giờ" với lịch 9 giờ sáng → 10 giờ sáng cùng ngày."""
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=10)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ) and out.missing == []
+
+    def test_missing_period_afternoon_anchor(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=4)
+        out = apply_anchor(c, ANCHOR_AFTERNOON, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 16, 0, tzinfo=TZ)
+
+    def test_anchor_period_outside_hours_uses_the_other_period(self):
+        """Neo buổi sáng nhưng "7 giờ" sáng chưa mở → 7 giờ tối cũng đóng (19:00) → vẫn hỏi."""
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=7)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at is None and out.missing == ["sáng hay chiều"]
+
+    def test_anchor_period_outside_hours_but_other_period_open(self):
+        """Neo buổi sáng, "6 giờ": 6 sáng đóng, 6 chiều (18:00) mở → 18:00."""
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=6)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 18, 0, tzinfo=TZ)
+
+    def test_missing_both_day_and_period(self):
+        c = ParsedTime(missing=["ngày nào", "sáng hay chiều"], partial_hour=10)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+
+    def test_missing_the_hour_itself_cannot_be_resolved(self):
+        c = ParsedTime(missing=["giờ cụ thể"], partial_date=date(2026, 9, 15))
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS).start_at is None
+
+    def test_no_hours_given_trusts_the_anchor_period(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=10)
+        assert apply_anchor(c, ANCHOR_MORNING, None).start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)

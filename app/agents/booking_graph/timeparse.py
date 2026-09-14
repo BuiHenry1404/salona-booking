@@ -9,6 +9,8 @@ from app.agents.llm import build_chat_model
 from app.core.clock import TZ
 from app.core.slots import SLOT_MINUTES, next_slot_after
 from app.core.logging import get_logger
+from app.models.shop import ShopHours
+from app.services.shop import is_within
 
 logger = get_logger(__name__)
 
@@ -58,6 +60,11 @@ class ParsedTime(BaseModel):
     partial_date: Optional[date] = Field(
         default=None, description="Ngày đã xác định được, dùng khi chưa biết giờ"
     )
+    partial_hour: Optional[int] = Field(
+        default=None,
+        description="Giờ đã nghe được. 0-23 nếu biết sáng/chiều; 1-12 nếu chưa biết buổi",
+    )
+    partial_minute: int = Field(default=0, description="Phút, mặc định 0")
     source: Literal["regex", "llm"] = "llm"
 
     @model_validator(mode="after")
@@ -209,6 +216,10 @@ Quy tắc:
   "sáng mai" → partial_date là ngày mai, missing là ["giờ cụ thể"].
   "3 giờ" → missing là ["sáng hay chiều"].
   "thứ Năm" → missing là ["tuần này hay tuần sau"].
+- Nghe được giờ mà chưa đủ để điền start_at thì PHẢI điền partial_hour (và
+  partial_minute): biết buổi thì ghi 0-23, chưa biết buổi thì ghi đúng số khách
+  nói (1-12). "10 giờ" → partial_hour 10, missing ["sáng hay chiều"].
+  "chiều mai 3 giờ" thiếu gì đó thì partial_hour 15.
 - TUYỆT ĐỐI không đoán thay khách. Đoán sai thì cụ già tới tiệm lúc không ai mở cửa.
 - "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ em qua được không" đều nghĩa
   là NGAY LÚC NÀY: điền start_at đúng {hour:02d}:{minute:02d} hôm nay, missing rỗng.
@@ -237,8 +248,55 @@ async def _ask_model(text: str, now: datetime) -> ParsedTime:
     return await model.with_structured_output(ParsedTime).ainvoke(prompt)
 
 
+def _period_candidates(hour: int) -> List[int]:
+    """1–12 chưa biết buổi → hai ứng viên 24h; 0–23 đã biết → chính nó."""
+    if hour >= 13 or hour == 0:
+        return [hour]
+    return sorted({hour, (hour + 12) % 24})
+
+
+def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
+                 hours: Optional[ShopHours]) -> ParsedTime:
+    """Điền phần thiếu từ mốc neo — bằng code, không hỏi lại khách.
+
+    Neo là mốc đang bàn (lịch cũ khi dời, giờ vừa đề nghị). Thiếu ngày → ngày
+    của neo. Thiếu buổi → buổi của neo nếu giờ ra nằm trong giờ mở cửa, không
+    thì buổi kia nếu hợp lệ; cả hai hợp lệ hay cả hai hỏng → vẫn hỏi như cũ.
+    Không đụng regex và không đổi enum MissingPiece.
+    """
+    if anchor is None or candidate.start_at is not None or candidate.partial_hour is None:
+        return candidate
+    missing = set(candidate.missing)
+    if "giờ cụ thể" in missing:
+        return candidate
+
+    local_anchor = anchor.astimezone(TZ)
+    day = candidate.partial_date or local_anchor.date()
+    minute = candidate.partial_minute or 0
+
+    if "sáng hay chiều" in missing:
+        options = _period_candidates(candidate.partial_hour)
+        anchor_is_morning = local_anchor.hour < 12
+        preferred = [h for h in options if (h < 12) == anchor_is_morning]
+        others = [h for h in options if (h < 12) != anchor_is_morning]
+        ordered = preferred + others
+        if hours is not None:
+            ordered = [h for h in ordered if is_within(hours, datetime(day.year, day.month, day.day, h, minute, tzinfo=TZ))]
+            if len(ordered) == 2:          # cả hai đều mở — không đoán
+                return candidate
+        if not ordered:
+            return candidate
+        hour = ordered[0]
+    else:
+        hour = candidate.partial_hour
+
+    start = datetime(day.year, day.month, day.day, hour, minute, tzinfo=TZ)
+    return candidate.model_copy(update={"start_at": start, "missing": [], "partial_date": day})
+
+
 async def parse_vi_time(
-    text: str, now: datetime, timeout: float = PARSE_TIMEOUT_SECONDS
+    text: str, now: datetime, timeout: float = PARSE_TIMEOUT_SECONDS,
+    anchor: Optional[datetime] = None, hours: Optional[ShopHours] = None,
 ) -> ParsedTime:
     """Quy câu nói về thời gian ra một thời điểm chuẩn.
 
@@ -261,4 +319,6 @@ async def parse_vi_time(
         logger.warning("timeparse_failed", extra={"text": text, "error": str(exc)})
         return ParsedTime(missing=["giờ cụ thể"], source="llm")
 
-    return _guard(candidate.model_copy(update={"source": "llm"}), now)
+    candidate = candidate.model_copy(update={"source": "llm"})
+    candidate = apply_anchor(candidate, anchor, hours)
+    return _guard(candidate, now)
