@@ -424,3 +424,29 @@ class TestApplyAnchor:
     def test_no_hours_given_trusts_the_anchor_period(self):
         c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=10)
         assert apply_anchor(c, ANCHOR_MORNING, None).start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+
+    def test_out_of_range_hour_is_ignored_not_a_crash(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=25)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_out_of_range_minute_is_ignored_not_a_crash(self):
+        c = ParsedTime(
+            missing=["sáng hay chiều"], partial_date=date(2026, 9, 15),
+            partial_hour=10, partial_minute=70,
+        )
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+
+class TestParseViTimeSurvivesABadAnchorHour:
+    """Model trả partial_hour ngoài khoảng — parse_vi_time không được ném lỗi
+    ra ngoài, phải fail-soft như mọi ca khác: hỏi lại khách."""
+
+    async def test_bad_hour_from_the_llm_still_asks_again(self, monkeypatch):
+        async def fake_ask_model(text, now):
+            return ParsedTime(missing=["ngày nào"], partial_hour=25)
+
+        monkeypatch.setattr(
+            "app.agents.booking_graph.timeparse._ask_model", fake_ask_model
+        )
+        result = await parse_vi_time("chuyển qua 25 giờ", NOW, anchor=ANCHOR_MORNING)
+        assert result.start_at is None

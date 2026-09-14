@@ -270,6 +270,20 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
     if "giờ cụ thể" in missing:
         return candidate
 
+    # LLM không bị ràng buộc kiểu bởi khoảng giá trị — partial_hour=25 hay
+    # partial_minute=70 vẫn qua được Pydantic (chỉ là int). datetime(...) bên
+    # dưới ném ValueError với giờ/phút ngoài khoảng, và hàm này chạy NGOÀI
+    # try/except của parse_vi_time (khối đó chỉ bọc _ask_model) nên lỗi sẽ lọt
+    # ra tận tool, biến "hỏi lại khách" thành "Tra cứu không được". Bỏ qua neo
+    # và trả nguyên candidate là đúng tinh thần fail-soft: khách vẫn được hỏi
+    # lại như khi chưa có bước này.
+    if not (0 <= candidate.partial_hour <= 23) or not (0 <= candidate.partial_minute <= 59):
+        logger.warning(
+            "anchor_bad_hour",
+            extra={"partial_hour": candidate.partial_hour, "partial_minute": candidate.partial_minute},
+        )
+        return candidate
+
     local_anchor = anchor.astimezone(TZ)
     day = candidate.partial_date or local_anchor.date()
     minute = candidate.partial_minute or 0
