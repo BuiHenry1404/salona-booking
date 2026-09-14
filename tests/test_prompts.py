@@ -9,8 +9,9 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
-from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
-                                              SOCIAL_PROMPT, SUPERVISOR_PROMPT)
+from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REWRITE_PROMPT,
+                                              SHOP_PROMPT, SOCIAL_PROMPT,
+                                              SUPERVISOR_PROMPT)
 
 CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "SHOP_PROMPT": SHOP_PROMPT}
 
@@ -445,3 +446,11 @@ class TestCompoundQuestionsRouteToBooking:
 
     def test_booking_prompt_tells_the_model_to_use_shop_tools(self):
         assert "use the shop tools" in BOOKING_PROMPT.lower()
+
+
+class TestRewritePromptDemandsVietnamese:
+    """F6: `REWRITE_PROMPT` viết lại câu trả lời cho khách — nó phải mang cùng
+    luật ngôn ngữ như ba prompt kia, không thì bản viết lại có thể lạc tiếng."""
+
+    def test_rewrite_prompt_demands_vietnamese(self):
+        assert "MUST be Vietnamese" in REWRITE_PROMPT

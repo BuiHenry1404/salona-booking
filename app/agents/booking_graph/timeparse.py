@@ -269,6 +269,11 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
     missing = set(candidate.missing)
     if "giờ cụ thể" in missing:
         return candidate
+    # Hàm này chỉ biết điền NGÀY (từ neo) và BUỔI (sáng/chiều). Bất cứ thứ gì
+    # khác — "tuần này hay tuần sau" là ca thật — không nằm trong năng lực của
+    # nó; đoán bừa qua neo là sai câu hỏi đang cần hỏi khách.
+    if missing - {"ngày nào", "sáng hay chiều"}:
+        return candidate
 
     # LLM không bị ràng buộc kiểu bởi khoảng giá trị — partial_hour=25 hay
     # partial_minute=70 vẫn qua được Pydantic (chỉ là int). datetime(...) bên

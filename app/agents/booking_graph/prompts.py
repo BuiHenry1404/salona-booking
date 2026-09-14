@@ -216,12 +216,13 @@ a different register and does not go with "anh"/"chị".
 VIOLATION_HINTS = {
     "repeat": "It repeats a sentence you already said in this conversation; say it differently.",
     "pronoun": "It addresses the customer with the wrong pronoun or the wrong register (a word for elders, or a child speaker); use exactly the form given below, in the em — anh/chị register.",
-    "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do.",
+    "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do. Never change a customer's name — only clock times and dates.",
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
 }
 
-# Câu chốt lịch: code đã ghi xong, LLM chỉ viết lời. Số liệu {when} là chuỗi
-# THẬT từ DB — guard bắt buộc câu phải chứa nguyên văn, sai thì dùng câu cứng.
+# Câu chốt lịch: code đã ghi xong, LLM chỉ viết lời. `{when_rule}` (rỗng khi
+# đặt lịch thất bại) mang chuỗi ngày-giờ THẬT từ DB — guard bắt buộc câu phải
+# chứa nguyên văn, sai thì dùng câu cứng.
 PHRASE_PROMPT = f"""You are the receptionist at a Vietnamese nail and hair salon.
 
 {_VIETNAMESE_ONLY}
@@ -246,19 +247,23 @@ PHRASE_KIND_SENTENCES = {
 }
 
 
-REWRITE_PROMPT = """You are fixing ONE reply written by a salon receptionist to a customer.
+REWRITE_PROMPT = f"""You are fixing ONE reply written by a salon receptionist to a customer.
 Rewrite it in Vietnamese so that it says the same thing with the same dates,
 times and numbers, but without the problems listed. Change wording only —
 never add facts, never remove a date, time or number. Reply with the new
 sentence only, nothing else.
 
-Problems:
-{violations}
+{_VIETNAMESE_ONLY}
 
-Address the customer as: {address}
+Problems:
+{{violations}}
+
+Address the customer as: {{address}}
 
 Your previous reply to the customer (do not repeat it):
-{previous}
+{{previous}}
 
 Reply to fix:
-{draft}"""
+{{draft}}
+
+{_VIETNAMESE_ONLY}"""

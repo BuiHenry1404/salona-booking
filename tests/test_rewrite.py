@@ -1,8 +1,10 @@
 import pytest
 from langchain_core.messages import AIMessage
 
+from app.agents.booking_graph.context import build_context_block
 from app.agents.booking_graph.guard import make_guard_node, route_after_guard
-from app.agents.booking_graph.rewrite import REWRITE_TAG, make_rewrite_node
+from app.agents.booking_graph.rewrite import REWRITE_TAG, _address_from_block, make_rewrite_node
+from app.models.shop import ShopStatusView
 from app.models.user import User
 
 pytestmark = pytest.mark.asyncio
@@ -74,6 +76,11 @@ class TestGuardNode:
         out = await make_guard_node(USER)(a_state(prev[0], previous=prev))
         assert out["violations"] == ["repeat"]
 
+    async def test_rewritten_with_no_answer_routes_to_end(self):
+        """F7: `route_after_guard` chỉ còn phụ thuộc `rewritten`/`answer`, không
+        đọc `"answer" in state` — trạng thái rỗng nhưng rewritten=True vẫn end."""
+        assert route_after_guard({"rewritten": True}) == "end"
+
 
 class TestRewriteNode:
     async def test_rewrites_with_the_violation_hints_and_previous_reply(self, patch_model):
@@ -93,3 +100,12 @@ class TestRewriteNode:
 
     async def test_rewrite_tag_is_never_respond(self):
         assert REWRITE_TAG != "respond"
+
+
+class TestAddressFromBlock:
+    def test_reads_the_address_from_the_real_context_block(self):
+        block = build_context_block(
+            User(phone="0912345678", hashed_password="x", full_name="Chú Tám"),
+            ShopStatusView(is_busy=False), [],
+        )
+        assert _address_from_block(block) == "anh Tám"

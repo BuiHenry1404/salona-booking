@@ -141,7 +141,8 @@ cancelling=True)`; dùng chung bộ từ phủ định là khách không bao gi�
 thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng
 cách bỏ cầu chì.
 
-21. **Guard là code, không phải rubric.** 5 phép kiểm tất định + kiểm số liệu.
+21. **Guard là code, không phải rubric.** 3 phép kiểm tất định (`repeat`,
+`pronoun`, `clock`) + kiểm số liệu `content` sau rewrite.
 Thêm phép kiểm mờ ("câu này có tự nhiên không") là biến guard thành LLM chấm —
 bẫy #16 đã đo là không phân giải được. Rewrite chỉ một lần; lần hai hỏng thì
 trả draft GỐC, không trả bản rewrite.
@@ -515,3 +516,22 @@ deselected** (14 test cần Azure thật, loại bởi `-m "not llm"`).
 conversations của hai tài khoản đã xoá; uvicorn nền dừng bằng
 `fuser -k -TERM 8000/tcp`; `git status` chỉ còn thay đổi tài liệu + script +
 hai transcript mới trước khi commit.
+
+**Đợt sửa cuối (rà review F1–F10, cùng ngày):** F1 chặn `apply_anchor` đoán bừa
+khi `missing` có phần tử ngoài `{"ngày nào", "sáng hay chiều"}` (VD "tuần này
+hay tuần sau"); F2 bỏ `re.I` khỏi phần tên trong `_REGISTER_BEFORE_NAME` ("bác
+sĩ", "cô gái", "chú chó" hết bị oan); F3 gộp lại `check_pronoun` thành một vòng
+quét theo câu, bỏ tiểu từ mở đầu ("Dạ", "vâng", ...) và dấu câu dính token
+trước khi soi đầu câu; F4 bỏ `re.I` khỏi `_CLOCK_WORDS` và loại số từ đứng ngay
+sau một xưng hô ("anh Tám", "anh Ba") khỏi tập bị coi là giờ/ngày; F6 nhúng
+`_VIETNAMESE_ONLY` vào `REWRITE_PROMPT`; F7 rút gọn `route_after_guard` còn
+phụ thuộc `rewritten`/`answer`; F8 cho node `phrase` mang digest giống
+`agents.py`.
+
+- `probe_repeats.py baseline-*.txt after-*.txt chat_transcript.txt` →
+  **12/161** (đo lại TRƯỚC khi sửa cũng ra đúng 12/161 — bộ transcript đã lớn
+  hơn 135 câu từ các task trước, các sửa F1–F10 không chạm `repeats()` nên
+  không đổi số này; mốc 11/135 ở Task 1 là trên bộ file nhỏ hơn tại thời điểm
+  đó).
+- `probe_supervisor.py` (Azure thật) → **0/18**, không lệch.
+- Full suite: **738 passed, 14 deselected**.

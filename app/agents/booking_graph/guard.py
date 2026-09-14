@@ -33,8 +33,20 @@ _REPEAT_REQUESTS = ("nhắc lại", "nói lại", "lặp lại", "quên rồi", 
 
 # Đại từ trái giọng "em — anh/chị". "con" chỉ bắt khi làm chủ ngữ của một
 # động từ lễ tân, để "con gái", "con nít" không bị oan.
-_REGISTER_START = re.compile(r"(?:^|[.!?…]\s+)(cô|chú|bác)\b", re.I)
-_REGISTER_BEFORE_NAME = re.compile(r"\b(cô|chú|bác)\s+[A-ZĐ][a-zà-ỹ]+", re.I)
+#
+# Sentence-start register (cô/chú/bác làm CHỦ NGỮ, VD "Cô muốn...") được kiểm
+# bằng token đầu câu trong check_pronoun, không phải regex riêng — cùng một
+# vòng lặp bỏ tiểu từ mở đầu ("Dạ") với phần đại từ sai giới. Chỉ tính honorific
+# VIẾT HOA đúng kiểu câu Việt (đầu câu viết hoa): "cô gái đó" chữ thường không
+# tính, "Cô muốn đặt giờ nào ạ?" thì tính.
+_FORBIDDEN_REGISTER = {"Cô", "Chú", "Bác"}
+# Tiểu từ mở đầu câu theo văn phong lễ tân — đứng trước đại từ/register thật sự
+# nên phải bỏ qua trước khi soi token đầu câu, không thì "Dạ chị ..." lọt lưới.
+_LEADING_PARTICLES = {"dạ", "vâng", "ừ", "à", "ờ"}
+# `re.I` trên CẢ pattern làm [A-ZĐ] khớp cả chữ thường — "bác sĩ", "cô gái",
+# "chú chó" bị coi là gọi khách sai giọng dù chỉ là danh từ thường. Chỉ có
+# honorific mới không phân biệt hoa thường; tên đi sau PHẢI viết hoa mới tính.
+_REGISTER_BEFORE_NAME = re.compile(r"\b(?i:cô|chú|bác)\s+[A-ZĐ][a-zà-ỹ]+")
 # "cho con chị" (đặt hộ con của khách) không phải xưng hô sai — chỉ bắt "con"
 # khi nó là CHỦ NGỮ của một động từ lễ tân ("con xem/đặt/...", "để/giúp con xem/...").
 _CON_AS_SUBJECT = re.compile(r"\bcon\s+(xem|giúp|đặt|hỏi|kiểm|giữ)\b|\b(để|giúp)\s+con\s+(xem|đặt|kiểm|giữ|hỏi)\b", re.I)
@@ -43,7 +55,13 @@ _NUMBER_WORD = (r"(?:mười\s+(?:một|hai|ba|bốn|lăm|sáu|bảy|tám|chín)
                 r"(?:hai|ba)\s+mươi(?:\s+(?:mốt|hai|ba|bốn|lăm|sáu|bảy|tám|chín))?|"
                 r"mười|một|hai|ba|bốn|năm|sáu|bảy|tám|chín)")
 _CLOCK_COLON = re.compile(r"\b\d{1,2}:\d{2}\b")
-_CLOCK_WORDS = re.compile(rf"\b{_NUMBER_WORD}\s+(?:giờ|tháng)\b|\bngày\s+{_NUMBER_WORD}\b", re.I)
+# KHÔNG `re.I`: chữ số viết bằng chữ trong câu đúng luật luôn là chữ THƯỜNG
+# ("chín giờ sáng"); tên khách viết hoa ("Tám", "Ba", ...) không phải ca này.
+_CLOCK_WORDS = re.compile(rf"\b{_NUMBER_WORD}\s+(?:giờ|tháng)\b|\bngày\s+{_NUMBER_WORD}\b")
+# Alternation trong lookbehind của Python phải cùng độ dài — "anh", "em", "ông"
+# khác số ký tự nhau, nên chặn tên khách sau xưng hô bằng cách soi phần văn
+# bản đứng trước khớp, không dùng lookbehind biến thiên độ dài.
+_HONORIFIC_BEFORE = re.compile(r"\b(?:anh|chị|em|cô|chú|bác|ông|bà)\s+$")
 
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
 _NUMBER = re.compile(r"\d+")
@@ -105,19 +123,34 @@ def _pronouns(address: str) -> tuple:
     return None, None
 
 
+def _leading_content_tokens(sentence: str) -> List[str]:
+    """Token của câu, đã bỏ dấu câu dính từng từ (",", "?", ...) và bỏ các
+    tiểu từ mở đầu ("Dạ", "Vâng", ...) — cả hai đều từng che mất token thật sự
+    cần soi ở đầu câu."""
+    tokens = [t for t in (_PUNCT.sub("", tok) for tok in sentence.split()) if t]
+    i = 0
+    while i < len(tokens) and tokens[i].lower() in _LEADING_PARTICLES:
+        i += 1
+    return tokens[i:]
+
+
 def check_pronoun(draft: str, address: str, name: str) -> bool:
     """Gộp hai lỗi đại từ vào một bảng: giọng cô/chú/bác (tuyệt đối cấm) và
     đại từ sai giới so với `address` (VD "anh Tám" mà gọi "chị")."""
-    if _REGISTER_START.search(draft) or _REGISTER_BEFORE_NAME.search(draft) or _CON_AS_SUBJECT.search(draft):
+    if _REGISTER_BEFORE_NAME.search(draft) or _CON_AS_SUBJECT.search(draft):
         return True
     _, wrong = _pronouns(address)
+    # Đầu câu (sau khi bỏ tiểu từ mở đầu), trừ khi nói về chủ tiệm ("Chị chủ ...").
+    for sent in sentences(draft):
+        tokens = _leading_content_tokens(sent)
+        if not tokens:
+            continue
+        if tokens[0] in _FORBIDDEN_REGISTER:
+            return True
+        if wrong and tokens[0].lower() == wrong and not (len(tokens) > 1 and tokens[1].lower() == "chủ"):
+            return True
     if not wrong:
         return False
-    # Đầu câu, trừ khi nói về chủ tiệm ("Chị chủ ...").
-    for sent in sentences(draft):
-        first = sent.split()[:2]
-        if first and first[0].lower() == wrong and not (len(first) > 1 and first[1].lower() == "chủ"):
-            return True
     # Ngay trước tên khách.
     if name and re.search(rf"\b{wrong}\s+{re.escape(name)}\b", draft, re.I):
         return True
@@ -125,7 +158,13 @@ def check_pronoun(draft: str, address: str, name: str) -> bool:
 
 
 def check_clock(draft: str) -> bool:
-    return bool(_CLOCK_COLON.search(draft) or _CLOCK_WORDS.search(draft))
+    if _CLOCK_COLON.search(draft):
+        return True
+    for m in _CLOCK_WORDS.finditer(draft):
+        if _HONORIFIC_BEFORE.search(draft, 0, m.start()):
+            continue
+        return True
+    return False
 
 
 def content_kept(original: str, rewritten: str) -> bool:
@@ -169,7 +208,13 @@ def make_guard_node(user: User):
             if not content_kept(original, draft):
                 codes.append("content")
             if codes:
-                logger.warning("guard_gave_up", extra={"codes": codes})
+                extra = {"codes": codes, "rewritten": bool(state.get("rewritten"))}
+                if draft == original:
+                    # `rewrite` chạy nhưng không đổi được gì — draft vẫn là bản
+                    # gốc. Phân biệt với ca rewrite ĐỔI xong rồi vẫn sai, vì hai
+                    # nguyên nhân khác nhau: model không sửa được, hay sửa sai.
+                    extra["rewrite_ran"] = False
+                logger.warning("guard_gave_up", extra=extra)
                 return {"answer": original, "answer_source": "llm", "violations": codes}
             logger.info("guard_rewritten")
             return {"answer": draft, "answer_source": "llm", "violations": []}
@@ -203,4 +248,4 @@ def _guard_phrase(state, draft, fact, address):
 
 
 def route_after_guard(state: GraphState) -> str:
-    return "end" if "answer" in state and state.get("answer") else "rewrite"
+    return "end" if state.get("rewritten") or state.get("answer") else "rewrite"

@@ -55,6 +55,19 @@ class TestPhraseNode:
         out = await make_phrase_node()(a_state())
         assert out["draft"] == FALLBACK and out["phrase_fact"] == FACT
 
+    async def test_digest_is_sent_right_after_the_system_message(self, patch_model):
+        """F8: `phrase` phải mang digest như `agents.py` — không thì lịch sử bị
+        tóm tắt (digest thay chỗ) mất tích trong đúng lượt chốt lịch."""
+        model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
+        out = await make_phrase_node()(a_state(digest=["Khách muốn cắt tóc."]))
+        second = model.calls[0][1]
+        assert "Khách muốn cắt tóc." in second.content
+
+    async def test_no_digest_leaves_the_message_order_unchanged(self, patch_model):
+        model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
+        out = await make_phrase_node()(a_state())
+        assert len(model.calls[0]) == 4  # system, context_block, history(1), question(1)
+
     async def test_failed_kind_drops_the_must_include_when_line_entirely(self, patch_model):
         """Task 4 review: fact["when"] là None khi đặt lịch thất bại (kind
         "failed"). Prompt cũ nhét placeholder tiếng Anh "(no time — the

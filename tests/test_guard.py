@@ -103,6 +103,30 @@ class TestPronoun:
     def test_capitalised_mid_sentence_register_before_name_is_flagged(self):
         assert check_pronoun("Dạ, Chú Tám ơi, em giữ chỗ rồi ạ.", "anh chị", "") is True
 
+    def test_bac_si_is_not_a_register_violation(self):
+        """"bác sĩ" — chữ thường sau honorific, [A-ZĐ] không được match kiểu
+        không phân biệt hoa thường nữa."""
+        assert check_pronoun("Em sẽ hỏi bác sĩ giúp anh.", "anh chị", "") is False
+
+    def test_co_gai_is_not_a_register_violation(self):
+        assert check_pronoun("cô gái đó", "anh chị", "") is False
+
+    def test_chu_cho_is_not_a_register_violation(self):
+        assert check_pronoun("chú chó", "anh chị", "") is False
+
+    def test_leading_da_particle_still_flags_wrong_pronoun(self):
+        """"Dạ" mở đầu câu đúng văn phong nhưng che mất đại từ sai ở token 0."""
+        assert check_pronoun("Dạ chị muốn đặt giờ nào ạ?", "anh Tám", "Tám") is True
+
+    def test_trailing_comma_on_first_token_still_flags(self):
+        assert check_pronoun("Chị, em giữ chỗ rồi ạ.", "anh Tám", "Tám") is True
+
+    def test_leading_da_particle_with_correct_pronoun_passes(self):
+        assert check_pronoun("Dạ anh Tám, mai 9 giờ sáng ạ.", "anh Tám", "Tám") is False
+
+    def test_owner_exemption_survives_the_leading_particle(self):
+        assert check_pronoun("Dạ chị chủ sẽ báo giá ạ.", "anh Tám", "Tám") is False
+
 
 class TestClock:
     @pytest.mark.parametrize("draft", ["Hẹn anh 15:00 nhé.", "Em giữ chỗ chín giờ sáng ạ.",
@@ -115,6 +139,15 @@ class TestClock:
 
     def test_a_name_that_is_a_number_word_passes(self):
         assert check_clock("Dạ anh Ba, em chào anh.") is False
+
+    def test_customer_name_tam_after_honorific_passes(self):
+        assert check_clock("Dạ anh Tám giờ nào tiện ạ?") is False
+
+    def test_customer_name_ba_after_honorific_passes(self):
+        assert check_clock("anh Ba giờ nào cũng được") is False
+
+    def test_nine_oclock_morning_still_flags(self):
+        assert check_clock("Em giữ chỗ chín giờ sáng ạ.") is True
 
 
 def test_language_is_no_longer_checked():

@@ -436,6 +436,16 @@ class TestApplyAnchor:
         )
         assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
 
+    def test_week_unknown_is_not_resolved(self):
+        """"tuần này hay tuần sau" không nằm trong bộ ngày/buổi hàm này được
+        phép điền — phải trả nguyên candidate, không đoán bừa qua neo."""
+        c = ParsedTime(missing=["tuần này hay tuần sau"], partial_hour=10)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_week_unknown_combined_with_period_is_not_resolved(self):
+        c = ParsedTime(missing=["tuần này hay tuần sau", "sáng hay chiều"], partial_hour=3)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
 
 class TestParseViTimeSurvivesABadAnchorHour:
     """Model trả partial_hour ngoài khoảng — parse_vi_time không được ném lỗi
