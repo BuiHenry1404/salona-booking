@@ -44,6 +44,16 @@ class TestRepeats:
         old = ["Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ."] + ["khác một"] * 3
         assert repeats("Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ.", old) is False
 
+    def test_same_template_with_a_different_time_is_not_a_repeat(self):
+        prev = ["Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"]
+        draft = "Em giữ chỗ Thứ Ba 15/9, 10 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"
+        assert repeats(draft, prev) is False
+
+    def test_same_template_with_the_same_time_is_a_repeat(self):
+        prev = ["Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"]
+        draft = "Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"
+        assert repeats(draft, prev) is True
+
 
 @pytest.mark.parametrize("text", ["nhắc lại giùm", "em nói lại đi", "anh quên rồi", "lặp lại giúp anh"])
 def test_customer_asking_to_repeat_is_detected(text):

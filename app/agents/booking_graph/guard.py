@@ -52,14 +52,26 @@ def sentences(text: str) -> List[str]:
     return [p for p in parts if p]
 
 
+def _digits(text: str) -> set:
+    return set(re.findall(r"\d+", text or ""))
+
+
 def repeats(draft: str, previous_replies: Sequence[str],
             ratio: float = REPEAT_RATIO, min_words: int = REPEAT_MIN_WORDS) -> bool:
     """Cấp 2 (độ giống cả câu trả lời) + cấp 3 (từng câu ≥ min_words từ), so với
     REPEAT_LOOKBACK câu đáp LLM gần nhất. Không so nguyên văn: ca thật chỉ khác
-    "của chị" → "của chị Thắm"."""
+    "của chị" → "của chị Thắm".
+
+    Số liệu (giờ, ngày, ...) khác nhau → không phải lặp, mà là thông tin mới
+    dùng lại cùng khung câu (VD đổi giờ giữ chỗ) — bỏ qua phép so đó."""
     d = normalize(draft)
+    d_digits = _digits(draft)
     d_sents = [normalize(s) for s in sentences(draft)]
     for prev in list(previous_replies)[-REPEAT_LOOKBACK:]:
+        # Số liệu khác nhau → khung câu giống nhưng thông tin mới, bỏ qua cả
+        # phép so cả câu lẫn so từng câu với lượt đáp này.
+        if d_digits != _digits(prev):
+            continue
         p = normalize(prev)
         if SequenceMatcher(None, d, p).ratio() >= ratio:
             return True
