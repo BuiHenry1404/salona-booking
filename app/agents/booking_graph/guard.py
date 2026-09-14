@@ -26,8 +26,10 @@ _REPEAT_REQUESTS = ("nhắc lại", "nói lại", "lặp lại", "quên rồi", 
 # Đại từ trái giọng "em — anh/chị". "con" chỉ bắt khi làm chủ ngữ của một
 # động từ lễ tân, để "con gái", "con nít" không bị oan.
 _REGISTER_START = re.compile(r"(?:^|[.!?…]\s+)(cô|chú|bác)\b", re.I)
-_REGISTER_BEFORE_NAME = re.compile(r"\b(cô|chú|bác)\s+[A-ZĐ][a-zà-ỹ]+")
-_CON_AS_SUBJECT = re.compile(r"\b(để|giúp|cho)\s+con\b|\bcon\s+(xem|giúp|đặt|hỏi|kiểm|giữ)\b", re.I)
+_REGISTER_BEFORE_NAME = re.compile(r"\b(cô|chú|bác)\s+[A-ZĐ][a-zà-ỹ]+", re.I)
+# "cho con chị" (đặt hộ con của khách) không phải xưng hô sai — chỉ bắt "con"
+# khi nó là CHỦ NGỮ của một động từ lễ tân ("con xem/đặt/...", "để/giúp con xem/...").
+_CON_AS_SUBJECT = re.compile(r"\bcon\s+(xem|giúp|đặt|hỏi|kiểm|giữ)\b|\b(để|giúp)\s+con\s+(xem|đặt|kiểm|giữ|hỏi)\b", re.I)
 
 _NUMBER_WORD = (r"(?:mười\s+(?:một|hai|ba|bốn|lăm|sáu|bảy|tám|chín)|"
                 r"(?:hai|ba)\s+mươi(?:\s+(?:mốt|hai|ba|bốn|lăm|sáu|bảy|tám|chín))?|"

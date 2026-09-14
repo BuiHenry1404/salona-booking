@@ -93,6 +93,19 @@ class TestRegister:
     def test_anh_chi_em_register_passes(self):
         assert check_register("Dạ anh Tám, em xem lịch giúp anh nhé.") is False
 
+    def test_booking_for_the_customers_child_is_not_a_violation(self):
+        """"cho con chị" = đặt hộ con của khách, không phải xưng hô sai."""
+        assert check_register("Dạ em đặt cho con chị lúc 3 giờ chiều ạ.") is False
+
+    def test_con_as_subject_of_a_receptionist_verb_is_still_flagged(self):
+        assert check_register("Để con xem lịch giúp cô.") is True
+
+    def test_con_as_subject_without_de_giup_is_still_flagged(self):
+        assert check_register("Con giữ chỗ cho cô rồi ạ.") is True
+
+    def test_capitalised_mid_sentence_register_before_name_is_flagged(self):
+        assert check_register("Dạ, Chú Tám ơi, em giữ chỗ rồi ạ.") is True
+
 
 class TestClock:
     @pytest.mark.parametrize("draft", ["Hẹn anh 15:00 nhé.", "Em giữ chỗ chín giờ sáng ạ.",
