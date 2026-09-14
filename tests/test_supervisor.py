@@ -1,7 +1,6 @@
 import pytest
 
-from app.agents.booking_graph.supervisor import (refuse, route_from_state,
-                                                 supervise)
+from app.agents.booking_graph.supervisor import route_from_state, supervise
 
 
 class FakeModel:
@@ -42,15 +41,30 @@ async def test_booking_intent_routes_to_booking(patch_model):
 
 
 @pytest.mark.asyncio
-async def test_status_intent_routes_to_status(patch_model):
-    patch_model("status")
-    assert (await supervise(a_state("chú có rảnh giờ không")))["route"] == "status"
+async def test_small_talk_routes_to_social(patch_model):
+    patch_model("social")
+    assert (await supervise(a_state("chào em")))["route"] == "social"
 
 
 @pytest.mark.asyncio
-async def test_off_topic_routes_to_refuse(patch_model):
-    patch_model("refuse")
-    assert (await supervise(a_state("cháu bán bảo hiểm không")))["route"] == "refuse"
+async def test_shop_question_routes_to_shop(patch_model):
+    patch_model("shop")
+    assert (await supervise(a_state("tiệm mở cửa mấy giờ")))["route"] == "shop"
+
+
+@pytest.mark.asyncio
+async def test_the_retired_labels_are_no_longer_valid(patch_model):
+    """`status` và `refuse` đã chết. Nếu model lỡ trả nhãn cũ mà ta coi là
+    hợp lệ, LangGraph sẽ nổ lúc chạy vì không có node tên đó — phải rơi về
+    booking như mọi nhãn lạ khác."""
+    for retired in ("status", "refuse"):
+        patch_model(retired)
+        assert (await supervise(a_state("gì đó")))["route"] == "booking"
+
+
+def test_refuse_node_is_gone():
+    import app.agents.booking_graph.supervisor as sup
+    assert not hasattr(sup, "refuse")
 
 
 @pytest.mark.asyncio
@@ -62,8 +76,8 @@ async def test_unrecognised_reply_falls_back_to_booking(patch_model):
 
 @pytest.mark.asyncio
 async def test_model_reply_is_case_and_space_insensitive(patch_model):
-    patch_model("  STATUS \n")
-    assert (await supervise(a_state()))["route"] == "status"
+    patch_model("  SHOP \n")
+    assert (await supervise(a_state()))["route"] == "shop"
 
 
 @pytest.mark.asyncio
@@ -72,13 +86,6 @@ async def test_supervisor_is_not_given_the_tool_schemas(patch_model):
     model = patch_model("booking")
     await supervise(a_state())
     assert not hasattr(model, "bound_tools")
-
-
-@pytest.mark.asyncio
-async def test_refuse_produces_a_polite_vietnamese_answer():
-    result = await refuse(a_state("cháu bán bảo hiểm không"))
-    assert "đặt lịch" in result["answer"].lower()
-    assert len(result["answer"]) < 300
 
 
 def test_pending_confirmation_short_circuits_the_supervisor():

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MonthlyCustomerStats } from "./MonthlyCustomerStats";
-import type { MonthlyCustomerStatsResponse } from "../mocks/monthlyCustomerStats";
+import type { MonthlyCustomerStatsResponse } from "../lib/api";
 
 const allZeroData: MonthlyCustomerStatsResponse = {
   months: Array.from({ length: 12 }, (_, i) => ({

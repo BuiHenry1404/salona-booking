@@ -58,7 +58,7 @@ def a_state(text="mai còn trống không con"):
 async def test_answers_without_calling_tools_when_not_needed(patch_model):
     patch_model([AIMessage(content="Dạ chủ tiệm đang rảnh ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    assert (await node(a_state()))["answer"] == "Dạ chủ tiệm đang rảnh ạ."
+    assert (await node(a_state()))["draft"] == "Dạ chủ tiệm đang rảnh ạ."
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_runs_a_tool_then_answers(patch_model):
     patch_model([tool_call_message(), AIMessage(content="Dạ mai còn trống 3 giờ chiều ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
     result = await node(a_state())
-    assert result["answer"] == "Dạ mai còn trống 3 giờ chiều ạ."
+    assert result["draft"] == "Dạ mai còn trống 3 giờ chiều ạ."
 
 
 @pytest.mark.asyncio
@@ -81,15 +81,47 @@ async def test_tool_result_is_fed_back_to_the_model(patch_model):
 
 @pytest.mark.asyncio
 async def test_context_block_is_the_last_message_before_the_question(patch_model):
-    """Bố cục prompt: khối bối cảnh đổi mỗi lượt nên phải đứng sát cuối,
-    không nhét vào system prompt — nếu không prompt cache không bao giờ trúng."""
+    """Bố cục prompt: System → lịch sử → bối cảnh → câu hỏi mới.
+
+    Đây là thứ tự `CONTEXT.md` bẫy #9 đã chốt. Lời khách phải là thứ CUỐI
+    model đọc: model bắt chước giọng người đối thoại, nên để một khối trạng
+    thái đứng cuối là nó sinh ra giọng biểu mẫu.
+
+    Tiền tố cache được vẫn chỉ là `SystemMessage` — lịch sử vốn đổi mỗi
+    lượt — nên đổi chỗ này không mất gì.
+    """
     model = patch_model([AIMessage(content="xong")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    await node(a_state())
+    await node(a_state("mai còn trống không em"))
 
     contents = [str(getattr(m, "content", "")) for m in model.calls[0]]
-    assert contents[0] == "prompt"                    # system đứng đầu, ổn định
-    assert "0912345678" in contents[-1]               # bối cảnh đứng cuối
+    assert contents[0] == "prompt"                       # system đứng đầu, ổn định
+    assert "0912345678" in contents[-2]                  # bối cảnh áp chót
+    assert contents[-1] == "mai còn trống không em"      # lời khách đứng cuối
+
+
+@pytest.mark.asyncio
+async def test_history_stays_in_order_before_the_context_block(patch_model):
+    """Lịch sử không được xáo: model đọc mạch hội thoại theo đúng thứ tự
+    xảy ra, rồi mới tới bối cảnh, rồi tới câu mới."""
+    model = patch_model([AIMessage(content="xong")])
+    node = make_subagent_node("prompt", [fake_lookup], tag="respond")
+    await node({
+        "messages": [
+            HumanMessage(content="câu cũ"),
+            AIMessage(content="đáp cũ"),
+            HumanMessage(content="câu mới"),
+        ],
+        "user_id": "u1",
+        "context_block": "Bạn đang nói chuyện với: Cô Lan (0912345678).",
+    })
+
+    contents = [str(getattr(m, "content", "")) for m in model.calls[0]]
+    assert contents == [
+        "prompt", "câu cũ", "đáp cũ",
+        "Bạn đang nói chuyện với: Cô Lan (0912345678).",
+        "câu mới",
+    ]
 
 
 @pytest.mark.asyncio
@@ -106,7 +138,7 @@ async def test_tool_loop_stops_at_the_limit(patch_model):
     patch_model([tool_call_message() for _ in range(MAX_TOOL_ROUNDS + 3)])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
     result = await node(a_state())
-    assert result["answer"]
+    assert result["draft"]
 
 
 @pytest.mark.asyncio
@@ -114,4 +146,48 @@ async def test_unknown_tool_name_does_not_crash(patch_model):
     bad = AIMessage(content="", tool_calls=[{"name": "khong_ton_tai", "args": {}, "id": "c1"}])
     patch_model([bad, AIMessage(content="Dạ con xin lỗi ạ.")])
     node = make_subagent_node("prompt", [fake_lookup], tag="respond")
-    assert (await node(a_state()))["answer"] == "Dạ con xin lỗi ạ."
+    assert (await node(a_state()))["draft"] == "Dạ con xin lỗi ạ."
+
+
+@pytest.mark.asyncio
+async def test_digest_sits_right_after_the_system_prompt(patch_model):
+    """Thứ tự khoá cứng (CONTEXT.md bẫy #9): system → digest → lịch sử → bối
+    cảnh → câu khách. Digest đổi vài lượt một lần nên đứng trước phần đổi mỗi
+    lượt để tiền tố cache sống lâu hơn."""
+    from langchain_core.messages import SystemMessage
+
+    model = patch_model([AIMessage(content="Dạ.")])
+    node = make_subagent_node("prompt", [], tag="respond")
+    state = {**a_state("còn không em"), "digest": ["Khách muốn làm tóc.", "Đã báo giờ mở cửa."]}
+    state["messages"] = [HumanMessage(content="hôm qua"), AIMessage(content="dạ"), HumanMessage(content="còn không em")]
+
+    await node(state)
+
+    sent = model.calls[0]
+    assert isinstance(sent[0], SystemMessage)
+    assert isinstance(sent[1], HumanMessage)
+    assert sent[1].content.startswith("Diễn biến phần trước của cuộc trò chuyện hôm nay:")
+    assert "- Khách muốn làm tóc.\n- Đã báo giờ mở cửa." in sent[1].content
+    assert sent[2].content == "hôm qua"                 # lịch sử đi sau digest
+    assert sent[-2].content.startswith("Bạn đang nói chuyện với")   # khối bối cảnh
+    assert sent[-1].content == "còn không em"
+
+
+@pytest.mark.asyncio
+async def test_no_digest_keeps_the_old_order_exactly(patch_model):
+    from langchain_core.messages import SystemMessage
+
+    model = patch_model([AIMessage(content="Dạ.")])
+    node = make_subagent_node("prompt", [], tag="respond")
+    await node(a_state("còn không em"))
+
+    sent = model.calls[0]
+    assert [type(m) for m in sent] == [SystemMessage, HumanMessage, HumanMessage]
+    assert sent[1].content.startswith("Bạn đang nói chuyện với")
+
+
+@pytest.mark.asyncio
+async def test_llm_node_returns_a_draft_not_an_answer(patch_model):
+    patch_model([AIMessage(content="Dạ.")])
+    out = await make_subagent_node("prompt", [], tag="respond")(a_state("chào"))
+    assert out == {"draft": "Dạ."}

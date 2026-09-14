@@ -1,8 +1,10 @@
-from datetime import timedelta
+import asyncio
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from app.core.clock import now_utc, to_local
+from app.models.conversation import Digest
 from app.services.conversation import ConversationService
 
 pytestmark = pytest.mark.asyncio
@@ -158,3 +160,160 @@ async def test_clearing_pending(test_db):
     await svc.set_pending("u1", {"start_at": "x", "note": None})
     await svc.set_pending("u1", None)
     assert await svc.get_pending("u1") is None
+
+
+async def test_history_never_starts_with_an_orphaned_answer(test_db):
+    """Cắt theo ngân sách đi từ tin mới nhất lùi về, nên chỗ cắt có thể rơi
+    giữa một cặp và giữ lại câu trả lời mà bỏ mất câu hỏi sinh ra nó.
+
+    Model đọc một câu đáp không có câu hỏi thì mất mạch — đó đúng là điều
+    04-agent.md:99 cấm.
+
+    Số học phải CHỐT CHẶT, không được để may rủi: giữ được số tin CHẴN thì
+    tin cũ nhất tình cờ là `user` và test xanh cả khi chưa sửa gì. Mỗi tin
+    dài đúng 30 ký tự -> cost = 30 // CHARS_PER_TOKEN = 10. Ngân sách 50 giữ
+    đúng 5 tin — số LẺ — nên tin cũ nhất chắc chắn là `assistant`.
+    """
+    svc = ConversationService(test_db)
+    for _ in range(10):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
+
+    history = await svc.history("u1", token_budget=50)
+
+    assert history, "ngân sách 50 token phải đủ cho ít nhất một cặp"
+    assert history[0].role == "user", [m.role for m in history]
+    # Bỏ đúng một tin mồ côi, không bỏ cả cặp còn lành.
+    assert len(history) == 4
+
+
+async def test_history_keeps_whole_pairs_when_the_budget_is_tiny(test_db):
+    """Ngân sách nhỏ tới mức chỉ đủ một tin: thà trả rỗng còn hơn trả một
+    câu đáp mồ côi.
+
+    Vòng lặp luôn giữ tin mới nhất dù vượt ngân sách (`and kept` chỉ chặn từ
+    tin thứ hai), nên chưa sửa thì hàm trả về đúng một `assistant` mồ côi.
+    """
+    svc = ConversationService(test_db)
+    await svc.append("u1", "user", "u" * 30)
+    await svc.append("u1", "assistant", "a" * 30)
+
+    assert await svc.history("u1", token_budget=1) == []
+
+
+async def test_a_truncated_window_of_three_still_drops_the_orphan(test_db):
+    """Ca mà luật đếm-độ-dài bỏ lọt: cắt còn ĐÚNG BA tin, tin đầu là câu đáp
+    mồ côi thật. Số học: mỗi tin 30 ký tự -> cost 10; budget 35 giữ 3 tin."""
+    svc = ConversationService(test_db)
+    for _ in range(3):
+        await svc.append("u1", "user", "u" * 30)
+        await svc.append("u1", "assistant", "a" * 30)
+
+    history = await svc.history("u1", token_budget=35)
+
+    assert [m.role for m in history] == ["user", "assistant"]
+
+
+def _digest(covers_until, bullets=("Khách muốn làm tóc.",), day=None, failures=0):
+    return Digest(day=day or to_local(now_utc()).date(), covers_until=covers_until,
+                  bullets=list(bullets), failures=failures)
+
+
+class TestDigestStorage:
+    async def test_round_trip_for_today(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.append("u1", "user", "x")
+        await svc.set_digest("u1", _digest(now_utc()))
+        got = await svc.get_digest("u1")
+        assert got.bullets == ["Khách muốn làm tóc."]
+
+    async def test_yesterdays_digest_is_invisible(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.set_digest("u1", _digest(now_utc(), day=date(2000, 1, 1)))
+        assert await svc.get_digest("u1") is None
+
+    async def test_no_digest_is_none(self, test_db):
+        assert await ConversationService(test_db).get_digest("u1") is None
+
+    async def test_bump_failures_increments(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.set_digest("u1", _digest(now_utc()))
+        await svc.bump_digest_failures("u1")
+        await svc.bump_digest_failures("u1")
+        assert (await svc.get_digest("u1")).failures == 2
+
+    async def test_bump_failures_without_digest_creates_an_empty_one(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.bump_digest_failures("u1")
+        got = await svc.get_digest("u1")
+        assert got.failures == 1 and got.bullets == []
+        assert got.covers_until == datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+class TestContextWindow:
+    """Tin đã nén (<= covers_until) không đi nguyên văn nữa — chỗ tiết kiệm token."""
+
+    async def _seed(self, svc, n):
+        for i in range(n):
+            await svc.append("u1", "user", f"hỏi {i}")
+            await svc.append("u1", "assistant", f"đáp {i}")
+            # Mongo lưu `created_at` với độ chính xác mili giây; append liên
+            # tiếp trong vòng lặp có thể trùng mốc, làm bộ lọc `after` (so
+            # sánh nghiêm ngặt) sai — chờ một chút để mỗi tin có mốc riêng.
+            await asyncio.sleep(0.002)
+        return await svc._all_messages("u1")
+
+    async def test_without_digest_returns_everything_like_history(self, test_db):
+        svc = ConversationService(test_db)
+        await self._seed(svc, 3)
+        bullets, msgs = await svc.context_window("u1")
+        assert bullets == []
+        assert [m.content for m in msgs] == [m.content for m in await svc.history("u1")]
+
+    async def test_messages_covered_by_the_digest_are_dropped(self, test_db):
+        svc = ConversationService(test_db)
+        all_msgs = await self._seed(svc, 5)
+        cut = all_msgs[3].created_at            # nén tới hết tin thứ 4
+        await svc.set_digest("u1", _digest(cut, bullets=["Khách hỏi 0 và 1."]))
+
+        bullets, msgs = await svc.context_window("u1")
+        assert bullets == ["Khách hỏi 0 và 1."]
+        assert [m.content for m in msgs] == [m.content for m in all_msgs[4:]]
+
+    async def test_yesterdays_digest_does_not_cut_todays_messages(self, test_db):
+        svc = ConversationService(test_db)
+        all_msgs = await self._seed(svc, 2)
+        await svc.set_digest("u1", _digest(all_msgs[-1].created_at, day=date(2000, 1, 1)))
+        bullets, msgs = await svc.context_window("u1")
+        assert bullets == [] and len(msgs) == 4
+
+    async def test_history_after_filters_strictly_greater(self, test_db):
+        svc = ConversationService(test_db)
+        all_msgs = await self._seed(svc, 2)
+        kept = await svc.history("u1", after=all_msgs[1].created_at)
+        assert [m.content for m in kept] == [m.content for m in all_msgs[2:]]
+
+    async def test_session_messages_untrimmed_unlike_history_with_tiny_budget(self, test_db):
+        svc = ConversationService(test_db)
+        all_msgs = await self._seed(svc, 5)
+
+        session = await svc.session_messages("u1")
+        assert [m.content for m in session] == [m.content for m in all_msgs]
+
+        trimmed = await svc.history("u1", token_budget=1)
+        assert len(trimmed) < len(all_msgs)
+
+
+class TestMessageSource:
+    async def test_append_defaults_to_llm_and_can_mark_code(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.append("u1", "assistant", "câu LLM")
+        await svc.append("u1", "assistant", "câu code", source="code")
+        msgs = await svc._all_messages("u1")
+        assert [m.source for m in msgs] == ["llm", "code"]
+
+    async def test_old_documents_without_source_read_as_llm(self, test_db):
+        await test_db["conversations"].insert_one({"user_id": "u9", "messages": [
+            {"role": "assistant", "content": "cũ", "created_at": now_utc()}]})
+        msgs = await ConversationService(test_db)._all_messages("u9")
+        assert msgs[0].source == "llm"

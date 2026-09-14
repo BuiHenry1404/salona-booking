@@ -1,5 +1,10 @@
 # API — Thống kê khách theo tháng
 
+> **Trạng thái:** đã implement. Route thật `GET /api/v1/admin/stats/customers-by-month`
+> (`app/api/v1/routers/admin.py`), nghiệp vụ ở `app/services/stats.py`, aggregation ở
+> `AppointmentRepository.distinct_customers_by_month`. Frontend nạp qua
+> `useMonthlyCustomerStats` — mock `frontend/src/mocks/monthlyCustomerStats.ts` đã bỏ.
+
 ## Mục đích
 
 Frontend Admin Dashboard cần số khách duy nhất có lịch theo từng tháng.
@@ -29,7 +34,9 @@ GET /api/v1/admin/stats/customers-by-month
 - Yêu cầu Bearer access token hợp lệ.
 - Chỉ `role = "admin"` được phép truy cập.
 - Customer thường → `403 Forbidden`.
-- Không xác thực → `401 Unauthorized`.
+- Access token hết hạn / sai / bị thu hồi → `401 Unauthorized`.
+- Thiếu hẳn header Authorization → `403 Forbidden` (xem "Error behavior"
+  bên dưới).
 
 ## Request
 
@@ -114,8 +121,10 @@ Không trả mảng rỗng chỉ vì chưa có appointment.
 
 ## Error behavior
 
-- `401 Unauthorized`: access token thiếu hoặc hết hạn.
-- `403 Forbidden`: user không phải admin.
+- `401 Unauthorized`: access token hết hạn / sai / bị thu hồi.
+- `403 Forbidden`: thiếu hẳn header Authorization (convention chung của
+  `HTTPBearer` toàn app — `app/api/deps.py:10`, không đổi riêng cho endpoint
+  này), hoặc user không phải admin.
 - `5xx`: lỗi server/database bất ngờ.
 
 ## Mongo aggregation guidance

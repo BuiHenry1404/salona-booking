@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { MonthlyCustomerStatsResponse } from "../mocks/monthlyCustomerStats";
+import type { MonthlyCustomerStatsResponse } from "../lib/api";
 import "./MonthlyCustomerStats.css";
 
 interface MonthlyCustomerStatsProps {

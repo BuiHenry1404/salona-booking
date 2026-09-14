@@ -5,7 +5,7 @@ from typing import Awaitable, Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.agents.booking_graph.state import GraphState
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -28,6 +28,11 @@ _NO = re.compile(
     r"\b(không|thôi|khỏi|đổi|khác|chưa|hủy)\b",
     re.IGNORECASE,
 )
+# Đang chốt HỦY thì "hủy" là đồng ý, không phải phủ định: "ừ hủy đi em".
+_NO_WHEN_CANCELLING = re.compile(
+    r"\b(không|thôi|khỏi|đổi|khác|chưa)\b",
+    re.IGNORECASE,
+)
 
 # Không dấu thì nới ra. Khách lớn tuổi gõ điện thoại phần lớn không bỏ dấu;
 # bắt họ gõ lại thì lần sau vẫn không dấu.
@@ -40,9 +45,13 @@ _NO_BARE = re.compile(
     r"\b(khong|ko|thoi|khoi|doi|khac|chua|huy)\b",
     re.IGNORECASE,
 )
+_NO_BARE_WHEN_CANCELLING = re.compile(
+    r"\b(khong|ko|thoi|khoi|doi|khac|chua)\b",
+    re.IGNORECASE,
+)
 
 
-def strip_dau(text: str) -> str:
+def strip_diacritics(text: str) -> str:
     """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
 
     NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
@@ -55,20 +64,34 @@ def strip_dau(text: str) -> str:
     )
 
 
-def is_affirmative(text: str) -> bool:
+def _sentence_start(phrase: str) -> str:
+    """Viết hoa chữ đầu mà KHÔNG hạ chữ tên: str.capitalize() biến "anh Hùng"
+    thành "Anh hùng"."""
+    return phrase[:1].upper() + phrase[1:]
+
+
+def is_affirmative(text: str, cancelling: bool = False) -> bool:
     """Phủ định thắng khẳng định: "dạ không" và "đúng rồi nhưng đổi giờ" đều phải
     ra False. Sai hướng này chỉ mất một câu hỏi lại; sai hướng kia là đặt nhầm lịch.
+
+    `cancelling`: câu hỏi đang chờ là "hủy lịch này đúng không?" — khi đó "hủy"
+    trong "ừ hủy đi" là đồng ý, không phải từ chối. Một bộ từ cho cả hai ngữ
+    cảnh là "ừ hủy đi em" bị đẩy về booking mãi và khách không hủy được.
     """
     cleaned = (text or "").strip()
-    bare = strip_dau(cleaned)
+    bare = strip_diacritics(cleaned)
     if bare == cleaned:
         # Khách gõ không dấu — nới luật ra.
-        target, yes, no = bare, _YES_BARE, _NO_BARE
+        target, yes = bare, _YES_BARE
+        no = _NO_BARE_WHEN_CANCELLING if cancelling else _NO_BARE
     else:
         # Khách có bỏ dấu — tin đúng cái họ gõ, không suy diễn thêm.
-        target, yes, no = cleaned, _YES, _NO
+        target, yes = cleaned, _YES
+        no = _NO_WHEN_CANCELLING if cancelling else _NO
     if no.search(target):
         return False
+    if cancelling and re.search(r"\b(hủy|huy)\b", target, re.IGNORECASE):
+        return True
     return bool(yes.search(target))
 
 
@@ -91,28 +114,69 @@ def make_confirm_node(
 
         await conversations.set_pending(user_id, None)
 
-        # Danh xưng do model điền lúc propose_appointment: node này chạy 0 lượt
-        # LLM nên không tự suy ra được "cô Lan" hay "bác Ba" từ "Nguyễn Thị Lan".
-        # Thiếu thì lùi về "anh chị" ở những câu BẮT BUỘC phải xưng hô, và bỏ hẳn
-        # lời gọi ở câu chốt — chỗ đó không xưng hô vẫn đọc trôi.
-        xung_ho = (pending.get("xung_ho") or "").strip()
-        goi = xung_ho or "anh chị"
-        loi_goi = f" {xung_ho}" if xung_ho else ""
+        # Suy từ full_name bằng code, không nhận từ model nữa: model quên
+        # truyền là câu chốt mất lời gọi, mà nó quên thật — đó là lý do
+        # hard rule 6 từng tồn tại.
+        address = address_phrase(user.full_name)
 
-        if not is_affirmative(last_message):
-            return {"answer": f"Dạ vâng, vậy {goi} muốn đặt ngày giờ nào ạ?"}
+        cancelling = pending.get("cancel_appointment_id")
+        if not is_affirmative(last_message, cancelling=bool(cancelling)):
+            # Khách chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại",
+            # "thôi 10 giờ đi em", "đổi sang thứ Năm" đều là chuyện của
+            # booking. Node này không có LLM nên trả lời cứng chỗ nào cũng
+            # trật; đẩy sang agent có lịch sử và đủ tool.
+            return {"route": "booking"}
 
+        # Từ đây trở đi, mọi nhánh đều đã CHỐT (kể cả lỗi): trả `confirm_fact`
+        # (số liệu, cho phrase node) và `fallback` (câu cứng, cho guard dùng
+        # khi LLM viết sai số liệu) — không còn `answer` ở node này nữa.
+        def done(kind, when=None, note=None, error=None, fallback=""):
+            return {"confirm_fact": {"kind": kind, "when": when, "note": note,
+                                     "address": address, "error": error},
+                    "fallback": fallback}
+
+        if cancelling:
+            # Hủy cũng đi qua đây, không hủy ngay trong tool: ràng buộc "hủy
+            # phải qua một bước xác nhận" áp cho cả chat, không riêng giao diện.
+            try:
+                await service.cancel(user, cancelling)
+            except AppError as exc:
+                return done("failed", error=exc.message, fallback=f"Dạ {exc.message} ạ.")
+            try:
+                when = format_vi_datetime(datetime.fromisoformat(pending["start_at"]))
+            except (KeyError, ValueError):
+                return done("cancelled", fallback=f"Em hủy lịch xong rồi ạ, {address} cần gì cứ nhắn em nhé.")
+            return done("cancelled", when=when,
+                        fallback=f"Em hủy lịch {when} cho {address} xong rồi ạ. Cần đặt lại thì cứ nhắn em nhé.")
+
+        # Có `replaces_appointment_id` là khách đang DỜI lịch: đi qua
+        # `reschedule` để lịch cũ được hủy trong cùng một bước. Đi qua `create`
+        # ở đây là ra hai lịch (BUG-1).
+        replaces = pending.get("replaces_appointment_id")
         try:
-            appointment = await service.create(
-                user, datetime.fromisoformat(pending["start_at"]), pending.get("note")
-            )
+            start = datetime.fromisoformat(pending["start_at"])
+            if replaces:
+                appointment = await service.reschedule(user, replaces, start, pending.get("note"))
+            else:
+                appointment = await service.create(user, start, pending.get("note"))
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. {goi.capitalize()} chọn giờ khác giúp em nhé."}
+            return done("failed", error=exc.message,
+                        fallback=f"Dạ {exc.message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé.")
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return {"answer": f"Dạ em nhầm mất rồi, {goi} nhắc lại ngày giờ giúp em ạ."}
+            return done("failed", error="em nhầm mất rồi",
+                        fallback=f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ.")
 
-        return {"answer": f"Xong rồi ạ. Hẹn gặp{loi_goi} "
-                          f"{format_vi_datetime(appointment.start_at)} nhé."}
+        when = format_vi_datetime(appointment.start_at)
+        if replaces:
+            return done("moved", when=when, note=appointment.note,
+                        fallback=f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé.")
+        return done("booked", when=when, note=appointment.note,
+                    fallback=f"Xong rồi ạ. Hẹn gặp {address} {when} nhé.")
 
     return node
+
+
+def route_after_confirm(state: GraphState) -> str:
+    """Chưa chốt → booking; đã ghi (có confirm_fact) → phrase viết câu chốt."""
+    return "booking" if state.get("route") == "booking" else "phrase"
