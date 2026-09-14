@@ -13,6 +13,9 @@ class ChatMessage(BaseModel):
     role: Role
     content: str
     created_at: datetime = Field(default_factory=now_utc)
+    # "code": câu do node confirm / câu lỗi sinh — cố ý giống nhau, không đem so
+    # lặp. Document cũ không có trường này → mặc định "llm", không migrate.
+    source: Literal["llm", "code"] = "llm"
 
 
 class DaySummary(BaseModel):

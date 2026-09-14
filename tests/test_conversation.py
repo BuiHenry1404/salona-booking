@@ -302,3 +302,18 @@ class TestContextWindow:
 
         trimmed = await svc.history("u1", token_budget=1)
         assert len(trimmed) < len(all_msgs)
+
+
+class TestMessageSource:
+    async def test_append_defaults_to_llm_and_can_mark_code(self, test_db):
+        svc = ConversationService(test_db)
+        await svc.append("u1", "assistant", "câu LLM")
+        await svc.append("u1", "assistant", "câu code", source="code")
+        msgs = await svc._all_messages("u1")
+        assert [m.source for m in msgs] == ["llm", "code"]
+
+    async def test_old_documents_without_source_read_as_llm(self, test_db):
+        await test_db["conversations"].insert_one({"user_id": "u9", "messages": [
+            {"role": "assistant", "content": "cũ", "created_at": now_utc()}]})
+        msgs = await ConversationService(test_db)._all_messages("u9")
+        assert msgs[0].source == "llm"
