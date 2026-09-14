@@ -239,7 +239,7 @@ class TestUpcomingAppointmentsCarryTheirId:
     def test_each_upcoming_line_ends_with_the_id(self):
         appt = an_appointment()
         block = build_context_block(a_user(), ShopStatusView(is_busy=False), [appt])
-        assert f"[id: {appt.id}]" in block
+        assert f"[id: {appt.id}, iso: 2026-08-07T08:00:00+07:00]" in block
 
     def test_the_id_sits_on_the_same_line_as_the_time(self):
         appt = an_appointment()

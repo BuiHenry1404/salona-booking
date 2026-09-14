@@ -34,11 +34,11 @@ class ConversationService:
         payload["_id"] = result.inserted_id
         return Conversation(**payload)
 
-    async def append(self, user_id: str, role: str, content: str) -> None:
+    async def append(self, user_id: str, role: str, content: str, source: str = "llm") -> None:
         await self.collection.update_one(
             {"user_id": user_id},
             {
-                "$push": {"messages": ChatMessage(role=role, content=content).model_dump()},
+                "$push": {"messages": ChatMessage(role=role, content=content, source=source).model_dump()},
                 "$set": {"updated_at": now_utc()},
                 "$setOnInsert": {"user_id": user_id, "created_at": now_utc()},
             },

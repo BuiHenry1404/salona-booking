@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from app.agents.booking_graph.confirm import is_affirmative, make_confirm_node
+from app.agents.booking_graph.context import format_vi_datetime
 from app.core.clock import TZ
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -58,7 +59,8 @@ async def test_propose_then_yes_books_the_time_from_MONGO(test_db):
     pending = await ConversationService(test_db).get_pending(str(user.id))
     result = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
 
-    assert "xong" in result["answer"].lower()
+    assert result["confirm_fact"]["kind"] == "booked"
+    assert "xong" in result["fallback"].lower()
     booked = await AppointmentService(test_db).upcoming_for(user)
     assert len(booked) == 1
     assert booked[0].start_at.astimezone(TZ) == start
@@ -72,7 +74,7 @@ async def test_yes_creates_the_appointment(test_db):
     node = make_confirm_node(test_db, user)
     result = await node(a_state(user, "ừ", pending))
 
-    assert "xong" in result["answer"].lower()
+    assert result["confirm_fact"]["kind"] == "booked"
     assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
 
 
@@ -105,8 +107,19 @@ async def test_taken_slot_produces_a_friendly_message_not_a_crash(test_db):
     pending = await ConversationService(test_db).get_pending(str(user.id))
     result = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
 
-    assert "có người" in result["answer"].lower()
+    assert result["confirm_fact"]["kind"] == "failed"
+    assert "có người" in result["fallback"].lower()
     assert await ConversationService(test_db).get_pending(str(user.id)) is None
+
+
+async def test_confirm_returns_fact_and_fallback_not_answer(test_db):
+    user = await _setup(test_db)
+    pending = await ConversationService(test_db).get_pending(str(user.id))
+    out = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
+    assert "answer" not in out
+    assert out["confirm_fact"] == {"kind": "booked", "when": format_vi_datetime(tomorrow_at(15)),
+                                   "note": "làm tóc", "address": "chị Lan", "error": None}
+    assert out["fallback"].startswith("Xong rồi ạ")
 
 
 class TestAffirmativeVariants:
@@ -170,10 +183,10 @@ class TestConfirmUsesTheRightHonorific:
                               "start_at": tomorrow_at(15).isoformat(),
                               "note": "cắt tóc"}})
 
-        assert "anh Ba" in out["answer"]
+        assert "anh Ba" in out["fallback"]
         # "Chú" là tiền tố để SUY giới tính, không phải chữ để nói lại với khách.
-        assert "chú" not in out["answer"].lower()
-        assert "cô chú" not in out["answer"]
+        assert "chú" not in out["fallback"].lower()
+        assert "cô chú" not in out["fallback"]
 
     async def test_without_a_derivable_honorific_it_does_not_invent_one(self, test_db):
         """Tên không có tiền tố thì lùi về "anh chị", KHÔNG rơi về "cô chú" —
@@ -184,8 +197,8 @@ class TestConfirmUsesTheRightHonorific:
                           "pending_confirmation": {
                               "start_at": tomorrow_at(15).isoformat(), "note": None}})
 
-        assert "cô chú" not in out["answer"]
-        assert "Xong rồi ạ" in out["answer"]
+        assert "cô chú" not in out["fallback"]
+        assert "Xong rồi ạ" in out["fallback"]
 
     async def test_the_booking_time_is_still_in_the_sentence(self, test_db):
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Bùi Văn Ba")
@@ -195,7 +208,7 @@ class TestConfirmUsesTheRightHonorific:
                               "start_at": tomorrow_at(15).isoformat(),
                               "note": None}})
 
-        assert "3 giờ chiều" in out["answer"]
+        assert "3 giờ chiều" in out["fallback"]
 
 
 class TestHonorificInTheOtherBranches:
@@ -217,7 +230,7 @@ class TestHonorificInTheOtherBranches:
                               "start_at": tomorrow_at(15).isoformat(),
                               "note": None}})
 
-        assert "cô chú" not in out["answer"].lower(), out["answer"]
+        assert "cô chú" not in out["fallback"].lower(), out["fallback"]
 
     async def test_the_decline_branch_hands_over_instead_of_answering(self, test_db):
         """Nhánh chưa-đồng-ý không còn câu nào để xưng hô: nó chuyển tiếp sang
@@ -265,8 +278,8 @@ class TestNotAffirmativeGoesToBooking:
 
         result = await node(state)
 
-        assert "Xong rồi ạ" in result["answer"]
-        assert "chị Lan" in result["answer"]
+        assert "Xong rồi ạ" in result["fallback"]
+        assert "chị Lan" in result["fallback"]
         assert result.get("route") is None
         assert await test_db["appointments"].count_documents({}) == 1
 
@@ -286,9 +299,10 @@ class TestConfirmReschedules:
         upcoming = await AppointmentService(test_db).upcoming_for(user)
         assert [a.start_at.astimezone(TZ) for a in upcoming] == [tomorrow_at(10)]
         assert upcoming[0].note == "làm tóc"
-        assert "dời" in out["answer"].lower()
-        assert "anh Hùng" in out["answer"]
-        assert "10 giờ sáng" in out["answer"]
+        assert "dời" in out["fallback"].lower()
+        assert "anh Hùng" in out["fallback"]
+        assert "10 giờ sáng" in out["fallback"]
+        assert out["confirm_fact"]["kind"] == "moved"
 
     async def test_a_taken_new_time_keeps_the_old_appointment(self, test_db):
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
@@ -300,7 +314,7 @@ class TestConfirmReschedules:
 
         out = await make_confirm_node(test_db, user)(a_state(user, "ừ", pending))
 
-        assert "có người" in out["answer"].lower()
+        assert "có người" in out["fallback"].lower()
         upcoming = await AppointmentService(test_db).upcoming_for(user)
         assert [a.start_at.astimezone(TZ) for a in upcoming] == [tomorrow_at(9)]
 
@@ -318,8 +332,9 @@ class TestConfirmCancels:
         out = await make_confirm_node(test_db, user)(a_state(user, "ừ", self._pending(appt)))
 
         assert await AppointmentService(test_db).upcoming_for(user) == []
-        assert "hủy" in out["answer"].lower()
-        assert "anh Hùng" in out["answer"] and "3 giờ chiều" in out["answer"]
+        assert "hủy" in out["fallback"].lower()
+        assert "anh Hùng" in out["fallback"] and "3 giờ chiều" in out["fallback"]
+        assert out["confirm_fact"]["kind"] == "cancelled"
         assert await ConversationService(test_db).get_pending(str(user.id)) is None
 
     async def test_u_huy_di_counts_as_yes_when_cancelling(self, test_db):
@@ -331,7 +346,7 @@ class TestConfirmCancels:
 
         out = await make_confirm_node(test_db, user)(a_state(user, "ừ hủy đi em", self._pending(appt)))
 
-        assert "answer" in out
+        assert "fallback" in out
         assert await AppointmentService(test_db).upcoming_for(user) == []
 
     async def test_no_keeps_the_appointment_and_hands_over(self, test_db):
@@ -349,7 +364,7 @@ class TestConfirmCancels:
         await AppointmentService(test_db).cancel(user, str(appt.id))
 
         out = await make_confirm_node(test_db, user)(a_state(user, "ừ", self._pending(appt)))
-        assert "không tìm thấy" in out["answer"].lower()
+        assert "không tìm thấy" in out["fallback"].lower()
 
 
 class TestIsAffirmativeWhileCancelling:

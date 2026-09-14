@@ -127,19 +127,27 @@ def make_confirm_node(
             # trật; đẩy sang agent có lịch sử và đủ tool.
             return {"route": "booking"}
 
+        # Từ đây trở đi, mọi nhánh đều đã CHỐT (kể cả lỗi): trả `confirm_fact`
+        # (số liệu, cho phrase node) và `fallback` (câu cứng, cho guard dùng
+        # khi LLM viết sai số liệu) — không còn `answer` ở node này nữa.
+        def done(kind, when=None, note=None, error=None, fallback=""):
+            return {"confirm_fact": {"kind": kind, "when": when, "note": note,
+                                     "address": address, "error": error},
+                    "fallback": fallback}
+
         if cancelling:
             # Hủy cũng đi qua đây, không hủy ngay trong tool: ràng buộc "hủy
             # phải qua một bước xác nhận" áp cho cả chat, không riêng giao diện.
             try:
                 await service.cancel(user, cancelling)
             except AppError as exc:
-                return {"answer": f"Dạ {exc.message} ạ."}
+                return done("failed", error=exc.message, fallback=f"Dạ {exc.message} ạ.")
             try:
                 when = format_vi_datetime(datetime.fromisoformat(pending["start_at"]))
             except (KeyError, ValueError):
-                return {"answer": f"Em hủy lịch xong rồi ạ, {address} cần gì cứ nhắn em nhé."}
-            return {"answer": f"Em hủy lịch {when} cho {address} xong rồi ạ. "
-                              "Cần đặt lại thì cứ nhắn em nhé."}
+                return done("cancelled", fallback=f"Em hủy lịch xong rồi ạ, {address} cần gì cứ nhắn em nhé.")
+            return done("cancelled", when=when,
+                        fallback=f"Em hủy lịch {when} cho {address} xong rồi ạ. Cần đặt lại thì cứ nhắn em nhé.")
 
         # Có `replaces_appointment_id` là khách đang DỜI lịch: đi qua
         # `reschedule` để lịch cũ được hủy trong cùng một bước. Đi qua `create`
@@ -152,19 +160,23 @@ def make_confirm_node(
             else:
                 appointment = await service.create(user, start, pending.get("note"))
         except AppError as exc:
-            return {"answer": f"Dạ {exc.message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé."}
+            return done("failed", error=exc.message,
+                        fallback=f"Dạ {exc.message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé.")
         except (KeyError, ValueError):
             logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return {"answer": f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ."}
+            return done("failed", error="em nhầm mất rồi",
+                        fallback=f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ.")
 
         when = format_vi_datetime(appointment.start_at)
         if replaces:
-            return {"answer": f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé."}
-        return {"answer": f"Xong rồi ạ. Hẹn gặp {address} {when} nhé."}
+            return done("moved", when=when, note=appointment.note,
+                        fallback=f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé.")
+        return done("booked", when=when, note=appointment.note,
+                    fallback=f"Xong rồi ạ. Hẹn gặp {address} {when} nhé.")
 
     return node
 
 
 def route_after_confirm(state: GraphState) -> str:
-    """Sau confirm: đã ghi lịch (có `answer`) thì xong; chưa chốt thì sang booking."""
-    return "booking" if state.get("route") == "booking" else "end"
+    """Chưa chốt → booking; đã ghi (có confirm_fact) → phrase viết câu chốt."""
+    return "booking" if state.get("route") == "booking" else "phrase"

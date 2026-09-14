@@ -200,6 +200,59 @@ Ngưỡng nén mặc định `COMPACT_THRESHOLD_TOKENS = 800` (`app/services/dig
 luồng đầu-cuối nhanh thì hạ tạm ngưỡng (vd. 300), chạy lại, rồi **khôi phục
 về 800** trước khi commit bất cứ gì.
 
+## 8c. Kiểm tầng gác (guard/rewrite/phrase)
+
+Mọi câu LLM đi qua node `guard` đúng một lần trước khi ra khách (spec
+`docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`; xem bẫy #21
+ở `CONTEXT.md`). Log qua `structlog`, không ném lỗi ra khách:
+
+- `guard_violation{codes}` — draft đầu tiên phạm một hay nhiều trong ba phép
+  kiểm tất định: `repeat` (giống câu đáp gần đây, xem `REPEAT_RATIO`/
+  `REPEAT_LOOKBACK` ở `guard.py`), `pronoun` (giọng "cô/chú/bác" hoặc đại từ
+  sai giới với `address` suy từ tên khách), `clock` (giờ viết bằng chữ hoặc
+  `HH:MM` thay vì "3 giờ chiều"). Sang node `rewrite`.
+- `guard_rewritten` — bản viết lại (LLM, tag `rewrite`, một lần, không stream)
+  qua hết mọi phép kiểm lại (cộng `content` — còn đủ mốc ngày-giờ/số của bản
+  gốc). Đây là câu được phát.
+- `guard_gave_up{codes}` — bản viết lại VẪN phạm (kể cả mất số liệu qua
+  `content_kept`). Guard trả **draft GỐC** (`answer_source="llm"`), không phát
+  bản rewrite hỏng — không có lần rewrite thứ hai.
+- `rewrite_failed{error,codes}` (ở `rewrite.py`) — lời gọi LLM viết lại lỗi
+  hoặc quá `REWRITE_TIMEOUT_SECONDS` (8s); node trả nguyên draft, guard sẽ thấy
+  lại đúng các `codes` cũ và thành `guard_gave_up`.
+- `phrase_fallback{codes}` — nhánh riêng cho câu chốt lịch sau `confirm`
+  (`_guard_phrase` trong `guard.py`): câu do `phrase` node viết thiếu `when`
+  (mốc ngày-giờ từ DB), thiếu cách gọi khách (`address`), thiếu câu báo lỗi khi
+  đặt hỏng, hoặc phạm ba phép kiểm thường — dùng ngay câu cứng
+  `state["fallback"]`, không rewrite (đây là khoảnh khắc chốt lịch, sai số liệu
+  không được phép).
+- `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của node `phrase` lỗi
+  hoặc quá `PHRASE_TIMEOUT_SECONDS` (8s); dùng thẳng `fallback`.
+- `anchor_ignored{anchor}` (ở `tools.py`) — tool gọi `apply_anchor` với neo
+  không hợp lệ (không parse được thành `datetime`), bỏ qua neo, hỏi lại khách
+  như trước khi có Task 3.
+- `anchor_bad_hour{partial_hour,partial_minute}` (ở `timeparse.py`) — LLM trả
+  `partial_hour`/`partial_minute` ngoài khoảng hợp lệ (không bị Pydantic chặn
+  vì chỉ là `int`); bỏ qua neo, trả nguyên candidate để khách vẫn được hỏi lại
+  thay vì tool ném `ValueError`.
+
+Đo thật 2026-09-14 (Task 6, 26 lượt LLM qua hai kịch bản `tu_nhien`+`dai`):
+đúng **1** `guard_violation` (`repeat`) → **1** `guard_gave_up` — rewrite chạy
+nhưng bản viết lại vẫn lặp nên bị guard trả về draft gốc; không log nào khác
+trong danh sách trên xuất hiện. Xem chi tiết ở Checkpoint Task 6 cuối
+`CONTEXT.md`.
+
+Kiểm bằng tay xem draft nào bị cờ `repeat` oan hay đúng (không gọi LLM, đọc
+transcript có sẵn):
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/probe_repeats.py [--ratio 0.85] [--min-words 6] FILE...
+```
+
+Mỗi file truyền vào phải đúng định dạng dòng `BOT   : ...` của
+`scripts/chat_e2e_transcript.py`; không truyền file nào thì nó tự nhặt hết
+`*.txt` ở gốc repo.
+
 ## 9. Trục trặc hay gặp
 
 | Hiện tượng | Nguyên nhân |

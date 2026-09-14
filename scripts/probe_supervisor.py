@@ -29,6 +29,10 @@ PROBES = [
     ("social", "thôi chị đi nha"),
     ("social", "cho tôi công thức nấu phở"),
     ("social", "dịch giùm tôi đoạn tiếng Anh này"),
+    ("booking", "mấy giờ đóng cửa vậy, chiều nay anh qua cắt tóc được không"),
+    ("booking", "tiệm còn làm không em, còn giờ nào trống chiều nay"),
+    ("booking", "chủ tiệm đang bận hả, vậy mai 9 giờ đặt được không"),
+    ("shop", "tiệm còn mở không em"),
 ]
 
 

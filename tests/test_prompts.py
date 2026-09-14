@@ -9,8 +9,9 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
-from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
-                                              SOCIAL_PROMPT, SUPERVISOR_PROMPT)
+from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REWRITE_PROMPT,
+                                              SHOP_PROMPT, SOCIAL_PROMPT,
+                                              SUPERVISOR_PROMPT)
 
 CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "SHOP_PROMPT": SHOP_PROMPT}
 
@@ -309,8 +310,10 @@ class TestBookingPromptSlimmed:
         # nguyên văn, viết hoa rule 4 và thêm vế "từ chối lần hai nói khác":
         # đo được 4320 — mốc lên 4400. Sau chạy thật 2026-09-14 thêm hai vế:
         # hủy phải gọi tool trước, và giá/dịch vụ không phải ca rule 4 — đo
-        # được 4780 — mốc lên 4900.
-        assert len(BOOKING_PROMPT) < 4900
+        # được 4780 — mốc lên 4900. Task 5 (2026-09-14) thêm câu "use the shop
+        # tools" cuối rule 1 (câu kép hỏi tiệm + hỏi lịch) — đo được 4918 —
+        # mốc lên 5000.
+        assert len(BOOKING_PROMPT) < 5000
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -431,3 +434,23 @@ class TestLiveChat20260914:
         luật cho câu "đang mở không", chỉ có "mở/đóng lúc mấy giờ"."""
         assert "open right now" in SHOP_PROMPT.lower()
         assert "never answer that from memory" in SHOP_PROMPT.lower()
+
+
+class TestCompoundQuestionsRouteToBooking:
+    """Task 5 (2026-09-14): câu kép ("mấy giờ đóng cửa, chiều nay còn giờ nào")
+    trộn hỏi tiệm với hỏi lịch — phải vào `booking` vì node đó giờ có cả tool
+    đọc của shop, còn `shop` thì không có tool đặt lịch."""
+
+    def test_supervisor_sends_mixed_shop_and_booking_to_booking(self):
+        assert "mixes a shop question" in SUPERVISOR_PROMPT
+
+    def test_booking_prompt_tells_the_model_to_use_shop_tools(self):
+        assert "use the shop tools" in BOOKING_PROMPT.lower()
+
+
+class TestRewritePromptDemandsVietnamese:
+    """F6: `REWRITE_PROMPT` viết lại câu trả lời cho khách — nó phải mang cùng
+    luật ngôn ngữ như ba prompt kia, không thì bản viết lại có thể lạc tiếng."""
+
+    def test_rewrite_prompt_demands_vietnamese(self):
+        assert "MUST be Vietnamese" in REWRITE_PROMPT

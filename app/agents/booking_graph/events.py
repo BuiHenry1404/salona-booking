@@ -84,6 +84,9 @@ async def run_turn(
             "context_block": context["context_block"],
             "digest": context.get("digest", []),
             "pending_confirmation": context["pending_confirmation"],
+            "previous_replies": [m.content for m in context["history"]
+                                 if m.role == "assistant" and m.source == "llm"],
+            "customer_text": question,
         }
 
         graph = build_graph(db, user)
@@ -106,7 +109,8 @@ async def run_turn(
         answer = final_state.get("answer", "")
         if answer:
             await conversations.append(user_id, "user", question)
-            await conversations.append(user_id, "assistant", answer)
+            await conversations.append(user_id, "assistant", answer,
+                                       source=final_state.get("answer_source", "llm"))
 
         yield AgentEvent("complete", {"answer": answer})
 

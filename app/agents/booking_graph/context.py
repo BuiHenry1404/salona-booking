@@ -146,7 +146,10 @@ def build_context_block(
         # dựng lại từ DB mỗi lượt nên id ở đây luôn có và luôn đúng.
         for appt in upcoming[:5]:
             note = f" — {appt.note}" if appt.note else ""
-            lines.append(f"  - {format_vi_datetime(appt.start_at)}{note} [id: {appt.id}]")
+            lines.append(
+                f"  - {format_vi_datetime(appt.start_at)}{note} "
+                f"[id: {appt.id}, iso: {to_local(appt.start_at).isoformat()}]"
+            )
     else:
         lines.append("Khách chưa có lịch nào sắp tới.")
 

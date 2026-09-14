@@ -4,8 +4,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.booking_graph.agents import make_subagent_node
 from app.agents.booking_graph.confirm import (make_confirm_node,
                                               route_after_confirm)
+from app.agents.booking_graph.guard import make_guard_node, route_after_guard
+from app.agents.booking_graph.phrase import make_phrase_node
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
                                               SOCIAL_PROMPT)
+from app.agents.booking_graph.rewrite import make_rewrite_node
 from app.agents.booking_graph.state import GraphState
 from app.agents.booking_graph.supervisor import route_from_state, supervise
 from app.agents.booking_graph.tools import (make_booking_tools,
@@ -13,6 +16,12 @@ from app.agents.booking_graph.tools import (make_booking_tools,
 from app.models.user import User
 
 RESPOND_TAG = "respond"
+
+
+def booking_tools(db: AsyncIOMotorDatabase, user: User):
+    """5 tool lịch + 2 tool đọc của shop. Câu kép ("mấy giờ đóng cửa, chiều nay
+    còn giờ nào") vào booking và cần cả hai nhóm. Vẫn KHÔNG có tool ghi."""
+    return make_booking_tools(db, user) + make_shop_tools(db, user)
 
 
 def build_graph(db: AsyncIOMotorDatabase, user: User):
@@ -37,8 +46,11 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     )
     graph.add_node(
         "booking",
-        make_subagent_node(BOOKING_PROMPT, make_booking_tools(db, user), tag=RESPOND_TAG),
+        make_subagent_node(BOOKING_PROMPT, booking_tools(db, user), tag=RESPOND_TAG),
     )
+    graph.add_node("guard", make_guard_node(user))
+    graph.add_node("rewrite", make_rewrite_node())
+    graph.add_node("phrase", make_phrase_node())
 
     # Nhánh tắt: có pending_confirmation thì bỏ qua supervisor hoàn toàn.
     graph.add_conditional_edges(
@@ -51,12 +63,17 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     )
 
     # Nhánh chưa-đồng-ý của confirm không tự trả lời mà chuyển tiếp sang
-    # booking — chỉ nhánh đã ghi lịch mới đi thẳng ra END.
+    # booking; nhánh đã ghi lịch sang phrase để LLM viết câu chốt theo số liệu.
     graph.add_conditional_edges(
-        "confirm", route_after_confirm, {"booking": "booking", "end": END}
+        "confirm", route_after_confirm, {"booking": "booking", "phrase": "phrase"}
     )
+    graph.add_edge("phrase", "guard")
 
+    # Mọi câu LLM đi qua guard ĐÚNG MỘT lần trước khi ra END; rewrite tối đa
+    # một lần rồi quay lại guard để kiểm, không viết lại lần hai.
     for node in ("social", "shop", "booking"):
-        graph.add_edge(node, END)
+        graph.add_edge(node, "guard")
+    graph.add_conditional_edges("guard", route_after_guard, {"rewrite": "rewrite", "end": END})
+    graph.add_edge("rewrite", "guard")
 
     return graph.compile()

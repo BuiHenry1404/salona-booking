@@ -24,6 +24,8 @@ def make_subagent_node(
 
     `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ node sinh câu trả
     lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn hình.
+
+    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối.
     """
     by_name = {t.name: t for t in tools}
 
@@ -64,7 +66,7 @@ def make_subagent_node(
 
             calls = getattr(reply, "tool_calls", None)
             if not calls:
-                return {"answer": reply.content or FALLBACK_ANSWER}
+                return {"draft": reply.content or FALLBACK_ANSWER}
 
             for call in calls:
                 tool = by_name.get(call["name"])
@@ -81,6 +83,6 @@ def make_subagent_node(
                 messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
 
         logger.warning("tool_loop_exhausted", extra={"tag": tag})
-        return {"answer": FALLBACK_ANSWER}
+        return {"draft": FALLBACK_ANSWER}
 
     return node

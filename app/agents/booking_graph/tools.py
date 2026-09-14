@@ -8,6 +8,7 @@ from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError
+from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.user import User
@@ -17,6 +18,8 @@ from app.services.shop import ShopService
 
 # Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
 WHOLE_DAY = 200
+
+logger = get_logger(__name__)
 
 
 def _parse_local(value: str) -> datetime:
@@ -81,7 +84,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     conversations = ConversationService(db)
 
     @tool
-    async def parse_time(text: str) -> str:
+    async def parse_time(text: str, anchor: Optional[str] = None) -> str:
         """Turn what the customer said about time into a concrete date and time.
         Call this BEFORE find_free_slots and propose_appointment, every time the
         customer mentions a time. Never compute a date yourself.
@@ -89,11 +92,24 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         earlier turns: if they named a day one turn and an hour the next, pass
         both together, not the hour alone. This tool reads only the string you
         give it — it cannot see earlier turns.
+        `anchor`: pass it whenever the customer is changing or answering about a
+        time already on the table — the appointment being moved (its `iso:` in
+        the context block) or the slot just proposed (the `iso:` in
+        propose_appointment's result). The tool then fills a missing day or
+        part of the day from it instead of asking again.
         Result has `missing` -> ask the customer for exactly that ONE missing
         piece, one piece per turn, and nothing else. The value "sáng hay chiều"
         is quoted from the tool's own output, not an example: it means the hour
         is known but the part of the day is not."""
-        parsed: ParsedTime = await parse_vi_time(text, now_utc())
+        anchor_dt = None
+        if anchor:
+            try:
+                anchor_dt = _parse_local(anchor)
+            except ValueError:
+                # Neo bịa thì bỏ neo, không bỏ cả lượt.
+                logger.warning("anchor_ignored", extra={"anchor": anchor[:60]})
+        hours = await service.shop.get_hours()
+        parsed: ParsedTime = await parse_vi_time(text, now_utc(), anchor=anchor_dt, hours=hours)
         # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
         # để chuyển thẳng sang propose_appointment, không được diễn giải lại.
         return parsed.model_dump_json(
@@ -188,12 +204,12 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         note_text = f", {note}" if note else ""
         if old:
             return (
-                f"Đã giữ chỗ {format_vi_datetime(start)}{note_text} để dời lịch "
+                f"Đã giữ chỗ {format_vi_datetime(start)} (iso: {start.isoformat()}){note_text} để dời lịch "
                 f"{format_vi_datetime(old.start_at)} sang đó. "
                 "Hãy nhắc lại đầy đủ ngày giờ mới và hỏi khách xác nhận."
             )
         return (
-            f"Đã giữ chỗ {format_vi_datetime(start)}{note_text}. "
+            f"Đã giữ chỗ {format_vi_datetime(start)} (iso: {start.isoformat()}){note_text}. "
             "Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận."
         )
 

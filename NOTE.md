@@ -4,9 +4,40 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-09-14
+Cập nhật: 2026-09-14 (nhánh `feat/natural-voice-guard`, Task 6)
 
 ## Đang ở đâu
+
+**Nhánh `feat/natural-voice-guard`** (mọc từ `henry/develop`, chưa merge) đã
+xong 6 task: node `guard` (3 phép kiểm tất định: `repeat`/`pronoun`/`clock`,
+`address`+`register` gộp vào `pronoun`, `language` bị bỏ — bẫy #21), node
+`rewrite` một lần, node `phrase` viết câu chốt lịch theo mạch với số liệu ép
+bởi guard, neo giờ thiếu buổi/ngày trong `parse_time`, và `booking` 7 tool trả
+lời câu kép shop+lịch. **721 test xanh** (`PYTHONPATH=. .venv/bin/python -m
+pytest -q`, 14 deselected vì cần Azure thật). Chạy thật hai kịch bản
+(`tu_nhien` mới + `dai`) qua Azure `gpt-5.4-mini`: cả 8 điểm kiểm của
+`tu_nhien` đều đúng; log tầng gác gần như im lặng (1 `guard_violation` →
+1 `guard_gave_up`, không log nào khác). Xem Checkpoint Task 6 cuối
+`CONTEXT.md` và mục "Kiểm tầng gác" ở `RUNBOOK.md`.
+
+## Việc tiếp theo (nhánh `feat/natural-voice-guard`)
+
+Cả 6 task của spec `2026-09-14-natural-voice-guard-design.md` đã xong, đã đo
+thật, đã ghi tài liệu (mục này). **Chưa merge vào `henry/develop`** — quyết
+định merge thuộc chủ dự án, không tự merge. Còn để ngỏ (quan sát, không phải
+lỗi cần sửa ngay):
+
+- Một lượt trong 26 lượt đo được bị `guard_violation{repeat}` rồi
+  `guard_gave_up` — mẫu quá nhỏ (1/26) để quyết có nên hạ `REPEAT_RATIO` hay
+  không; cần thêm dữ liệu chạy thật trước khi đổi ngưỡng.
+- Rubric `dai` nhiễu giữa các lần chấm cùng baseline (2.2 vs 2.4 đo được ở
+  cùng ngày) — đừng dùng một lần chấm để kết luận cải thiện/suy giảm, xem bẫy
+  #16 và #18.
+- Probe supervisor 18 mẫu (bộ mới, thêm 4 câu kép shop+booking từ Task 5) nên
+  chạy lại một lần nữa trước khi merge, để có mốc ứng với đúng bộ câu hiện tại
+  (đợt đo Task 6 không chạy lại vì không đổi `SUPERVISOR_PROMPT`).
+
+## Đang ở đâu (cũ)
 
 **Cả 4 plan gốc đã xong** — backend, agent/memory/streaming, Telegram bot,
 React frontend, đã merge vào `main`.
