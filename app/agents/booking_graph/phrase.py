@@ -17,8 +17,12 @@ def make_phrase_node():
         fact = state.get("confirm_fact") or {}
         fallback = state.get("fallback") or ""
         kind_sentence = PHRASE_KIND_SENTENCES.get(fact.get("kind"), "").format(error=fact.get("error") or "")
-        system = PHRASE_PROMPT.format(kind_sentence=kind_sentence,
-                                      when=fact.get("when") or "(no time — the booking failed)",
+        when = fact.get("when")
+        # Đặt lịch thất bại thì không có `when` — không được nhét placeholder
+        # tiếng Anh vào chỗ này, nó có thể rò vào câu trả lời tiếng Việt.
+        when_rule = (f"You MUST include this exact text for the date and time:\n{when}"
+                     if when else "")
+        system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
                                       address=fact.get("address") or "anh chị")
         history, question = state["messages"][:-1], state["messages"][-1:]
         messages = [SystemMessage(content=system), *history,

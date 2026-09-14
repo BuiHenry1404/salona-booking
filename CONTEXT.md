@@ -78,7 +78,7 @@ biên bản, không phải mẫu để chép.
 **Agent và streaming** — *lỗi 6, 8, 10 đều KHÔNG làm test nào đỏ vì fail-soft nuốt bằng chứng.*
 
 6. Khối bối cảnh **phải nói hôm nay là ngày nào, ở dòng đầu** — thiếu thì model đặt lệch cả năm mà chuỗi ISO vẫn hợp lệ nên không gì chặn.
-7. Đúng **5 tool**: `parse_time`, `find_free_slots`, `propose_appointment`, `list_my_appointments`, `cancel_appointment`. Thêm `create_appointment` là phá cả hai lớp bảo vệ.
+7. Node `booking` có **7 tool, 0 tool ghi**: 5 tool lịch + 2 tool đọc của shop (từ 2026-09-14, để trả lời câu kép). Thêm `create_appointment` là phá cả hai lớp bảo vệ — hàng rào là `test_there_is_NO_tool_that_writes_an_appointment`.
 8. Chỉ stream token mang tag `respond`. Parser thời gian phải `tags=["timeparse"]` + `streaming=False`, không thì JSON chạy ngang màn hình khách.
 9. Khối bối cảnh **không nằm trong system prompt** — nó đổi mỗi lượt, đặt đầu là cache không bao giờ trúng. Thứ tự: System → lịch sử → bối cảnh → tin mới.
 Thứ tự này từng bị code làm ngược (bối cảnh rơi xuống sau câu hỏi mới) và có

@@ -55,6 +55,19 @@ class TestPhraseNode:
         out = await make_phrase_node()(a_state())
         assert out["draft"] == FALLBACK and out["phrase_fact"] == FACT
 
+    async def test_failed_kind_drops_the_must_include_when_line_entirely(self, patch_model):
+        """Task 4 review: fact["when"] là None khi đặt lịch thất bại (kind
+        "failed"). Prompt cũ nhét placeholder tiếng Anh "(no time — the
+        booking failed)" vào đúng chỗ câu "MUST include this exact text" —
+        placeholder đó có thể rò vào câu trả lời tiếng Việt. Khi không có
+        `when`, dòng MUST-include không được xuất hiện chút nào."""
+        model = patch_model("Dạ Tám ơi, giờ đó đã có người đặt, anh chọn giờ khác giúp em nhé.")
+        fact = {**FACT, "kind": "failed", "when": None, "error": "Giờ đó đã có người đặt"}
+        out = await make_phrase_node()(a_state(confirm_fact=fact))
+        system = model.calls[0][0].content
+        assert "MUST include this exact text" not in system
+        assert "no time" not in system
+
 
 class TestGuardForPhrase:
     async def test_missing_when_falls_back_without_rewrite(self):

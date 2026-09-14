@@ -18,6 +18,12 @@ from app.models.user import User
 RESPOND_TAG = "respond"
 
 
+def booking_tools(db: AsyncIOMotorDatabase, user: User):
+    """5 tool lịch + 2 tool đọc của shop. Câu kép ("mấy giờ đóng cửa, chiều nay
+    còn giờ nào") vào booking và cần cả hai nhóm. Vẫn KHÔNG có tool ghi."""
+    return make_booking_tools(db, user) + make_shop_tools(db, user)
+
+
 def build_graph(db: AsyncIOMotorDatabase, user: User):
     """Đồ thị cho một khách cụ thể.
 
@@ -40,7 +46,7 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     )
     graph.add_node(
         "booking",
-        make_subagent_node(BOOKING_PROMPT, make_booking_tools(db, user), tag=RESPOND_TAG),
+        make_subagent_node(BOOKING_PROMPT, booking_tools(db, user), tag=RESPOND_TAG),
     )
     graph.add_node("guard", make_guard_node(user))
     graph.add_node("rewrite", make_rewrite_node())

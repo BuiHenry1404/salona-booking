@@ -29,3 +29,14 @@ def test_confirm_goes_to_phrase_then_guard_never_straight_to_end():
     assert ("confirm", "phrase") in e and ("confirm", "booking") in e
     assert ("confirm", "__end__") not in e
     assert ("phrase", "guard") in e
+
+
+def test_booking_node_has_the_two_shop_tools_but_no_write_tool():
+    from unittest.mock import MagicMock
+
+    from app.agents.booking_graph.graph import booking_tools
+    from app.models.user import User
+    names = {t.name for t in booking_tools(MagicMock(), User(phone="0912345678", hashed_password="x", full_name="Cô Lan"))}
+    assert names == {"parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
+                     "cancel_appointment", "get_shop_hours", "get_shop_status"}
+    assert "create_appointment" not in names

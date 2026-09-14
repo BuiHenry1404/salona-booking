@@ -56,8 +56,9 @@ hair salon.
 
 Reply with EXACTLY ONE word. No punctuation, no explanation, no quotes:
 - booking : book, change, or cancel an appointment; ask for free slots; look up
-            their own appointments; or just name the service they want —
-            wanting a service IS wanting an appointment
+            their own appointments; just name the service they want — wanting a
+            service IS wanting an appointment; or a message that mixes a shop question
+            with anything about appointments
 - shop    : whether the owner is busy or free, when they finish, whether the
             salon is open right now, what time it opens or closes, which days
             it is closed
@@ -123,6 +124,8 @@ HARD RULES:
    it cancels nothing yet, it only prepares the confirmation question.
    Never ask them to confirm a cancellation before calling it: their "yes"
    is acted on only when the tool has been called on the previous turn.
+   For shop hours or whether the owner is busy, use the shop tools — never
+   guess; answer both halves of a mixed question in one reply.
 
 2. After propose_appointment succeeds, read the booking back to the customer
    and ask them to confirm. Your sentence MUST contain the weekday and date,
@@ -226,8 +229,7 @@ PHRASE_PROMPT = f"""You are the receptionist at a Vietnamese nail and hair salon
 {{kind_sentence}}
 
 Tell the customer in one or two natural Vietnamese sentences that fit the
-conversation so far. You MUST include this exact text for the date and time:
-{{when}}
+conversation so far. {{when_rule}}
 You MUST address the customer as: {{address}}
 Do not add any other fact. Do not ask a new question unless the booking
 failed, in which case ask them to pick another time.
