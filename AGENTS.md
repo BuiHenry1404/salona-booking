@@ -5,7 +5,7 @@ FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Backend 
 
 ## Read first (in this order)
 
-1. `CONTEXT.md` — the *why*: locked decisions, 13 already-fixed traps (do NOT "clean them up"),
+1. `CONTEXT.md` — the *why*: locked decisions, 21 already-fixed traps (do NOT "clean them up"),
    UI constraints for elderly users, security audit results. Authoritative.
 2. `RUNBOOK.md` — the *how*: setup, test accounts, Azure/Langfuse config, troubleshooting.
 3. Before any plan task: the **Ràng buộc toàn cục** section in that plan's `README.md`
