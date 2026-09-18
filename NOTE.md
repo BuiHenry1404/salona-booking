@@ -4,78 +4,34 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-09-14 (nhánh `feat/natural-voice-guard`, Task 6)
+Cập nhật: 2026-09-18
 
 ## Đang ở đâu
 
-**Nhánh `feat/natural-voice-guard`** (mọc từ `henry/develop`, chưa merge) đã
-xong 6 task: node `guard` (3 phép kiểm tất định: `repeat`/`pronoun`/`clock`,
-`address`+`register` gộp vào `pronoun`, `language` bị bỏ — bẫy #21), node
-`rewrite` một lần, node `phrase` viết câu chốt lịch theo mạch với số liệu ép
-bởi guard, neo giờ thiếu buổi/ngày trong `parse_time`, và `booking` 7 tool trả
-lời câu kép shop+lịch. **721 test xanh** (`PYTHONPATH=. .venv/bin/python -m
-pytest -q`, 14 deselected vì cần Azure thật). Chạy thật hai kịch bản
-(`tu_nhien` mới + `dai`) qua Azure `gpt-5.4-mini`: cả 8 điểm kiểm của
-`tu_nhien` đều đúng; log tầng gác gần như im lặng (1 `guard_violation` →
-1 `guard_gave_up`, không log nào khác). Xem Checkpoint Task 6 cuối
-`CONTEXT.md` và mục "Kiểm tầng gác" ở `RUNBOOK.md`.
+**Không có nhánh nào đang dở.** Toàn bộ đợt việc 12–14/9 đã merge vào
+`henry/develop` và đã push: định tuyến lại agent, hội thoại tự nhiên, ba bug
+nghiệp vụ (dời/hủy/viết số), bỏ câu thoại sẵn khỏi prompt, tầng digest trong
+phiên, ba lỗi từ chat thật, và tầng gác `guard`/`rewrite`/`phrase` + neo thời
+gian + `booking` 7 tool.
 
-## Việc tiếp theo (nhánh `feat/natural-voice-guard`)
-
-Cả 6 task của spec `2026-09-14-natural-voice-guard-design.md` đã xong, đã đo
-thật, đã ghi tài liệu (mục này). **Chưa merge vào `henry/develop`** — quyết
-định merge thuộc chủ dự án, không tự merge. Còn để ngỏ (quan sát, không phải
-lỗi cần sửa ngay):
-
-- Một lượt trong 26 lượt đo được bị `guard_violation{repeat}` rồi
-  `guard_gave_up` — mẫu quá nhỏ (1/26) để quyết có nên hạ `REPEAT_RATIO` hay
-  không; cần thêm dữ liệu chạy thật trước khi đổi ngưỡng.
-- Rubric `dai` nhiễu giữa các lần chấm cùng baseline (2.2 vs 2.4 đo được ở
-  cùng ngày) — đừng dùng một lần chấm để kết luận cải thiện/suy giảm, xem bẫy
-  #16 và #18.
-- Probe supervisor 18 mẫu (bộ mới, thêm 4 câu kép shop+booking từ Task 5) nên
-  chạy lại một lần nữa trước khi merge, để có mốc ứng với đúng bộ câu hiện tại
-  (đợt đo Task 6 không chạy lại vì không đổi `SUPERVISOR_PROMPT`).
-
-## Đang ở đâu (cũ)
-
-**Cả 4 plan gốc đã xong** — backend, agent/memory/streaming, Telegram bot,
-React frontend, đã merge vào `main`.
-
-> ⚠️ **Từ đó tới nay có thêm ba đợt việc, đã merge vào `henry/develop`
-> ngày 2026-09-14 nhưng `main` CHƯA nhận.** Trước khi làm bất cứ gì, đọc mục
-> **Checkpoint 2026-09-14** ở cuối [`CONTEXT.md`](CONTEXT.md) — nó ghi đủ đã
-> làm gì, còn dở gì, và ba bug tồn đọng kèm cách tái hiện.
-
-- **630 test backend + 252 test frontend xanh**, frontend build sạch. (Tăng từ
-  590 vì nhánh `feat/conversation-digest`, Task 1–6 — xem checkpoint cuối
-  `CONTEXT.md`.)
-- `scripts/live_e2e.py` — 31/31 pass trên server thật.
-- `scripts/chat_scenarios.py` — 8 kịch bản hội thoại đúng.
-- `scripts/llm_scenarios.py` — diễn lại kịch bản `LLM-xx`, dùng để bắt lỗi
-  giọng điệu mà pytest không thấy.
-- Chat chạy thật với Azure `gpt-5.4-mini`. Langfuse có trace và có chi phí.
+- **738 test backend + 252 test frontend xanh**, frontend build sạch.
+  (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.)
+- **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.
+  `main` chỉ nhận qua PR này.
+- Nhật ký từng đợt, kết quả đo và các quan sát còn để ngỏ: nửa sau
+  [`CONTEXT.md`](CONTEXT.md) ("Nhật ký các đợt việc").
 
 **Quy ước nhánh:** mỗi việc một nhánh riêng → merge vào `henry/develop` →
 `main` chỉ nhận bằng cách merge `henry/develop`. Không commit thẳng lên `main`.
 
-## Việc tiếp theo — đã chốt
+## Việc tiếp theo
 
-**Tầng digest xong** trên `feat/conversation-digest` (Task 1–6): `Digest`
-model, `DigestService.maybe_compact`, `context_window`, chạy nền sau mỗi lượt,
-đo thật kịch bản `dai` + rubric — xem checkpoint cuối `CONTEXT.md`. Nhánh này
-**chưa merge vào `henry/develop`** — quyết định merge thuộc chủ dự án.
-
-**Ba nhánh đã merge vào `henry/develop` và đã push** (2026-09-14). `main` chưa
-nhận — merge lên `main` khi nào bạn thấy sẵn sàng.
-
-**Ba bug nghiệp vụ** tìm được khi chạy hội thoại thật ngày 2026-09-13/14 (dời
-lịch thành đặt thêm, hủy hụt vì mất id, viết số bằng chữ) **đã sửa cùng ngày**
-trên `fix/reschedule-and-cancel`, rồi đợt hai `fix/cancel-confirm-and-prompts`
-(hủy qua bước xác nhận, rule 4 hết bắn nhầm khi hết lịch, note chỉ là dịch vụ);
-rồi `fix/rule4-english` (bỏ câu thoại sẵn cuối cùng trong prompt — rule 4 giờ
-là mô tả tiếng Anh viết hoa); cả ba đã merge vào `henry/develop`. Chi tiết ở
-Checkpoint trong `CONTEXT.md` (bẫy #19).
+1. **Merge PR #6** khi thấy sẵn sàng.
+2. Hai mục **P1** trong `REPO_AUDIT.md` (bên dưới) — cần xong trước khi mở cho
+   khách thật.
+3. Bốn quan sát đã đo nhưng **chưa quyết** (chi tiết ở mục "Việc còn dở" của
+   `CONTEXT.md`): đo token digest khi Langfuse sống; hai lần từ chối liên tiếp
+   ra câu gần y nhau; câu hỏi xác nhận bị tính là lặp; neo có thể ra giờ đã qua.
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
 cho khách thật:
