@@ -186,12 +186,6 @@ def sanitize_slots(
     """
     if raw is None:
         return None
-    if raw == ConversationSlots():
-        # RAW đã rỗng ngay từ đầu (hội thoại tán gẫu, model không đoán gì) —
-        # khác với trường hợp model CÓ đoán nhưng bị lọc sạch (vd id bịa):
-        # trường hợp sau vẫn phải trả object (rỗng) chứ không được thành None,
-        # vì các test dưới đây cần .field truy cập được sau khi lọc.
-        return None
 
     local_now = to_local(now)
 
@@ -242,7 +236,7 @@ def sanitize_slots(
         declined.append(item)
     declined = declined[-MAX_DECLINED:]
 
-    return ConversationSlots(
+    cleaned = ConversationSlots(
         intent=intent,
         service=service,
         day=day.isoformat() if day else None,
@@ -250,3 +244,8 @@ def sanitize_slots(
         target_appointment_id=appointment_id,
         declined=declined,
     )
+    # Rỗng hoàn toàn thì trả None: khối slots sẽ không được in ra, và lượt nén
+    # KHÔNG bị tính là hỏng — hội thoại tán gẫu thì rỗng mới là đúng.
+    if cleaned == ConversationSlots():
+        return None
+    return cleaned

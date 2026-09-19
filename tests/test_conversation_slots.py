@@ -4,6 +4,8 @@
 """
 from datetime import datetime, timezone
 
+import structlog
+
 from app.models.conversation import ConversationSlots
 from app.services.conversation_state import sanitize_slots
 
@@ -53,7 +55,9 @@ def test_an_unparseable_day_or_time_is_dropped():
 
 def test_an_appointment_id_the_customer_does_not_own_is_dropped():
     """Model từng bịa id (BUG-2). Đối chiếu DB, không tin chuỗi model gõ."""
-    assert _clean(target_appointment_id="bbbbbbbbbbbbbbbbbbbbbbbb").target_appointment_id is None
+    slots = _clean(intent="cancel", target_appointment_id="bbbbbbbbbbbbbbbbbbbbbbbb")
+    assert slots.target_appointment_id is None
+    assert slots.intent == "cancel"      # field khác không bị vạ lây
 
 
 def test_service_is_capped_and_flattened():
@@ -74,10 +78,15 @@ def test_everything_empty_becomes_none():
     assert sanitize_slots(None, now=NOW, valid_ids=IDS) is None
 
 
-def test_each_dropped_field_is_logged(caplog):
+def test_each_dropped_field_is_logged():
     """Không có log này thì slot sai âm thầm biến mất — đúng lối fail-soft đã
-    che ba lỗi nặng nhất của dự án."""
-    with caplog.at_level("INFO"):
+    che ba lỗi nặng nhất của dự án.
+
+    Dùng `structlog.testing.capture_logs()` chứ không phải `caplog`: app cấu
+    hình structlog với `WriteLoggerFactory` (ghi thẳng stdout, không qua
+    module `logging` chuẩn của Python), nên `caplog` không bắt được gì.
+    """
+    with structlog.testing.capture_logs() as logs:
         _clean(intent="booking", day="2026-01-01")
-    dropped = [r for r in caplog.records if r.message == "state_slot_dropped"]
-    assert {r.field for r in dropped} == {"intent", "day"}
+    dropped = [e for e in logs if e["event"] == "state_slot_dropped"]
+    assert {e["extra"]["field"] for e in dropped} == {"intent", "day"}
