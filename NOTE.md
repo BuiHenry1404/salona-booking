@@ -21,7 +21,7 @@ Trước đó, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develop
 bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
 tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 
-- **764 test backend xanh, 1 skip** (tự skip sau 3 giờ chiều giờ VN, bình
+- **765 test backend xanh, 1 skip** (tự skip sau 3 giờ chiều giờ VN, bình
   thường) **+ 252 test frontend xanh**, frontend build sạch.
   (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.)
 - **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.

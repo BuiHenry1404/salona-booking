@@ -39,7 +39,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
 | Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** | `propose_appointment` giữ chỗ, `cancel_appointment` giữ ý hủy; node `confirm` mới ghi/hủy khi khách "ừ". Giá trị lấy từ DB, không từ chuỗi model gõ lại |
 | Câu trả lời | **Mọi câu qua `guard` (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp** | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
-| Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` (summary + slots) là bản nén của tầng 2, không phải tầng 3; slots là bản nén dạng trường của tầng 2, không phải tầng 3 |
+| Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` = summary (văn xuôi) + slots (dạng trường), cả hai đều là bản nén của tầng 2, không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
 | Bot Telegram | **Không có AI**, 4 nút | Tất định, không tốn token, test không cần LLM |
 | Số worker | **Đúng 1** | Telegram chỉ cho một `getUpdates` mỗi token → mỗi lần deploy đều downtime |
