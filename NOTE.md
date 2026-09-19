@@ -39,7 +39,7 @@ tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 2. Hai mục **P1** trong `REPO_AUDIT.md` (bên dưới) — cần xong trước khi mở cho
    khách thật.
 3. Bốn quan sát đã đo nhưng **chưa quyết** (chi tiết ở mục "Việc còn dở" của
-   `CONTEXT.md`): đo token digest khi Langfuse sống; hai lần từ chối liên tiếp
+   `CONTEXT.md`): đo token `ConversationState` khi Langfuse sống; hai lần từ chối liên tiếp
    ra câu gần y nhau; câu hỏi xác nhận bị tính là lặp; neo có thể ra giờ đã qua.
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
