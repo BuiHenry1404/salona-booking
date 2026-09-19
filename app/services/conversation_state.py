@@ -3,8 +3,8 @@
 Spec: docs/superpowers/specs/2026-09-19-conversation-state-design.md.
 """
 import asyncio
-from datetime import datetime
-from typing import List, Optional, Sequence, Tuple
+from datetime import date, datetime, time as dtime
+from typing import List, Optional, Sequence, Set, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, field_validator
@@ -13,7 +13,8 @@ from app.agents.llm import build_chat_model
 from app.core.clock import now_utc, to_local
 from app.core.logging import get_logger
 from app.core.text import single_line
-from app.models.conversation import ChatMessage, ConversationState
+from app.models.appointment import NOTE_MAX
+from app.models.conversation import ChatMessage, ConversationSlots, ConversationState
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
 logger = get_logger(__name__)
@@ -159,3 +160,93 @@ class ConversationStateService:
             "user_id": user_id, "bullets": len(result.bullets), "compacted": len(older),
         })
         return True
+
+
+ALLOWED_INTENTS = {"book", "reschedule", "cancel"}
+MAX_DECLINED = 6
+
+
+def _drop(user_id: str, field: str, value) -> None:
+    logger.info("state_slot_dropped", extra={
+        "user_id": user_id, "field": field, "value": single_line(str(value), 40),
+    })
+
+
+def sanitize_slots(
+    raw: Optional[ConversationSlots],
+    *,
+    now: datetime,
+    valid_ids: Set[str],
+    user_id: str = "",
+) -> Optional[ConversationSlots]:
+    """Lọc slots do LLM sinh. Bỏ TỪNG field sai, không đánh trượt cả lượt nén.
+
+    Thuần: `now` (UTC) và `valid_ids` truyền vào, không tự gọi DB hay đồng hồ —
+    nhờ vậy test được mọi mốc thời gian mà không phải giả lập clock.
+    """
+    if raw is None:
+        return None
+    if raw == ConversationSlots():
+        # RAW đã rỗng ngay từ đầu (hội thoại tán gẫu, model không đoán gì) —
+        # khác với trường hợp model CÓ đoán nhưng bị lọc sạch (vd id bịa):
+        # trường hợp sau vẫn phải trả object (rỗng) chứ không được thành None,
+        # vì các test dưới đây cần .field truy cập được sau khi lọc.
+        return None
+
+    local_now = to_local(now)
+
+    intent = raw.intent if raw.intent in ALLOWED_INTENTS else None
+    if raw.intent and intent is None:
+        _drop(user_id, "intent", raw.intent)
+
+    service = single_line(raw.service, NOTE_MAX) or None
+    if raw.service and not service:
+        _drop(user_id, "service", raw.service)
+
+    day: Optional[date] = None
+    if raw.day:
+        try:
+            day = date.fromisoformat(raw.day)
+        except ValueError:
+            _drop(user_id, "day", raw.day)
+        else:
+            if day < local_now.date():
+                _drop(user_id, "day", raw.day)
+                day = None
+
+    clock: Optional[dtime] = None
+    if raw.time:
+        try:
+            clock = datetime.strptime(raw.time, "%H:%M").time()
+        except ValueError:
+            _drop(user_id, "time", raw.time)
+        else:
+            # Chỉ bỏ khi chắc chắn đã qua: cùng ngày hôm nay và giờ đã trôi.
+            # Không có ngày thì không suy ra được, giữ lại.
+            if day == local_now.date() and clock <= local_now.time():
+                _drop(user_id, "time", raw.time)
+                clock = None
+
+    appointment_id = raw.target_appointment_id
+    if appointment_id and appointment_id not in valid_ids:
+        _drop(user_id, "target_appointment_id", appointment_id)
+        appointment_id = None
+
+    declined: List[str] = []
+    for item in raw.declined or []:
+        try:
+            datetime.fromisoformat(item)
+        except (ValueError, TypeError):
+            _drop(user_id, "declined", item)
+            continue
+        declined.append(item)
+    declined = declined[-MAX_DECLINED:]
+
+    return ConversationSlots(
+        intent=intent,
+        service=service,
+        day=day.isoformat() if day else None,
+        time=clock.strftime("%H:%M") if clock else None,
+        target_appointment_id=appointment_id,
+        declined=declined,
+    )
