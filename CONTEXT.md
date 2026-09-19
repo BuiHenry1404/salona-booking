@@ -49,7 +49,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate |
 | Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn |
 
-## Xưng hô — chốt 2026-08-23
+## Xưng hô — chốt 2026-08-23, siết 2026-09-19
 
 **Lễ tân xưng "em", gọi khách "anh"/"chị".** Cách gọi suy bằng **code** từ
 `full_name` (`derive_address`), không hỏi model.
@@ -57,6 +57,13 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 **Không dùng "con", "cô", "chú", "bác" ở bất kỳ đâu khách nhìn thấy** — prompt,
 câu lỗi, câu hết phiên, toàn bộ chuỗi frontend. "con" chỉ đi với cô/chú/bác;
 ghép với anh/chị là sai tiếng Việt. Đổi một vế phải đổi cả hai.
+
+**Tên không cho biết giới tính thì phải nói đúng "anh chị" — cấm đoán** (siết
+2026-09-19). `derive_address` trả "anh chị" khi `full_name` không mang tiền tố;
+lúc đó gọi riêng "anh" hay "chị" là AI tự quyết giới tính khách. Trước đây
+`_pronouns` trả `(None, None)` cho ca này nên guard **không kiểm gì cả**, và
+chạy thật cho thấy cùng một khách bị gọi "Chị ơi" hai lượt đầu rồi "Anh chị ơi"
+từ lượt 3. Cụm "anh chị" nguyên vẹn và "chị chủ" (gọi chủ tiệm) vẫn hợp lệ.
 
 Hai hàng rào: `tests/test_prompts.py` (sót "cô chú" hay "giúp con" trong prompt
 là test đỏ) và phép kiểm `pronoun` của `guard` (câu trả lời thật sai xưng hô thì

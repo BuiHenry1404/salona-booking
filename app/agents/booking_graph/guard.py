@@ -116,13 +116,22 @@ def customer_asked_to_repeat(text: str) -> bool:
 
 
 def _pronouns(address: str) -> tuple:
-    """"anh Tám" → (đúng "anh", sai "chị"); "chị Lan" → ngược lại; "anh chị" → không kiểm."""
+    """"anh Tám" → (đúng "anh", sai {"chị"}); "chị Lan" → ngược lại.
+
+    "anh chị" → (None, {"anh", "chị"}): KHÔNG phải "không kiểm gì". Cách gọi đó
+    nghĩa là tên khách không cho biết giới tính, nên gọi riêng "anh" hay "chị"
+    là AI TỰ ĐOÁN giới tính khách — đúng thứ `derive_address` cố tình không làm.
+    Đổi 2026-09-19 sau khi chạy thật: cùng một khách bị gọi "Chị ơi" hai lượt
+    đầu rồi "Anh chị ơi" từ lượt 3.
+    """
     head = (address or "").split()[0].lower() if address else ""
-    if head == "anh" and address.strip().lower() != "anh chị":
-        return "anh", "chị"
+    if (address or "").strip().lower() == "anh chị":
+        return None, frozenset({"anh", "chị"})
+    if head == "anh":
+        return "anh", frozenset({"chị"})
     if head == "chị":
-        return "chị", "anh"
-    return None, None
+        return "chị", frozenset({"anh"})
+    return None, frozenset()
 
 
 def _leading_content_tokens(sentence: str) -> List[str]:
@@ -149,12 +158,17 @@ def check_pronoun(draft: str, address: str, name: str) -> bool:
             continue
         if tokens[0] in _FORBIDDEN_REGISTER:
             return True
-        if wrong and tokens[0].lower() == wrong and not (len(tokens) > 1 and tokens[1].lower() == "chủ"):
+        first = tokens[0].lower()
+        nxt = tokens[1].lower() if len(tokens) > 1 else ""
+        if first in wrong and nxt != "chủ":
+            # "anh chị" nguyên cụm CHÍNH LÀ cách gọi đã chốt, không phải đoán giới.
+            if first == "anh" and nxt == "chị":
+                continue
             return True
     if not wrong:
         return False
     # Ngay trước tên khách.
-    if name and re.search(rf"\b{wrong}\s+{re.escape(name)}\b", draft, re.I):
+    if name and any(re.search(rf"\b{w}\s+{re.escape(name)}\b", draft, re.I) for w in wrong):
         return True
     return False
 

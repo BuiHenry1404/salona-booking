@@ -89,15 +89,35 @@ class TestPronoun:
     def test_female_customer_called_anh_is_a_violation(self):
         assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", "chị Lan", "Lan") is True
 
-    def test_ambiguous_address_never_flags(self):
-        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is False
+    def test_guessing_a_gender_the_name_does_not_give_is_a_violation(self):
+        """Đổi 2026-09-19, lật quyết định cũ "không rõ giới thì không bao giờ cờ".
+
+        `derive_address` trả "anh chị" đúng khi tên KHÔNG cho biết giới tính.
+        Gọi "chị" lúc đó là AI tự đoán giới tính khách — thứ code cố tình không
+        làm. Chạy thật (LLM-32) còn cho thấy hệ quả thứ hai: hai lượt đầu gọi
+        "Chị ơi", từ lượt 3 đổi sang "Anh chị ơi" — cùng một khách, hai cách gọi
+        trong một cuộc, đúng thứ dòng "Gọi khách là:" sinh ra để chốt."""
+        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is True
+        assert check_pronoun("Anh muốn đặt giờ nào ạ?", "anh chị", "") is True
+
+    def test_the_ambiguous_address_itself_passes(self):
+        """"Anh chị" là chính cách gọi được chốt — không được tự cờ mình."""
+        assert check_pronoun("Anh chị muốn đặt giờ nào ạ?", "anh chị", "") is False
+        assert check_pronoun("Dạ anh chị ơi, mai 9 giờ sáng ạ.", "anh chị", "") is False
+
+    def test_talking_about_the_owner_still_passes_when_gender_is_unknown(self):
+        """"Chị chủ" là gọi CHỦ TIỆM, không phải gọi khách — vế miễn trừ sẵn có
+        phải còn hiệu lực ở nhánh mới này."""
+        assert check_pronoun("Chị chủ sẽ báo giá ạ.", "anh chị", "") is False
 
     @pytest.mark.parametrize("draft", ["Cô muốn đặt giờ nào ạ?", "Để con xem lịch giúp cô.", "Chú Ba đặt 3 giờ nhé."])
     def test_forbidden_register_is_flagged(self, draft):
         assert check_pronoun(draft, "anh chị", "") is True
 
-    def test_anh_chi_em_register_passes(self):
-        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is False
+    def test_naming_a_gender_beside_the_name_is_a_violation_when_unknown(self):
+        """Trước 2026-09-19 câu này được cho qua. Nhưng cách gọi đã chốt là
+        "anh chị", nên "anh Tám" là AI tự quyết khách là nam."""
+        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is True
 
     def test_booking_for_the_customers_child_is_not_a_violation(self):
         """"cho con chị" = đặt hộ con của khách, không phải xưng hô sai."""
