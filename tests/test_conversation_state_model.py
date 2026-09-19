@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from app.models.conversation import Conversation, ConversationState
+from app.models.conversation import Conversation, ConversationSlots, ConversationState
 from app.services.conversation_state import (BULLET_MAX_CHARS, MAX_BULLETS,
                                  StateOutput)
 
@@ -38,3 +38,31 @@ class TestStateOutputCoerces:
     def test_leading_dash_is_stripped(self):
         """Model hay tự thêm '- ' dù đã bảo trả danh sách."""
         assert StateOutput(bullets=["- Khách muốn làm nail."]).bullets == ["Khách muốn làm nail."]
+
+
+def test_slots_defaults_to_none_on_an_old_document():
+    """Document lưu trước khi có slots vẫn đọc lên được — không migrate."""
+    state = ConversationState(
+        day=date(2026, 9, 19),
+        covers_until=datetime(2026, 9, 19, 3, 0, tzinfo=timezone.utc),
+        summary=["Khách muốn làm tóc."],
+    )
+    assert state.slots is None
+
+
+def test_slots_never_raises_on_rubbish_from_the_model():
+    """Model là THÙNG CHỨA, không phải hàng rào. Ném lỗi ở đây là biến một
+    field sai thành một lượt nén hỏng, và đốt một nấc cầu chì."""
+    slots = ConversationSlots(
+        intent="booking",              # không thuộc ba giá trị hợp lệ
+        day="thứ Năm tuần sau",        # không phải ISO
+        time="25:99",
+        declined=["không phải giờ"],
+    )
+    assert slots.intent == "booking"
+    assert slots.day == "thứ Năm tuần sau"
+
+
+def test_slots_all_fields_optional():
+    slots = ConversationSlots()
+    assert slots.intent is None and slots.declined == []

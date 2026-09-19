@@ -29,6 +29,26 @@ class DaySummary(BaseModel):
     preview: str
 
 
+class ConversationSlots(BaseModel):
+    """Dữ kiện dạng trường của cuộc trò chuyện hôm nay, do lượt nén (LLM) sinh.
+
+    Đây là THÙNG CHỨA THÔ, cố ý không validate gì: nó là đích của
+    `with_structured_output`, nên một field sai kiểu sẽ làm Pydantic ném lỗi
+    và đánh trượt cả lượt nén — mất luôn phần summary vốn đúng, lại còn đốt
+    một nấc cầu chì. Hàng rào nằm ở `sanitize_slots()`, chạy sau khi parse.
+
+    Không có đường code nào đặt/dời/hủy lịch dựa trên các field này. Chúng chỉ
+    được in thành chữ trong prompt, và luôn THUA khối bối cảnh.
+    """
+
+    intent: Optional[str] = None                 # "book" | "reschedule" | "cancel"
+    service: Optional[str] = None                # text tự do, ≤ NOTE_MAX
+    day: Optional[str] = None                    # "YYYY-MM-DD"
+    time: Optional[str] = None                   # "HH:MM"
+    target_appointment_id: Optional[str] = None
+    declined: List[str] = Field(default_factory=list)   # ISO local, giờ khách đã lắc
+
+
 class ConversationState(BaseModel):
     """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
     xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
@@ -40,6 +60,7 @@ class ConversationState(BaseModel):
     summary: List[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=now_utc)
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
+    slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate
 
     @field_validator("day", mode="before")
     @classmethod
