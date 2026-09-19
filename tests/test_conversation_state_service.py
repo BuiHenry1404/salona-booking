@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.models.conversation import ConversationSlots
 from app.services.conversation import ConversationService
 from app.services.conversation_state import (COMPACT_THRESHOLD_TOKENS, KEEP_RECENT_TURNS,
                                  MAX_FAILURES, StateOutput, ConversationStateService,
@@ -41,7 +42,7 @@ class FakeModel:
 @pytest.fixture
 def patch_model(monkeypatch):
     def _install(reply=None, fail=False):
-        structured = FakeStructured(reply or StateOutput(bullets=["Khách muốn làm tóc."]), fail)
+        structured = FakeStructured(reply or StateOutput(summary=["Khách muốn làm tóc."]), fail)
         model = FakeModel(structured)
 
         def _build(**kwargs):
@@ -190,7 +191,7 @@ async def test_empty_state_does_not_advance_covers_until(test_db, patch_model):
     """Model trả về 0 bullet hợp lệ → coi như hỏng: covers_until KHÔNG dời,
     state cũ (nếu có) giữ nguyên, failures tăng, và context_window vẫn trả về
     TOÀN BỘ tin hôm nay nguyên văn (không mất gì)."""
-    patch_model(reply=StateOutput(bullets=["", "-", "  "]))
+    patch_model(reply=StateOutput(summary=["", "-", "  "]))
     all_msgs = await _seed(test_db, 12)
 
     assert await ConversationStateService(test_db).maybe_compact("u1") is False
@@ -217,7 +218,7 @@ async def test_empty_state_keeps_the_old_state_and_bumps_the_fuse(test_db, patch
     conv = ConversationService(test_db)
     before = await conv.get_state("u1")
 
-    patch_model(reply=StateOutput(bullets=["", "-", "  "]))
+    patch_model(reply=StateOutput(summary=["", "-", "  "]))
     await _seed(test_db, 12)
     assert await ConversationStateService(test_db).maybe_compact("u1") is False
 
@@ -234,3 +235,57 @@ async def test_never_raises(test_db, monkeypatch):
     monkeypatch.setattr(ConversationService, "get_state", boom)
     await _seed(test_db, 12)
     assert await ConversationStateService(test_db).maybe_compact("u1") is False
+
+
+async def test_compaction_stores_sanitized_slots(test_db, patch_model):
+    patch_model(reply=StateOutput(
+        summary=["Khách muốn làm móng bột."],
+        slots=ConversationSlots(intent="book", service="làm móng bột",
+                                day="2999-01-01", time="15:00"),
+    ))
+    await _seed(test_db, turns=12)
+
+    assert await ConversationStateService(test_db).maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.intent == "book"
+    assert state.slots.service == "làm móng bột"
+    assert state.slots.day == "2999-01-01"
+
+
+async def test_a_hallucinated_appointment_id_does_not_reach_mongo(test_db, patch_model):
+    """Khách không có lịch nào → mọi id model gõ ra đều là bịa."""
+    patch_model(reply=StateOutput(
+        summary=["Khách hỏi dời lịch."],
+        slots=ConversationSlots(intent="reschedule",
+                                target_appointment_id="aaaaaaaaaaaaaaaaaaaaaaaa"),
+    ))
+    await _seed(test_db, turns=12)
+
+    await ConversationStateService(test_db).maybe_compact("u1")
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.target_appointment_id is None
+    assert state.slots.intent == "reschedule"      # field khác không bị vạ lây
+
+
+async def test_empty_slots_are_not_a_failure(test_db, patch_model):
+    """Tán gẫu thì không có slot nào — không được đốt cầu chì vì chuyện đó."""
+    patch_model(reply=StateOutput(summary=["Khách chào hỏi."], slots=None))
+    await _seed(test_db, turns=12)
+
+    assert await ConversationStateService(test_db).maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots is None
+    assert state.failures == 0
+
+
+async def test_the_prompt_asks_for_slots(test_db, patch_model):
+    model = patch_model()
+    await _seed(test_db, turns=12)
+    await ConversationStateService(test_db).maybe_compact("u1")
+
+    prompt = model.structured.prompts[0]
+    assert "slots" in prompt.lower()
+    assert "YYYY-MM-DD" in prompt

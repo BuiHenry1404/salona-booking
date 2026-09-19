@@ -24,20 +24,20 @@ class TestStateOutputCoerces:
     nhất để vứt dữ liệu tốt (bài học ParsedTime)."""
 
     def test_too_many_lines_are_cut_to_max(self):
-        out = StateOutput(bullets=[f"dòng {i}" for i in range(20)])
-        assert len(out.bullets) == MAX_BULLETS
+        out = StateOutput(summary=[f"dòng {i}" for i in range(20)])
+        assert len(out.summary) == MAX_BULLETS
 
     def test_long_lines_are_flattened_and_cut(self):
-        out = StateOutput(bullets=["a\nb " + "x" * 500])
-        assert "\n" not in out.bullets[0]
-        assert len(out.bullets[0]) <= BULLET_MAX_CHARS
+        out = StateOutput(summary=["a\nb " + "x" * 500])
+        assert "\n" not in out.summary[0]
+        assert len(out.summary[0]) <= BULLET_MAX_CHARS
 
     def test_empty_and_whitespace_lines_are_dropped(self):
-        assert StateOutput(bullets=["", "  ", "còn một"]).bullets == ["còn một"]
+        assert StateOutput(summary=["", "  ", "còn một"]).summary == ["còn một"]
 
     def test_leading_dash_is_stripped(self):
         """Model hay tự thêm '- ' dù đã bảo trả danh sách."""
-        assert StateOutput(bullets=["- Khách muốn làm nail."]).bullets == ["Khách muốn làm nail."]
+        assert StateOutput(summary=["- Khách muốn làm nail."]).summary == ["Khách muốn làm nail."]
 
 
 def test_slots_defaults_to_none_on_an_old_document():
