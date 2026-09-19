@@ -3,6 +3,7 @@ from typing import Awaitable, Callable, List
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.context import render_slots
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -14,7 +15,7 @@ FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho
 
 # Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
 # bối cảnh, không phải chỉ dẫn.
-DIGEST_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
 
 
 def make_subagent_node(
@@ -42,16 +43,22 @@ def make_subagent_node(
         #
         # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
         history, question = state["messages"][:-1], state["messages"][-1:]
-        # Digest đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn khối
-        # bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống lâu.
-        bullets = state.get("digest") or []
-        digest_messages = (
-            [HumanMessage(content=DIGEST_HEADER + "\n" + "\n".join(f"- {b}" for b in bullets))]
-            if bullets else []
-        )
+        # Khối trạng thái đứng NGAY SAU system: đổi vài lượt một lần, ổn định
+        # hơn khối bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống
+        # lâu. Summary và slots đi CHUNG một message — tách đôi là thêm một
+        # ranh giới nữa cho thứ tự bẫy #9 có thể trượt.
+        parts = []
+        summary = state.get("summary") or []
+        if summary:
+            parts.append(STATE_HEADER + "\n" + "\n".join(f"- {s}" for s in summary))
+        rendered = render_slots(state.get("slots"))
+        if rendered:
+            parts.append(rendered)
+        state_messages = [HumanMessage(content="\n\n".join(parts))] if parts else []
+
         messages = [
             SystemMessage(content=prompt),
-            *digest_messages,
+            *state_messages,
             *history,
             HumanMessage(content=state.get("context_block", "")),
             *question,

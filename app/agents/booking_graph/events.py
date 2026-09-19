@@ -10,7 +10,7 @@ from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
 from app.models.user import User
 from app.services.conversation import ConversationService
-from app.services.digest import DigestService
+from app.services.conversation_state import ConversationStateService
 
 logger = get_logger(__name__)
 
@@ -22,7 +22,7 @@ _PENDING_COMPACTIONS: set = set()
 
 def schedule_compaction(db: AsyncIOMotorDatabase, user_id: str) -> None:
     """Nén nền, không await: khách đã nhận complete. maybe_compact tự nuốt lỗi."""
-    task = asyncio.create_task(DigestService(db).maybe_compact(user_id))
+    task = asyncio.create_task(ConversationStateService(db).maybe_compact(user_id))
     _PENDING_COMPACTIONS.add(task)
     task.add_done_callback(_PENDING_COMPACTIONS.discard)
 
@@ -82,7 +82,8 @@ async def run_turn(
             "messages": [*history, HumanMessage(content=question)],
             "user_id": user_id,
             "context_block": context["context_block"],
-            "digest": context.get("digest", []),
+            "summary": context.get("summary", []),
+            "slots": context.get("slots"),
             "pending_confirmation": context["pending_confirmation"],
             "previous_replies": [m.content for m in context["history"]
                                  if m.role == "assistant" and m.source == "llm"],
@@ -120,7 +121,7 @@ async def run_turn(
             try:
                 schedule_compaction(db, user_id)
             except Exception as exc:
-                logger.warning("digest_schedule_failed", extra={
+                logger.warning("state_schedule_failed", extra={
                     "user_id": user_id, "error": str(exc), "error_type": type(exc).__name__,
                 })
 

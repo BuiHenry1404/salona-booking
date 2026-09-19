@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from app.core.clock import now_utc, to_local
-from app.models.conversation import Digest
+from app.models.conversation import ConversationState
 from app.services.conversation import ConversationService
 
 pytestmark = pytest.mark.asyncio
@@ -214,39 +214,39 @@ async def test_a_truncated_window_of_three_still_drops_the_orphan(test_db):
     assert [m.role for m in history] == ["user", "assistant"]
 
 
-def _digest(covers_until, bullets=("Khách muốn làm tóc.",), day=None, failures=0):
-    return Digest(day=day or to_local(now_utc()).date(), covers_until=covers_until,
-                  bullets=list(bullets), failures=failures)
+def _state(covers_until, summary=("Khách muốn làm tóc.",), day=None, failures=0):
+    return ConversationState(day=day or to_local(now_utc()).date(), covers_until=covers_until,
+                  summary=list(summary), failures=failures)
 
 
-class TestDigestStorage:
+class TestStateStorage:
     async def test_round_trip_for_today(self, test_db):
         svc = ConversationService(test_db)
         await svc.append("u1", "user", "x")
-        await svc.set_digest("u1", _digest(now_utc()))
-        got = await svc.get_digest("u1")
-        assert got.bullets == ["Khách muốn làm tóc."]
+        await svc.set_state("u1", _state(now_utc()))
+        got = await svc.get_state("u1")
+        assert got.summary == ["Khách muốn làm tóc."]
 
-    async def test_yesterdays_digest_is_invisible(self, test_db):
+    async def test_yesterdays_state_is_invisible(self, test_db):
         svc = ConversationService(test_db)
-        await svc.set_digest("u1", _digest(now_utc(), day=date(2000, 1, 1)))
-        assert await svc.get_digest("u1") is None
+        await svc.set_state("u1", _state(now_utc(), day=date(2000, 1, 1)))
+        assert await svc.get_state("u1") is None
 
-    async def test_no_digest_is_none(self, test_db):
-        assert await ConversationService(test_db).get_digest("u1") is None
+    async def test_no_state_is_none(self, test_db):
+        assert await ConversationService(test_db).get_state("u1") is None
 
     async def test_bump_failures_increments(self, test_db):
         svc = ConversationService(test_db)
-        await svc.set_digest("u1", _digest(now_utc()))
-        await svc.bump_digest_failures("u1")
-        await svc.bump_digest_failures("u1")
-        assert (await svc.get_digest("u1")).failures == 2
+        await svc.set_state("u1", _state(now_utc()))
+        await svc.bump_state_failures("u1")
+        await svc.bump_state_failures("u1")
+        assert (await svc.get_state("u1")).failures == 2
 
-    async def test_bump_failures_without_digest_creates_an_empty_one(self, test_db):
+    async def test_bump_failures_without_state_creates_an_empty_one(self, test_db):
         svc = ConversationService(test_db)
-        await svc.bump_digest_failures("u1")
-        got = await svc.get_digest("u1")
-        assert got.failures == 1 and got.bullets == []
+        await svc.bump_state_failures("u1")
+        got = await svc.get_state("u1")
+        assert got.failures == 1 and got.summary == []
         assert got.covers_until == datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -263,29 +263,29 @@ class TestContextWindow:
             await asyncio.sleep(0.002)
         return await svc._all_messages("u1")
 
-    async def test_without_digest_returns_everything_like_history(self, test_db):
+    async def test_without_state_returns_everything_like_history(self, test_db):
         svc = ConversationService(test_db)
         await self._seed(svc, 3)
-        bullets, msgs = await svc.context_window("u1")
-        assert bullets == []
+        summary, slots, msgs = await svc.context_window("u1")
+        assert summary == []
         assert [m.content for m in msgs] == [m.content for m in await svc.history("u1")]
 
-    async def test_messages_covered_by_the_digest_are_dropped(self, test_db):
+    async def test_messages_covered_by_the_state_are_dropped(self, test_db):
         svc = ConversationService(test_db)
         all_msgs = await self._seed(svc, 5)
         cut = all_msgs[3].created_at            # nén tới hết tin thứ 4
-        await svc.set_digest("u1", _digest(cut, bullets=["Khách hỏi 0 và 1."]))
+        await svc.set_state("u1", _state(cut, summary=["Khách hỏi 0 và 1."]))
 
-        bullets, msgs = await svc.context_window("u1")
-        assert bullets == ["Khách hỏi 0 và 1."]
+        summary, slots, msgs = await svc.context_window("u1")
+        assert summary == ["Khách hỏi 0 và 1."]
         assert [m.content for m in msgs] == [m.content for m in all_msgs[4:]]
 
-    async def test_yesterdays_digest_does_not_cut_todays_messages(self, test_db):
+    async def test_yesterdays_state_does_not_cut_todays_messages(self, test_db):
         svc = ConversationService(test_db)
         all_msgs = await self._seed(svc, 2)
-        await svc.set_digest("u1", _digest(all_msgs[-1].created_at, day=date(2000, 1, 1)))
-        bullets, msgs = await svc.context_window("u1")
-        assert bullets == [] and len(msgs) == 4
+        await svc.set_state("u1", _state(all_msgs[-1].created_at, day=date(2000, 1, 1)))
+        summary, slots, msgs = await svc.context_window("u1")
+        assert summary == [] and len(msgs) == 4
 
     async def test_history_after_filters_strictly_greater(self, test_db):
         svc = ConversationService(test_db)

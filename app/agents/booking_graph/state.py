@@ -11,7 +11,8 @@ class GraphState(TypedDict, total=False):
     messages: Annotated[List[AnyMessage], add_messages]
     user_id: str
     context_block: str
-    digest: List[str]
+    summary: List[str]
+    slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
     pending_confirmation: Optional[Dict[str, Any]]
     route: str
     answer: str
