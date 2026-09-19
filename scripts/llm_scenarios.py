@@ -109,19 +109,35 @@ SCENARIOS = [
      ["mai... à không... ngày mốt... 4 giờ chiều... cắt tóc"]),
     ("LLM-31", "Lỗi gõ Telex",
      ["ngayf mai 3 giowf chieeuf lafm tosc nha con"]),
-    ("LLM-32", "Hội thoại dài, kiểm slots sau lượt nén",
-     ["Em chào chị, tiệm mình làm móng bột không ạ",
-      "Giá tầm bao nhiêu vậy chị",
-      "Tiệm mở cửa mấy giờ thế",
-      "Chủ nhật có làm không chị",
-      "Thế còn thứ hai thì sao",
-      "À mà chị ơi nhuộm tóc nữa có được không",
-      "Thôi em làm móng bột thôi vậy",
-      "Mai chị xem giúp em còn giờ nào trống với",
-      "9 giờ sáng em bận rồi",
-      "2 giờ chiều em cũng không đi được",
-      "Thế 4 giờ chiều được không chị",
-      "Mà nãy em nói làm gì ấy nhỉ, chị nhắc lại giúp em"]),
+    # ĐỪNG RÚT NGẮN KỊCH BẢN NÀY. Lượt nén chỉ chạy khi phần hội thoại nằm
+    # ngoài cửa sổ 8 tin gần nhất vượt COMPACT_THRESHOLD_TOKENS = 800 token
+    # (~2400 ký tự). Bản 12 lượt câu ngắn trước đây chỉ đạt ~300 token, nên
+    # lượt nén KHÔNG HỀ NỔ: conversations.state là undefined, không có log
+    # state_compacted, và slots chưa từng tồn tại — nhưng AI vẫn trả lời trôi
+    # chảy nên người chạy tưởng đã nghiệm thu xong. Một kịch bản không chạm
+    # được thứ nó nghiệm thu còn tệ hơn không có kịch bản. 17 lượt câu dài
+    # dưới đây là mạch đã được chạy thật và xác nhận làm state_compacted nổ
+    # với slots=True. Dọn cho gọn là vô hiệu hoá hàng rào.
+    ("LLM-32", "Hội thoại DÀI (phải đủ 800 token để lượt nén nổ), kiểm slots",
+     ["Em chào chị, cho em hỏi tiệm mình có làm móng bột không ạ, em nghe mấy chị cùng cơ quan giới thiệu tiệm mình làm móng đẹp lắm nên em muốn hỏi thử",
+      "Giá làm móng bột bên mình tầm bao nhiêu vậy chị, em muốn làm loại bền bền một chút để đi ăn cưới đứa em họ cuối tháng này",
+      "Tiệm mình mở cửa từ mấy giờ tới mấy giờ vậy chị, em đi làm về cũng hơi muộn nên muốn biết trước để còn sắp xếp công việc",
+      "Chủ nhật tiệm mình có làm không chị, tại chủ nhật em mới rảnh được cả ngày chứ ngày thường em bận lắm không đi đâu được",
+      "Thế còn thứ hai đầu tuần thì sao chị, em thấy nhiều tiệm nghỉ thứ hai nên em hỏi cho chắc kẻo mai em tới lại đóng cửa",
+      "À mà chị ơi bên mình có nhuộm tóc nữa không, em đang tính nhuộm màu nâu khói nhưng sợ tóc em khô quá nhuộm lên không đẹp",
+      "Thôi chắc em làm móng bột thôi vậy chị, tóc để hôm khác em tính tiếp, giờ em muốn chốt cái móng trước cho xong đã",
+      "Ngày mai chị xem giúp em còn khung giờ nào trống với, em muốn làm móng bột thôi chứ không làm thêm dịch vụ gì khác đâu ạ",
+      "9 giờ sáng mai em bận họp giao ban ở công ty rồi chị ơi, giờ đó chắc chắn em không qua được, chị xem giúp em giờ khác nha",
+      "2 giờ chiều em cũng không đi được đâu chị, chiều đó em phải đưa bé nhà em đi khám định kỳ ở bệnh viện, chắc phải muộn hơn",
+      "Thế 4 giờ chiều mai được không chị, giờ đó chắc em xong việc rồi, em đi từ chỗ làm qua tiệm cũng chỉ mất hai mươi phút",
+      "Mà làm móng bột như vậy mất khoảng bao lâu hả chị, em hỏi để còn nhờ chồng em đón bé giúp nếu làm lâu quá",
+      "Em hỏi thêm chút nữa là bên mình có nhận thanh toán chuyển khoản không chị, tại em ít khi mang tiền mặt theo người lắm",
+      "Tiệm mình nằm ở chỗ nào vậy chị, em mới chuyển về khu này ở nên đường sá còn chưa rành lắm, chị chỉ giúp em với",
+      "Nếu mai có việc đột xuất em không qua được thì em báo lại cho chị trước bao lâu là được ạ, em ngại làm phiền tiệm lắm",
+      # Hai câu chốt: chỉ trả lời đúng được nếu slots còn sống sau lượt nén —
+      # phần hội thoại nói ra dịch vụ và các giờ đã lắc đã bị nén đi rồi.
+      "Chị ơi mà nãy em nói em muốn làm dịch vụ gì ấy nhỉ, chị nhắc lại giúp em với, em nói nhiều quá giờ em quên mất rồi",
+      "Chị nhắc lại giúp em cái giờ em đã chốt với lại mấy giờ em bảo em không đi được luôn nha, em ghi vào lịch cho khỏi quên"]),
 ]
 
 
