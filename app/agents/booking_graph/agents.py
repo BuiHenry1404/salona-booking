@@ -3,6 +3,7 @@ from typing import Awaitable, Callable, List
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.context import render_slots
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -42,16 +43,22 @@ def make_subagent_node(
         #
         # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
         history, question = state["messages"][:-1], state["messages"][-1:]
-        # ConversationState đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn khối
-        # bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống lâu.
+        # Khối trạng thái đứng NGAY SAU system: đổi vài lượt một lần, ổn định
+        # hơn khối bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống
+        # lâu. Summary và slots đi CHUNG một message — tách đôi là thêm một
+        # ranh giới nữa cho thứ tự bẫy #9 có thể trượt.
+        parts = []
         summary = state.get("summary") or []
-        summary_messages = (
-            [HumanMessage(content=STATE_HEADER + "\n" + "\n".join(f"- {b}" for b in summary))]
-            if summary else []
-        )
+        if summary:
+            parts.append(STATE_HEADER + "\n" + "\n".join(f"- {s}" for s in summary))
+        rendered = render_slots(state.get("slots"))
+        if rendered:
+            parts.append(rendered)
+        state_messages = [HumanMessage(content="\n\n".join(parts))] if parts else []
+
         messages = [
             SystemMessage(content=prompt),
-            *summary_messages,
+            *state_messages,
             *history,
             HumanMessage(content=state.get("context_block", "")),
             *question,

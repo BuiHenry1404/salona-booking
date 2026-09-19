@@ -201,7 +201,7 @@ async def test_empty_state_does_not_advance_covers_until(test_db, patch_model):
     assert state.summary == []
     assert state.failures == 1
 
-    summary, msgs = await conv.context_window("u1")
+    summary, slots, msgs = await conv.context_window("u1")
     assert summary == []
     # token_budget lớn để tách riêng khỏi cắt-theo-ngân-sách: điều test này
     # canh là covers_until KHÔNG dời, không phải chuyện cắt bớt vì dài.

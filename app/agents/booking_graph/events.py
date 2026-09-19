@@ -83,6 +83,7 @@ async def run_turn(
             "user_id": user_id,
             "context_block": context["context_block"],
             "summary": context.get("summary", []),
+            "slots": context.get("slots"),
             "pending_confirmation": context["pending_confirmation"],
             "previous_replies": [m.content for m in context["history"]
                                  if m.role == "assistant" and m.source == "llm"],

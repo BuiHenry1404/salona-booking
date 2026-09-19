@@ -266,7 +266,7 @@ class TestContextWindow:
     async def test_without_state_returns_everything_like_history(self, test_db):
         svc = ConversationService(test_db)
         await self._seed(svc, 3)
-        summary, msgs = await svc.context_window("u1")
+        summary, slots, msgs = await svc.context_window("u1")
         assert summary == []
         assert [m.content for m in msgs] == [m.content for m in await svc.history("u1")]
 
@@ -276,7 +276,7 @@ class TestContextWindow:
         cut = all_msgs[3].created_at            # nén tới hết tin thứ 4
         await svc.set_state("u1", _state(cut, summary=["Khách hỏi 0 và 1."]))
 
-        summary, msgs = await svc.context_window("u1")
+        summary, slots, msgs = await svc.context_window("u1")
         assert summary == ["Khách hỏi 0 và 1."]
         assert [m.content for m in msgs] == [m.content for m in all_msgs[4:]]
 
@@ -284,7 +284,7 @@ class TestContextWindow:
         svc = ConversationService(test_db)
         all_msgs = await self._seed(svc, 2)
         await svc.set_state("u1", _state(all_msgs[-1].created_at, day=date(2000, 1, 1)))
-        summary, msgs = await svc.context_window("u1")
+        summary, slots, msgs = await svc.context_window("u1")
         assert summary == [] and len(msgs) == 4
 
     async def test_history_after_filters_strictly_greater(self, test_db):

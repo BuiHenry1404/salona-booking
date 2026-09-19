@@ -237,8 +237,12 @@ class ConversationService:
             {"user_id": user_id}, {"$inc": {"state.failures": 1}}
         )
 
-    async def context_window(self, user_id: str) -> tuple[List[str], List[ChatMessage]]:
-        """Thứ LLM đọc: (dữ kiện đã nén, tin nguyên văn sau mốc nén)."""
+    async def context_window(self, user_id: str):
+        """Thứ LLM đọc: (dữ kiện đã nén, slots, tin nguyên văn sau mốc nén)."""
         state = await self.get_state(user_id)
         after = state.covers_until if state else None
-        return (state.summary if state else []), await self.history(user_id, after=after)
+        return (
+            (state.summary if state else []),
+            (state.slots if state else None),
+            await self.history(user_id, after=after),
+        )

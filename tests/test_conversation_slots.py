@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import structlog
 
+from app.agents.booking_graph.context import render_slots
 from app.models.conversation import ConversationSlots
 from app.services.conversation_state import sanitize_slots
 
@@ -97,3 +98,36 @@ def test_each_dropped_field_is_logged():
         _clean(intent="booking", day="2026-01-01")
     dropped = [e for e in logs if e["event"] == "state_slot_dropped"]
     assert {e["extra"]["field"] for e in dropped} == {"intent", "day"}
+
+
+def test_render_omits_fields_that_are_none():
+    out = render_slots(ConversationSlots(intent="book", service="làm móng bột"))
+    assert "Khách muốn: đặt lịch mới" in out
+    assert "Dịch vụ: làm móng bột" in out
+    assert "Ngày đang nhắm" not in out
+
+
+def test_render_speaks_vietnamese_not_iso():
+    out = render_slots(ConversationSlots(day="2026-09-20", time="15:00"))
+    assert "Chủ Nhật 20/9" in out
+    assert "3 giờ chiều" in out
+    assert "2026-09-20" not in out
+
+
+def test_render_lists_the_times_the_customer_turned_down():
+    out = render_slots(ConversationSlots(
+        declined=["2026-09-20T09:00:00+07:00", "2026-09-20T14:00:00+07:00"]))
+    assert "9 giờ sáng" in out and "2 giờ chiều" in out
+
+
+def test_render_is_empty_when_there_is_nothing():
+    assert render_slots(None) == ""
+    assert render_slots(ConversationSlots()) == ""
+
+
+def test_render_never_uses_a_forbidden_honorific():
+    """Xưng hô chốt cứng: không 'con', 'cô', 'chú', 'bác' ở bất cứ đâu."""
+    out = render_slots(ConversationSlots(intent="cancel", service="làm tóc",
+                                         day="2026-09-20", time="15:00"))
+    for word in (" con ", " cô ", " chú ", " bác "):
+        assert word not in f" {out} "

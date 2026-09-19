@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -58,6 +58,47 @@ def format_vi_datetime(dt) -> str:
     local = to_local(dt)
     return (f"{_WEEKDAYS[local.weekday()]} {local.day}/{local.month}, "
             f"{_clock_phrase(local.hour, local.minute)}")
+
+
+SLOTS_HEADER = "Trạng thái cuộc trò chuyện:"
+
+_INTENT_VI = {"book": "đặt lịch mới", "reschedule": "dời lịch", "cancel": "hủy lịch"}
+
+
+def _format_vi_day(iso: str) -> str:
+    """'2026-09-20' -> 'Chủ Nhật 20/9'. Không in năm: cùng một ngày mà chỗ này
+    có năm, chỗ kia không, là hai giọng khác nhau trong cùng một prompt."""
+    day = date.fromisoformat(iso)
+    return f"{_WEEKDAYS[day.weekday()]} {day.day}/{day.month}"
+
+
+def render_slots(slots) -> str:
+    """Khối trạng thái, dựng hoàn toàn bằng code. Rỗng thì trả chuỗi rỗng.
+
+    Slots do LLM sinh nên khối này luôn đứng TRƯỚC khối bối cảnh trong prompt,
+    tức là thua nó. Không có đường code nào hành động theo những dòng ở đây.
+    """
+    if slots is None:
+        return ""
+
+    lines = []
+    if slots.intent in _INTENT_VI:
+        lines.append(f"- Khách muốn: {_INTENT_VI[slots.intent]}")
+    if slots.service:
+        lines.append(f"- Dịch vụ: {slots.service}")
+    if slots.day:
+        lines.append(f"- Ngày đang nhắm: {_format_vi_day(slots.day)}")
+    if slots.time:
+        lines.append(f"- Giờ đang nhắm: {format_vi_hhmm(slots.time)}")
+    if slots.declined:
+        offered = ", ".join(
+            format_vi_datetime(datetime.fromisoformat(x)) for x in slots.declined
+        )
+        lines.append(f"- Đã chào mà khách không lấy: {offered}")
+
+    # `target_appointment_id` cố ý KHÔNG in ra: khối bối cảnh đã liệt kê mọi
+    # lịch sắp tới kèm id thật, in lại ở đây chỉ tạo cơ hội cho hai chỗ lệch nhau.
+    return f"{SLOTS_HEADER}\n" + "\n".join(lines) if lines else ""
 
 
 # Tiền tố xưng hô nào cũng phải CẮT khỏi tên (prompt cấm nói cô/chú/bác),
@@ -178,7 +219,7 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     conversations = ConversationService(db)
     user_id = str(user.id)
 
-    status, upcoming, (summary, history), pending = await asyncio.gather(
+    status, upcoming, (summary, slots, history), pending = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
         conversations.context_window(user_id),
@@ -190,5 +231,6 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         "context_block": build_context_block(user, status, upcoming, last_reply=last_reply),
         "history": history,
         "summary": summary,
+        "slots": slots,
         "pending_confirmation": pending,
     }

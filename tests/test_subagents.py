@@ -3,6 +3,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 
 from app.agents.booking_graph.agents import MAX_TOOL_ROUNDS, make_subagent_node
+from app.models.conversation import ConversationSlots
 
 
 @tool
@@ -171,6 +172,46 @@ async def test_state_sits_right_after_the_system_prompt(patch_model):
     assert sent[2].content == "hôm qua"                 # lịch sử đi sau state
     assert sent[-2].content.startswith("Bạn đang nói chuyện với")   # khối bối cảnh
     assert sent[-1].content == "còn không em"
+
+
+@pytest.mark.asyncio
+async def test_slots_ride_in_the_same_block_as_the_summary(patch_model):
+    """Thứ tự khoá cứng (CONTEXT.md bẫy #9): system → [summary + slots] →
+    lịch sử → bối cảnh → tin mới. Slots KHÔNG được rơi xuống sau lịch sử."""
+    from langchain_core.messages import SystemMessage
+
+    model = patch_model([AIMessage(content="Dạ.")])
+    node = make_subagent_node("prompt", [], tag="respond")
+    state = {
+        **a_state("còn không em"),
+        "summary": ["Khách muốn làm tóc."],
+        "slots": ConversationSlots(intent="book", service="làm móng bột"),
+    }
+    state["messages"] = [HumanMessage(content="hôm qua"),
+                         HumanMessage(content="còn không em")]
+
+    await node(state)
+
+    sent = model.calls[0]
+    assert isinstance(sent[0], SystemMessage)
+    assert "- Khách muốn làm tóc." in sent[1].content
+    assert "- Dịch vụ: làm móng bột" in sent[1].content     # CÙNG một message
+    assert sent[2].content == "hôm qua"                     # lịch sử vẫn đi sau
+    assert sent[-2].content.startswith("Bạn đang nói chuyện với")
+    assert sent[-1].content == "còn không em"
+
+
+@pytest.mark.asyncio
+async def test_slots_alone_still_make_a_block(patch_model):
+    """Không có summary mà có slots thì khối vẫn phải được gửi."""
+    model = patch_model([AIMessage(content="Dạ.")])
+    node = make_subagent_node("prompt", [], tag="respond")
+    state = {**a_state("còn không em"), "summary": [],
+             "slots": ConversationSlots(service="làm móng bột")}
+
+    await node(state)
+
+    assert "- Dịch vụ: làm móng bột" in model.calls[0][1].content
 
 
 @pytest.mark.asyncio
