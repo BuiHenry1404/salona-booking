@@ -118,26 +118,36 @@ SCENARIOS = [
     # được thứ nó nghiệm thu còn tệ hơn không có kịch bản. 17 lượt câu dài
     # dưới đây là mạch đã được chạy thật và xác nhận làm state_compacted nổ
     # với slots=True. Dọn cho gọn là vô hiệu hoá hàng rào.
-    ("LLM-32", "Hội thoại DÀI (phải đủ 800 token để lượt nén nổ), kiểm slots",
-     ["Em chào chị, cho em hỏi tiệm mình có làm móng bột không ạ, em nghe mấy chị cùng cơ quan giới thiệu tiệm mình làm móng đẹp lắm nên em muốn hỏi thử",
-      "Giá làm móng bột bên mình tầm bao nhiêu vậy chị, em muốn làm loại bền bền một chút để đi ăn cưới đứa em họ cuối tháng này",
-      "Tiệm mình mở cửa từ mấy giờ tới mấy giờ vậy chị, em đi làm về cũng hơi muộn nên muốn biết trước để còn sắp xếp công việc",
-      "Chủ nhật tiệm mình có làm không chị, tại chủ nhật em mới rảnh được cả ngày chứ ngày thường em bận lắm không đi đâu được",
-      "Thế còn thứ hai đầu tuần thì sao chị, em thấy nhiều tiệm nghỉ thứ hai nên em hỏi cho chắc kẻo mai em tới lại đóng cửa",
-      "À mà chị ơi bên mình có nhuộm tóc nữa không, em đang tính nhuộm màu nâu khói nhưng sợ tóc em khô quá nhuộm lên không đẹp",
-      "Thôi chắc em làm móng bột thôi vậy chị, tóc để hôm khác em tính tiếp, giờ em muốn chốt cái móng trước cho xong đã",
-      "Ngày mai chị xem giúp em còn khung giờ nào trống với, em muốn làm móng bột thôi chứ không làm thêm dịch vụ gì khác đâu ạ",
-      "9 giờ sáng mai em bận họp giao ban ở công ty rồi chị ơi, giờ đó chắc chắn em không qua được, chị xem giúp em giờ khác nha",
-      "2 giờ chiều em cũng không đi được đâu chị, chiều đó em phải đưa bé nhà em đi khám định kỳ ở bệnh viện, chắc phải muộn hơn",
-      "Thế 4 giờ chiều mai được không chị, giờ đó chắc em xong việc rồi, em đi từ chỗ làm qua tiệm cũng chỉ mất hai mươi phút",
-      "Mà làm móng bột như vậy mất khoảng bao lâu hả chị, em hỏi để còn nhờ chồng em đón bé giúp nếu làm lâu quá",
-      "Em hỏi thêm chút nữa là bên mình có nhận thanh toán chuyển khoản không chị, tại em ít khi mang tiền mặt theo người lắm",
-      "Tiệm mình nằm ở chỗ nào vậy chị, em mới chuyển về khu này ở nên đường sá còn chưa rành lắm, chị chỉ giúp em với",
-      "Nếu mai có việc đột xuất em không qua được thì em báo lại cho chị trước bao lâu là được ạ, em ngại làm phiền tiệm lắm",
+    # ĐỪNG RÚT NGẮN KỊCH BẢN NÀY. Lượt nén chỉ nổ khi phần ngoài cửa sổ 8 tin
+    # vượt COMPACT_THRESHOLD_TOKENS = 800 (~2400 ký tự, CHARS_PER_TOKEN = 3).
+    #
+    # 2026-09-19, lần hai: bản trước dựa vào việc AI nói DÀI mới đủ ngưỡng. Sửa
+    # xong lỗi lặp thì câu đáp ngắn lại, phần AI tụt còn 271 token và cả cuộc
+    # chỉ đạt 787/800 — lượt nén không nổ, kịch bản lại thành bảo đảm giả. Nói
+    # cách khác: hàng rào đang phụ thuộc vào chính cái bug nó phải canh.
+    #
+    # Nên giờ CÂU CỦA KHÁCH phải tự gánh đủ ngưỡng, không tính câu của AI. Giữ
+    # mỗi câu ≥ 200 ký tự. Rút ngắn là vô hiệu hoá hàng rào.
+    ("LLM-32", "Hội thoại DÀI (câu khách tự đủ 800 token để lượt nén nổ), kiểm slots",
+     ["Em chào chị, cho em hỏi tiệm mình có làm móng bột không ạ, em nghe mấy chị cùng cơ quan giới thiệu tiệm mình làm móng đẹp lắm nên em muốn hỏi thử xem có đúng không, chứ em cũng chưa đi tiệm nào ở khu này bao giờ cả",
+      "Giá làm móng bột bên mình tầm bao nhiêu vậy chị, em muốn làm loại bền bền một chút để đi ăn cưới đứa em họ cuối tháng này, mà em cũng chưa biết mấy loại móng khác nhau thế nào nên chị tư vấn giúp em với ạ",
+      "Tiệm mình mở cửa từ mấy giờ tới mấy giờ vậy chị, em đi làm về cũng hơi muộn nên muốn biết trước để còn sắp xếp công việc với lại xin nghỉ sớm nếu cần, chứ tan làm em mới rảnh được mà sợ tới nơi tiệm đóng rồi",
+      "Chủ nhật tiệm mình có làm không chị, tại chủ nhật em mới rảnh được cả ngày chứ ngày thường em bận lắm không đi đâu được, cuối tuần thì em mới thong thả mà đi làm móng cho thoải mái không phải vội vàng gì",
+      "Thế còn thứ hai đầu tuần thì sao chị, em thấy nhiều tiệm nghỉ thứ hai nên em hỏi cho chắc kẻo mai em tới lại đóng cửa thì phí công đi, mà từ nhà em qua chỗ tiệm mình cũng phải đi một quãng khá xa đấy ạ",
+      "À mà chị ơi bên mình có nhuộm tóc nữa không, em đang tính nhuộm màu nâu khói nhưng sợ tóc em khô quá nhuộm lên không đẹp, với lại em cũng mới duỗi tóc cách đây vài tháng nên không biết có nhuộm được luôn không",
+      "Thôi chắc em làm móng bột thôi vậy chị, tóc để hôm khác em tính tiếp, giờ em muốn chốt cái móng trước cho xong đã kẻo tới sát ngày cưới lại không đặt được chỗ nào, mấy hôm nữa chắc tiệm nào cũng đông khách",
+      "Ngày mai chị xem giúp em còn khung giờ nào trống với, em muốn làm móng bột thôi chứ không làm thêm dịch vụ gì khác đâu ạ, chị cứ xem giúp em các giờ còn trống rồi em chọn một giờ nào tiện nhất cho em",
+      "9 giờ sáng mai em bận họp giao ban ở công ty rồi chị ơi, giờ đó chắc chắn em không qua được, chị xem giúp em giờ khác nha, họp giao ban đầu tuần bên em thường kéo dài lắm chứ không nhanh như em nghĩ đâu",
+      "2 giờ chiều em cũng không đi được đâu chị, chiều đó em phải đưa bé nhà em đi khám định kỳ ở bệnh viện, chắc phải muộn hơn mới xong, khám ở đó lúc nào cũng phải chờ lâu nên em không dám hẹn sát giờ quá",
+      "Thế 4 giờ chiều mai được không chị, giờ đó chắc em xong việc rồi, em đi từ chỗ làm qua tiệm cũng chỉ mất hai mươi phút thôi nếu đường không tắc, mà chiều đó cũng không phải giờ cao điểm nên chắc là kịp",
+      "Mà làm móng bột như vậy mất khoảng bao lâu hả chị, em hỏi để còn nhờ chồng em đón bé giúp nếu làm lâu quá, chứ hai vợ chồng em cứ phải chia nhau ra mà lo cho bé nên việc gì cũng phải tính trước cho chắc",
+      "Em hỏi thêm chút nữa là bên mình có nhận thanh toán chuyển khoản không chị, tại em ít khi mang tiền mặt theo người lắm, dạo này em toàn quét mã trả tiền chứ ví thì để quên ở nhà suốt cả tuần luôn ấy ạ",
+      "Tiệm mình nằm ở chỗ nào vậy chị, em mới chuyển về khu này ở nên đường sá còn chưa rành lắm, chị chỉ giúp em với, em cứ phải dò bản đồ mãi mà nhiều khi vẫn đi nhầm đường rồi vòng lại mất cả nửa tiếng",
+      "Nếu mai có việc đột xuất em không qua được thì em báo lại cho chị trước bao lâu là được ạ, em ngại làm phiền tiệm lắm, chứ công việc bên em thỉnh thoảng cũng có việc gấp phát sinh mà không báo trước được",
       # Hai câu chốt: chỉ trả lời đúng được nếu slots còn sống sau lượt nén —
       # phần hội thoại nói ra dịch vụ và các giờ đã lắc đã bị nén đi rồi.
-      "Chị ơi mà nãy em nói em muốn làm dịch vụ gì ấy nhỉ, chị nhắc lại giúp em với, em nói nhiều quá giờ em quên mất rồi",
-      "Chị nhắc lại giúp em cái giờ em đã chốt với lại mấy giờ em bảo em không đi được luôn nha, em ghi vào lịch cho khỏi quên"]),
+      "Chị ơi mà nãy em nói em muốn làm dịch vụ gì ấy nhỉ, chị nhắc lại giúp em với, em nói nhiều quá giờ em quên mất rồi, chị cứ nói lại cho em yên tâm chứ em sợ lát nữa lại nhớ nhầm sang dịch vụ khác",
+      "Chị nhắc lại giúp em cái giờ em đã chốt với lại ĐỦ CẢ các giờ em bảo em không đi được luôn nha, em ghi hết vào lịch cho khỏi quên, chứ em hay nhớ nhầm giờ giấc lắm rồi tới nơi mới biết là sai"]),
 ]
 
 

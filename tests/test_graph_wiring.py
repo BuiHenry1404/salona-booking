@@ -66,3 +66,38 @@ def test_no_code_path_books_from_slots():
                 f"{module.__name__} có chuỗi '{needle}' — đọc slots hội thoại "
                 f"trong code, xem CONTEXT.md bẫy #22"
             )
+
+
+def test_the_live_slots_scenario_can_actually_reach_compaction():
+    """Kịch bản LLM-32 tồn tại để nghiệm thu tầng slots qua chạy thật. Nó chỉ
+    chạm tới slots khi lượt nén NỔ, mà lượt nén chỉ nổ khi phần ngoài cửa sổ 8
+    tin vượt COMPACT_THRESHOLD_TOKENS.
+
+    Hai lần liên tiếp kịch bản này tụt xuống dưới ngưỡng mà không ai biết:
+    - lần một: bản 12 lượt chỉ đạt ~300 token, `state` là undefined;
+    - lần hai: bản 17 lượt đủ ngưỡng NHỜ câu đáp của AI dài dòng — sửa xong lỗi
+      lặp thì câu ngắn lại, cả cuộc còn 787/800 và lượt nén lại không nổ.
+
+    Cả hai lần, kịch bản vẫn "chạy xanh" và vẫn bị đọc là đã nghiệm thu. Nên
+    hàng rào phải là: CÂU CỦA KHÁCH tự gánh đủ ngưỡng, không tính câu của AI —
+    độ dài câu AI là thứ ta sẽ còn sửa nữa.
+    """
+    import re
+
+    from app.services.conversation import CHARS_PER_TOKEN
+    from app.services.conversation_state import (COMPACT_THRESHOLD_TOKENS,
+                                                 KEEP_RECENT_TURNS)
+
+    src = open("scripts/llm_scenarios.py", encoding="utf-8").read()
+    block = src[src.index('("LLM-32"'):src.index("\n]\n", src.index('("LLM-32"'))]
+    lines = re.findall(r'"([^"]{80,})"', block)
+    assert lines, "không đọc được câu khách của LLM-32"
+
+    # 4 lượt cuối luôn nằm trong cửa sổ nguyên văn, không bị nén.
+    older = lines[:-KEEP_RECENT_TURNS]
+    tokens = sum(max(1, len(m) // CHARS_PER_TOKEN) for m in older)
+    assert tokens > COMPACT_THRESHOLD_TOKENS, (
+        f"LLM-32 chỉ còn {tokens} token ngoài cửa sổ, dưới ngưỡng "
+        f"{COMPACT_THRESHOLD_TOKENS} — lượt nén sẽ KHÔNG nổ và kịch bản sẽ "
+        f"chạy xanh mà không hề chạm tới slots."
+    )
