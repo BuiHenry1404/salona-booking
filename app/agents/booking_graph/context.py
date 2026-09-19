@@ -178,7 +178,7 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     conversations = ConversationService(db)
     user_id = str(user.id)
 
-    status, upcoming, (digest, history), pending = await asyncio.gather(
+    status, upcoming, (summary, history), pending = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
         conversations.context_window(user_id),
@@ -189,6 +189,6 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     return {
         "context_block": build_context_block(user, status, upcoming, last_reply=last_reply),
         "history": history,
-        "digest": digest,
+        "summary": summary,
         "pending_confirmation": pending,
     }

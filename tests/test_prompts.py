@@ -392,12 +392,12 @@ class TestNoRepeatCoversWording:
         assert "NEVER THE SAME SENTENCE TWICE" in BOOKING_PROMPT
 
 
-class TestNoRepeatKnowsAboutTheDigest:
-    def test_digest_facts_count_as_already_said(self):
+class TestNoRepeatKnowsAboutTheState:
+    def test_state_facts_count_as_already_said(self):
         for name, prompt in (("SHOP_PROMPT", SHOP_PROMPT),
                              ("BOOKING_PROMPT", BOOKING_PROMPT),
                              ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
-            assert "conversation digest count as already said" in prompt, name
+            assert "conversation state count as already said" in prompt, name
 
 
 class TestLiveChat20260914:

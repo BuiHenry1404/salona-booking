@@ -14,7 +14,7 @@ FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho
 
 # Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
 # bối cảnh, không phải chỉ dẫn.
-DIGEST_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
 
 
 def make_subagent_node(
@@ -42,16 +42,16 @@ def make_subagent_node(
         #
         # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
         history, question = state["messages"][:-1], state["messages"][-1:]
-        # Digest đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn khối
+        # ConversationState đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn khối
         # bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống lâu.
-        bullets = state.get("digest") or []
-        digest_messages = (
-            [HumanMessage(content=DIGEST_HEADER + "\n" + "\n".join(f"- {b}" for b in bullets))]
-            if bullets else []
+        summary = state.get("summary") or []
+        summary_messages = (
+            [HumanMessage(content=STATE_HEADER + "\n" + "\n".join(f"- {b}" for b in summary))]
+            if summary else []
         )
         messages = [
             SystemMessage(content=prompt),
-            *digest_messages,
+            *summary_messages,
             *history,
             HumanMessage(content=state.get("context_block", "")),
             *question,

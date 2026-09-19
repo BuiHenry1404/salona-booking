@@ -3,7 +3,7 @@ import asyncio
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.booking_graph.agents import DIGEST_HEADER
+from app.agents.booking_graph.agents import STATE_HEADER
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS
 from app.agents.booking_graph.prompts import PHRASE_KIND_SENTENCES, PHRASE_PROMPT
 from app.agents.booking_graph.state import GraphState
@@ -26,15 +26,15 @@ def make_phrase_node():
         system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
                                       address=fact.get("address") or "anh chị")
         history, question = state["messages"][:-1], state["messages"][-1:]
-        # Digest đứng NGAY SAU system, cùng vị trí với agents.py — không thì
+        # ConversationState đứng NGAY SAU system, cùng vị trí với agents.py — không thì
         # đúng lượt chốt lịch lại là lượt duy nhất "quên" cả mạch chuyện đã
         # tóm tắt.
-        bullets = state.get("digest") or []
-        digest_messages = (
-            [HumanMessage(content=DIGEST_HEADER + "\n" + "\n".join(f"- {b}" for b in bullets))]
-            if bullets else []
+        summary = state.get("summary") or []
+        summary_messages = (
+            [HumanMessage(content=STATE_HEADER + "\n" + "\n".join(f"- {b}" for b in summary))]
+            if summary else []
         )
-        messages = [SystemMessage(content=system), *digest_messages, *history,
+        messages = [SystemMessage(content=system), *summary_messages, *history,
                     HumanMessage(content=state.get("context_block", "")), *question]
         model = build_chat_model(tags=["respond"], temperature=0.3)
         try:

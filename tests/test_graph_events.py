@@ -108,12 +108,12 @@ async def test_load_context_passes_the_last_assistant_reply(test_db):
     assert "Em chỉ xem lịch của chị Lan thôi ạ." in context["context_block"]
 
 
-async def test_load_context_returns_the_digest_bullets(test_db):
+async def test_load_context_returns_the_state_summary(test_db):
     from datetime import datetime, timezone
 
     from app.agents.booking_graph.context import load_context
     from app.core.clock import now_utc, to_local
-    from app.models.conversation import Digest
+    from app.models.conversation import ConversationState
     from app.services.auth import AuthService
     from app.services.conversation import ConversationService
 
@@ -125,11 +125,11 @@ async def test_load_context_returns_the_digest_bullets(test_db):
     import asyncio
     await asyncio.sleep(0.002)  # created_at ở mức mili giây, tránh trùng với `cut`
     await convs.append(str(user.id), "user", "mới")
-    await convs.set_digest(str(user.id), Digest(
-        day=to_local(now_utc()).date(), covers_until=cut, bullets=["Khách chào."]))
+    await convs.set_state(str(user.id), ConversationState(
+        day=to_local(now_utc()).date(), covers_until=cut, summary=["Khách chào."]))
 
     context = await load_context(test_db, user, "x")
-    assert context["digest"] == ["Khách chào."]
+    assert context["summary"] == ["Khách chào."]
     assert [m.content for m in context["history"]] == ["mới"]
 
 
@@ -181,12 +181,12 @@ async def test_schedule_compaction_keeps_a_strong_reference_until_done(test_db, 
     import asyncio
 
     from app.agents.booking_graph import events
-    from app.services.digest import DigestService
+    from app.services.conversation_state import ConversationStateService
 
     async def fake_maybe_compact(self, user_id):
         return False
 
-    monkeypatch.setattr(DigestService, "maybe_compact", fake_maybe_compact)
+    monkeypatch.setattr(ConversationStateService, "maybe_compact", fake_maybe_compact)
 
     events.schedule_compaction(test_db, "u1")
 

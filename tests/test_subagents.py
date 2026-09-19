@@ -150,15 +150,15 @@ async def test_unknown_tool_name_does_not_crash(patch_model):
 
 
 @pytest.mark.asyncio
-async def test_digest_sits_right_after_the_system_prompt(patch_model):
-    """Thứ tự khoá cứng (CONTEXT.md bẫy #9): system → digest → lịch sử → bối
-    cảnh → câu khách. Digest đổi vài lượt một lần nên đứng trước phần đổi mỗi
+async def test_state_sits_right_after_the_system_prompt(patch_model):
+    """Thứ tự khoá cứng (CONTEXT.md bẫy #9): system → state → lịch sử → bối
+    cảnh → câu khách. ConversationState đổi vài lượt một lần nên đứng trước phần đổi mỗi
     lượt để tiền tố cache sống lâu hơn."""
     from langchain_core.messages import SystemMessage
 
     model = patch_model([AIMessage(content="Dạ.")])
     node = make_subagent_node("prompt", [], tag="respond")
-    state = {**a_state("còn không em"), "digest": ["Khách muốn làm tóc.", "Đã báo giờ mở cửa."]}
+    state = {**a_state("còn không em"), "summary": ["Khách muốn làm tóc.", "Đã báo giờ mở cửa."]}
     state["messages"] = [HumanMessage(content="hôm qua"), AIMessage(content="dạ"), HumanMessage(content="còn không em")]
 
     await node(state)
@@ -168,13 +168,13 @@ async def test_digest_sits_right_after_the_system_prompt(patch_model):
     assert isinstance(sent[1], HumanMessage)
     assert sent[1].content.startswith("Diễn biến phần trước của cuộc trò chuyện hôm nay:")
     assert "- Khách muốn làm tóc.\n- Đã báo giờ mở cửa." in sent[1].content
-    assert sent[2].content == "hôm qua"                 # lịch sử đi sau digest
+    assert sent[2].content == "hôm qua"                 # lịch sử đi sau state
     assert sent[-2].content.startswith("Bạn đang nói chuyện với")   # khối bối cảnh
     assert sent[-1].content == "còn không em"
 
 
 @pytest.mark.asyncio
-async def test_no_digest_keeps_the_old_order_exactly(patch_model):
+async def test_no_state_keeps_the_old_order_exactly(patch_model):
     from langchain_core.messages import SystemMessage
 
     model = patch_model([AIMessage(content="Dạ.")])

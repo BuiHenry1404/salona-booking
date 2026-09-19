@@ -55,15 +55,15 @@ class TestPhraseNode:
         out = await make_phrase_node()(a_state())
         assert out["draft"] == FALLBACK and out["phrase_fact"] == FACT
 
-    async def test_digest_is_sent_right_after_the_system_message(self, patch_model):
-        """F8: `phrase` phải mang digest như `agents.py` — không thì lịch sử bị
-        tóm tắt (digest thay chỗ) mất tích trong đúng lượt chốt lịch."""
+    async def test_state_is_sent_right_after_the_system_message(self, patch_model):
+        """F8: `phrase` phải mang state như `agents.py` — không thì lịch sử bị
+        tóm tắt (state thay chỗ) mất tích trong đúng lượt chốt lịch."""
         model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
-        out = await make_phrase_node()(a_state(digest=["Khách muốn cắt tóc."]))
+        out = await make_phrase_node()(a_state(summary=["Khách muốn cắt tóc."]))
         second = model.calls[0][1]
         assert "Khách muốn cắt tóc." in second.content
 
-    async def test_no_digest_leaves_the_message_order_unchanged(self, patch_model):
+    async def test_no_state_leaves_the_message_order_unchanged(self, patch_model):
         model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
         out = await make_phrase_node()(a_state())
         assert len(model.calls[0]) == 4  # system, context_block, history(1), question(1)
