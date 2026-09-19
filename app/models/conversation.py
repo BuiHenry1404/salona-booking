@@ -52,7 +52,8 @@ class ConversationSlots(BaseModel):
 class ConversationState(BaseModel):
     """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
     xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
-    document conversations. Xem spec 2026-09-14-conversation-digest-design.md.
+    document conversations. Xem spec
+    docs/superpowers/specs/2026-09-19-conversation-state-design.md.
     """
 
     day: date                        # ngày VN state thuộc về; khác hôm nay là bỏ

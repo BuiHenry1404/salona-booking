@@ -2,7 +2,7 @@
 import inspect
 from unittest.mock import MagicMock
 
-from app.agents.booking_graph import confirm, guard, tools
+from app.agents.booking_graph import confirm, guard, phrase, tools
 from app.agents.booking_graph.graph import build_graph
 from app.models.user import User
 
@@ -48,8 +48,9 @@ def test_no_code_path_books_from_slots():
     """Anh em với test_there_is_NO_tool_that_writes_an_appointment.
 
     Slots do LLM sinh. Chúng chỉ được in thành chữ trong prompt (render_slots).
-    Giây phút confirm/guard/tools đọc chúng là giá trị model gõ ra đi thẳng
-    vào DB — phá đúng chốt 'giá trị lấy từ DB, không từ chuỗi model gõ lại'.
+    Giây phút confirm/guard/phrase/tools đọc chúng là giá trị model gõ ra đi
+    thẳng vào DB — và phrase.py sinh CÂU XÁC NHẬN LỊCH với khách, nên số sai
+    lẻn vào đó là đi thẳng tới tai khách — phá đúng chốt 'giá trị lấy từ DB, không từ chuỗi model gõ lại'.
 
     Không cấm chữ "slots" trần trụi: tools.py có find_free_slots (khung giờ
     trống trong lịch), trùng chữ nhưng không trùng khái niệm với
@@ -58,7 +59,7 @@ def test_no_code_path_books_from_slots():
     """
     forbidden = ("ConversationSlots", "sanitize_slots", "render_slots",
                  'state["slots"]', 'state.get("slots")')
-    for module in (confirm, guard, tools):
+    for module in (confirm, guard, phrase, tools):
         source = inspect.getsource(module)
         for needle in forbidden:
             assert needle not in source, (

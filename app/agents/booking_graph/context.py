@@ -5,6 +5,7 @@ from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import now_utc, to_local
+from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
@@ -12,6 +13,8 @@ from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
 from app.services.shop import ShopService
+
+logger = get_logger(__name__)
 
 _WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
 
@@ -81,20 +84,28 @@ def render_slots(slots) -> str:
     if slots is None:
         return ""
 
-    lines = []
-    if slots.intent in _INTENT_VI:
-        lines.append(f"- Khách muốn: {_INTENT_VI[slots.intent]}")
-    if slots.service:
-        lines.append(f"- Dịch vụ: {slots.service}")
-    if slots.day:
-        lines.append(f"- Ngày đang nhắm: {_format_vi_day(slots.day)}")
-    if slots.time:
-        lines.append(f"- Giờ đang nhắm: {format_vi_hhmm(slots.time)}")
-    if slots.declined:
-        offered = ", ".join(
-            format_vi_datetime(datetime.fromisoformat(x)) for x in slots.declined
-        )
-        lines.append(f"- Đã chào mà khách không lấy: {offered}")
+    try:
+        lines = []
+        if slots.intent in _INTENT_VI:
+            lines.append(f"- Khách muốn: {_INTENT_VI[slots.intent]}")
+        if slots.service:
+            lines.append(f"- Dịch vụ: {slots.service}")
+        if slots.day:
+            lines.append(f"- Ngày đang nhắm: {_format_vi_day(slots.day)}")
+        if slots.time:
+            lines.append(f"- Giờ đang nhắm: {format_vi_hhmm(slots.time)}")
+        if slots.declined:
+            offered = ", ".join(
+                format_vi_datetime(datetime.fromisoformat(x)) for x in slots.declined
+            )
+            lines.append(f"- Đã chào mà khách không lấy: {offered}")
+    except Exception as exc:
+        # sanitize_slots đã chặn mọi giá trị tới được đây, nhưng một document
+        # cũ/hỏng lọt qua thì ném ở đây là events.py nuốt thành "Máy đang bận
+        # chút xíu" cho MỌI lượt tới hết ngày — một document khoá cứng một
+        # khách cả ngày. Cả tầng này fail-soft: mất khối slots còn hơn mất khách.
+        logger.warning("slots_render_failed", extra={"error": str(exc)})
+        return ""
 
     # `target_appointment_id` cố ý KHÔNG in ra: khối bối cảnh đã liệt kê mọi
     # lịch sắp tới kèm id thật, in lại ở đây chỉ tạo cơ hội cho hai chỗ lệch nhau.

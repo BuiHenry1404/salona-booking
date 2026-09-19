@@ -1,14 +1,16 @@
 """Không gọi LLM: build_chat_model được thay bằng model giả ghi lại đầu vào."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.clock import now_utc, to_local
+from app.models.appointment import NOTE_MAX
 from app.models.conversation import ConversationSlots
 from app.services.conversation import ConversationService
-from app.services.conversation_state import (COMPACT_THRESHOLD_TOKENS, KEEP_RECENT_TURNS,
-                                 MAX_FAILURES, StateOutput, ConversationStateService,
-                                 split_window)
+from app.services.conversation_state import (BULLET_MAX_CHARS, COMPACT_THRESHOLD_TOKENS,
+                                 KEEP_RECENT_TURNS, MAX_FAILURES, StateOutput,
+                                 ConversationStateService, split_window)
 
 pytestmark = pytest.mark.asyncio
 
@@ -238,10 +240,13 @@ async def test_never_raises(test_db, monkeypatch):
 
 
 async def test_compaction_stores_sanitized_slots(test_db, patch_model):
+    # Ngày tính theo hôm nay: `day` có trần trên MAX_DAYS_AHEAD, một mốc cố
+    # định như "2999-01-01" sẽ bị lọc bỏ (và kéo theo cả `time`).
+    soon = (to_local(now_utc()).date() + timedelta(days=7)).isoformat()
     patch_model(reply=StateOutput(
         summary=["Khách muốn làm móng bột."],
         slots=ConversationSlots(intent="book", service="làm móng bột",
-                                day="2999-01-01", time="15:00"),
+                                day=soon, time="15:00"),
     ))
     await _seed(test_db, turns=12)
 
@@ -250,7 +255,8 @@ async def test_compaction_stores_sanitized_slots(test_db, patch_model):
     state = await ConversationService(test_db).get_state("u1")
     assert state.slots.intent == "book"
     assert state.slots.service == "làm móng bột"
-    assert state.slots.day == "2999-01-01"
+    assert state.slots.day == soon
+    assert state.slots.time == "15:00"
 
 
 async def test_a_hallucinated_appointment_id_does_not_reach_mongo(test_db, patch_model):
@@ -289,3 +295,32 @@ async def test_the_prompt_asks_for_slots(test_db, patch_model):
     prompt = model.structured.prompts[0]
     assert "slots" in prompt.lower()
     assert "YYYY-MM-DD" in prompt
+
+
+async def test_the_prompt_says_what_day_today_is(test_db, patch_model):
+    """CONTEXT.md bẫy #6, lặp lại ở prompt nén: model được đòi `day` dạng ISO
+    mà không có mốc nào thì nó neo vào dữ liệu huấn luyện — ngày ra quá khứ,
+    sanitize_slots bỏ, và `day` không bao giờ sống sót."""
+    model = patch_model()
+    await _seed(test_db, turns=12)
+    await ConversationStateService(test_db).maybe_compact("u1")
+
+    prompt = model.structured.prompts[0]
+    today = to_local(now_utc()).date().isoformat()
+    assert today in prompt
+    # Ở NGAY dòng đầu, cùng lối với khối bối cảnh — không lẫn giữa thân prompt.
+    assert today in prompt.splitlines()[0]
+
+
+async def test_the_prompt_promises_the_same_cap_the_code_enforces(test_db, patch_model):
+    """Prompt từng hứa 120 ký tự cho `service` trong khi sanitize_slots cắt ở
+    NOTE_MAX=80: model tuân thủ đúng rồi bị cắt cụt giữa chữ, không log gì."""
+    model = patch_model()
+    await _seed(test_db, turns=12)
+    await ConversationStateService(test_db).maybe_compact("u1")
+
+    prompt = model.structured.prompts[0]
+    service_line = next(l for l in prompt.splitlines() if l.startswith("- service:"))
+    assert str(NOTE_MAX) in service_line
+    assert str(BULLET_MAX_CHARS) not in service_line
+    assert f"{BULLET_MAX_CHARS} characters" in prompt        # summary giữ trần cũ
