@@ -4,20 +4,29 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-09-18
+Cập nhật: 2026-09-19
 
 ## Đang ở đâu
 
-**Không có nhánh nào đang dở.** Toàn bộ đợt việc 12–14/9 đã merge vào
-`henry/develop` và đã push: định tuyến lại agent, hội thoại tự nhiên, ba bug
-nghiệp vụ (dời/hủy/viết số), bỏ câu thoại sẵn khỏi prompt, tầng digest trong
-phiên, ba lỗi từ chat thật, và tầng gác `guard`/`rewrite`/`phrase` + neo thời
-gian + `booking` 7 tool.
+**Tầng Conversation State đã xong** (nhánh `feat/conversation-state`, chưa
+merge): `Digest` đổi tên thành `ConversationState` (`summary` + `slots`).
+Slots là dữ kiện dạng trường (ý định, dịch vụ, ngày/giờ đang nhắm, lịch bị từ
+chối) do LLM sinh ở lượt nén nền, lọc lại bằng code (`sanitize_slots`) rồi
+dựng thành chữ (`render_slots`) và nhồi chung một message với `summary`, ngay
+sau system prompt. Không có đường code nào đặt/dời/hủy lịch dựa trên slots —
+`test_no_code_path_books_from_slots` canh (xem `CONTEXT.md` bẫy #22).
 
-- **738 test backend + 252 test frontend xanh**, frontend build sạch.
+Trước đó, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develop` và đã push:
+định tuyến lại agent, hội thoại tự nhiên, ba bug nghiệp vụ (dời/hủy/viết số),
+bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
+tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
+
+- **764 test backend xanh, 1 skip** (tự skip sau 3 giờ chiều giờ VN, bình
+  thường) **+ 252 test frontend xanh**, frontend build sạch.
   (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.)
 - **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.
-  `main` chỉ nhận qua PR này.
+  `main` chỉ nhận qua PR này. `feat/conversation-state` chưa merge vào
+  `henry/develop` — việc merge để người quyết, không tự động ở đây.
 - Nhật ký từng đợt, kết quả đo và các quan sát còn để ngỏ: nửa sau
   [`CONTEXT.md`](CONTEXT.md) ("Nhật ký các đợt việc").
 

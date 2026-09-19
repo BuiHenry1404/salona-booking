@@ -39,7 +39,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
 | Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** | `propose_appointment` giữ chỗ, `cancel_appointment` giữ ý hủy; node `confirm` mới ghi/hủy khi khách "ừ". Giá trị lấy từ DB, không từ chuỗi model gõ lại |
 | Câu trả lời | **Mọi câu qua `guard` (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp** | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
-| Memory | **2 tầng + digest trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. Digest là bản nén của tầng 2, không phải tầng 3 |
+| Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` (summary + slots) là bản nén của tầng 2, không phải tầng 3; slots là bản nén dạng trường của tầng 2, không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
 | Bot Telegram | **Không có AI**, 4 nút | Tất định, không tốn token, test không cần LLM |
 | Số worker | **Đúng 1** | Telegram chỉ cho một `getUpdates` mỗi token → mỗi lần deploy đều downtime |
@@ -72,7 +72,7 @@ biên bản, không phải mẫu để chép.
 Khách ──socket──▶ run_turn
                     │
      load_context (code, 4 truy vấn song song): trạng thái tiệm · lịch sắp tới
-     [id + iso] · digest + lịch sử hôm nay · cờ pending
+     [id + iso] · summary + slots + lịch sử hôm nay · cờ pending
                     │
    START ─▶ có pending? ──có──▶ confirm (0 LLM: ghi/dời/hủy bằng code)
               │                    ├─ chưa đồng ý ──▶ booking
@@ -90,7 +90,7 @@ Khách ──socket──▶ run_turn
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
 - Khối bối cảnh dựng bằng code mỗi lượt và **thắng** lịch sử lẫn digest.
 
-## 21 cái bẫy — đã trả giá, đừng "sửa cho gọn"
+## 22 cái bẫy — đã trả giá, đừng "sửa cho gọn"
 
 **Dữ liệu**
 
@@ -149,6 +149,10 @@ Khách ──socket──▶ run_turn
 
 21. **Guard là code, không phải rubric.** 3 phép kiểm tất định (`repeat`, `pronoun`, `clock`) + kiểm số liệu `content` sau rewrite. Thêm phép kiểm mờ ("câu này có tự nhiên không") là biến guard thành LLM chấm — bẫy #18 đã đo là không phân giải được. Rewrite **chỉ một lần**; lần hai hỏng thì trả **draft GỐC**, không trả bản rewrite. `repeat` bỏ qua khi hai câu khác tập chữ số (số liệu mới = nội dung mới) và khi khách **xin** nhắc lại.
 
+**Conversation state**
+
+22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh. `target_appointment_id` phải đối chiếu `upcoming_for_user` trước khi lưu; model từng bịa id (BUG-2).
+
 ## Ràng buộc giao diện — không được phá
 
 Khách bấm điện thoại ngoài đường hoặc trong tiệm ồn. Đây không phải thẩm mỹ.
@@ -200,7 +204,7 @@ cho **chính họ**.
 - **Đo token của digest**: mục tiêu "tiết kiệm token phiên dài" chưa có số vì Langfuse không lên hai lần đo 14/9. Đo lại khi Langfuse sống: so input token/lượt trước–sau, trace tag `digest`.
 - **Hai lần từ chối liên tiếp ra câu gần y nhau** (rule 4). KHÔNG phải hard-code — cả hai đều stream từ LLM. Đã thử ba cách đều không dứt: vế "không dùng lại nguyên câu" trong `_NO_REPEAT`; đặt vế đó ngay trong rule 4; nâng temperature 0.2 → 0.6 (nhánh `try/respond-temperature`, đã xoá — hai câu vẫn y nhau từng chữ). Kết luận: model **neo** vào câu của chính nó trong lịch sử, không phải do sampling. Tầng gác nay bắt được ca này (`guard_violation{repeat}`), nhưng rewrite cũng lặp nên guard trả draft gốc. Cách còn lại: can thiệp vào `history()`.
 - **Câu hỏi xác nhận bị tính là lặp.** "…xác nhận giúp em nhé?" ở hai lượt đặt/hủy khác nhau bị `repeat` cờ → tốn một lượt rewrite vô ích (đo 1/26 lượt). Có thể miễn kiểm `repeat` cho riêng câu hỏi xác nhận sau `propose`/`cancel`.
-- **Neo ra giờ đã qua**: `apply_anchor` có thể suy ra một mốc hôm nay đã trôi qua, `_guard` trả "ngày khác — giờ đó qua mất rồi" cho một ngày khách không hề nói. An toàn nhưng khó hiểu.
+- **Neo ra giờ đã qua**: `apply_anchor` có thể suy ra một mốc hôm nay đã trôi qua, `_guard` trả "ngày khác — giờ đó qua mất rồi" cho một ngày khách không hề nói. An toàn nhưng khó hiểu. **Chỉ mới phủ một phần** (đợt Conversation State, 19/9): `sanitize_slots` bỏ `day` quá khứ và bỏ `time` khi `day` là hôm nay nhưng giờ đã trôi trong **slots** — không cho slots bịa lại một mốc đã qua. Neo trong `parse_time`/`apply_anchor` (nhánh đặt lịch thật) không thuộc đợt này, còn nguyên như cũ.
 - **Parser "mai" sát nửa đêm không ổn định**: hai lần chạy cách nhau một phút, một lần ra đúng hôm sau, một lần ra hôm nay. Nhánh LLM của `parse_vi_time`, không phải regex.
 - **Khách nói "ừ" khi bot đang hỏi thiếu một mảnh** ("sáng hay chiều") thì bot hỏi lại nguyên câu — hợp lý nhưng lặp.
 - **Câu hỏi kép ba vế trở lên** vẫn có thể rớt: một lượt chỉ vào một node. Hai vế shop+lịch đã xử (bẫy #7).

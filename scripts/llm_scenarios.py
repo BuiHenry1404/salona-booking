@@ -109,6 +109,19 @@ SCENARIOS = [
      ["mai... à không... ngày mốt... 4 giờ chiều... cắt tóc"]),
     ("LLM-31", "Lỗi gõ Telex",
      ["ngayf mai 3 giowf chieeuf lafm tosc nha con"]),
+    ("LLM-32", "Hội thoại dài, kiểm slots sau lượt nén",
+     ["Em chào chị, tiệm mình làm móng bột không ạ",
+      "Giá tầm bao nhiêu vậy chị",
+      "Tiệm mở cửa mấy giờ thế",
+      "Chủ nhật có làm không chị",
+      "Thế còn thứ hai thì sao",
+      "À mà chị ơi nhuộm tóc nữa có được không",
+      "Thôi em làm móng bột thôi vậy",
+      "Mai chị xem giúp em còn giờ nào trống với",
+      "9 giờ sáng em bận rồi",
+      "2 giờ chiều em cũng không đi được",
+      "Thế 4 giờ chiều được không chị",
+      "Mà nãy em nói làm gì ấy nhỉ, chị nhắc lại giúp em"]),
 ]
 
 
