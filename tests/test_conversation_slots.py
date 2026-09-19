@@ -48,6 +48,13 @@ def test_a_time_already_gone_survives_on_a_later_day():
     assert _clean(day="2026-09-20", time="09:00").time == "09:00"
 
 
+def test_a_time_without_a_day_is_kept():
+    """Không có ngày thì không suy ra được giờ đó đã qua hay chưa — giữ lại.
+    Khách nói 'tầm 9 giờ sáng' trước khi chốt ngày là chuyện bình thường."""
+    slots = _clean(time="09:00", service="làm tóc")
+    assert slots.time == "09:00"
+
+
 def test_an_unparseable_day_or_time_is_dropped():
     slots = _clean(day="thứ Năm tuần sau", time="25:99", service="làm tóc")
     assert slots.day is None and slots.time is None
