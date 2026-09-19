@@ -5,7 +5,7 @@ FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Backend 
 
 ## Read first (in this order)
 
-1. `CONTEXT.md` — the *why*: locked decisions, 13 already-fixed traps (do NOT "clean them up"),
+1. `CONTEXT.md` — the *why*: locked decisions, 21 already-fixed traps (do NOT "clean them up"),
    UI constraints for elderly users, security audit results. Authoritative.
 2. `RUNBOOK.md` — the *how*: setup, test accounts, Azure/Langfuse config, troubleshooting.
 3. Before any plan task: the **Ràng buộc toàn cục** section in that plan's `README.md`
@@ -77,7 +77,7 @@ docs/superpowers/        specs + 4 plans; start at specs/2026-08-06-booking-nail
 - Health check URL needs the trailing slash: `/api/v1/health/` (307 otherwise).
 - `mongo-express` on :8081 (`admin`/`admin`) and Mongo exposed without auth are **dev-only**
   compose entries; prod split is planned (Plan 5), not done. Don't ship them as-is.
-- Repo is Vietnamese-language throughout (docs, commits, UI strings). Match that.
+- Repo is Vietnamese-language throughout (docs, comments, UI strings), except commit messages — those are English and short. Match that.
 - Plans 3 and 4 can run in parallel. After Plan 3: admin password reset via Telegram bot
   (`specs/2026-08-15-admin-password-reset-telegram-design.md`) — Zalo/SMS are permanently
   off the table, don't re-suggest them.

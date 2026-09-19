@@ -4,24 +4,43 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-08-23
+Cập nhật: 2026-09-19
 
 ## Đang ở đâu
 
-**Cả 4 plan đã xong** — backend, agent/memory/streaming, Telegram bot, React
-frontend. Tất cả đã merge vào `main`.
+**Tầng Conversation State đã xong** (nhánh `feat/conversation-state`, chưa
+merge): `Digest` đổi tên thành `ConversationState` (`summary` + `slots`).
+Slots là dữ kiện dạng trường (ý định, dịch vụ, ngày/giờ đang nhắm, lịch bị từ
+chối) do LLM sinh ở lượt nén nền, lọc lại bằng code (`sanitize_slots`) rồi
+dựng thành chữ (`render_slots`) và nhồi chung một message với `summary`, ngay
+sau system prompt. Không có đường code nào đặt/dời/hủy lịch dựa trên slots —
+`test_no_code_path_books_from_slots` canh (xem `CONTEXT.md` bẫy #22).
 
-- **436 test backend + 252 test frontend xanh**, frontend build sạch.
-- `scripts/live_e2e.py` — 31/31 pass trên server thật.
-- `scripts/chat_scenarios.py` — 8 kịch bản hội thoại đúng.
-- `scripts/llm_scenarios.py` — diễn lại kịch bản `LLM-xx`, dùng để bắt lỗi
-  giọng điệu mà pytest không thấy.
-- Chat chạy thật với Azure `gpt-5.4-mini`. Langfuse có trace và có chi phí.
+Trước đó, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develop` và đã push:
+định tuyến lại agent, hội thoại tự nhiên, ba bug nghiệp vụ (dời/hủy/viết số),
+bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
+tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
+
+- **776 test backend xanh, 1 skip** (tự skip sau 3 giờ chiều giờ VN, bình
+  thường) **+ 252 test frontend xanh**, frontend build sạch.
+  (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.)
+- **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.
+  `main` chỉ nhận qua PR này. `feat/conversation-state` chưa merge vào
+  `henry/develop` — việc merge để người quyết, không tự động ở đây.
+- Nhật ký từng đợt, kết quả đo và các quan sát còn để ngỏ: nửa sau
+  [`CONTEXT.md`](CONTEXT.md) ("Nhật ký các đợt việc").
 
 **Quy ước nhánh:** mỗi việc một nhánh riêng → merge vào `henry/develop` →
 `main` chỉ nhận bằng cách merge `henry/develop`. Không commit thẳng lên `main`.
 
-## Việc tiếp theo — đã chốt
+## Việc tiếp theo
+
+1. **Merge PR #6** khi thấy sẵn sàng.
+2. Hai mục **P1** trong `REPO_AUDIT.md` (bên dưới) — cần xong trước khi mở cho
+   khách thật.
+3. Bốn quan sát đã đo nhưng **chưa quyết** (chi tiết ở mục "Việc còn dở" của
+   `CONTEXT.md`): đo token `ConversationState` khi Langfuse sống; hai lần từ chối liên tiếp
+   ra câu gần y nhau; câu hỏi xác nhận bị tính là lặp; neo có thể ra giờ đã qua.
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
 cho khách thật:

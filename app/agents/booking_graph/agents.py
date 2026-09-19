@@ -3,6 +3,7 @@ from typing import Awaitable, Callable, List
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.context import render_slots
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -12,6 +13,10 @@ logger = get_logger(__name__)
 MAX_TOOL_ROUNDS = 4
 FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho tiệm giúp em nhé ạ."
 
+# Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
+# bối cảnh, không phải chỉ dẫn.
+STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+
 
 def make_subagent_node(
     prompt: str, tools: List[BaseTool], tag: str
@@ -20,6 +25,8 @@ def make_subagent_node(
 
     `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ node sinh câu trả
     lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn hình.
+
+    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối.
     """
     by_name = {t.name: t for t in tools}
 
@@ -27,11 +34,34 @@ def make_subagent_node(
         model = build_chat_model(tags=[tag], temperature=0.2).bind_tools(tools)
 
         # Bố cục theo độ ổn định: system (tĩnh, được cache) → lịch sử →
-        # khối bối cảnh (đổi mỗi lượt) đặt sát cuối, ngay trước câu hỏi mới.
+        # khối bối cảnh (đổi mỗi lượt) → câu hỏi mới.
+        #
+        # Lời khách phải là thứ CUỐI model đọc. Model bắt chước giọng người
+        # đối thoại; để khối trạng thái đứng cuối là nó đáp lại bằng giọng
+        # biểu mẫu ("em giữ chỗ cho dịch vụ làm tóc"). Đây cũng đúng thứ tự
+        # `CONTEXT.md` bẫy #9 đã chốt từ đầu.
+        #
+        # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
+        history, question = state["messages"][:-1], state["messages"][-1:]
+        # Khối trạng thái đứng NGAY SAU system: đổi vài lượt một lần, ổn định
+        # hơn khối bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống
+        # lâu. Summary và slots đi CHUNG một message — tách đôi là thêm một
+        # ranh giới nữa cho thứ tự bẫy #9 có thể trượt.
+        parts = []
+        summary = state.get("summary") or []
+        if summary:
+            parts.append(STATE_HEADER + "\n" + "\n".join(f"- {s}" for s in summary))
+        rendered = render_slots(state.get("slots"))
+        if rendered:
+            parts.append(rendered)
+        state_messages = [HumanMessage(content="\n\n".join(parts))] if parts else []
+
         messages = [
             SystemMessage(content=prompt),
-            *state["messages"],
+            *state_messages,
+            *history,
             HumanMessage(content=state.get("context_block", "")),
+            *question,
         ]
 
         for _ in range(MAX_TOOL_ROUNDS):
@@ -43,7 +73,7 @@ def make_subagent_node(
 
             calls = getattr(reply, "tool_calls", None)
             if not calls:
-                return {"answer": reply.content or FALLBACK_ANSWER}
+                return {"draft": reply.content or FALLBACK_ANSWER}
 
             for call in calls:
                 tool = by_name.get(call["name"])
@@ -60,6 +90,6 @@ def make_subagent_node(
                 messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
 
         logger.warning("tool_loop_exhausted", extra={"tag": tag})
-        return {"answer": FALLBACK_ANSWER}
+        return {"draft": FALLBACK_ANSWER}
 
     return node

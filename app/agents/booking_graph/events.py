@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List
 
@@ -9,8 +10,21 @@ from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
 from app.models.user import User
 from app.services.conversation import ConversationService
+from app.services.conversation_state import ConversationStateService
 
 logger = get_logger(__name__)
+
+
+# Giữ tham chiếu mạnh: event loop chỉ giữ weak-ref, tác vụ nền không ai giữ
+# có thể bị GC giữa chừng — mất lượt nén mà không có dòng log nào.
+_PENDING_COMPACTIONS: set = set()
+
+
+def schedule_compaction(db: AsyncIOMotorDatabase, user_id: str) -> None:
+    """Nén nền, không await: khách đã nhận complete. maybe_compact tự nuốt lỗi."""
+    task = asyncio.create_task(ConversationStateService(db).maybe_compact(user_id))
+    _PENDING_COMPACTIONS.add(task)
+    task.add_done_callback(_PENDING_COMPACTIONS.discard)
 
 
 @dataclass
@@ -68,7 +82,12 @@ async def run_turn(
             "messages": [*history, HumanMessage(content=question)],
             "user_id": user_id,
             "context_block": context["context_block"],
+            "summary": context.get("summary", []),
+            "slots": context.get("slots"),
             "pending_confirmation": context["pending_confirmation"],
+            "previous_replies": [m.content for m in context["history"]
+                                 if m.role == "assistant" and m.source == "llm"],
+            "customer_text": question,
         }
 
         graph = build_graph(db, user)
@@ -91,9 +110,20 @@ async def run_turn(
         answer = final_state.get("answer", "")
         if answer:
             await conversations.append(user_id, "user", question)
-            await conversations.append(user_id, "assistant", answer)
+            await conversations.append(user_id, "assistant", answer,
+                                       source=final_state.get("answer_source", "llm"))
 
         yield AgentEvent("complete", {"answer": answer})
+
+        if answer:
+            # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không
+            # được biến thành sự kiện error cho một lượt đã xong.
+            try:
+                schedule_compaction(db, user_id)
+            except Exception as exc:
+                logger.warning("state_schedule_failed", extra={
+                    "user_id": user_id, "error": str(exc), "error_type": type(exc).__name__,
+                })
 
     except Exception as exc:
         logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})
