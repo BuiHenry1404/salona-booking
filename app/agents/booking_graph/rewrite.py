@@ -4,7 +4,7 @@ import asyncio
 
 from langchain_core.messages import HumanMessage
 
-from app.agents.booking_graph.guard import REWRITE_TIMEOUT_SECONDS
+from app.agents.booking_graph.guard import REPEAT_LOOKBACK, REWRITE_TIMEOUT_SECONDS
 from app.agents.booking_graph.prompts import REWRITE_PROMPT, VIOLATION_HINTS
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
@@ -19,13 +19,17 @@ def make_rewrite_node():
     async def node(state: GraphState) -> dict:
         draft = state.get("draft") or ""
         codes = state.get("violations") or []
-        previous = (state.get("previous_replies") or [])[-1:] or ["(none)"]
+        # Cùng cửa sổ mà `repeats()` đã so, không phải mỗi câu cuối: guard bắt
+        # lặp với câu ở vài lượt trước rồi đưa người viết lại một câu KHÁC kèm
+        # lệnh "đừng lặp câu này" — nó không bao giờ thấy câu mình đã trùng.
+        window = (state.get("previous_replies") or [])[-REPEAT_LOOKBACK:]
+        previous = "\n".join(f"- {p}" for p in window) or "(none)"
         # Cách gọi lấy từ khối bối cảnh: dòng "Gọi khách là: ..." — tránh nhận
         # thêm User vào closure chỉ để làm một chuỗi.
         address = _address_from_block(state.get("context_block") or "")
         prompt = REWRITE_PROMPT.format(
             violations="\n".join(f"- {c}: {VIOLATION_HINTS.get(c, c)}" for c in codes),
-            address=address, previous=previous[0], draft=draft,
+            address=address, previous=previous, draft=draft,
         )
         model = build_chat_model(tags=[REWRITE_TAG], temperature=0.3, streaming=False)
         try:

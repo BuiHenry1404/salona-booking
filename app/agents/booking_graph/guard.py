@@ -21,7 +21,9 @@ logger = get_logger(__name__)
 
 REPEAT_RATIO = 0.85          # điểm khởi đầu — khoá sau khi duyệt scripts/probe_repeats.py
 REPEAT_MIN_WORDS = 6
-REPEAT_LOOKBACK = 3
+REPEAT_LOOKBACK = 8         # đo trên transcript chạy thật 2026-09-19: 6 đã bắt hết,
+                            # 8 lấy biên. Mốc cũ 3 mù với câu từ chối tái xuất
+                            # sau vài lượt — LLM-32 lặp ở lượt 1, 2, 6, 14, 16.
 REWRITE_TIMEOUT_SECONDS = 8
 PHRASE_TIMEOUT_SECONDS = 8
 
@@ -214,8 +216,16 @@ def make_guard_node(user: User):
                     # gốc. Phân biệt với ca rewrite ĐỔI xong rồi vẫn sai, vì hai
                     # nguyên nhân khác nhau: model không sửa được, hay sửa sai.
                     extra["rewrite_ran"] = False
+                # Bản GỐC an toàn hơn cho mọi lỗi — trừ đúng một ca: lỗi LẶP.
+                # Ở đó bản gốc CHÍNH LÀ câu lặp, trả nó về là phát đúng thứ vừa
+                # bị bắt. Bản viết lại dù chưa đạt thì ít nhất cũng khác chữ.
+                # Chỉ áp dụng khi lặp là lỗi DUY NHẤT: còn "content" (mất số
+                # liệu), "pronoun" hay "clock" thì bản gốc vẫn thắng.
+                only_repeat = set(codes) == {"repeat"} and draft != original
+                shipped = draft if only_repeat else original
+                extra["shipped"] = "rewrite" if only_repeat else "original"
                 logger.warning("guard_gave_up", extra=extra)
-                return {"answer": original, "answer_source": "llm", "violations": codes}
+                return {"answer": shipped, "answer_source": "llm", "violations": codes}
             logger.info("guard_rewritten")
             return {"answer": draft, "answer_source": "llm", "violations": []}
 

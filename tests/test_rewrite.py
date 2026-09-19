@@ -71,6 +71,27 @@ class TestGuardNode:
         assert out["answer"] == "Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
         assert "content" in out["violations"]
 
+    async def test_an_unfixable_repeat_ships_the_rewrite_not_the_original(self):
+        """Trả lại bản GỐC khi rewrite vẫn sai là đúng cho lỗi MẤT SỐ LIỆU — bản
+        gốc an toàn hơn. Với lỗi LẶP thì ngược hẳn: bản gốc CHÍNH LÀ câu lặp,
+        nên trả nó về là phát đúng thứ guard vừa bắt.
+
+        Chạy thật 2026-09-19 (LLM-32): câu từ chối gần y hệt tới tay khách 5
+        lần dù guard đã cờ ngay từ lượt 2."""
+        lap = "Dạ anh Tám, em chỉ xem và đặt lịch của chính anh chị thôi ạ."
+        state = a_state(lap + " ", previous=[lap], rewritten=True, original_draft=lap)
+        out = await make_guard_node(USER)(state)
+        assert out["violations"] == ["repeat"]
+        assert out["answer"] != lap, "bản gốc là chính câu lặp — không được phát lại"
+
+    async def test_an_unfixable_content_loss_still_ships_the_original(self):
+        """Ngược lại: mất mốc giờ thì bản gốc vẫn an toàn hơn. Đừng nới ca này."""
+        state = a_state("Dạ anh Tám, em giữ chỗ rồi ạ.", rewritten=True,
+                        original_draft="Dạ anh Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ.")
+        out = await make_guard_node(USER)(state)
+        assert "content" in out["violations"]
+        assert out["answer"] == "Dạ anh Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
+
     async def test_repeat_uses_previous_llm_replies(self):
         prev = ["Em chỉ xem và đặt lịch của anh Tám thôi. Anh muốn đặt hay xem lịch của mình ạ?"]
         out = await make_guard_node(USER)(a_state(prev[0], previous=prev))
@@ -92,6 +113,20 @@ class TestRewriteNode:
         prompt = model.calls[0][0].content
         assert "pronoun" in prompt and "repeat" in prompt and "Câu trước." in prompt
         assert model.kwargs["tags"] == [REWRITE_TAG] and model.kwargs["streaming"] is False
+
+    async def test_the_rewriter_sees_the_same_window_the_guard_compared_against(self, patch_model):
+        """`repeats()` so với REPEAT_LOOKBACK câu đáp gần nhất, nhưng rewrite chỉ
+        được cho xem ĐÚNG MỘT câu cuối. Nên guard bắt lặp với câu ở 3 lượt trước,
+        rồi đưa cho người viết lại một câu KHÁC kèm lệnh "đừng lặp câu này" —
+        nó không bao giờ nhìn thấy câu mình đã trùng."""
+        model = patch_model("Dạ anh Tám, em xem giúp anh nhé.")
+        cu = "Dạ anh Tám, em chỉ xem lịch của chính anh thôi ạ."
+        state = a_state("Chị hỏi chủ tiệm giúp em nhé.",
+                        previous=[cu, "Câu giữa.", "Câu áp chót.", "Câu trước."],
+                        violations=["repeat"])
+        await make_rewrite_node()(state)
+        prompt = model.calls[0][0].content
+        assert cu in prompt, "câu bị trùng thật sự phải có trong prompt viết lại"
 
     async def test_model_failure_keeps_the_draft_and_marks_rewritten(self, patch_model):
         patch_model("", fail=True)

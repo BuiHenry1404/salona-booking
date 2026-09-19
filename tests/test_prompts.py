@@ -165,6 +165,28 @@ class TestHardWonRulesSurvive:
             for cam in ("nhắc lại", "hỏi lại đúng câu", "repeat the sentence"):
                 assert cam not in prompt.lower(), f"{name} chứa {cam!r}"
 
+    def test_prices_and_services_are_not_a_privacy_refusal(self):
+        """Lỗi gốc (chạy thật 2026-09-19, LLM-32): khách hỏi "giá làm móng bột
+        bao nhiêu" và "bên mình có nhuộm tóc không" đều bị đáp bằng câu từ chối
+        về quyền riêng tư — không liên quan gì tới câu hỏi.
+
+        Nguyên nhân: ngoại lệ cho giá/dịch vụ nằm ở CUỐI khối VIẾT HOA của luật
+        quyền riêng tư, viết thường. Cùng một loại câu hỏi mà model xử lý hai
+        kiểu khác nhau trong cùng một cuộc. Ngoại lệ phải là luật riêng, nổi
+        ngang khối kia."""
+        assert "PRICES, SERVICES" in BOOKING_PROMPT
+        # Luật mới phải đứng TÁCH khỏi khối quyền riêng tư, không nằm lọt bên trong.
+        privacy = BOOKING_PROMPT.index("NEVER ACT ON ANYONE ELSE")
+        prices = BOOKING_PROMPT.index("PRICES, SERVICES")
+        assert prices > privacy, "luật giá phải đứng sau, như một mục riêng"
+        # Và phải cấm tường minh việc mượn câu từ chối của luật quyền riêng tư.
+        assert "only view and book their own appointments" in BOOKING_PROMPT
+
+    def test_all_the_times_the_customer_ruled_out_are_listed(self):
+        """Lỗi gốc (chạy thật 2026-09-19): slots trong Mongo có ĐỦ hai giờ khách
+        đã loại (09:00 và 14:00), khách hỏi lại cả hai, model chỉ nhắc một."""
+        assert "list ALL of them" in BOOKING_PROMPT
+
     def test_one_reply_per_turn_is_stated(self):
         for name, prompt in CUSTOMER_FACING.items():
             assert "ONE reply per turn" in prompt, name
@@ -312,8 +334,11 @@ class TestBookingPromptSlimmed:
         # hủy phải gọi tool trước, và giá/dịch vụ không phải ca rule 4 — đo
         # được 4780 — mốc lên 4900. Task 5 (2026-09-14) thêm câu "use the shop
         # tools" cuối rule 1 (câu kép hỏi tiệm + hỏi lịch) — đo được 4918 —
-        # mốc lên 5000.
-        assert len(BOOKING_PROMPT) < 5000
+        # mốc lên 5000. 2026-09-19: chạy thật lộ ra luật giá/dịch vụ nằm LỌT
+        # trong khối viết hoa của rule 4 nên bị nuốt — tách thành rule 5 riêng,
+        # thêm rule 6 (liệt kê đủ các giờ khách đã loại) — đo được 5291 —
+        # mốc lên 5400.
+        assert len(BOOKING_PROMPT) < 5400
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -416,9 +441,18 @@ class TestLiveChat20260914:
         """Lượt 10: "tiệm có nhuộm tóc bạc không, giá bao nhiêu" → câu bảo mật
         rule 4. Supervisor xếp "nhuộm tóc" vào booking (dịch vụ = đặt lịch) rồi
         rule 4 bắt nhầm. Giá/dịch vụ là chuyện của chủ tiệm, không phải của
-        khách khác."""
-        assert "prices or which services" in BOOKING_PROMPT.lower() or "prices or services" in BOOKING_PROMPT.lower()
-        assert "owner will answer" in BOOKING_PROMPT.lower()
+        khách khác.
+
+        2026-09-19 — TEST NÀY TỪNG XANH SUỐT MÀ BUG VẪN TÁI DIỄN. Bản cũ chỉ
+        kiểm hai chuỗi CÓ MẶT trong prompt. Chúng có mặt thật, nhưng nằm lọt ở
+        cuối khối VIẾT HOA của rule 4 và viết thường, nên model đọc cả khối là
+        "từ chối" rồi áp luôn cho câu hỏi giá. Chạy thật LLM-32 cho thấy cùng
+        một loại câu hỏi bị xử hai kiểu trong một cuộc. Bài học: kiểm một câu
+        có mặt trong prompt KHÔNG chứng minh model theo được nó — vị trí và độ
+        nổi của luật mới là thứ quyết định. Hàng rào thật nằm ở
+        `test_prices_and_services_are_not_a_privacy_refusal`."""
+        assert "owner" in BOOKING_PROMPT.lower() and "will answer that" in BOOKING_PROMPT.lower()
+        assert "what the salon charges" in BOOKING_PROMPT.lower()
 
     def test_supervisor_routes_open_right_now_to_shop(self):
         """Lượt 1: "tiệm còn làm không" → social → bot tự khẳng định "còn làm"
