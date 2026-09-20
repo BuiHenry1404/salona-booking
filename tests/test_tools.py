@@ -338,15 +338,40 @@ async def test_every_tool_reports_times_in_vietnam_time(test_db):
     await ShopService(test_db).set_busy(30)
 
     tools = make_booking_tools(test_db, user) + make_shop_tools(test_db, user)
+    # `propose_appointment` và `cancel_appointment` từng bị bỏ sót khỏi bất
+    # biến này — bao cả hai để một mốc +00:00 lọt vào lời chốt lịch hay lời
+    # hủy lịch cũng bị bắt, không chỉ ở các tool chỉ đọc.
+    proposed = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": tomorrow_at(11).isoformat(), "note": "làm nail"}))
+    appt = await AppointmentService(test_db).create(user, tomorrow_at(13), note="cắt tóc")
+    cancelled = json.loads(await by_name(tools, "cancel_appointment").ainvoke(
+        {"appointment_id": str(appt.id)}))
     payloads = [
         json.loads(await by_name(tools, "list_my_appointments").ainvoke({})),
         json.loads(await by_name(tools, "get_shop_status").ainvoke({})),
         json.loads(await by_name(tools, "find_free_slots").ainvoke(
             {"day": when.date().isoformat()})),
+        proposed,
+        cancelled,
     ]
     raw = json.dumps(payloads, ensure_ascii=False)
     assert "+00:00" not in raw and "Z\"" not in raw, "còn mốc giờ chưa đổi sang giờ VN"
     assert "+07:00" in raw
+
+
+async def test_tool_output_keeps_vietnamese_readable(test_db):
+    """`ensure_ascii=False` ở mọi json.dumps có tiếng Việt. Không kiểm được
+    bằng giá trị đã parse — `json.loads` trả cùng một string dù cờ bật hay
+    tắt — nên phải soi CHUỖI THÔ."""
+    user = await a_user(test_db)
+    when = tomorrow_at(9)
+    await AppointmentService(test_db).create(user, when, note="làm tóc")
+    tools = make_booking_tools(test_db, user) + make_shop_tools(test_db, user)
+
+    for name, args in [("list_my_appointments", {}), ("get_shop_hours", {}),
+                       ("find_free_slots", {"day": when.date().isoformat()})]:
+        raw = await by_name(tools, name).ainvoke(args)
+        assert "\\u" not in raw, f"{name} escape mất tiếng Việt — thiếu ensure_ascii=False"
 
 
 async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):

@@ -219,6 +219,19 @@ class TestHardWonRulesSurvive:
         kwarg lạ rồi báo lỗi."""
         assert "xung_ho" not in BOOKING_PROMPT
 
+    def test_the_rules_the_tools_used_to_carry_now_live_here(self):
+        """Ba mệnh lệnh này trước nằm trong chuỗi trả về của tool. Chuyển sang
+        prompt thì phải thật sự có mặt, không thì luật biến mất lặng lẽ."""
+        assert "read the booking back" in BOOKING_PROMPT.lower()
+        assert "ask them to confirm before cancelling" in BOOKING_PROMPT.lower()
+        assert "another day" in BOOKING_PROMPT.lower()
+
+    def test_the_prompt_describes_the_json_tool_contract(self):
+        """Tool giờ trả JSON. Model phải biết đọc `spoken` chứ không chép cả
+        khoá `iso` ra cho khách."""
+        assert "spoken" in BOOKING_PROMPT
+        assert "spoken" in SHOP_PROMPT
+
 
 class TestSupervisorStaysMachineReadable:
     def test_it_asks_for_exactly_one_word(self):
@@ -337,8 +350,12 @@ class TestBookingPromptSlimmed:
         # mốc lên 5000. 2026-09-19: chạy thật lộ ra luật giá/dịch vụ nằm LỌT
         # trong khối viết hoa của rule 4 nên bị nuốt — tách thành rule 5 riêng,
         # thêm rule 6 (liệt kê đủ các giờ khách đã loại) — đo được 5291 —
-        # mốc lên 5400.
-        assert len(BOOKING_PROMPT) < 5400
+        # mốc lên 5400. Task 4 (2026-09-20): mệnh lệnh trước nằm trong chuỗi
+        # trả về của tool ("đọc lại lịch", "hỏi xác nhận trước khi hủy", "ngày
+        # đầy thì hỏi ngày khác") chuyển hẳn vào rule 2 của prompt, cộng với
+        # câu mô tả hợp đồng JSON (`spoken` chứ không phải `iso`) — đo được
+        # 5685 ký tự — mốc lên 5700.
+        assert len(BOOKING_PROMPT) < 5700
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

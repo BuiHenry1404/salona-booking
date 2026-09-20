@@ -68,6 +68,32 @@ def test_no_code_path_books_from_slots():
             )
 
 
+def test_tools_return_data_not_instructions():
+    """Tool là chỗ cấp DỮ KIỆN. Trước 2026-09-20 nó nhét cả mệnh lệnh vào kết
+    quả trả về ("Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận.") — chỉ
+    dẫn cho model trá hình thành dữ liệu.
+
+    Hậu quả: cùng một luật tồn tại hai bản, một ở prompts.py một ở tools.py,
+    rồi trôi lệch nhau mà không ai rà được. Chỉ dẫn thuộc system prompt —
+    ổn định và được cache; kết quả tool thì đổi mỗi lần gọi.
+    """
+    import inspect
+
+    from app.agents.booking_graph import tools
+
+    source = inspect.getsource(tools)
+    # Chỉ soi phần THÂN HÀM, không soi docstring: docstring của tool ĐÚNG là
+    # chỗ để chỉ dẫn, nó đi vào định nghĩa tool chứ không vào kết quả trả về.
+    bodies = "\n".join(
+        line for line in source.splitlines()
+        if not line.lstrip().startswith(('"""', "#", "'''"))
+    )
+    for cam in ("Hãy ", "hãy "):
+        assert cam not in bodies, (
+            f"tools.py còn mệnh lệnh {cam!r} trong thân hàm — chuyển sang prompts.py"
+        )
+
+
 def test_the_live_slots_scenario_can_actually_reach_compaction():
     """Kịch bản LLM-32 tồn tại để nghiệm thu tầng slots qua chạy thật. Nó chỉ
     chạm tới slots khi lượt nén NỔ, mà lượt nén chỉ nổ khi phần ngoài cửa sổ 8
