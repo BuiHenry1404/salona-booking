@@ -233,14 +233,20 @@ class TestHardWonRulesSurvive:
         assert "spoken" in SHOP_PROMPT
 
     def test_every_error_code_is_explained_in_plain_language(self):
-        """I4: model gặp năm mã lỗi này mà không luật nào nói chúng nghĩa gì —
-        khe hở để chuỗi tiếng Anh trần lọt ra câu tiếng Việt. Mỗi mã phải có
-        mặt trong prompt, kèm một câu cấm đọc mã ra cho khách."""
-        for code in ("slot_unavailable", "appointment_not_found",
+        """I4: model gặp mã lỗi mà không luật nào nói chúng nghĩa gì — khe hở
+        để chuỗi tiếng Anh trần lọt ra câu tiếng Việt. Mỗi mã TỚI ĐƯỢC phải có
+        mặt trong prompt, kèm một câu cấm đọc mã ra cho khách.
+
+        `unavailable` CỐ Ý không nằm trong danh sách: nó là nhánh mặc định của
+        `_error_code`, và hai tool gọi hàm đó chỉ bọc `own_booked` — hàm này
+        chỉ ném `NotFoundError`/`ForbiddenError`. Dạy model một mã không bao
+        giờ xuất hiện là tốn prompt và nói sai về hệ thống."""
+        for code in ("already_yours", "slot_unavailable", "appointment_not_found",
                      "not_your_appointment", "bad_time_format",
-                     "bad_day_format", "unavailable"):
+                     "bad_day_format"):
             assert code in BOOKING_PROMPT, code
         assert "never read the code itself" in BOOKING_PROMPT
+        assert "- unavailable:" not in BOOKING_PROMPT
 
 
 class TestSupervisorStaysMachineReadable:
@@ -369,8 +375,12 @@ class TestBookingPromptSlimmed:
         # C1/I3) và thêm vào rule 2 danh sách năm mã lỗi
         # (`appointment_not_found`, `not_your_appointment`, `bad_time_format`,
         # `bad_day_format`, `unavailable`) kèm câu cấm đọc mã ra cho khách
-        # (I4) — đo được 6306 ký tự — mốc lên 6400.
-        assert len(BOOKING_PROMPT) < 6400
+        # (I4) — đo được 6306 ký tự — mốc lên 6400. 2026-09-20 (đợt sau): gỡ
+        # mã `unavailable` khỏi danh sách vì nó KHÔNG tới được, thêm mã
+        # `already_yours` (khách đã có đúng lịch ở giờ đó — nguyên nhân duy
+        # nhất mà câu đáp ngược hẳn với "chọn giờ khác") — đo được 6417 ký tự
+        # — mốc lên 6500.
+        assert len(BOOKING_PROMPT) < 6500
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

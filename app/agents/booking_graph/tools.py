@@ -68,6 +68,18 @@ _ERROR_CODES = {
 
 
 def _error_code(exc: AppError) -> str:
+    """Mặc định `"unavailable"` là LƯỚI AN TOÀN, không phải mã model sẽ gặp.
+
+    Hai tool duy nhất gọi hàm này đều chỉ bọc `own_booked`, mà nó chỉ ném
+    `NotFoundError` hoặc `ForbiddenError` — id rác đã bị `ObjectId.is_valid()`
+    chặn từ `get_by_id` và thành `NotFoundError`. Nên nhánh mặc định hiện
+    KHÔNG tới được, và `BOOKING_PROMPT` cố ý không mô tả nó: dạy model một mã
+    không bao giờ xuất hiện là tốn prompt và nói sai về hệ thống.
+
+    Giữ default vì bỏ đi là biến một fallback thành `KeyError`. Thêm lớp
+    `AppError` mới thì phải chọn: ánh xạ nó ở đây, hoặc mô tả `unavailable`
+    trong `BOOKING_PROMPT`.
+    """
     return _ERROR_CODES.get(type(exc), "unavailable")
 
 
@@ -211,6 +223,23 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
                 old = await service.own_booked(user, replaces_appointment_id)
             except AppError as exc:
                 return json.dumps({"error": _error_code(exc)})
+
+        # Khách đã có ĐÚNG lịch ở giờ này rồi. Phải tách khỏi `slot_unavailable`:
+        # đó là nguyên nhân duy nhất mà câu đáp đúng NGƯỢC HẲN với "chọn giờ
+        # khác đi" — giờ họ xin chính là giờ họ đang giữ. Trước 2026-09-20 ca
+        # này rơi chung vào `slot_unavailable` nên model nói "em chưa giữ được
+        # 4 giờ chiều" trong khi lịch đó đang tồn tại (thấy thật trong
+        # transcript nghiệm thu).
+        #
+        # Chỉ kiểm khi KHÔNG dời lịch: đang dời thì `find_free_slots` đã nhả
+        # các mốc của lịch cũ ra nên giờ đó tính là trống, đúng như mong đợi.
+        if old is None:
+            mine = await service.repo.find_active_at(str(user.id), start)
+            if mine:
+                return json.dumps({
+                    "error": "already_yours",
+                    "existing": {"id": str(mine.id), "at": _moment(mine.start_at)},
+                }, ensure_ascii=False)
 
         # Kiểm trước khi hỏi khách. `find_free_slots` lọc sẵn quá khứ, ngoài
         # giờ mở cửa, ngày nghỉ và giờ đã có người — một truy vấn thay bốn lần

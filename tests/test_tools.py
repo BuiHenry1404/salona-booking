@@ -5,7 +5,7 @@ import pytest
 
 from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
-from app.core.clock import TZ
+from app.core.clock import TZ, to_local
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -710,3 +710,42 @@ class TestParseTimeAnchor:
         out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
             {"start_at": start.isoformat(), "note": "làm tóc"}))
         assert out["held"]["iso"] == start.isoformat()
+
+
+async def test_proposing_a_time_the_customer_already_booked_says_so(test_db):
+    """Trước 2026-09-20 ca này trả `slot_unavailable` giống hệt "hết chỗ", nên
+    model nói "em chưa giữ được 4 giờ chiều" TRONG KHI lịch 4 giờ chiều của
+    chính khách đang tồn tại — sai sự thật với khách. Đã thấy thật trong
+    transcript nghiệm thu 2026-09-20.
+
+    `slot_unavailable` gộp bốn nguyên nhân khác hẳn nhau; đây là nguyên nhân
+    DUY NHẤT mà câu trả lời đúng ngược hẳn với "chọn giờ khác đi"."""
+    user = await a_user(test_db)
+    when = tomorrow_at(15)
+    appt = await AppointmentService(test_db).create(user, when, note="làm tóc")
+    tools = make_booking_tools(test_db, user)
+
+    out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": when.isoformat(), "note": "làm tóc"}))
+
+    assert out["error"] == "already_yours"
+    assert out["existing"]["id"] == str(appt.id)
+    assert out["existing"]["at"]["spoken"] == format_vi_datetime(when)
+    # KHÔNG gợi ý giờ khác: khách đã có đúng giờ họ xin, mời đổi là vô nghĩa.
+    assert "nearest" not in out
+
+
+async def test_rescheduling_onto_your_own_slot_is_still_slot_unavailable(test_db):
+    """Ca DỜI lịch sang chính giờ đang giữ thì khác: `find_free_slots` đã bỏ
+    qua lịch cũ nên giờ đó tính là trống, không rơi vào nhánh này."""
+    user = await a_user(test_db)
+    when = tomorrow_at(15)
+    appt = await AppointmentService(test_db).create(user, when, note="làm tóc")
+    tools = make_booking_tools(test_db, user)
+
+    out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": when.isoformat(), "note": "làm tóc",
+         "replaces_appointment_id": str(appt.id)}))
+
+    assert "error" not in out
+    assert out["held"]["iso"] == to_local(when).isoformat()
