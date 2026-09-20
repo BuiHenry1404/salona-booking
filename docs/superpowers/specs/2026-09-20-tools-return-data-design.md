@@ -104,6 +104,158 @@ dụng. Cái mất đi là **khuôn câu**, không phải dạng đọc.
 // parse_time — GIỮ NGUYÊN, đã đúng khuôn
 ```
 
+### Ví dụ đầy đủ — LLM truyền gì vào, nhận lại gì
+
+Mọi chuỗi `spoken` dưới đây sinh bằng `format_vi_datetime`/`format_vi_hhmm`
+thật, không phải viết tay. Mốc giả định: hôm nay 2026-09-20 (Chủ Nhật), khách
+hỏi cho "mai" = Thứ Hai 21/9.
+
+#### `get_shop_hours` — không tham số
+
+```jsonc
+// LLM gọi: get_shop_hours()
+// CŨ
+"Tiệm mở từ 8 giờ sáng đến 7 giờ tối. Mở cả tuần."
+// MỚI
+{"open": {"iso": "08:00", "spoken": "8 giờ sáng"},
+ "close": {"iso": "19:00", "spoken": "7 giờ tối"},
+ "closed_days": []}
+```
+
+#### `get_shop_status` — không tham số
+
+```jsonc
+// CŨ
+"Chủ tiệm đang bận, xong lúc Thứ Hai 21/9, 3 giờ rưỡi chiều."
+// MỚI
+{"busy": true,
+ "until": {"iso": "2026-09-21T15:30:00+07:00",
+           "spoken": "Thứ Hai 21/9, 3 giờ rưỡi chiều"}}
+// rảnh:
+{"busy": false}
+```
+
+#### `parse_time` — GIỮ NGUYÊN, đã đúng khuôn
+
+```jsonc
+// LLM gọi: parse_time(text="mai 4 giờ chiều")
+{"start_at": "2026-09-21T16:00:00+07:00", "partial_date": null, "missing": []}
+
+// LLM gọi: parse_time(text="mai") — thiếu giờ
+{"start_at": null, "partial_date": "2026-09-21", "missing": ["giờ nào"]}
+```
+
+#### `find_free_slots` — `day` dạng `YYYY-MM-DD`
+
+```jsonc
+// LLM gọi: find_free_slots(day="2026-09-21")
+// CŨ
+"Các giờ còn trống: Thứ Hai 21/9, 8 giờ sáng, Thứ Hai 21/9, 8 giờ 15 sáng, ..."
+// MỚI
+{"day": "2026-09-21",
+ "slots": [{"iso": "2026-09-21T08:00:00+07:00", "spoken": "Thứ Hai 21/9, 8 giờ sáng"},
+           {"iso": "2026-09-21T08:15:00+07:00", "spoken": "Thứ Hai 21/9, 8 giờ 15 sáng"},
+           {"iso": "2026-09-21T09:00:00+07:00", "spoken": "Thứ Hai 21/9, 9 giờ sáng"}]}
+
+// ngày hết chỗ — DỮ KIỆN, không phải câu:
+{"day": "2026-09-21", "slots": []}
+
+// LLM gọi: find_free_slots(day="mai")   ← model không chịu dùng ISO
+{"error": "bad_day_format"}
+```
+
+**`spoken` cố ý lặp lại ngày ở mọi mốc.** Với 12 mốc là ~360 ký tự thừa, và
+cắt đi thì rẻ hơn. Không cắt, vì cắt xong model phải **tự ghép** ngày với giờ
+để nói — đúng việc mà `guard.check_clock` sinh ra để chặn, và một chuỗi chép
+nguyên văn luôn an toàn hơn một chuỗi được ghép. Model chỉ đọc ra 2–3 mốc nên
+chi phí thật nằm ở prompt chứ không ở câu trả lời, và nó có trần (12 mốc).
+
+#### `propose_appointment` — `start_at` bắt buộc, `note` và `replaces_appointment_id` tuỳ chọn
+
+```jsonc
+// LLM gọi: propose_appointment(start_at="2026-09-21T16:00:00+07:00", note="móng bột")
+// CŨ
+"Đã giữ chỗ Thứ Hai 21/9, 4 giờ chiều (iso: 2026-09-21T16:00:00+07:00), móng bột. Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận."
+// MỚI
+{"held": {"iso": "2026-09-21T16:00:00+07:00", "spoken": "Thứ Hai 21/9, 4 giờ chiều"},
+ "note": "móng bột"}
+
+// dời lịch: propose_appointment(start_at="...T16:00:00+07:00", note="móng bột",
+//                               replaces_appointment_id="66f0a1b2c3d4e5f6a7b8c9d0")
+{"held": {"iso": "2026-09-21T16:00:00+07:00", "spoken": "Thứ Hai 21/9, 4 giờ chiều"},
+ "note": "móng bột",
+ "replaces": {"id": "66f0a1b2c3d4e5f6a7b8c9d0",
+              "was": {"iso": "2026-09-21T09:00:00+07:00",
+                      "spoken": "Thứ Hai 21/9, 9 giờ sáng"}}}
+
+// giờ đó đã có người — một mã, phân biệt bằng `nearest`:
+{"error": "slot_unavailable",
+ "nearest": [{"iso": "2026-09-21T15:30:00+07:00", "spoken": "Thứ Hai 21/9, 3 giờ rưỡi chiều"},
+             {"iso": "2026-09-21T16:15:00+07:00", "spoken": "Thứ Hai 21/9, 4 giờ 15 chiều"},
+             {"iso": "2026-09-21T16:30:00+07:00", "spoken": "Thứ Hai 21/9, 4 giờ rưỡi chiều"}]}
+
+// cả ngày hết chỗ: `nearest` rỗng
+{"error": "slot_unavailable", "nearest": []}
+
+// model bỏ qua parse_time rồi tự gõ: propose_appointment(start_at="mai 4 giờ")
+{"error": "bad_time_format"}
+
+// id dời lịch không thuộc khách
+{"error": "not_your_appointment"}
+```
+
+#### `list_my_appointments` — không tham số
+
+```jsonc
+// CŨ
+"Thứ Hai 21/9, 4 giờ chiều — móng bột [id: 66f0a1b2c3d4e5f6a7b8c9d0]"
+// MỚI
+{"appointments": [{"id": "66f0a1b2c3d4e5f6a7b8c9d0",
+                   "at": {"iso": "2026-09-21T16:00:00+07:00",
+                          "spoken": "Thứ Hai 21/9, 4 giờ chiều"},
+                   "note": "móng bột"}]}
+
+// chưa có lịch nào — DỮ KIỆN, không phải câu "Khách chưa có lịch nào sắp tới."
+{"appointments": []}
+```
+
+#### `cancel_appointment` — `appointment_id`
+
+```jsonc
+// LLM gọi: cancel_appointment(appointment_id="66f0a1b2c3d4e5f6a7b8c9d0")
+// CŨ
+"Sẽ hủy lịch Thứ Hai 21/9, 4 giờ chiều. Hãy hỏi khách xác nhận trước khi hủy."
+// MỚI
+{"will_cancel": {"id": "66f0a1b2c3d4e5f6a7b8c9d0",
+                 "at": {"iso": "2026-09-21T16:00:00+07:00",
+                        "spoken": "Thứ Hai 21/9, 4 giờ chiều"}}}
+
+{"error": "appointment_not_found"}
+{"error": "not_your_appointment"}
+```
+
+#### Một lượt trọn vẹn
+
+```
+Khách:  "Mai 4 giờ chiều làm móng bột được không em?"
+
+  → parse_time(text="mai 4 giờ chiều")
+    {"start_at": "2026-09-21T16:00:00+07:00", "partial_date": null, "missing": []}
+
+  → propose_appointment(start_at="2026-09-21T16:00:00+07:00", note="móng bột")
+    {"held": {"iso": "2026-09-21T16:00:00+07:00",
+              "spoken": "Thứ Hai 21/9, 4 giờ chiều"}, "note": "móng bột"}
+
+AI:     "Dạ em giữ chỗ Thứ Hai 21/9, 4 giờ chiều cho móng bột rồi ạ,
+         anh chị xác nhận giúp em nhé?"
+                     └─────────┬─────────┘
+                    chép y `held.spoken`; phần còn lại của câu do model tự viết
+```
+
+Đây là toàn bộ điểm của đợt việc: **chuỗi giờ vẫn chép nguyên văn** (nên
+`guard.check_clock` còn hiệu lực và hai chỗ nói giờ không lệch giọng), nhưng
+**câu thì model tự viết** — không còn khuôn nào để bắt chước.
+
 ### Mã lỗi, không phải câu lỗi
 
 `AppError.message` **không đổi** — nó phục vụ tầng REST và frontend. Tầng tool
