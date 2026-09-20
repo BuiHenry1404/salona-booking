@@ -22,15 +22,32 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — cập nhật 2026-09-18
+## Trạng thái — cập nhật 2026-09-20
 
-- **738 test backend** + 252 test frontend xanh; frontend build sạch.
+- **805 test backend** + 252 test frontend xanh; frontend build sạch.
+  (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.
+  **Chỉ chạy MỘT tiến trình pytest một lúc** — xem "Lặt vặt".)
 - Chạy thật với Azure `gpt-5.4-mini`. Langfuse tự dựng có trace và chi phí,
-  nhưng **không lên** trong hai lần đo gần nhất (14/9) → chưa có số token.
-- `henry/develop` đi trước `main` **85 commit / 13 merge**, đã push.
-  **PR #6 đang mở** (`henry/develop` → `main`) — `main` chỉ nhận qua PR này.
-- Mọi việc của đợt 12–14/9 **đã xong và đã merge vào `henry/develop`**; không
-  còn nhánh nào dở. Nhật ký từng đợt ở cuối file.
+  nhưng **không lên** trong hai lần đo 14/9 → vẫn chưa có số token.
+
+### Bốn nhánh xếp chồng, CHƯA nhánh nào merge
+
+```
+henry/develop
+  └─ feat/conversation-state      (PR #7 mở)  tầng ConversationState + slots
+       └─ fix/live-run-findings                4 lỗi từ chạy thật 19/9
+            └─ refactor/tools-return-data      tool trả JSON thay vì câu
+                 └─ fix/clock-and-dead-data    ← ĐANG Ở ĐÂY
+```
+
+Mỗi nhánh rẽ từ nhánh trên nó vì đều sửa cùng vùng `prompts.py`/`tools.py`.
+**PR #6** (`henry/develop` → `main`) và **PR #7** (`feat/conversation-state` →
+`henry/develop`) đang mở. Cách gộp là quyết định của chủ dự án — có thể squash
+cả chồng, hoặc merge lần lượt từ dưới lên.
+
+Ba file `hoi-thoai-dai-*.txt` ở gốc repo là transcript chạy thật, **untracked
+có chủ ý**. Bốn file `after-*.txt` bị một lệnh `git rebase` khôi phục lại sau
+khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
 
 ## Chốt cứng — đừng mở lại
 
@@ -95,6 +112,8 @@ Khách ──socket──▶ run_turn
 ```
 
 - `booking` có **7 tool, 0 tool ghi**; `shop` 2 tool; `social` 0 tool.
+- **Mọi tool trả JSON dữ kiện, không trả câu** (bẫy #23). Mốc thời gian là
+  `{"iso", "spoken"}`; model chép `spoken` nguyên văn, câu thì tự viết.
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
 - Khối bối cảnh dựng bằng code mỗi lượt và **thắng** lịch sử lẫn `ConversationState` (summary + slots).
 
@@ -203,6 +222,39 @@ cho **chính họ**.
 
 ## Việc còn dở
 
+### VIỆC TIẾP THEO — bug `is_affirmative`, nặng nhất đang mở
+
+**Một câu tán gẫu đặt được lịch thật cho khách.**
+
+`is_affirmative()` (`app/agents/booking_graph/confirm.py:22-26`) khớp `_YES`
+bằng `\b(...)\b` nên trúng **"phải"**, **"được"**, **"dạ"**, **"đúng"** ở
+**bất kỳ đâu** trong câu. Đã tái hiện hai lần trên DB sạch:
+
+```
+is_affirmative("Mà làm móng bột mất bao lâu hả chị, … việc gì cũng
+                phải tính trước cho chắc")  ->  True
+```
+
+→ node `confirm` **ghi lịch thật** giữa cuộc, khách không hề chốt. Và lượt đó
+AI **vẫn hỏi khách xác nhận** trong khi DB đã ghi xong: AI nói một đằng, DB làm
+một nẻo.
+
+Bug này đã **hai lần liên tiếp** làm hỏng nghiệm thu mà không ai nhận ra lúc đó
+— hai lần chạy `LLM-32` rơi vào hai trạng thái DB khác nhau, và lần thứ hai suýt
+dẫn tới một kết luận sai về chất lượng hệ thống (đã sửa lại trong `NOTE.md`).
+
+**Vì sao không sửa nhanh được:** bỏ "phải" khỏi `_YES` là "phải rồi" hết được
+hiểu là đồng ý. Phải chuyển từ khớp **từ đơn** sang khớp **cụm**, và giữ nguyên
+hai thứ đang đúng:
+
+- `is_affirmative(..., cancelling=True)` — khi đang chốt hủy thì "hủy" trong
+  "ừ hủy đi" là ĐỒNG Ý, không phải phủ định (bẫy #19);
+- `_YES_BARE` — bản không dấu, phải sửa song song, không thì tiếng Việt không
+  dấu đi một đường khác.
+
+Hàng rào đang có: `tests/test_confirm.py`. Thêm test cho các câu tán gẫu **chứa**
+từ đồng ý nhưng **không phải** đồng ý — đó là ca chưa ai phủ.
+
 **Trước khi mở cho khách thật**
 
 - **P1 trong `REPO_AUDIT.md`**: SEC-01 (Socket.IO chưa kiểm `token_version`), SEC-03 (tách compose prod). SEC-02 và REL-02 đã xong.
@@ -216,6 +268,15 @@ cho **chính họ**.
 - **Neo ra giờ đã qua**: `apply_anchor` có thể suy ra một mốc hôm nay đã trôi qua, `_guard` trả "ngày khác — giờ đó qua mất rồi" cho một ngày khách không hề nói. An toàn nhưng khó hiểu. **Chỉ mới phủ một phần** (đợt Conversation State, 19/9): `sanitize_slots` bỏ `day` quá khứ và bỏ `time` khi `day` là hôm nay nhưng giờ đã trôi trong **slots** — không cho slots bịa lại một mốc đã qua. Neo trong `parse_time`/`apply_anchor` (nhánh đặt lịch thật) không thuộc đợt này, còn nguyên như cũ.
 - **Parser "mai" sát nửa đêm không ổn định**: hai lần chạy cách nhau một phút, một lần ra đúng hôm sau, một lần ra hôm nay. Nhánh LLM của `parse_vi_time`, không phải regex.
 - **Khách nói "ừ" khi bot đang hỏi thiếu một mảnh** ("sáng hay chiều") thì bot hỏi lại nguyên câu — hợp lý nhưng lặp.
+- **`slots.declined` sót mốc** (quan sát 20/9): khách từ chối 9 giờ sáng **và**
+  2 giờ chiều, lượt nén chỉ ghi lại một. Dữ liệu vào prompt thiếu một nửa.
+- **Câu mời lặp gần y hệt**: "Anh chị muốn đặt lịch làm gì ạ?" ba lượt liên
+  tiếp. `_NO_REPEAT` nói về *fact* nên không chắc bắt được câu mời — cần quyết
+  có viết luật riêng không.
+- **`slot_unavailable` vẫn gộp ba nguyên nhân** (tiệm nghỉ, ngoài giờ mở cửa,
+  giờ quá khứ). Ca thứ tư — khách đã có đúng lịch giờ đó — đã tách thành
+  `already_yours` ngày 20/9 vì nó là ca duy nhất mà câu đáp đúng NGƯỢC hẳn với
+  "chọn giờ khác". Ba ca còn lại chỉ khác nhau ở lời giải thích, chưa tách.
 - **Câu hỏi kép ba vế trở lên** vẫn có thể rớt: một lượt chỉ vào một node. Hai vế shop+lịch đã xử (bẫy #7).
 
 **Lặt vặt**
@@ -259,7 +320,9 @@ Cách tốt nhất đang có: tạo tài khoản qua API rồi tự chat như kh
 
 ---
 
-# Nhật ký các đợt việc — đều đã xong và đã merge
+# Nhật ký các đợt việc
+
+**Bốn nhánh cuối bảng CHƯA merge** — xem mục Trạng thái.
 
 Mỗi nhánh một merge commit `--no-ff` nên vẫn tra ngược được từng đơn vị công việc.
 Cột test là số test backend sau khi merge nhánh đó.
@@ -276,6 +339,10 @@ Cột test là số test backend sau khi merge nhánh đó.
 | `feat/conversation-digest` | Tầng digest trong phiên | 596 → 633 |
 | `fix/live-chat-2026-09-14` | 3 lỗi từ cuộc chat thật không kịch bản | 633 → 639 |
 | `feat/natural-voice-guard` | `guard` + `rewrite` + `phrase` + neo thời gian + 7 tool | 639 → **738** |
+| `feat/conversation-state` | `Digest`→`ConversationState`; thêm `slots` (ý định/dịch vụ/ngày/giờ/giờ đã từ chối) do chính lượt nén sinh — 0 lời gọi LLM thêm | 738 → **776** |
+| `fix/live-run-findings` | 4 lỗi từ chạy thật 19/9: giá/dịch vụ bị đáp bằng câu quyền riêng tư; lặp nguyên văn; AI đoán giới tính khách; liệt kê thiếu giờ đã từ chối | 776 → **785** |
+| `refactor/tools-return-data` | 6 tool trả JSON thay vì câu tiếng Việt; câu lỗi thành mã lỗi; mệnh lệnh chuyển từ tool về prompt | 785 → **803** |
+| `fix/clock-and-dead-data` | 12 giờ đọc là "trưa" không phải "chiều"; bỏ `target_appointment_id` (dữ liệu chết tốn một truy vấn); tách mã `already_yours` | 803 → **805** |
 
 ## Ba bug nghiệp vụ (tìm 13–14/9, sửa xong)
 

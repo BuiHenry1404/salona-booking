@@ -8,6 +8,15 @@ Cập nhật: 2026-09-20
 
 ## Đang ở đâu
 
+**Đợt gần nhất — `fix/clock-and-dead-data` (chưa merge):** 12 giờ giờ đọc là
+"12 giờ **trưa**" chứ không phải "12 giờ chiều" (tiệm mở 08:00–19:00 không nghỉ
+trưa nên ô 12:00–12:45 đặt được hằng ngày — sai này chạm khách thường xuyên);
+0 giờ đọc là "12 giờ đêm". Bỏ slot `target_appointment_id` — dữ liệu chết tốn
+một truy vấn Mongo mỗi lượt nén mà không ai đọc. Tách mã `already_yours` khỏi
+`slot_unavailable`: khách đã có đúng lịch ở giờ đó là ca duy nhất mà câu đáp
+đúng **ngược hẳn** với "chọn giờ khác đi", và trước đó AI nói "em chưa giữ
+được 4 giờ chiều" trong khi lịch ấy đang tồn tại.
+
 **Đợt "tool trả JSON, không trả câu" đã xong** (nhánh
 `refactor/tools-return-data`, chưa merge): cả 6 tool đặt lịch/xem lịch giờ
 chỉ cấp dữ kiện dạng JSON (mốc thời gian là `{"iso","spoken"}`), không còn
@@ -63,12 +72,14 @@ Trước nữa, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develo
 bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
 tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 
-- **803 test backend xanh, 0 fail** (`PYTHONPATH=. .venv/bin/python -m
-  pytest -q`, 14 deselected vì cần Azure thật; đợt final-fix 2026-09-20
-  (I1) thêm 1 test mở rộng hàng rào `ensure_ascii`).
-- **Ba nhánh đang xếp chồng, chưa merge**: `feat/conversation-state` →
-  `fix/live-run-findings` → `refactor/tools-return-data` (nhánh hiện tại).
-  Cách gộp là quyết định của người dùng.
+- **805 test backend xanh, 0 fail** (`PYTHONPATH=. .venv/bin/python -m
+  pytest -q`, 14 deselected vì cần Azure thật). **Chỉ chạy MỘT tiến trình
+  pytest một lúc** — hai tiến trình tranh chấp cùng Mongo test DB và ra hàng
+  chục lỗi pymongo giả.
+- **Bốn nhánh đang xếp chồng, CHƯA nhánh nào merge**: `feat/conversation-state`
+  → `fix/live-run-findings` → `refactor/tools-return-data` →
+  `fix/clock-and-dead-data` (nhánh hiện tại). Sơ đồ đầy đủ ở `CONTEXT.md` mục
+  Trạng thái. Cách gộp là quyết định của chủ dự án.
 - **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.
   `main` chỉ nhận qua PR này.
 - Nhật ký từng đợt, kết quả đo và các quan sát còn để ngỏ: nửa sau
@@ -79,12 +90,23 @@ tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 
 ## Việc tiếp theo
 
-1. **Merge PR #6** khi thấy sẵn sàng.
-2. Hai mục **P1** trong `REPO_AUDIT.md` (bên dưới) — cần xong trước khi mở cho
-   khách thật.
-3. Bốn quan sát đã đo nhưng **chưa quyết** (chi tiết ở mục "Việc còn dở" của
-   `CONTEXT.md`): đo token `ConversationState` khi Langfuse sống; hai lần từ chối liên tiếp
-   ra câu gần y nhau; câu hỏi xác nhận bị tính là lặp; neo có thể ra giờ đã qua.
+1. **BUG `is_affirmative` — làm trước hết.** Một câu tán gẫu có chứa "phải",
+   "được", "dạ" hay "đúng" bị coi là ĐỒNG Ý, và node `confirm` **ghi lịch thật**
+   cho khách. Đã tái hiện hai lần. Chi tiết, cách tái hiện, và vì sao không sửa
+   nhanh được: mục "Việc còn dở" đầu tiên của [`CONTEXT.md`](CONTEXT.md) và mục
+   "Để sau" bên dưới. Nặng hơn mọi thứ bốn nhánh đang chờ merge sửa được.
+2. **Quyết cách gộp bốn nhánh xếp chồng** (sơ đồ ở `CONTEXT.md` mục Trạng thái)
+   và **merge PR #6 / PR #7** khi thấy sẵn sàng.
+3. Hai mục **P1** trong `REPO_AUDIT.md` (bên dưới) — cần xong trước khi mở cho
+   khách thật. Chủ dự án đã chốt **để tới lúc deploy mới làm**.
+4. Quan sát đã đo nhưng **chưa quyết** (chi tiết ở "Việc còn dở" của
+   `CONTEXT.md`): đo token `ConversationState` khi Langfuse sống; hai lần từ chối
+   liên tiếp ra câu gần y nhau; câu hỏi xác nhận bị tính là lặp; neo có thể ra
+   giờ đã qua; `slots.declined` sót mốc; câu mời lặp gần y hệt.
+
+**Đã chốt là KHÔNG sửa bây giờ:** AI tự ước lượng thời lượng dịch vụ ("khoảng
+1 tiếng rưỡi đến 2 tiếng") — chủ dự án chấp nhận vì đó là ước lượng hợp lý,
+dù tiệm không có dữ liệu thời lượng nào.
 
 Còn **2 mục P1** trong [`REPO_AUDIT.md`](REPO_AUDIT.md), cần xong trước khi mở
 cho khách thật:
