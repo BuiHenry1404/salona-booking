@@ -4,29 +4,50 @@
 [`CONTEXT.md`](CONTEXT.md), *gõ gì* nằm ở [`RUNBOOK.md`](RUNBOOK.md), *cần gì
 để lên prod* nằm ở [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md).
 
-Cập nhật: 2026-09-19
+Cập nhật: 2026-09-20
 
 ## Đang ở đâu
 
-**Tầng Conversation State đã xong** (nhánh `feat/conversation-state`, chưa
-merge): `Digest` đổi tên thành `ConversationState` (`summary` + `slots`).
-Slots là dữ kiện dạng trường (ý định, dịch vụ, ngày/giờ đang nhắm, lịch bị từ
-chối) do LLM sinh ở lượt nén nền, lọc lại bằng code (`sanitize_slots`) rồi
-dựng thành chữ (`render_slots`) và nhồi chung một message với `summary`, ngay
-sau system prompt. Không có đường code nào đặt/dời/hủy lịch dựa trên slots —
-`test_no_code_path_books_from_slots` canh (xem `CONTEXT.md` bẫy #22).
+**Đợt "tool trả JSON, không trả câu" đã xong** (nhánh
+`refactor/tools-return-data`, chưa merge): cả 6 tool đặt lịch/xem lịch giờ
+chỉ cấp dữ kiện dạng JSON (mốc thời gian là `{"iso","spoken"}`), không còn
+câu tiếng Việt viết sẵn hay mệnh lệnh nhét trong kết quả trả về — mọi luật đó
+đã dồn về `BOOKING_PROMPT`/`SHOP_PROMPT`. Câu lỗi cũ thành mã lỗi
+(`slot_unavailable`, `bad_time_format`, `appointment_not_found`,
+`not_your_appointment`, `bad_day_format`, `unavailable`); `parse_time` giữ
+nguyên hợp đồng cũ. Xem `CONTEXT.md` bẫy #23.
 
-Trước đó, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develop` và đã push:
+**Đã chạy thật với Azure để nghiệm thu** (kịch bản LLM-32, hội thoại dài kèm
+nén): soi tay transcript `hoi-thoai-dai-sau-refactor-tool.txt` ở gốc repo,
+**không** thấy khoá JSON hay chuỗi ISO nào rò ra câu nói với khách (`iso`,
+`held`, `slots`, `error`, `spoken`, `+07:00`, `HH:MM`...), giờ vẫn đọc đúng
+giọng Việt ("4 giờ chiều"), xưng hô đúng "em"/"anh chị", và
+`conversations.state.slots` trong Mongo vẫn được LLM sinh và lưu đúng sau
+lượt nén. Đáng chú ý: so với `hoi-thoai-dai-sau-khi-fix.txt` (trước đợt này),
+bản mới không còn hiện tượng model tự nhận "đã chốt" một giờ chưa thật sự giữ
+được — lượt cuối gọi đúng `propose_appointment`, phát hiện giờ đã bận và trả
+mã `slot_unavailable` kèm giờ trống thay thế, còn bản cũ chỉ gọi `parse_time`
+rồi tự bịa câu xác nhận.
+
+Trước đó, tầng Conversation State (`Digest` đổi tên thành `ConversationState`,
+`summary` + `slots`) đã xong ở nhánh `feat/conversation-state`, chưa merge.
+Slots là dữ kiện dạng trường do LLM sinh ở lượt nén nền, lọc lại bằng code
+(`sanitize_slots`) rồi dựng thành chữ (`render_slots`). Không có đường code
+nào đặt/dời/hủy lịch dựa trên slots — `test_no_code_path_books_from_slots`
+canh (bẫy #22).
+
+Trước nữa, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develop` và đã push:
 định tuyến lại agent, hội thoại tự nhiên, ba bug nghiệp vụ (dời/hủy/viết số),
 bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
 tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 
-- **776 test backend xanh, 1 skip** (tự skip sau 3 giờ chiều giờ VN, bình
-  thường) **+ 252 test frontend xanh**, frontend build sạch.
-  (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.)
+- **802 test backend xanh, 0 fail** (`PYTHONPATH=. .venv/bin/python -m
+  pytest -q`, 14 deselected vì cần Azure thật).
+- **Ba nhánh đang xếp chồng, chưa merge**: `feat/conversation-state` →
+  `fix/live-run-findings` → `refactor/tools-return-data` (nhánh hiện tại).
+  Cách gộp là quyết định của người dùng.
 - **PR #6 đang mở**: `henry/develop` → `main`, 85 commit / 13 merge.
-  `main` chỉ nhận qua PR này. `feat/conversation-state` chưa merge vào
-  `henry/develop` — việc merge để người quyết, không tự động ở đây.
+  `main` chỉ nhận qua PR này.
 - Nhật ký từng đợt, kết quả đo và các quan sát còn để ngỏ: nửa sau
   [`CONTEXT.md`](CONTEXT.md) ("Nhật ký các đợt việc").
 

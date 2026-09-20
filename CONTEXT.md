@@ -48,6 +48,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Quan sát | **Langfuse tự dựng**, compose riêng | Dữ liệu khách không ra khỏi máy. Nặng nên tách khỏi `docker-compose.yml` |
 | Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate |
 | Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn |
+| Tool | **Chỉ cấp dữ kiện JSON, không viết câu** | Câu là việc của LLM; tool viết câu thì guard không sửa được giọng |
 
 ## Xưng hô — chốt 2026-08-23, siết 2026-09-19
 
@@ -97,7 +98,7 @@ Khách ──socket──▶ run_turn
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
 - Khối bối cảnh dựng bằng code mỗi lượt và **thắng** lịch sử lẫn `ConversationState` (summary + slots).
 
-## 22 cái bẫy — đã trả giá, đừng "sửa cho gọn"
+## 23 cái bẫy — đã trả giá, đừng "sửa cho gọn"
 
 **Dữ liệu**
 
@@ -159,6 +160,7 @@ Khách ──socket──▶ run_turn
 **Conversation state**
 
 22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh. `target_appointment_id` phải đối chiếu `upcoming_for_user` trước khi lưu; model từng bịa id (BUG-2).
+23. **Tool trả JSON, KHÔNG trả câu.** Trước 2026-09-20, 5/7 tool trả câu tiếng Việt hoàn chỉnh và prompt bảo model chép lại — giọng chết cứng, và tầng `guard`/`rewrite` sinh ra để làm giọng tự nhiên không với tới được vì khuôn câu đã bị tool áp đặt. Tool cũng nhét cả **mệnh lệnh** vào kết quả trả về ("Hãy hỏi khách xác nhận"), làm cùng một luật có hai bản ở `prompts.py` và `tools.py` rồi trôi lệch. Mốc thời gian cấp cả `iso` lẫn `spoken`: bỏ `spoken` đi là bắt model tự định dạng giờ, đúng thứ `guard.check_clock` sinh ra để chặn. `test_tools_return_data_not_instructions` canh.
 
 ## Ràng buộc giao diện — không được phá
 
