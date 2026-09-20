@@ -9,6 +9,7 @@ from app.core.clock import TZ
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
+from app.services.conversation import ConversationService
 from app.services.shop import ShopService
 
 pytestmark = pytest.mark.asyncio
@@ -93,15 +94,14 @@ async def test_propose_stores_the_time_in_mongo_not_in_the_prompt(test_db):
     nằm trong context của model — và model chép sai 15:00 thành 5:00 thì không
     gì phát hiện được.
     """
-    from app.services.conversation import ConversationService
-
     user = await a_user(test_db)
     start = tomorrow_at(15)
 
     result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": start.isoformat(), "note": "làm tóc"}
     )
-    assert "giữ chỗ" in result.lower()
+    out = json.loads(result)
+    assert out["held"]["iso"] == start.isoformat()
 
     pending = await ConversationService(test_db).get_pending(str(user.id))
     assert pending["start_at"] == start.isoformat()
@@ -150,8 +150,9 @@ async def test_propose_checks_availability_BEFORE_asking_the_customer(test_db):
     result = await by_name(make_booking_tools(test_db, other), "propose_appointment").ainvoke(
         {"start_at": tomorrow_at(16).isoformat(), "note": None}
     )
-    assert "không đặt được" in result.lower()
-    assert "còn trống" in result.lower()   # phải gợi ý giờ khác, không bỏ lửng
+    out = json.loads(result)
+    assert out["error"] == "slot_unavailable"
+    assert out["nearest"], "phải gợi ý giờ khác, không bỏ lửng"
 
 
 async def test_propose_rejects_a_time_outside_opening_hours(test_db):
@@ -159,7 +160,8 @@ async def test_propose_rejects_a_time_outside_opening_hours(test_db):
     result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": tomorrow_at(3).isoformat(), "note": None}   # 3 giờ sáng
     )
-    assert "không đặt được" in result.lower()
+    out = json.loads(result)
+    assert out["error"] == "slot_unavailable"
 
 
 async def test_list_then_cancel(test_db):
@@ -173,14 +175,13 @@ async def test_list_then_cancel(test_db):
     assert listed_json["appointments"][0]["note"] == "làm tóc"
     appointment_id = listed_json["appointments"][0]["id"]
 
-    held = await by_name(tools, "cancel_appointment").ainvoke({"appointment_id": appointment_id})
-    assert "hủy" in held.lower()
+    held = json.loads(await by_name(tools, "cancel_appointment").ainvoke({"appointment_id": appointment_id}))
+    assert held["will_cancel"]["id"] == appointment_id
 
     # Tool chỉ GIỮ ý hủy — lịch vẫn còn cho tới khi khách "ừ" ở node confirm.
     listed_after = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
     assert len(listed_after["appointments"]) == 1
     assert listed_after["appointments"][0]["note"] == "làm tóc"
-    from app.services.conversation import ConversationService
     pending = await ConversationService(test_db).get_pending(str(user.id))
     assert pending["cancel_appointment_id"] == appointment_id
 
@@ -198,7 +199,85 @@ async def test_tool_cannot_touch_another_users_appointment(test_db):
     result = await by_name(make_booking_tools(test_db, intruder), "cancel_appointment").ainvoke(
         {"appointment_id": appointment_id}
     )
-    assert "của chính mình" in result.lower()
+    assert json.loads(result) == {"error": "not_your_appointment"}
+
+
+async def test_propose_returns_data_and_still_stores_the_time_in_mongo(test_db):
+    """Chốt cũ không đổi: giá trị đem đi ghi lịch lấy từ Mongo, KHÔNG từ chuỗi
+    model gõ lại. Đợt này chỉ đổi HÌNH DẠNG thứ tool trả về."""
+    user = await a_user(test_db)
+    tools = make_booking_tools(test_db, user)
+    when = tomorrow_at(15)
+    out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": when.isoformat(), "note": "làm tóc"}))
+
+    assert out["held"]["iso"] == when.isoformat()
+    assert out["held"]["spoken"] == format_vi_datetime(when)
+    assert out["note"] == "làm tóc"
+    assert "replaces" not in out
+    # Không còn mệnh lệnh nào lẫn trong kết quả tool.
+    assert "Hãy" not in json.dumps(out, ensure_ascii=False)
+
+    pending = await ConversationService(test_db).get_pending(str(user.id))
+    assert pending["start_at"] == when.isoformat()
+
+
+async def test_propose_on_a_taken_time_returns_a_code_and_nearest_slots(test_db):
+    user = await a_user(test_db)
+    tools = make_booking_tools(test_db, user)
+    when = tomorrow_at(15)
+    await AppointmentService(test_db).create(
+        await a_user(test_db, phone="0911111111", name="Chị Hoa"), when, note="x")
+
+    out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": when.isoformat()}))
+
+    assert out["error"] == "slot_unavailable"
+    assert out["nearest"], "phải gợi ý giờ khác, không bỏ lửng"
+    assert all(set(s) == {"iso", "spoken"} for s in out["nearest"])
+
+
+async def test_propose_rejects_rubbish_time_with_a_code(test_db):
+    tools = make_booking_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
+        {"start_at": "mai 3 giờ"}))
+    assert out == {"error": "bad_time_format"}
+
+
+async def test_another_users_appointment_maps_to_a_code_not_the_rest_message(test_db):
+    """`AppError.message` viết cho tầng REST, không viết cho lễ tân. Ánh xạ
+    theo LỚP exception — chuỗi message đổi lúc nào không ai báo."""
+    owner = await a_user(test_db, phone="0911111111", name="Chị Hoa")
+    appt = await AppointmentService(test_db).create(owner, tomorrow_at(9), note="x")
+    tools = make_booking_tools(test_db, await a_user(test_db))
+
+    out = json.loads(await by_name(tools, "cancel_appointment").ainvoke(
+        {"appointment_id": str(appt.id)}))
+    assert out == {"error": "not_your_appointment"}
+
+
+async def test_an_unknown_appointment_id_maps_to_a_code(test_db):
+    tools = make_booking_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "cancel_appointment").ainvoke(
+        {"appointment_id": "a" * 24}))
+    assert out == {"error": "appointment_not_found"}
+
+
+async def test_cancel_returns_data_and_still_only_records_the_intent(test_db):
+    """Chốt cũ không đổi: tool KHÔNG hủy, chỉ ghi ý định; node confirm mới hủy."""
+    user = await a_user(test_db)
+    when = tomorrow_at(9)
+    appt = await AppointmentService(test_db).create(user, when, note="làm tóc")
+    tools = make_booking_tools(test_db, user)
+
+    out = json.loads(await by_name(tools, "cancel_appointment").ainvoke(
+        {"appointment_id": str(appt.id)}))
+
+    assert out["will_cancel"]["id"] == str(appt.id)
+    assert out["will_cancel"]["at"]["spoken"] == format_vi_datetime(when)
+    # Vẫn còn nguyên trong danh sách — chưa hủy gì cả.
+    still = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
+    assert len(still["appointments"]) == 1
 
 
 async def test_free_slots_returns_data_not_a_sentence(test_db):
@@ -279,8 +358,8 @@ async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):
     result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": naive, "note": "làm tóc"}
     )
-    assert "giữ chỗ" in result.lower()
-    assert "3 giờ chiều" in result   # 15h giờ Việt Nam, không bị lệch 7 tiếng
+    out = json.loads(result)
+    assert "3 giờ chiều" in out["held"]["spoken"]   # 15h giờ Việt Nam, không bị lệch 7 tiếng
 
 
 async def test_rubbish_time_string_gets_a_polite_answer_not_a_crash(test_db):
@@ -288,7 +367,7 @@ async def test_rubbish_time_string_gets_a_polite_answer_not_a_crash(test_db):
     result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": "mai 3 giờ chiều", "note": None}
     )
-    assert "không hợp lệ" in result.lower()
+    assert json.loads(result) == {"error": "bad_time_format"}
 
 
 async def test_parse_time_returns_json_the_agent_can_hand_straight_on(test_db):
@@ -446,33 +525,31 @@ class TestProposeCanReplaceAnExistingAppointment:
         return await AppointmentService(db).create(user, start, note="làm tóc")
 
     async def test_the_old_id_is_kept_in_pending_for_confirm(self, test_db):
-        from app.services.conversation import ConversationService
         user = await a_user(test_db)
         old = await self._booked(test_db, user, tomorrow_at(9))
         tools = make_booking_tools(test_db, user)
 
-        out = await by_name(tools, "propose_appointment").ainvoke(
+        out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
             {"start_at": tomorrow_at(10).isoformat(),
              "replaces_appointment_id": str(old.id)}
-        )
+        ))
 
         pending = await ConversationService(test_db).get_pending(str(user.id))
         assert pending["replaces_appointment_id"] == str(old.id)
-        assert "dời" in out.lower()
+        assert out["replaces"]["id"] == str(old.id)
         # Chưa ghi gì: lịch cũ vẫn là lịch duy nhất.
         assert await test_db["appointments"].count_documents({"status": "booked"}) == 1
 
     async def test_an_unknown_id_is_refused_before_holding_anything(self, test_db):
-        from app.services.conversation import ConversationService
         user = await a_user(test_db)
         tools = make_booking_tools(test_db, user)
 
-        out = await by_name(tools, "propose_appointment").ainvoke(
+        out = json.loads(await by_name(tools, "propose_appointment").ainvoke(
             {"start_at": tomorrow_at(10).isoformat(),
              "replaces_appointment_id": "id bịa"}
-        )
+        ))
 
-        assert "không tìm thấy" in out.lower()
+        assert out["error"] == "appointment_not_found"
         assert await ConversationService(test_db).get_pending(str(user.id)) is None
 
     async def test_someone_elses_id_is_refused(self, test_db):
@@ -480,11 +557,11 @@ class TestProposeCanReplaceAnExistingAppointment:
         intruder = await a_user(test_db, phone="0938111222", name="Người lạ")
         old = await self._booked(test_db, owner, tomorrow_at(9))
 
-        out = await by_name(make_booking_tools(test_db, intruder), "propose_appointment").ainvoke(
+        out = json.loads(await by_name(make_booking_tools(test_db, intruder), "propose_appointment").ainvoke(
             {"start_at": tomorrow_at(10).isoformat(),
              "replaces_appointment_id": str(old.id)}
-        )
-        assert "chính mình" in out.lower()
+        ))
+        assert out["error"] == "not_your_appointment"
 
     async def test_the_description_tells_the_model_when_to_pass_it(self, test_db):
         user = await a_user(test_db)
@@ -515,28 +592,26 @@ class TestCancelGoesThroughConfirm:
 
     async def test_cancel_holds_the_intent_and_keeps_the_appointment(self, test_db):
         from app.services.appointment import AppointmentService
-        from app.services.conversation import ConversationService
         user = await a_user(test_db)
         appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
 
-        out = await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
+        out = json.loads(await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
             {"appointment_id": str(appt.id)}
-        )
+        ))
 
         assert (await AppointmentService(test_db).repo.get_by_id(str(appt.id))).status == "booked"
         pending = await ConversationService(test_db).get_pending(str(user.id))
         assert pending == {"cancel_appointment_id": str(appt.id),
                            "start_at": appt.start_at.isoformat(),
                            "asked_at": pending["asked_at"]}
-        assert "3 giờ chiều" in out and "xác nhận" in out
+        assert "3 giờ chiều" in out["will_cancel"]["at"]["spoken"]
 
     async def test_a_bad_id_holds_nothing(self, test_db):
-        from app.services.conversation import ConversationService
         user = await a_user(test_db)
-        out = await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
+        out = json.loads(await by_name(make_booking_tools(test_db, user), "cancel_appointment").ainvoke(
             {"appointment_id": "bịa"}
-        )
-        assert "không tìm thấy" in out.lower()
+        ))
+        assert out["error"] == "appointment_not_found"
         assert await ConversationService(test_db).get_pending(str(user.id)) is None
 
     async def test_the_description_says_the_customer_confirms_next_turn(self, test_db):
@@ -583,6 +658,6 @@ class TestParseTimeAnchor:
     async def test_propose_returns_the_iso_for_the_next_turn(self, test_db):
         user = await a_user(test_db)
         start = tomorrow_at(15)
-        out = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
-            {"start_at": start.isoformat(), "note": "làm tóc"})
-        assert f"(iso: {start.isoformat()})" in out
+        out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
+            {"start_at": start.isoformat(), "note": "làm tóc"}))
+        assert out["held"]["iso"] == start.isoformat()

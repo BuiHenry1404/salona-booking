@@ -8,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
-from app.core.errors import AppError
+from app.core.errors import AppError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
@@ -55,6 +55,18 @@ def _moment(dt: datetime) -> dict:
     """
     local = to_local(dt)
     return {"iso": local.isoformat(), "spoken": format_vi_datetime(local)}
+
+
+# Ánh xạ theo LỚP exception, không theo chuỗi `message`: `AppError.message`
+# viết cho tầng REST và frontend, đổi lúc nào không ai báo cho tầng này.
+_ERROR_CODES = {
+    NotFoundError: "appointment_not_found",
+    ForbiddenError: "not_your_appointment",
+}
+
+
+def _error_code(exc: AppError) -> str:
+    return _ERROR_CODES.get(type(exc), "unavailable")
 
 
 # Index CHÍNH LÀ giá trị trong closed_days: 0 = Chủ Nhật (app/models/shop.py).
@@ -166,77 +178,63 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         note: Optional[str] = None,
         replaces_appointment_id: Optional[str] = None,
     ) -> str:
-        """Hold the slot temporarily and prepare the confirmation question.
-        `start_at` is ISO 8601, copied UNCHANGED from parse_time's result.
-        Call this tool, then ask the customer to confirm. NO tool writes an
-        appointment directly — it is written only when the customer agrees on
-        the NEXT turn.
+        """Hold the slot temporarily, as JSON. `start_at` is ISO 8601, copied
+        UNCHANGED from parse_time's result.
+        NO tool writes an appointment directly — it is written only when the
+        customer agrees on the NEXT turn.
+        On success the result carries `held`; say `held.spoken` exactly as
+        written. `error: "slot_unavailable"` carries `nearest`, the free slots
+        closest to what they asked for; an empty `nearest` means the day is full.
         `note` is the service only (what they want done) — never the time or
         the day; those live in `start_at`.
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
         (reschedule) an appointment they already have. Copy the id from the
-        `[id: ...]` tag on that appointment's line in the context block. When
-        they confirm, the old appointment is moved to the new time instead of
-        a second one being added. Leave it out for a brand-new booking."""
-        # `note` ở đây do model tự gõ lại theo lời khách, và được lưu vào
-        # `pending_confirmation` + in thẳng vào chuỗi trả về — cả hai đường
-        # này không đi qua `Appointment`, nên cái cap ở `Appointment._clean_note`
-        # (single_line + NOTE_MAX) không tự động áp dụng. Phải lọc lại ở đây.
+        context block. Leave it out for a brand-new booking."""
+        # `note` do model gõ lại theo lời khách và được lưu vào
+        # `pending_confirmation` — đường này không đi qua `Appointment`, nên
+        # cap ở `Appointment._clean_note` không tự áp dụng. Lọc lại ở đây.
         note = single_line(note, NOTE_MAX)
         try:
             start = _parse_local(start_at)
         except ValueError:
-            return "Thời gian không hợp lệ."
+            return json.dumps({"error": "bad_time_format"})
 
         # Dời lịch: kiểm id TRƯỚC khi giữ chỗ. Id bịa mà vẫn giữ chỗ thì khách
-        # chốt "ừ" xong là lại ra hai lịch — đúng cái BUG-1 đang sửa.
+        # chốt "ừ" xong là ra hai lịch — đúng BUG-1.
         old = None
         if replaces_appointment_id:
             try:
                 old = await service.own_booked(user, replaces_appointment_id)
             except AppError as exc:
-                return exc.message
+                return json.dumps({"error": _error_code(exc)})
 
-        # Kiểm trước khi hỏi khách. Hỏi "3 giờ chiều đúng không chị?" rồi mới báo
-        # giờ đó có người là bắt khách chọn lại hai lần.
-        # `find_free_slots` lọc sẵn cả quá khứ, ngoài giờ mở cửa, ngày nghỉ và
-        # giờ đã có người — một truy vấn thay cho bốn lần kiểm tay.
-        #
-        # `limit` phải phủ TRỌN ngày. Mặc định của service là 12 mốc, tức chỉ
-        # tới gần 11 giờ trưa; để nguyên thì mọi giờ chiều đều bị báo "không đặt
-        # được" dù còn trống.
-        # Đang dời thì các mốc của chính lịch cũ tính là trống (9:00 → 9:15).
+        # Kiểm trước khi hỏi khách. `find_free_slots` lọc sẵn quá khứ, ngoài
+        # giờ mở cửa, ngày nghỉ và giờ đã có người — một truy vấn thay bốn lần
+        # kiểm tay. `limit` phải phủ TRỌN ngày, mặc định 12 mốc chỉ tới gần
+        # 11 giờ trưa. Đang dời thì mốc của chính lịch cũ tính là trống.
         free = await service.find_free_slots(
             to_local(start).date(), limit=WHOLE_DAY,
             ignore_appointment_id=str(old.id) if old else None,
         )
         if start not in free:
-            if not free:
-                return "Ngày đó không còn giờ trống. Hãy hỏi khách chọn ngày khác."
-            # Gợi ý ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày:
-            # khách xin 4 giờ chiều mà gợi ý 8, 8:15, 8:30 sáng là gợi ý vô ích.
+            # Ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày: khách
+            # xin 4 giờ chiều mà gợi ý 8 giờ sáng là gợi ý vô ích.
             nearest = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
-            suggestion = ", ".join(format_vi_datetime(s) for s in nearest)
-            return f"Giờ đó không đặt được. Các giờ còn trống gần nhất: {suggestion}."
+            return json.dumps({"error": "slot_unavailable",
+                               "nearest": [_moment(s) for s in nearest]},
+                              ensure_ascii=False)
 
-        # Lưu vào Mongo để lượt sau đọc lại. Đây là điểm mấu chốt: giá trị đem đi
-        # ghi lịch lấy từ DB, KHÔNG phải từ chuỗi model gõ lại — nên model không
-        # thể chép sai giờ giữa hai lượt.
+        # Lưu vào Mongo để lượt sau đọc lại: giá trị đem đi ghi lịch lấy từ DB,
+        # KHÔNG từ chuỗi model gõ lại.
         payload = {"start_at": start.isoformat(), "note": note}
         if old:
             payload["replaces_appointment_id"] = str(old.id)
         await conversations.set_pending(str(user.id), payload)
-        note_text = f", {note}" if note else ""
+
+        result = {"held": _moment(start), "note": note}
         if old:
-            return (
-                f"Đã giữ chỗ {format_vi_datetime(start)} (iso: {start.isoformat()}){note_text} để dời lịch "
-                f"{format_vi_datetime(old.start_at)} sang đó. "
-                "Hãy nhắc lại đầy đủ ngày giờ mới và hỏi khách xác nhận."
-            )
-        return (
-            f"Đã giữ chỗ {format_vi_datetime(start)} (iso: {start.isoformat()}){note_text}. "
-            "Hãy nhắc lại đầy đủ ngày giờ và hỏi khách xác nhận."
-        )
+            result["replaces"] = {"id": str(old.id), "was": _moment(old.start_at)}
+        return json.dumps(result, ensure_ascii=False)
 
     @tool
     async def list_my_appointments() -> str:
@@ -255,28 +253,28 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:
-        """Prepare to cancel one appointment. Call this AS SOON AS the customer
-        asks to cancel — do not ask them to confirm before calling it. Nothing
-        is cancelled yet: the tool only records the intent; after it returns,
-        ask the customer to confirm, and the appointment is cancelled only when
-        they agree on the NEXT turn. Never say it is already cancelled before
-        that.
-        `appointment_id` is the `[id: ...]` tag on that appointment's line in
-        the context block — copy it exactly. Never invent or guess an id; if
-        the context block shows none, call list_my_appointments first. If the
-        customer has two or more appointments, ask which one first."""
-        # Không hủy ở đây. Hủy giống đặt: tool giữ ý định, node confirm mới
-        # làm thật khi khách "ừ". Kiểm id trước để không giữ một ý hủy vô nghĩa.
+        """Prepare to cancel one appointment, as JSON. Call this AS SOON AS the
+        customer asks to cancel — do not ask them to confirm before calling it.
+        Nothing is cancelled yet: the tool only records the intent, and the
+        appointment is cancelled only when they agree on the NEXT turn. Never
+        say it is already cancelled before that.
+        `appointment_id` is the id on that appointment's line in the context
+        block — copy it exactly. Never invent or guess an id; if the context
+        block shows none, call list_my_appointments first. If the customer has
+        two or more appointments, ask which one first."""
+        # Không hủy ở đây. Hủy giống đặt: tool giữ ý định, node confirm mới làm
+        # thật khi khách "ừ". Kiểm id trước để không giữ một ý hủy vô nghĩa.
         try:
             appt = await service.own_booked(user, appointment_id)
         except AppError as exc:
-            return exc.message
+            return json.dumps({"error": _error_code(exc)})
         await conversations.set_pending(
             str(user.id),
             {"cancel_appointment_id": str(appt.id), "start_at": appt.start_at.isoformat()},
         )
-        return (f"Sẽ hủy lịch {format_vi_datetime(appt.start_at)}. "
-                "Hãy hỏi khách xác nhận trước khi hủy.")
+        return json.dumps({"will_cancel": {"id": str(appt.id),
+                                           "at": _moment(appt.start_at)}},
+                          ensure_ascii=False)
 
     return [
         parse_time,
