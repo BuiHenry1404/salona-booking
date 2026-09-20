@@ -15,20 +15,18 @@ from app.services.conversation_state import sanitize_slots
 
 # 2026-09-19 10:00 UTC = 17:00 giờ VN (UTC+7).
 NOW = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
-IDS = {"aaaaaaaaaaaaaaaaaaaaaaaa"}
 
 
 def _clean(**kwargs):
-    return sanitize_slots(ConversationSlots(**kwargs), now=NOW, valid_ids=IDS)
+    return sanitize_slots(ConversationSlots(**kwargs), now=NOW)
 
 
 def test_keeps_a_fully_valid_set():
     slots = _clean(intent="book", service="làm móng bột", day="2026-09-20",
-                   time="15:00", target_appointment_id="aaaaaaaaaaaaaaaaaaaaaaaa")
+                   time="15:00")
     assert slots.intent == "book"
     assert slots.day == "2026-09-20"
     assert slots.time == "15:00"
-    assert slots.target_appointment_id == "aaaaaaaaaaaaaaaaaaaaaaaa"
 
 
 def test_unknown_intent_is_dropped():
@@ -83,12 +81,6 @@ def test_an_unparseable_day_or_time_is_dropped():
     slots = _clean(day="thứ Năm tuần sau", time="25:99", service="làm tóc")
     assert slots.day is None and slots.time is None
 
-
-def test_an_appointment_id_the_customer_does_not_own_is_dropped():
-    """Model từng bịa id (BUG-2). Đối chiếu DB, không tin chuỗi model gõ."""
-    slots = _clean(intent="cancel", target_appointment_id="bbbbbbbbbbbbbbbbbbbbbbbb")
-    assert slots.target_appointment_id is None
-    assert slots.intent == "cancel"      # field khác không bị vạ lây
 
 
 def test_service_is_capped_and_flattened():
@@ -171,7 +163,7 @@ def test_declined_keeps_the_last_six_parseable_entries():
 
 def test_everything_empty_becomes_none():
     assert _clean() is None
-    assert sanitize_slots(None, now=NOW, valid_ids=IDS) is None
+    assert sanitize_slots(None, now=NOW) is None
 
 
 def test_each_dropped_field_is_logged():

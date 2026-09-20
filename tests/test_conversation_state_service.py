@@ -259,21 +259,6 @@ async def test_compaction_stores_sanitized_slots(test_db, patch_model):
     assert state.slots.time == "15:00"
 
 
-async def test_a_hallucinated_appointment_id_does_not_reach_mongo(test_db, patch_model):
-    """Khách không có lịch nào → mọi id model gõ ra đều là bịa."""
-    patch_model(reply=StateOutput(
-        summary=["Khách hỏi dời lịch."],
-        slots=ConversationSlots(intent="reschedule",
-                                target_appointment_id="aaaaaaaaaaaaaaaaaaaaaaaa"),
-    ))
-    await _seed(test_db, turns=12)
-
-    await ConversationStateService(test_db).maybe_compact("u1")
-
-    state = await ConversationService(test_db).get_state("u1")
-    assert state.slots.target_appointment_id is None
-    assert state.slots.intent == "reschedule"      # field khác không bị vạ lây
-
 
 async def test_empty_slots_are_not_a_failure(test_db, patch_model):
     """Tán gẫu thì không có slot nào — không được đốt cầu chì vì chuyện đó."""

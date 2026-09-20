@@ -159,7 +159,7 @@ Khách ──socket──▶ run_turn
 
 **Conversation state**
 
-22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh. `target_appointment_id` phải đối chiếu `upcoming_for_user` trước khi lưu; model từng bịa id (BUG-2).
+22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh. Từng có thêm slot `target_appointment_id`, bỏ 2026-09-20: nó được hỏi, được lọc bằng một truy vấn Mongo mỗi lượt nén, được lưu — rồi **không nơi nào đọc**, vì khối bối cảnh đã in id thật mỗi lượt và đó mới là thứ chữa BUG-2.
 23. **Tool trả JSON, KHÔNG trả câu.** Trước 2026-09-20, 5/7 tool trả câu tiếng Việt hoàn chỉnh và prompt bảo model chép lại — giọng chết cứng, và tầng `guard`/`rewrite` sinh ra để làm giọng tự nhiên không với tới được vì khuôn câu đã bị tool áp đặt. Tool cũng nhét cả **mệnh lệnh** vào kết quả trả về ("Hãy hỏi khách xác nhận"), làm cùng một luật có hai bản ở `prompts.py` và `tools.py` rồi trôi lệch. Mốc thời gian cấp cả `iso` lẫn `spoken`: bỏ `spoken` đi là bắt model tự định dạng giờ, đúng thứ `guard.check_clock` sinh ra để chặn. `test_tools_return_data_not_instructions` canh.
 
 ## Ràng buộc giao diện — không được phá

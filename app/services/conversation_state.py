@@ -4,7 +4,7 @@ Spec: docs/superpowers/specs/2026-09-19-conversation-state-design.md.
 """
 import asyncio
 from datetime import date, datetime, time as dtime, timedelta
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, field_validator
@@ -15,7 +15,6 @@ from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.conversation import ChatMessage, ConversationSlots, ConversationState
-from app.repositories.appointment import AppointmentRepository
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
 logger = get_logger(__name__)
@@ -78,7 +77,6 @@ Every field is optional — leave it out when the customer has not said it.
 - service: what they want done, in Vietnamese, at most {service_max} characters.
 - day: the day they are aiming for, as YYYY-MM-DD. Never a weekday name.
 - time: the time they are aiming for, as HH:MM on a 24-hour clock.
-- target_appointment_id: only an id that appears verbatim in the messages.
 - declined: times the salon offered and the customer turned down, each as a
   full ISO timestamp with the +07:00 offset.
 Do NOT guess. An empty slots object is the correct answer for small talk.
@@ -110,7 +108,6 @@ def split_window(messages, covers_until: Optional[datetime]):
 class ConversationStateService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.conversations = ConversationService(db)
-        self.appointments = AppointmentRepository(db)
 
     async def _todays_messages(self, user_id: str) -> List[ChatMessage]:
         """Cùng mốc cắt với ConversationService.history() — chủ sở hữu công
@@ -183,15 +180,9 @@ class ConversationStateService:
             logger.warning("state_empty", extra={"user_id": user_id})
             await self.conversations.bump_state_failures(user_id)
             return False
-
-        # id thật của khách, lấy từ DB — model không được tự cấp id.
-        # Dùng repository (nhận user_id) chứ không phải AppointmentService
-        # (nhận User): ở đây chỉ có user_id, nạp cả User là thừa một truy vấn.
-        upcoming = await self.appointments.upcoming_for_user(user_id, now=now)
         slots = sanitize_slots(
             result.slots,
             now=now,
-            valid_ids={str(a.id) for a in upcoming},
             user_id=user_id,
         )
 
@@ -229,12 +220,11 @@ def sanitize_slots(
     raw: Optional[ConversationSlots],
     *,
     now: datetime,
-    valid_ids: Set[str],
     user_id: str = "",
 ) -> Optional[ConversationSlots]:
     """Lọc slots do LLM sinh. Bỏ TỪNG field sai, không đánh trượt cả lượt nén.
 
-    Thuần: `now` (UTC) và `valid_ids` truyền vào, không tự gọi DB hay đồng hồ —
+    Thuần: `now` (UTC) truyền vào, không tự gọi DB hay đồng hồ —
     nhờ vậy test được mọi mốc thời gian mà không phải giả lập clock.
     """
     if raw is None:
@@ -281,11 +271,6 @@ def sanitize_slots(
                 _drop(user_id, "time", raw.time)
                 clock = None
 
-    appointment_id = raw.target_appointment_id
-    if appointment_id and appointment_id not in valid_ids:
-        _drop(user_id, "target_appointment_id", appointment_id)
-        appointment_id = None
-
     declined: List[str] = []
     for item in raw.declined or []:
         text = item.strip() if isinstance(item, str) else ""
@@ -318,7 +303,6 @@ def sanitize_slots(
         service=service,
         day=day.isoformat() if day else None,
         time=clock.strftime("%H:%M") if clock else None,
-        target_appointment_id=appointment_id,
         declined=declined,
     )
     # Rỗng hoàn toàn thì trả None: khối slots sẽ không được in ra, và lượt nén

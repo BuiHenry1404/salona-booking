@@ -45,7 +45,6 @@ class ConversationSlots(BaseModel):
     service: Optional[str] = None                # text tự do, ≤ NOTE_MAX
     day: Optional[str] = None                    # "YYYY-MM-DD"
     time: Optional[str] = None                   # "HH:MM"
-    target_appointment_id: Optional[str] = None
     declined: List[str] = Field(default_factory=list)   # ISO local, giờ khách đã lắc
 
 
