@@ -1,11 +1,14 @@
+import json
 from datetime import datetime, timedelta
 
 import pytest
 
+from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
 from app.core.clock import TZ
 from app.models.user import User
 from app.services.auth import AuthService
+from app.services.shop import ShopService
 
 pytestmark = pytest.mark.asyncio
 
@@ -46,27 +49,38 @@ async def test_there_is_NO_tool_that_writes_an_appointment(test_db):
     assert "create_appointment" not in names
 
 
-async def test_shop_status_reads_free(test_db):
-    user = await a_user(test_db)
-    tool = by_name(make_shop_tools(test_db, user), "get_shop_status")
-    assert "rảnh" in (await tool.ainvoke({})).lower()
+async def test_shop_status_returns_data_not_a_sentence(test_db):
+    tools = make_shop_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "get_shop_status").ainvoke({}))
+    assert out == {"busy": False}
 
 
-async def test_shop_status_reads_busy_with_finish_time(test_db):
-    """Giờ xong là thông tin chính. Mốc cố định thì không cũ đi, còn "còn 30
-    phút" thì sai ngay sau đó — mà khách hay đọc lại tin nhắn cũ."""
-    from app.services.shop import ShopService
-
+async def test_shop_status_busy_carries_both_forms_of_the_finish_time(test_db):
+    """`iso` để máy đọc, `spoken` để model chép y — guard.check_clock cờ mọi
+    chuỗi HH:MM nên model KHÔNG được tự định dạng giờ."""
     user = await a_user(test_db)
     await ShopService(test_db).set_busy(30)
-    tool = by_name(make_shop_tools(test_db, user), "get_shop_status")
-    result = await tool.ainvoke({})
+    status = await ShopService(test_db).get_status()
+    tools = make_shop_tools(test_db, user)
+    out = json.loads(await by_name(tools, "get_shop_status").ainvoke({}))
 
-    assert "bận" in result.lower()
-    assert "xong lúc" in result.lower()
-    # KHÔNG được nói "còn 30 phút": câu này nằm lại trong lịch sử chat, đọc lại
-    # sau một tiếng là sai hẳn.
-    assert "30 phút" not in result
+    assert out["busy"] is True
+    assert out["until"]["iso"] == status.busy_until.isoformat()
+    assert out["until"]["spoken"] == format_vi_datetime(status.busy_until)
+    # Mốc giờ tuyệt đối, không đếm ngược — câu đáp nằm lại trong lịch sử chat.
+    assert "phút" not in json.dumps(out, ensure_ascii=False)
+
+
+async def test_shop_hours_returns_data_not_a_sentence(test_db):
+    tools = make_shop_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "get_shop_hours").ainvoke({}))
+
+    assert out["open"]["iso"] == "08:00"
+    assert out["open"]["spoken"] == format_vi_hhmm("08:00")
+    assert out["close"]["iso"] == "19:00"
+    assert out["closed_days"] == []
+    # Không còn câu nào: "Mở cả tuần." là kết luận của model, không phải của tool.
+    assert "Mở cả tuần" not in json.dumps(out, ensure_ascii=False)
 
 
 async def test_propose_stores_the_time_in_mongo_not_in_the_prompt(test_db):
@@ -294,10 +308,12 @@ class TestShopHoursTool:
         assert names == {"get_shop_status", "get_shop_hours"}
 
     async def test_open_and_close_are_spoken_not_digits(self, test_db):
-        out = await self._call(test_db, "08:00", "19:00", [])
-        assert "8 giờ sáng" in out
-        assert "7 giờ tối" in out
-        assert "08:00" not in out
+        out = json.loads(await self._call(test_db, "08:00", "19:00", []))
+        # `iso` giữ nguyên dạng số cho máy đọc; `spoken` mới là thứ model chép
+        # y vào câu nói với khách.
+        assert out["open"]["spoken"] == "8 giờ sáng"
+        assert out["close"]["spoken"] == "7 giờ tối"
+        assert out["open"]["iso"] == "08:00"
 
     async def test_zero_means_sunday_not_monday(self, test_db):
         out = await self._call(test_db, "08:00", "19:00", [0])
@@ -309,8 +325,10 @@ class TestShopHoursTool:
         assert "Thứ Bảy" in out
 
     async def test_no_closed_days_says_open_all_week(self, test_db):
-        out = await self._call(test_db, "08:00", "19:00", [])
-        assert "cả tuần" in out
+        # Rỗng nghĩa là mở cả tuần — kết luận đó nay do model tự rút ra,
+        # tool chỉ cấp danh sách trống.
+        out = json.loads(await self._call(test_db, "08:00", "19:00", []))
+        assert out["closed_days"] == []
 
 
 class TestRulesMovedIntoToolDescriptions:

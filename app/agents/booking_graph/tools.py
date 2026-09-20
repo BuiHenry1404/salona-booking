@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -36,6 +37,20 @@ def _parse_local(value: str) -> datetime:
     return parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed
 
 
+def _moment(dt: datetime) -> dict:
+    """Một mốc thời gian, cấp CẢ HAI dạng.
+
+    `iso` để model chuyền tiếp sang tool khác không diễn giải lại. `spoken` để
+    model chép y vào câu nói với khách: `guard.check_clock` cờ mọi chuỗi
+    `HH:MM` và mọi số viết bằng chữ, nên nếu tool không cấp dạng đọc thì model
+    phải tự chế ra — đúng thứ guard sinh ra để chặn.
+
+    Đây là chỗ DUY NHẤT tool được phép sinh chữ tiếng Việt. Mọi thứ khác là
+    dữ kiện; câu thì model tự viết.
+    """
+    return {"iso": dt.isoformat(), "spoken": format_vi_datetime(dt)}
+
+
 # Index CHÍNH LÀ giá trị trong closed_days: 0 = Chủ Nhật (app/models/shop.py).
 # Ngược với datetime.weekday() của Python, nên tuyệt đối không dùng _WEEKDAYS.
 _CLOSED_DAY_NAMES = [
@@ -48,28 +63,31 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def get_shop_status() -> str:
-        """Whether the owner is busy or free, and if busy, what time they finish."""
+        """Whether the owner is busy or free, and if busy, what time they finish.
+        Returns JSON. When `busy` is true, say the finish time using
+        `until.spoken` exactly as written — never a countdown in minutes."""
         status = await shop.get_status()
         if not status.is_busy:
-            return "Chủ tiệm đang rảnh."
-        # Nói MỘT mốc giờ, không nói "còn N phút" — giống hệt thẻ trạng thái
-        # trên giao diện. Nói hai kiểu ở hai chỗ là khách tưởng hai thông tin
-        # khác nhau. Và câu trả lời của AI còn nằm lại trong lịch sử chat: "còn
-        # 30 phút" đọc lại sau một tiếng là sai hẳn, "3:30 chiều" thì vẫn đúng.
-        return f"Chủ tiệm đang bận, xong lúc {format_vi_datetime(status.busy_until)}."
+            return json.dumps({"busy": False})
+        # Mốc giờ tuyệt đối, không "còn N phút": câu đáp nằm lại trong lịch sử
+        # chat và đọc lại sau một tiếng là sai hẳn.
+        return json.dumps({"busy": True, "until": _moment(status.busy_until)},
+                          ensure_ascii=False)
 
     @tool
     async def get_shop_hours() -> str:
-        """Opening hours and closed days. Call this when the customer asks what
-        time the salon opens or closes, or whether it is open on a given day."""
+        """Opening hours and closed days, as JSON. Call this when the customer
+        asks what time the salon opens or closes, or whether it is open on a
+        given day. Say the times using `open.spoken` and `close.spoken` exactly
+        as written. An empty `closed_days` means the salon opens every day."""
         hours = await shop.get_hours()
         closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
                   if 0 <= d < len(_CLOSED_DAY_NAMES)]
-        closed_text = f"Nghỉ {', '.join(closed)}." if closed else "Mở cả tuần."
-        return (
-            f"Tiệm mở từ {format_vi_hhmm(hours.open_time)} "
-            f"đến {format_vi_hhmm(hours.close_time)}. {closed_text}"
-        )
+        return json.dumps({
+            "open": {"iso": hours.open_time, "spoken": format_vi_hhmm(hours.open_time)},
+            "close": {"iso": hours.close_time, "spoken": format_vi_hhmm(hours.close_time)},
+            "closed_days": closed,
+        }, ensure_ascii=False)
 
     return [get_shop_status, get_shop_hours]
 
