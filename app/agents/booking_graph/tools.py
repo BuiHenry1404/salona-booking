@@ -136,22 +136,24 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def find_free_slots(day: str) -> str:
-        """Free slots on one day. `day` is YYYY-MM-DD, taken from the
+        """Free slots on one day, as JSON. `day` is YYYY-MM-DD, taken from the
         "Bây giờ là..." line in the context block — never guess the date.
         Use ONLY what this tool returns — never invent a free slot.
-        If the time they asked for is taken, offer the two free slots nearest
-        to it.
+        Say each time using its `spoken` value exactly as written.
+        An empty `slots` list means the day is full — ask them for another day.
+        If the time they asked for is taken, offer the two slots nearest to it.
         Only when the customer says the salon may pick the time for them, call
         this for today — or tomorrow if today is finished — then offer two or
         three slots. If they have NOT named a day, ask which day first. Never
         assume today."""
         try:
-            slots = await service.find_free_slots(date.fromisoformat(day))
+            parsed_day = date.fromisoformat(day)
         except ValueError:
-            return "Ngày không hợp lệ, cần dạng YYYY-MM-DD."
-        if not slots:
-            return "Ngày đó không còn giờ trống."
-        return "Các giờ còn trống: " + ", ".join(format_vi_datetime(s) for s in slots)
+            return json.dumps({"error": "bad_day_format"})
+        slots = await service.find_free_slots(parsed_day)
+        # Dữ kiện đặc biệt: convert to local time để ISO là giờ Việt, không UTC.
+        return json.dumps({"day": day, "slots": [_moment(to_local(s)) for s in slots]},
+                          ensure_ascii=False)
 
     @tool
     async def propose_appointment(
@@ -233,20 +235,19 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
 
     @tool
     async def list_my_appointments() -> str:
-        """The customer's own upcoming appointments, each with its id.
-        The context block already lists them with the same `[id: ...]` tags;
-        call this only when the appointment you need is not shown there.
+        """The customer's own upcoming appointments, as JSON, each with its id.
+        The context block already lists them with the same ids; call this only
+        when the appointment you need is not shown there.
         When the customer asks about their OWN appointments, call this
         IMMEDIATELY — never ask for a date first, the tool filters by the
-        logged-in customer. If they have none, say so plainly."""
+        logged-in customer. An empty `appointments` list means they have none;
+        say so plainly."""
         appointments = await service.upcoming_for(user)
-        if not appointments:
-            return "Khách chưa có lịch nào sắp tới."
-        lines = []
-        for appt in appointments:
-            note_text = f" — {appt.note}" if appt.note else ""
-            lines.append(f"{format_vi_datetime(appt.start_at)}{note_text} [id: {appt.id}]")
-        return "\n".join(lines)
+        # Dữ kiện đặc biệt: convert to local time để ISO là giờ Việt, không UTC.
+        return json.dumps({"appointments": [
+            {"id": str(a.id), "at": _moment(to_local(a.start_at)), "note": a.note}
+            for a in appointments
+        ]}, ensure_ascii=False)
 
     @tool
     async def cancel_appointment(appointment_id: str) -> str:

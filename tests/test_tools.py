@@ -7,6 +7,7 @@ from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
 from app.core.clock import TZ
 from app.models.user import User
+from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
 from app.services.shop import ShopService
 
@@ -164,18 +165,20 @@ async def test_list_then_cancel(test_db):
     user = await a_user(test_db)
     tools = make_booking_tools(test_db, user)
 
-    from app.services.appointment import AppointmentService
     await AppointmentService(test_db).create(user, tomorrow_at(15), note="làm tóc")
 
-    listed = await by_name(tools, "list_my_appointments").ainvoke({})
-    assert "làm tóc" in listed
+    listed_json = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
+    assert len(listed_json["appointments"]) == 1
+    assert listed_json["appointments"][0]["note"] == "làm tóc"
+    appointment_id = listed_json["appointments"][0]["id"]
 
-    appointment_id = listed.split("[id:")[1].split("]")[0].strip()
     held = await by_name(tools, "cancel_appointment").ainvoke({"appointment_id": appointment_id})
     assert "hủy" in held.lower()
 
     # Tool chỉ GIỮ ý hủy — lịch vẫn còn cho tới khi khách "ừ" ở node confirm.
-    assert "làm tóc" in await by_name(tools, "list_my_appointments").ainvoke({})
+    listed_after = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
+    assert len(listed_after["appointments"]) == 1
+    assert listed_after["appointments"][0]["note"] == "làm tóc"
     from app.services.conversation import ConversationService
     pending = await ConversationService(test_db).get_pending(str(user.id))
     assert pending["cancel_appointment_id"] == appointment_id
@@ -186,11 +189,10 @@ async def test_tool_cannot_touch_another_users_appointment(test_db):
     owner = await a_user(test_db)
     intruder = await a_user(test_db, phone="0938111222", name="Người lạ")
 
-    from app.services.appointment import AppointmentService
     await AppointmentService(test_db).create(owner, tomorrow_at(17), note=None)
 
-    listed = await by_name(make_booking_tools(test_db, owner), "list_my_appointments").ainvoke({})
-    appointment_id = listed.split("[id:")[1].split("]")[0].strip()
+    listed_json = json.loads(await by_name(make_booking_tools(test_db, owner), "list_my_appointments").ainvoke({}))
+    appointment_id = listed_json["appointments"][0]["id"]
 
     result = await by_name(make_booking_tools(test_db, intruder), "cancel_appointment").ainvoke(
         {"appointment_id": appointment_id}
@@ -198,11 +200,52 @@ async def test_tool_cannot_touch_another_users_appointment(test_db):
     assert "của chính mình" in result.lower()
 
 
-async def test_free_slots_never_include_3am(test_db):
+async def test_free_slots_returns_data_not_a_sentence(test_db):
     user = await a_user(test_db)
-    tool = by_name(make_booking_tools(test_db, user), "find_free_slots")
-    day = (datetime.now(TZ) + timedelta(days=1)).date().isoformat()
-    assert "3:00 sáng" not in await tool.ainvoke({"day": day})
+    tools = make_booking_tools(test_db, user)
+    day = tomorrow_at(9).date().isoformat()
+    out = json.loads(await by_name(tools, "find_free_slots").ainvoke({"day": day}))
+
+    assert out["day"] == day
+    assert out["slots"], "ngày trống phải có mốc"
+    assert all(set(s) == {"iso", "spoken"} for s in out["slots"])
+    # 3 giờ sáng ngoài giờ mở cửa — không mốc nào được rơi vào đó.
+    assert not any(s["iso"].split("T")[1].startswith("03:") for s in out["slots"])
+
+
+async def test_free_slots_on_a_full_day_returns_an_empty_list_not_a_sentence(test_db):
+    """Hết chỗ là DỮ KIỆN (`slots: []`), không phải câu "Ngày đó không còn giờ
+    trống." — câu đó là việc của model."""
+    tools = make_booking_tools(test_db, await a_user(test_db))
+    # Ngày Chủ Nhật xa trong quá khứ: find_free_slots lọc sạch mốc quá khứ.
+    out = json.loads(await by_name(tools, "find_free_slots").ainvoke({"day": "2020-01-01"}))
+    assert out["slots"] == []
+
+
+async def test_free_slots_rejects_a_bad_day_with_a_code_not_a_sentence(test_db):
+    tools = make_booking_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "find_free_slots").ainvoke({"day": "mai"}))
+    assert out == {"error": "bad_day_format"}
+
+
+async def test_list_my_appointments_returns_data_not_a_sentence(test_db):
+    user = await a_user(test_db)
+    tools = make_booking_tools(test_db, user)
+    when = tomorrow_at(9)
+    appt = await AppointmentService(test_db).create(user, when, note="làm tóc")
+
+    out = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
+    assert len(out["appointments"]) == 1
+    row = out["appointments"][0]
+    assert row["id"] == str(appt.id)
+    assert row["note"] == "làm tóc"
+    assert row["at"]["spoken"] == format_vi_datetime(when)
+
+
+async def test_no_appointments_is_an_empty_list_not_a_sentence(test_db):
+    tools = make_booking_tools(test_db, await a_user(test_db))
+    out = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
+    assert out == {"appointments": []}
 
 
 async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):
