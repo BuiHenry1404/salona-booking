@@ -341,8 +341,17 @@ async def test_every_tool_reports_times_in_vietnam_time(test_db):
     # `propose_appointment` và `cancel_appointment` từng bị bỏ sót khỏi bất
     # biến này — bao cả hai để một mốc +00:00 lọt vào lời chốt lịch hay lời
     # hủy lịch cũng bị bắt, không chỉ ở các tool chỉ đọc.
+    #
+    # `start_at` do test tự truyền vào (`tomorrow_at(...).isoformat()`) đã
+    # mang sẵn offset +07:00, nên nếu chỉ gọi propose_appointment ở nhánh đặt
+    # MỚI thì `to_local()` là no-op trên chính giá trị đó — bỏ nó đi payload
+    # vẫn ra +07:00, hàng rào không bắt được gì (phát hiện của review
+    # 2026-09-20). Phải đi qua nhánh DỜI LỊCH: `result["replaces"]["was"]`
+    # được tính từ `old.start_at` đọc lên từ Mongo — nguồn UTC thật.
+    cu = await AppointmentService(test_db).create(user, tomorrow_at(10), note="làm tóc")
     proposed = json.loads(await by_name(tools, "propose_appointment").ainvoke(
-        {"start_at": tomorrow_at(11).isoformat(), "note": "làm nail"}))
+        {"start_at": tomorrow_at(11).isoformat(), "note": "làm nail",
+         "replaces_appointment_id": str(cu.id)}))
     appt = await AppointmentService(test_db).create(user, tomorrow_at(13), note="cắt tóc")
     cancelled = json.loads(await by_name(tools, "cancel_appointment").ainvoke(
         {"appointment_id": str(appt.id)}))

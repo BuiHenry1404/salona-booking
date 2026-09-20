@@ -77,8 +77,9 @@ Call get_shop_status when the customer asks whether the owner is busy or free.
 Call get_shop_hours when they ask what time the salon opens or closes, or
 whether it is open on a given day. Both return JSON, never a finished
 sentence — write the sentence yourself, and copy clock times from the `spoken`
-field exactly as written. An empty `closed_days` means the salon opens every
-day. Never invent opening hours.
+field exactly as written; never show the customer an `iso` value or a JSON
+key. An empty `closed_days` means the salon opens every day. Never invent
+opening hours.
 When they ask whether the salon is open RIGHT NOW or still working today, call
 get_shop_hours and compare its hours with the current time given in the
 context block; never answer that from memory.
