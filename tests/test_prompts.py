@@ -232,6 +232,16 @@ class TestHardWonRulesSurvive:
         assert "spoken" in BOOKING_PROMPT
         assert "spoken" in SHOP_PROMPT
 
+    def test_every_error_code_is_explained_in_plain_language(self):
+        """I4: model gặp năm mã lỗi này mà không luật nào nói chúng nghĩa gì —
+        khe hở để chuỗi tiếng Anh trần lọt ra câu tiếng Việt. Mỗi mã phải có
+        mặt trong prompt, kèm một câu cấm đọc mã ra cho khách."""
+        for code in ("slot_unavailable", "appointment_not_found",
+                     "not_your_appointment", "bad_time_format",
+                     "bad_day_format", "unavailable"):
+            assert code in BOOKING_PROMPT, code
+        assert "never read the code itself" in BOOKING_PROMPT
+
 
 class TestSupervisorStaysMachineReadable:
     def test_it_asks_for_exactly_one_word(self):
@@ -354,8 +364,13 @@ class TestBookingPromptSlimmed:
         # trả về của tool ("đọc lại lịch", "hỏi xác nhận trước khi hủy", "ngày
         # đầy thì hỏi ngày khác") chuyển hẳn vào rule 2 của prompt, cộng với
         # câu mô tả hợp đồng JSON (`spoken` chứ không phải `iso`) — đo được
-        # 5685 ký tự — mốc lên 5700.
-        assert len(BOOKING_PROMPT) < 5700
+        # 5685 ký tự — mốc lên 5700. Đợt vá final-fix (2026-09-20, I3+I4):
+        # bỏ chữ "full" khỏi câu `nearest`/`slots` rỗng (trung tính hoá theo
+        # C1/I3) và thêm vào rule 2 danh sách năm mã lỗi
+        # (`appointment_not_found`, `not_your_appointment`, `bad_time_format`,
+        # `bad_day_format`, `unavailable`) kèm câu cấm đọc mã ra cho khách
+        # (I4) — đo được 6306 ký tự — mốc lên 6400.
+        assert len(BOOKING_PROMPT) < 6400
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

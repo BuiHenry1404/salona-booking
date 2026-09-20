@@ -45,8 +45,10 @@ def _moment(dt: datetime) -> dict:
     `HH:MM` và mọi số viết bằng chữ, nên nếu tool không cấp dạng đọc thì model
     phải tự chế ra — đúng thứ guard sinh ra để chặn.
 
-    Đây là chỗ DUY NHẤT tool được phép sinh chữ tiếng Việt. Mọi thứ khác là
-    dữ kiện; câu thì model tự viết.
+    Đây KHÔNG phải chỗ duy nhất tool được phép sinh chữ tiếng Việt:
+    `_CLOSED_DAY_NAMES` và hai lời gọi `format_vi_hhmm` trực tiếp trong
+    `get_shop_hours` cũng vậy. Điều đúng là: đây là hàm DÙNG CHUNG cho việc
+    đó, để không mỗi tool tự bịa một kiểu.
 
     `to_local` nằm TRONG đây, không ở chỗ gọi: `spoken` luôn là giờ Việt Nam
     vì `format_vi_datetime` tự đổi, nên `iso` cũng phải vậy — một object mà
@@ -102,8 +104,8 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         closed = [_CLOSED_DAY_NAMES[d] for d in sorted(hours.closed_days)
                   if 0 <= d < len(_CLOSED_DAY_NAMES)]
         return json.dumps({
-            "open": {"iso": hours.open_time, "spoken": format_vi_hhmm(hours.open_time)},
-            "close": {"iso": hours.close_time, "spoken": format_vi_hhmm(hours.close_time)},
+            "open": {"hhmm": hours.open_time, "spoken": format_vi_hhmm(hours.open_time)},
+            "close": {"hhmm": hours.close_time, "spoken": format_vi_hhmm(hours.close_time)},
             "closed_days": closed,
         }, ensure_ascii=False)
 
@@ -130,7 +132,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         give it — it cannot see earlier turns.
         `anchor`: pass it whenever the customer is changing or answering about a
         time already on the table — the appointment being moved (its `iso:` in
-        the context block) or the slot just proposed (the `iso:` in
+        the context block) or the slot just proposed (`held.iso` in
         propose_appointment's result). The tool then fills a missing day or
         part of the day from it instead of asking again.
         Result has `missing` -> ask the customer for exactly that ONE missing
@@ -158,7 +160,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         "Bây giờ là..." line in the context block — never guess the date.
         Use ONLY what this tool returns — never invent a free slot.
         Say each time using its `spoken` value exactly as written.
-        An empty `slots` list means the day is full — ask them for another day.
+        An empty `slots` list means no slot is available for that request —
+        ask them for another day or another time.
         If the time they asked for is taken, offer the two slots nearest to it.
         Only when the customer says the salon may pick the time for them, call
         this for today — or tomorrow if today is finished — then offer two or
@@ -184,7 +187,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         customer agrees on the NEXT turn.
         On success the result carries `held`; say `held.spoken` exactly as
         written. `error: "slot_unavailable"` carries `nearest`, the free slots
-        closest to what they asked for; an empty `nearest` means the day is full.
+        closest to what they asked for; an empty `nearest` means no slot is
+        available for that request — ask them for another day or another time.
         `note` is the service only (what they want done) — never the time or
         the day; those live in `start_at`.
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE

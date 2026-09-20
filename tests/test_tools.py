@@ -78,9 +78,9 @@ async def test_shop_hours_returns_data_not_a_sentence(test_db):
     tools = make_shop_tools(test_db, await a_user(test_db))
     out = json.loads(await by_name(tools, "get_shop_hours").ainvoke({}))
 
-    assert out["open"]["iso"] == "08:00"
+    assert out["open"]["hhmm"] == "08:00"
     assert out["open"]["spoken"] == format_vi_hhmm("08:00")
-    assert out["close"]["iso"] == "19:00"
+    assert out["close"]["hhmm"] == "19:00"
     assert out["closed_days"] == []
     # Không còn câu nào: "Mở cả tuần." là kết luận của model, không phải của tool.
     assert "Mở cả tuần" not in json.dumps(out, ensure_ascii=False)
@@ -371,14 +371,28 @@ async def test_every_tool_reports_times_in_vietnam_time(test_db):
 async def test_tool_output_keeps_vietnamese_readable(test_db):
     """`ensure_ascii=False` ở mọi json.dumps có tiếng Việt. Không kiểm được
     bằng giá trị đã parse — `json.loads` trả cùng một string dù cờ bật hay
-    tắt — nên phải soi CHUỖI THÔ."""
+    tắt — nên phải soi CHUỖI THÔ.
+
+    Trước đây vòng lặp chỉ phủ 3/6 tool (list_my_appointments, get_shop_hours,
+    find_free_slots) — phép thử phá chứng minh: bỏ `ensure_ascii=False` khỏi
+    get_shop_status, propose_appointment hoặc cancel_appointment thì test này
+    vẫn xanh. Mở rộng sang cả ba (I1)."""
     user = await a_user(test_db)
     when = tomorrow_at(9)
-    await AppointmentService(test_db).create(user, when, note="làm tóc")
+    appt = await AppointmentService(test_db).create(user, when, note="làm tóc")
+    await ShopService(test_db).set_busy(30)
     tools = make_booking_tools(test_db, user) + make_shop_tools(test_db, user)
 
-    for name, args in [("list_my_appointments", {}), ("get_shop_hours", {}),
-                       ("find_free_slots", {"day": when.date().isoformat()})]:
+    for name, args in [
+        ("list_my_appointments", {}),
+        ("get_shop_hours", {}),
+        ("find_free_slots", {"day": when.date().isoformat()}),
+        ("get_shop_status", {}),
+        ("propose_appointment", {
+            "start_at": tomorrow_at(10).isoformat(), "note": "làm móng bột",
+        }),
+        ("cancel_appointment", {"appointment_id": str(appt.id)}),
+    ]:
         raw = await by_name(tools, name).ainvoke(args)
         assert "\\u" not in raw, f"{name} escape mất tiếng Việt — thiếu ensure_ascii=False"
 
@@ -487,11 +501,12 @@ class TestShopHoursTool:
 
     async def test_open_and_close_are_spoken_not_digits(self, test_db):
         out = json.loads(await self._call(test_db, "08:00", "19:00", []))
-        # `iso` giữ nguyên dạng số cho máy đọc; `spoken` mới là thứ model chép
-        # y vào câu nói với khách.
+        # `hhmm` giữ nguyên dạng số cho máy đọc (không phải ISO-8601 đầy đủ
+        # như các tool khác); `spoken` mới là thứ model chép y vào câu nói
+        # với khách.
         assert out["open"]["spoken"] == "8 giờ sáng"
         assert out["close"]["spoken"] == "7 giờ tối"
-        assert out["open"]["iso"] == "08:00"
+        assert out["open"]["hhmm"] == "08:00"
 
     async def test_zero_means_sunday_not_monday(self, test_db):
         out = await self._call(test_db, "08:00", "19:00", [0])

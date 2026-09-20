@@ -18,16 +18,38 @@ câu tiếng Việt viết sẵn hay mệnh lệnh nhét trong kết quả trả
 nguyên hợp đồng cũ. Xem `CONTEXT.md` bẫy #23.
 
 **Đã chạy thật với Azure để nghiệm thu** (kịch bản LLM-32, hội thoại dài kèm
-nén): soi tay transcript `hoi-thoai-dai-sau-refactor-tool.txt` ở gốc repo,
-**không** thấy khoá JSON hay chuỗi ISO nào rò ra câu nói với khách (`iso`,
-`held`, `slots`, `error`, `spoken`, `+07:00`, `HH:MM`...), giờ vẫn đọc đúng
-giọng Việt ("4 giờ chiều"), xưng hô đúng "em"/"anh chị", và
-`conversations.state.slots` trong Mongo vẫn được LLM sinh và lưu đúng sau
-lượt nén. Đáng chú ý: so với `hoi-thoai-dai-sau-khi-fix.txt` (trước đợt này),
-bản mới không còn hiện tượng model tự nhận "đã chốt" một giờ chưa thật sự giữ
-được — lượt cuối gọi đúng `propose_appointment`, phát hiện giờ đã bận và trả
-mã `slot_unavailable` kèm giờ trống thay thế, còn bản cũ chỉ gọi `parse_time`
-rồi tự bịa câu xác nhận.
+nén): soi tay transcript `hoi-thoai-dai-sau-refactor-tool.txt` (file cục bộ,
+untracked — không có trong git, xem "Dễ quên" bên dưới), **không** thấy khoá
+JSON hay chuỗi ISO nào rò ra câu nói với khách (`iso`, `held`, `slots`,
+`error`, `spoken`, `+07:00`, `HH:MM`...), giờ vẫn đọc đúng giọng Việt ("4 giờ
+chiều"), xưng hô đúng "em"/"anh chị", và `conversations.state.slots` trong
+Mongo vẫn được LLM sinh và lưu đúng sau lượt nén.
+
+**Sửa lại kết luận trước đó (đã sai) về so sánh với bản trước đợt này.**
+Bản ghi cũ ở đây từng nói bản cũ (`hoi-thoai-dai-sau-khi-fix.txt`) "hallucinate"
+tự nhận đã chốt một giờ chưa giữ được, còn bản mới gọi lại
+`propose_appointment` và báo đúng `slot_unavailable` — coi đó là bằng chứng
+lợi ích của đợt refactor này. **Kết luận đó sai**, lý do:
+
+- Hai lần chạy rơi vào **hai trạng thái DB khác nhau**. Nguyên nhân gốc đã
+  tái hiện: trong lượt "Mà làm móng bột như vậy mất khoảng bao lâu... việc gì
+  cũng **phải** tính trước cho chắc", hàm `is_affirmative()`
+  (`app/agents/booking_graph/confirm.py:22-26`) khớp chữ "phải" trong `_YES`
+  và coi câu tán gẫu đó là ĐỒNG Ý, nên node `confirm` ghi lịch thật 16:00
+  ngay giữa cuộc — ở CẢ HAI lần chạy, nhưng một lần 16:00 khi đó còn trống
+  (lịch được tạo thật) và một lần 16:00 đã là lịch của chính khách (lịch cũ
+  còn đó). Hai transcript vì vậy **không so sánh được** — chênh lệch giữa
+  chúng không quy được cho tool trả JSON hay bất cứ gì ở đợt này.
+- Vì lý do trên: bản cũ nói "đã chốt 4 giờ chiều" là **đúng sự thật** ở lần
+  chạy đó (lịch thật tồn tại) — không phải bịa. Bản mới nói "em chưa giữ
+  được 4 giờ chiều" trong khi lịch của khách **đang tồn tại** mới là câu
+  **sai sự thật** — và nó từng bị ghi vào đây như một thắng lợi.
+- Lợi ích **thật**, quan sát được, của đợt "tool trả JSON" là **giọng tự
+  nhiên hơn**: bản cũ lặp khuôn "Chủ tiệm sẽ trả lời về..." bốn lần, bản mới
+  không còn lặp câu đó.
+
+Xem bug `is_affirmative` ở mục "Để sau" bên dưới — **chưa sửa** trong đợt
+final-fix (2026-09-20), ngoài phạm vi và cần thiết kế riêng.
 
 Trước đó, tầng Conversation State (`Digest` đổi tên thành `ConversationState`,
 `summary` + `slots`) đã xong ở nhánh `feat/conversation-state`, chưa merge.
@@ -41,8 +63,9 @@ Trước nữa, toàn bộ đợt việc 12–14/9 đã merge vào `henry/develo
 bỏ câu thoại sẵn khỏi prompt, tầng digest trong phiên, ba lỗi từ chat thật, và
 tầng gác `guard`/`rewrite`/`phrase` + neo thời gian + `booking` 7 tool.
 
-- **802 test backend xanh, 0 fail** (`PYTHONPATH=. .venv/bin/python -m
-  pytest -q`, 14 deselected vì cần Azure thật).
+- **803 test backend xanh, 0 fail** (`PYTHONPATH=. .venv/bin/python -m
+  pytest -q`, 14 deselected vì cần Azure thật; đợt final-fix 2026-09-20
+  (I1) thêm 1 test mở rộng hàng rào `ensure_ascii`).
 - **Ba nhánh đang xếp chồng, chưa merge**: `feat/conversation-state` →
   `fix/live-run-findings` → `refactor/tools-return-data` (nhánh hiện tại).
   Cách gộp là quyết định của người dùng.
@@ -77,6 +100,18 @@ Sau đó là vận hành: HTTPS, sao lưu Mongo, CI — `PROD_CHECKLIST.md` bư�
 
 ## Để sau
 
+- [ ] **BUG — `is_affirmative()` khớp "phải"/"được"/"dạ"/"đúng" bất kỳ đâu
+      trong câu.** `is_affirmative()` (`app/agents/booking_graph/confirm.py:22-26`)
+      khớp các chữ đó ở BẤT KỲ đâu trong câu khách gõ, nên một câu tán gẫu có
+      chứa "phải" (ví dụ: "...việc gì cũng phải tính trước cho chắc") bị coi
+      là ĐỒNG Ý, và node `confirm` **ghi lịch thật** ngay giữa cuộc, dù khách
+      không hề chốt. Đã tái hiện thật: câu trên đặt lịch thành công. Bug này
+      đã làm hỏng **hai lần nghiệm thu liên tiếp** (LLM-32 chạy trước đợt này
+      và lần chạy trong đợt này) mà không ai nhận ra lúc đó — xem đoạn sửa lại
+      kết luận ở "Đang ở đâu" phía trên. Sửa cần cẩn thận: bỏ "phải" khỏi
+      `_YES` sẽ làm "phải rồi" không còn được hiểu là đồng ý — cần tách theo
+      cụm từ, không theo từ đơn. **Không sửa `confirm.py` trong đợt final-fix
+      2026-09-20** — ngoài phạm vi, cần thiết kế riêng.
 - [ ] **DEP-01** — `python-jose` đã bỏ hoang và có CVE, thay bằng `PyJWT`.
 - [ ] **REL-01** — hai lượt chat song song của cùng một khách giẫm nhau.
 - [ ] **REL-05** — `conversations` phình vô hạn (xem mục Mongo bên dưới).
