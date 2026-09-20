@@ -59,6 +59,7 @@ async def test_shop_status_returns_data_not_a_sentence(test_db):
 async def test_shop_status_busy_carries_both_forms_of_the_finish_time(test_db):
     """`iso` để máy đọc, `spoken` để model chép y — guard.check_clock cờ mọi
     chuỗi HH:MM nên model KHÔNG được tự định dạng giờ."""
+    from app.core.clock import to_local
     user = await a_user(test_db)
     await ShopService(test_db).set_busy(30)
     status = await ShopService(test_db).get_status()
@@ -66,7 +67,7 @@ async def test_shop_status_busy_carries_both_forms_of_the_finish_time(test_db):
     out = json.loads(await by_name(tools, "get_shop_status").ainvoke({}))
 
     assert out["busy"] is True
-    assert out["until"]["iso"] == status.busy_until.isoformat()
+    assert out["until"]["iso"] == to_local(status.busy_until).isoformat()
     assert out["until"]["spoken"] == format_vi_datetime(status.busy_until)
     # Mốc giờ tuyệt đối, không đếm ngược — câu đáp nằm lại trong lịch sử chat.
     assert "phút" not in json.dumps(out, ensure_ascii=False)
@@ -246,6 +247,27 @@ async def test_no_appointments_is_an_empty_list_not_a_sentence(test_db):
     tools = make_booking_tools(test_db, await a_user(test_db))
     out = json.loads(await by_name(tools, "list_my_appointments").ainvoke({}))
     assert out == {"appointments": []}
+
+
+async def test_every_tool_reports_times_in_vietnam_time(test_db):
+    """`iso` và `spoken` trong cùng một object phải cùng múi giờ. Nguồn lưu
+    UTC, nên nếu quên đổi thì `iso` ra +00:00 còn `spoken` vẫn giờ VN — lệch
+    7 tiếng mà nhìn qua vẫn thấy hợp lệ."""
+    user = await a_user(test_db)
+    when = tomorrow_at(9)
+    await AppointmentService(test_db).create(user, when, note="làm tóc")
+    await ShopService(test_db).set_busy(30)
+
+    tools = make_booking_tools(test_db, user) + make_shop_tools(test_db, user)
+    payloads = [
+        json.loads(await by_name(tools, "list_my_appointments").ainvoke({})),
+        json.loads(await by_name(tools, "get_shop_status").ainvoke({})),
+        json.loads(await by_name(tools, "find_free_slots").ainvoke(
+            {"day": when.date().isoformat()})),
+    ]
+    raw = json.dumps(payloads, ensure_ascii=False)
+    assert "+00:00" not in raw and "Z\"" not in raw, "còn mốc giờ chưa đổi sang giờ VN"
+    assert "+07:00" in raw
 
 
 async def test_iso_without_timezone_is_read_as_vietnam_time(test_db):

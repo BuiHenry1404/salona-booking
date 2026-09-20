@@ -47,8 +47,14 @@ def _moment(dt: datetime) -> dict:
 
     Đây là chỗ DUY NHẤT tool được phép sinh chữ tiếng Việt. Mọi thứ khác là
     dữ kiện; câu thì model tự viết.
+
+    `to_local` nằm TRONG đây, không ở chỗ gọi: `spoken` luôn là giờ Việt Nam
+    vì `format_vi_datetime` tự đổi, nên `iso` cũng phải vậy — một object mà
+    hai trường khác múi giờ là bẫy cho người đọc sau. Nguồn dữ liệu (Mongo,
+    `shop.busy_until`) lưu UTC, nên phải đổi ở đúng một chỗ.
     """
-    return {"iso": dt.isoformat(), "spoken": format_vi_datetime(dt)}
+    local = to_local(dt)
+    return {"iso": local.isoformat(), "spoken": format_vi_datetime(local)}
 
 
 # Index CHÍNH LÀ giá trị trong closed_days: 0 = Chủ Nhật (app/models/shop.py).
@@ -151,8 +157,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         except ValueError:
             return json.dumps({"error": "bad_day_format"})
         slots = await service.find_free_slots(parsed_day)
-        # Dữ kiện đặc biệt: convert to local time để ISO là giờ Việt, không UTC.
-        return json.dumps({"day": day, "slots": [_moment(to_local(s)) for s in slots]},
+        return json.dumps({"day": day, "slots": [_moment(s) for s in slots]},
                           ensure_ascii=False)
 
     @tool
@@ -243,9 +248,8 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         logged-in customer. An empty `appointments` list means they have none;
         say so plainly."""
         appointments = await service.upcoming_for(user)
-        # Dữ kiện đặc biệt: convert to local time để ISO là giờ Việt, không UTC.
         return json.dumps({"appointments": [
-            {"id": str(a.id), "at": _moment(to_local(a.start_at)), "note": a.note}
+            {"id": str(a.id), "at": _moment(a.start_at), "note": a.note}
             for a in appointments
         ]}, ensure_ascii=False)
 
