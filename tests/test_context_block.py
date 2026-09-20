@@ -216,8 +216,29 @@ class TestFormatVietnameseHhmm:
     def test_afternoon(self):
         assert format_vi_hhmm("14:00") == "2 giờ chiều"
 
-    def test_noon_is_afternoon(self):
-        assert format_vi_hhmm("12:00") == "12 giờ chiều"
+    def test_noon_is_trua_not_chieu(self):
+        """Sửa 2026-09-20, lật `test_noon_is_afternoon` cũ.
+
+        "12 giờ chiều" không phải tiếng Việt: "trưa" tồn tại chính xác để phân
+        biệt 12h ban ngày với 12h đêm. Không phải đánh đổi sản phẩm — chính
+        parser của dự án đã hiểu đầu vào "mai 12 giờ trưa"
+        (`tests/test_timeparse.py`), tức hệ ĐỌC VÀO "trưa" mà NÓI RA "chiều".
+
+        Ca này chạm khách thường xuyên: tiệm mở 08:00–19:00 không nghỉ trưa,
+        bước 15 phút, nên 12:00/12:15/12:30/12:45 đều là ô đặt được."""
+        assert format_vi_hhmm("12:00") == "12 giờ trưa"
+        assert format_vi_hhmm("12:30") == "12 giờ rưỡi trưa"
+        assert format_vi_hhmm("12:45") == "12 giờ 45 trưa"
+
+    def test_one_pm_is_still_chieu(self):
+        """Biên dưới của "chiều" không đổi — chỉ đúng 12 giờ mới là trưa."""
+        assert format_vi_hhmm("13:00") == "1 giờ chiều"
+
+    def test_midnight_is_dem_not_zero_oclock(self):
+        """"0 giờ sáng" không ai nói. Ngoài giờ mở cửa nên hiếm, nhưng tới
+        được qua `slots.time` khi khách nhắc nửa đêm mà chưa chốt ngày."""
+        assert format_vi_hhmm("00:00") == "12 giờ đêm"
+        assert format_vi_hhmm("00:30") == "12 giờ rưỡi đêm"
 
     def test_evening(self):
         assert format_vi_hhmm("19:00") == "7 giờ tối"

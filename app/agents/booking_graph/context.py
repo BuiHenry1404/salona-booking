@@ -29,10 +29,23 @@ def _clock_phrase(hour: int, minute: int) -> str:
     Dùng chung cho cả datetime lẫn chuỗi 'HH:MM' — hai chỗ mà lệch nhau một
     chữ là khách nghe ra hai giọng khác nhau trong cùng một cuộc.
     """
-    if hour < 12:
+    # Buổi trong ngày theo cách người Việt thật sự nói. Hai biên dễ sai:
+    #
+    # - ĐÚNG 12 giờ là "trưa", không phải "chiều". "Trưa" tồn tại chính xác để
+    #   phân biệt 12h ban ngày với 12h đêm; "12 giờ chiều" không ai nói. Tiệm
+    #   mở 08:00–19:00 không nghỉ trưa nên các ô 12:00–12:45 đặt được hằng
+    #   ngày — sai ở đây là sai với khách thường xuyên. Chính parser của dự án
+    #   đã hiểu đầu vào "12 giờ trưa", nên trước 2026-09-20 hệ ĐỌC VÀO "trưa"
+    #   mà NÓI RA "chiều".
+    # - 0 giờ là "12 giờ đêm", không phải "0 giờ sáng".
+    if hour == 0:
+        period, display = "đêm", 12
+    elif hour < 12:
         period, display = "sáng", hour
+    elif hour == 12:
+        period, display = "trưa", 12
     elif hour < 18:
-        period, display = "chiều", hour - 12 if hour > 12 else 12
+        period, display = "chiều", hour - 12
     else:
         period, display = "tối", hour - 12
 
