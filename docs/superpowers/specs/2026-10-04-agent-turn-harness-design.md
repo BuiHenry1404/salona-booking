@@ -67,7 +67,11 @@ Trạng thái lượt: `pending` (đọc lúc đầu lượt, kèm `asked_at`), 
 ### 2. Bốn luật
 
 1. **Mỗi lượt giữ tối đa một lịch.** `hold` lần 2 trong cùng lượt bị từ chối với
-   `{"error": "one_at_a_time"}`; pending giữ cái đầu.
+   `{"error": "one_at_a_time"}`; pending giữ cái đầu. Đi kèm luật prompt: khách
+   xin **nhiều dịch vụ cho cùng một lần tới tiệm** ("làm móng rồi gội đầu luôn")
+   thì **gom vào một `note`** của một đề xuất duy nhất, không gọi `propose` nhiều
+   lần. Yêu cầu gộp nhiều việc là ~19% số ca hỏng của GPT-4o trong τ-bench; luật 1
+   không được biến chúng thành "chỉ làm một việc".
 2. **Pending chỉ sống nếu khách vừa được hỏi đúng nó.** Cuối lượt, pending được
    giữ **chỉ khi** câu trả lời cuối (sau guard/rewrite) chứa **cả** phần giờ
    (`format_vi_hhmm`, vd "3 giờ chiều") **và** phần ngày ("5/10"), so trên chữ
@@ -214,6 +218,10 @@ chứa mọi câu đã tái hiện:
 | 3 | hai `commit` cùng pending → đúng một lịch |
 | 3 | hủy thất bại → `cancel_failed` |
 | 4 | `check_claim`: "em đặt xong rồi ạ" chưa ghi → bắt; "chị đã có lịch 4 giờ chiều rồi ạ", "em chưa đặt" → qua |
+| 3 | khách "có" hai lần (lượt sau "ừ" lần nữa) → vẫn đúng một lịch, lượt sau không còn pending |
+| 2 + 3 | đề xuất bị thay trong lượt `unclear` (15h → 16h) rồi "ừ" → ghi 16h, không ghi 15h |
+| 3 | slot bị người khác lấy giữa lúc giữ và lúc "ừ" → `failed`, pending đã xoá, không có lịch |
+| 2 | pending hết hạn 10 phút rồi "ừ" → không ghi gì |
 
 **Tầng 3 — node/wiring** (model giả, theo lối test hiện có):
 
@@ -246,6 +254,23 @@ với câu thật; chạy `scripts/chat_scenarios.py` sau khi xong.
   giữ chỗ trong DB; mọi ghi lịch của agent đi qua `TurnHarness`.
 
 ## Ngoài phạm vi
+
+Hai spec nên làm tiếp theo (từ so sánh với các dự án cùng loại — τ-bench, Rasa
+CALM, Parlant, OpenAI Agents SDK, LangGraph HITL, các repo booking LangGraph):
+
+- **Nút "Đồng ý / Không" gắn `proposal_id`** trên React và Telegram (inline
+  keyboard): bấm nút đi thẳng vào `commit`, gõ chữ mới qua `consent`. Giảm mơ hồ
+  nhiều nhất cho khách lớn tuổi. Cần sửa frontend + socket — spec riêng.
+- **Bộ eval kiểu τ-bench:** 15–30 kịch bản tiếng Việt, ngày tham chiếu ghim cố
+  định, LLM đóng vai khách lớn tuổi (vòng vo, đổi ý, "ừ mà khoan"); chấm bằng
+  trạng thái DB cuối + chuỗi bắt buộc trong câu trả lời + **không có lần ghi nào
+  thiếu xác nhận**; chạy k lần, báo pass^k; tách holdout; marker `llm`.
+
+Để sau, khi log cho thấy cần: câu chốt "đặt xong" bằng câu mẫu thay LLM (đã có
+một phần: fallback cứng + guard bắt buộc có giờ); supervisor trả lệnh kiểu
+`CorrectSlot(giờ)` thay vì chỉ intent.
+
+Các mục khác:
 
 - G-04 (đánh số ngày nghỉ lệch frontend/backend) — bug riêng, sửa bounded.
 - G-05/G-06 (regex đọc giờ), G-12/G-19/G-20 (guard xưng hô, đồng hồ) — spec riêng.
