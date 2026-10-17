@@ -47,6 +47,10 @@ class AdapterA(ChatAdapter):
         self._done: asyncio.Event | None = None  # tạo lại mỗi lượt gửi
         self._base_url: str = ""
         self._token: str = ""
+        # True sau khi một lần reconnect-vì-timeout thất bại (server sập,
+        # token bị từ chối, ...) — lượt kế tiếp phải thử nối lại trước khi
+        # gửi, thay vì gửi trên kết nối hỏng.
+        self._needs_reconnect: bool = False
 
     async def open(self, base_url: str, customer: "Customer") -> None:
         self._base_url = base_url
@@ -67,6 +71,17 @@ class AdapterA(ChatAdapter):
             text = turn.say or ""
 
         record = TurnRecord(index=index, customer_text=text)
+
+        if self._needs_reconnect:
+            # Lượt trước timeout và lần reconnect ngay sau đó đã thất bại —
+            # thử lại trước khi gửi, để không gửi trên một kết nối đã hỏng.
+            try:
+                await self._reconnect()
+                self._needs_reconnect = False
+            except Exception as exc:  # noqa: BLE001 — ghi lại, không raise
+                record.error = f"timeout; reconnect failed: {exc}"
+                return record
+
         self._record = record
         self._done = asyncio.Event()
         self._start_perf = time.monotonic()
@@ -82,7 +97,11 @@ class AdapterA(ChatAdapter):
             # tiếp. Ngắt và nối lại kết nối Socket.IO (cùng base_url/token)
             # để các sự kiện trễ đó chết theo kết nối cũ trước khi trả về.
             self._record = None
-            await self._reconnect()
+            try:
+                await self._reconnect()
+            except Exception as exc:  # noqa: BLE001 — timeout không bao giờ raise
+                record.error = f"timeout; reconnect failed: {exc}"
+                self._needs_reconnect = True
         finally:
             self._record = None
 

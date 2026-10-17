@@ -172,9 +172,12 @@ async def test_unknown_events_are_kept_and_rate_limited_is_error(fake_server):
 
 @pytest.mark.asyncio
 async def test_stale_event_after_timeout_does_not_leak_into_next_turn(fake_server):
-    """Review Focus #2 fix: lượt 1 timeout trong khi server vẫn đang xử lý
-    (phát `complete` trễ); adapter phải ngắt/nối lại kết nối khi timeout nên
-    `complete` trễ đó không thể tới và lẫn vào lượt 2."""
+    """Review Focus #2 fix: lượt 1 timeout nhưng server vẫn phát sự kiện trễ
+    (kể cả `complete`) *trong lúc lượt 2 đang mở* — phải chứng minh adapter
+    không gán nhầm dữ liệu trễ của lượt 1 vào lượt 2 đang chờ, chứ không chỉ
+    là lượt 2 xong trước khi dữ liệu trễ tới (test cũ không phân biệt được).
+    Nếu bỏ `_reconnect()` trong nhánh timeout, test này FAIL vì lượt 2 nhận
+    nhầm `complete` trễ của lượt 1 trong lúc đang chờ."""
     turn_count = {"n": 0}
 
     async def on_send_message(sio, sid, data):
@@ -182,7 +185,10 @@ async def test_stale_event_after_timeout_does_not_leak_into_next_turn(fake_serve
         if turn_count["n"] == 1:
 
             async def late_reply() -> None:
-                await asyncio.sleep(0.6)  # lâu hơn timeout_s=0.2 của lượt 1
+                # Lượt 1 timeout ở t=0.2s; phát sự kiện trễ ở t=0.5s — ngay
+                # giữa lúc lượt 2 (bắt đầu ngay sau t=0.2s, tự hoàn tất ở
+                # t≈0.7s) vẫn còn đang mở.
+                await asyncio.sleep(0.5)
                 try:
                     await sio.emit("tool_started", {"name": "turn1_tool"}, to=sid)
                     await sio.emit("complete", {"answer": "turn1 answer"}, to=sid)
@@ -191,8 +197,13 @@ async def test_stale_event_after_timeout_does_not_leak_into_next_turn(fake_serve
 
             asyncio.create_task(late_reply())
         else:
-            await sio.emit("tool_started", {"name": "turn2_tool"}, to=sid)
-            await sio.emit("complete", {"answer": "turn2 answer"}, to=sid)
+
+            async def turn2_reply() -> None:
+                await sio.emit("tool_started", {"name": "turn2_tool"}, to=sid)
+                await asyncio.sleep(0.5)  # giữ lượt 2 mở trong lúc t=0.5s tới
+                await sio.emit("complete", {"answer": "turn2 answer"}, to=sid)
+
+            asyncio.create_task(turn2_reply())
 
     base_url = await fake_server(on_send_message)
     adapter = AdapterA()
@@ -200,9 +211,9 @@ async def test_stale_event_after_timeout_does_not_leak_into_next_turn(fake_serve
     try:
         record1 = await adapter.send(Turn(say="turn1"), index=0, timeout_s=0.2)
         record2 = await adapter.send(Turn(say="turn2"), index=1, timeout_s=2.0)
-        # Để cho late_reply() (vẫn đang ngủ) kịp cố gửi vào kết nối cũ và
+        # Để late_reply() (nếu còn đang ngủ) kịp cố gửi vào kết nối cũ và
         # thất bại, tránh cảnh báo "task pending" khi test kết thúc.
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.2)
     finally:
         await adapter.close()
 
@@ -247,3 +258,41 @@ async def test_per_turn_state_resets(fake_server):
     assert record2.answer == "answer2"
     assert record2.tools == []
     assert record2.first_token_ms is None
+
+
+@pytest.mark.asyncio
+async def test_reconnect_failure_after_timeout_is_recorded_not_raised():
+    """Review Focus #2 fix, item 2: nếu reconnect-vì-timeout cũng thất bại
+    (server sập, token bị từ chối, ...), `send()` phải trả về TurnRecord có
+    lỗi thay vì raise — và lượt kế tiếp phải tự thử nối lại trước khi gửi,
+    cũng không raise nếu vẫn thất bại."""
+
+    async def on_send_message(sio, sid, data):
+        return  # không bao giờ trả lời -> timeout
+
+    server = FakeServer(on_send_message)
+    base_url = await server.start()
+
+    async def stop_server_soon() -> None:
+        # Tắt server trước khi timeout của lượt 1 (0.2s) kích hoạt, để lần
+        # reconnect ngay sau đó chắc chắn thất bại (connection refused).
+        await asyncio.sleep(0.05)
+        await server.stop()
+
+    adapter = AdapterA()
+    try:
+        await adapter.open(base_url, _customer())
+        asyncio.create_task(stop_server_soon())
+
+        record1 = await adapter.send(Turn(say="xin chào"), index=0, timeout_s=0.2)
+        assert record1.error is not None
+        assert record1.error.startswith("timeout")
+        assert "reconnect failed" in record1.error
+
+        # Lượt kế tiếp: adapter tự thử nối lại trước khi gửi; vẫn thất bại
+        # (server vẫn tắt) nhưng không raise.
+        record2 = await adapter.send(Turn(say="lại nữa"), index=1, timeout_s=0.2)
+        assert record2.error is not None
+        assert "reconnect failed" in record2.error
+    finally:
+        await adapter.close()
