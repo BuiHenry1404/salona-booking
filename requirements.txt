@@ -7,8 +7,8 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1  # passlib 1.7.4 incompatibility: bcrypt 5.x breaks backend detection
 
 # Database
-motor==3.3.2
-pymongo==4.6.0
+motor==3.7.1
+pymongo==4.19.0
 
 # Validation and serialization
 pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
@@ -41,12 +41,14 @@ pip-audit==2.6.1
 python-socketio[asyncio]>=5.13.0
 
 # Agent
-langgraph>=0.2.60
-langchain-openai>=0.2.14
-langchain-core>=0.3.28
+langgraph==1.2.11
+langgraph-checkpoint==4.2.0
+langgraph-checkpoint-mongodb==0.5.1
+langchain-openai==1.5.1
+langchain-core==1.5.5
 # langfuse.langchain import chính gói `langchain`, không chỉ langchain-core.
 # Thiếu nó thì trace tắt im lặng, chỉ còn một dòng warning.
-langchain>=0.3
+langchain==1.3.15
 langfuse>=3.0
 
 # Logging
