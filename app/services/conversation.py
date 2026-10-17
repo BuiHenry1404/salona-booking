@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -19,6 +19,55 @@ CARRY_OVER_MINUTES = 30
 PREVIEW_CHARS = 80
 
 
+T = TypeVar("T")
+
+
+def session_cutoff(now: Optional[datetime] = None) -> datetime:
+    """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+
+    MỘT hàm cho mọi chỗ đọc — `history()`, `session_messages()` (đầu vào nén) và
+    lịch sử model đọc từ thread checkpointer (`model_history`). Lệch nhau là có
+    tin rơi vào khe giữa state và phần nguyên văn.
+    """
+    now = now or now_utc()
+    day_start, _ = local_day_bounds(to_local(now).date())
+    return min(day_start, now - timedelta(minutes=CARRY_OVER_MINUTES))
+
+
+def select_window(
+    items: Sequence[T], *, cutoff: datetime, after: Optional[datetime], token_budget: int,
+) -> List[T]:
+    """Thuật toán cửa sổ lịch sử, thuần — xem docstring `ConversationService.history`.
+
+    `items` có `.role` ("user" | "assistant"), `.content`, `.created_at`, xếp cũ
+    → mới. Giữ tin `created_at >= cutoff` và (nếu có `after`) `> after`, rồi cắt
+    từ cuối theo ngân sách token.
+    """
+    # `after`: mốc covers_until của state — tin đã nén không gửi nguyên văn.
+    messages = [
+        m for m in items
+        if m.created_at >= cutoff and (after is None or m.created_at > after)
+    ]
+    kept: List[T] = []
+    used = 0
+    truncated = False
+    for message in reversed(messages):
+        cost = max(1, len(message.content) // CHARS_PER_TOKEN)
+        if used + cost > token_budget and kept:
+            truncated = True
+            break
+        kept.append(message)
+        used += cost
+    kept.reverse()
+    # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
+    # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
+    # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
+    # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
+    if truncated and kept and kept[0].role == "assistant":
+        kept.pop(0)
+    return kept
+
+
 class ConversationService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["conversations"]
@@ -34,11 +83,19 @@ class ConversationService:
         payload["_id"] = result.inserted_id
         return Conversation(**payload)
 
-    async def append(self, user_id: str, role: str, content: str, source: str = "llm") -> None:
+    async def append(
+        self, user_id: str, role: str, content: str, source: str = "llm",
+        created_at: Optional[datetime] = None,
+    ) -> None:
+        """`created_at`: mốc dùng chung với message trong thread checkpointer
+        (`now_ms()`), để `covers_until` đọc từ đây khớp đúng tin bên thread."""
+        message = ChatMessage(role=role, content=content, source=source)
+        if created_at is not None:
+            message.created_at = created_at
         await self.collection.update_one(
             {"user_id": user_id},
             {
-                "$push": {"messages": ChatMessage(role=role, content=content, source=source).model_dump()},
+                "$push": {"messages": message.model_dump()},
                 "$set": {"updated_at": now_utc()},
                 "$setOnInsert": {"user_id": user_id, "created_at": now_utc()},
             },
@@ -51,19 +108,16 @@ class ConversationService:
             return []
         return [ChatMessage(**m) for m in doc.get("messages", [])]
 
-    def _session_cutoff(self) -> datetime:
-        """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+    def session_cutoff(self) -> datetime:
+        """Mốc cắt phiên lúc này — xem hàm module `session_cutoff`."""
+        return session_cutoff()
 
-        Một mốc, hai chỗ đọc (`history()` và `session_messages()`) — lệch nhau
-        là có tin rơi vào khe giữa state và phần nguyên văn.
-        """
-        day_start, _ = local_day_bounds(to_local(now_utc()).date())
-        return min(day_start, now_utc() - timedelta(minutes=CARRY_OVER_MINUTES))
+    _session_cutoff = session_cutoff
 
     async def session_messages(self, user_id: str) -> List[ChatMessage]:
         """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
         vào cho state."""
-        cutoff = self._session_cutoff()
+        cutoff = self.session_cutoff()
         return [m for m in await self._all_messages(user_id) if m.created_at >= cutoff]
 
     async def history(
@@ -101,35 +155,10 @@ class ConversationService:
         `after` (tuỳ chọn): chỉ giữ tin SAU mốc này — dùng cho state: tin đã
         được nén thành dữ kiện thì không gửi nguyên văn nữa.
         """
-        all_messages = await self._all_messages(user_id)
-        if not all_messages:
-            return []
-
-        cutoff = self._session_cutoff()
-
-        # `after`: mốc covers_until của state — tin đã nén không gửi nguyên văn.
-        messages = [
-            m for m in all_messages
-            if m.created_at >= cutoff and (after is None or m.created_at > after)
-        ]
-        kept: List[ChatMessage] = []
-        used = 0
-        truncated = False
-        for message in reversed(messages):
-            cost = max(1, len(message.content) // CHARS_PER_TOKEN)
-            if used + cost > token_budget and kept:
-                truncated = True
-                break
-            kept.append(message)
-            used += cost
-        kept.reverse()
-        # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
-        # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
-        # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
-        # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
-        if truncated and kept and kept[0].role == "assistant":
-            kept.pop(0)
-        return kept
+        return select_window(
+            await self._all_messages(user_id), cutoff=self.session_cutoff(),
+            after=after, token_budget=token_budget,
+        )
 
     async def list_days(self, user_id: str) -> List[DaySummary]:
         """Các ngày khách từng nhắn, mới nhất trước.

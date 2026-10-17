@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -14,6 +15,7 @@ class GraphState(TypedDict, total=False):
     summary: List[str]
     slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
     pending_confirmation: Optional[Dict[str, Any]]
+    history_after: Optional[datetime]  # covers_until của state nén; tin ≤ mốc này không gửi model
     route: str
     answer: str
     draft: str                       # câu LLM vừa viết, chưa qua guard

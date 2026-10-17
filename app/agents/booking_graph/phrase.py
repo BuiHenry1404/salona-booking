@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.booking_graph.agents import STATE_HEADER
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS
+from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import PHRASE_KIND_SENTENCES, PHRASE_PROMPT
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
@@ -25,7 +26,9 @@ def make_phrase_node():
                      if when else "")
         system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
                                       address=fact.get("address") or "anh chị")
-        history, question = state["messages"][:-1], state["messages"][-1:]
+        # Lịch sử cắt đúng như agent (tin đã nén không gửi lại) — xem history.py.
+        history = model_history(state["messages"][:-1], after=state.get("history_after"))
+        question = state["messages"][-1:]
         # ConversationState đứng NGAY SAU system, cùng vị trí với agents.py — không thì
         # đúng lượt chốt lịch lại là lượt duy nhất "quên" cả mạch chuyện đã
         # tóm tắt.

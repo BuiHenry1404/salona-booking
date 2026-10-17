@@ -34,7 +34,11 @@ def patch_model(monkeypatch):
 
 
 def a_state(**extra):
-    return {"messages": [HumanMessage(content="anh bận đột xuất, dời sang mai nha"), HumanMessage(content="ừ")],
+    # Lịch sử là một cặp hỏi/đáp như ngoài đời: câu khách không có câu đáp
+    # ngay sau là dấu vết lượt lỗi, `model_history` bỏ nó (giống A).
+    return {"messages": [HumanMessage(content="anh bận đột xuất, dời sang mai nha"),
+                         AIMessage(content="Dạ mai 9 giờ sáng được không anh?"),
+                         HumanMessage(content="ừ")],
             "context_block": "Gọi khách là: anh Tám.", "confirm_fact": FACT, "fallback": FALLBACK,
             "previous_replies": [], "customer_text": "ừ", **extra}
 
@@ -66,7 +70,7 @@ class TestPhraseNode:
     async def test_no_state_leaves_the_message_order_unchanged(self, patch_model):
         model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
         out = await make_phrase_node()(a_state())
-        assert len(model.calls[0]) == 4  # system, context_block, history(1), question(1)
+        assert len(model.calls[0]) == 5  # system, history(2), context_block, question(1)
 
     async def test_failed_kind_drops_the_must_include_when_line_entirely(self, patch_model):
         """Task 4 review: fact["when"] là None khi đặt lịch thất bại (kind

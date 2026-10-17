@@ -1,5 +1,6 @@
 from langchain_core.messages import SystemMessage
 
+from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
@@ -26,7 +27,11 @@ async def supervise(state: GraphState) -> dict:
     chỉ vài lượt chat cuối. Nó chỉ cần biết khách đang muốn gì.
     """
     model = build_chat_model(tags=["supervisor"], temperature=0.0)
-    recent = state["messages"][-SUPERVISOR_HISTORY_TURNS:]
+    # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:
+    # tin đã nén hay của hôm qua không được kéo định tuyến.
+    *earlier, question = state["messages"]
+    window = model_history(earlier, after=state.get("history_after"))
+    recent = [*window, question][-SUPERVISOR_HISTORY_TURNS:]
 
     reply = await model.ainvoke([SystemMessage(content=SUPERVISOR_PROMPT), *recent])
     route = (reply.content or "").strip().lower()
