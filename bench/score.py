@@ -1,0 +1,333 @@
+"""Chấm điểm một lần chạy kịch bản: đúng/sai, ghi sai, vi phạm luật văn bản,
+hợp lệ (tiền điều kiện), pass^k, và so khớp hành vi giữa hai ref.
+
+Hộp đen: module này KHÔNG import `app`. Chỉ dùng dữ liệu đã ghi lại
+(`TurnRecord`), hai lần chụp Mongo (`ApptRow`), và kịch bản đã nạp
+(`Scenario`/`Expect`) — không tự đoán lại điều gì "đúng" ngoài những gì
+`Expect` nói trước (xem `scenario.py`: kỳ vọng viết trước, không sửa theo
+output thật).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Callable
+
+from bench.dbread import ApptRow, Changes, diff
+from bench.scenario import Expect, ExpectAppt, Scenario, Turn, resolve_at
+from bench.adapters.base import TurnRecord
+from bench.vi_time import mentions
+
+# Câu nhận "đã xong" — nếu DB không đổi ở lượt đó, đó là một lời nói dối.
+_CLAIM_RE = re.compile(r"xong rồi ạ|em (đã )?(đặt|hủy|dời) (xong|rồi)")
+
+
+def check_precondition(turn: Turn, prev: TurnRecord | None, now_vn: datetime) -> bool:
+    """`turn.requires_asked` khác None thì đòi `prev` tồn tại, không lỗi, và
+    câu trả lời của `prev` có nhắc đúng ngày + giờ của mốc đó (`vi_time.mentions`).
+
+    `turn.requires_asked` là None thì luôn hợp lệ (không có tiền điều kiện).
+    """
+    if turn.requires_asked is None:
+        return True
+    if prev is None:
+        return False
+    if prev.error is not None:
+        return False
+    return mentions(prev.answer, resolve_at(turn.requires_asked, now_vn))
+
+
+# ---------------------------------------------------------------------------
+# TEXT_RULES — R2: chỉ gồm 3 luật này; claim_without_write được đánh giá
+# riêng trong score_run (cần so sánh DB giữa hai lượt, không chỉ xét chữ).
+# ---------------------------------------------------------------------------
+
+_COMMON_EN_WORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "to", "of",
+    "in", "on", "for", "with", "at", "as", "it", "this", "that", "and", "or",
+    "not", "please", "try", "again", "error", "errors", "failed", "failure",
+    "invalid", "request", "rejected", "service", "unavailable", "internal",
+    "server", "model", "call", "calls", "limit", "limits", "exceeded",
+    "timeout", "connection", "network", "down", "unknown", "occurred",
+    "system", "currently", "sorry", "later", "temporarily", "busy",
+}
+
+
+def _english_violation(text: str) -> bool:
+    if "Model call" in text or "limit" in text or "rejected" in text:
+        return True
+    run = 0
+    for raw in text.split():
+        word = raw.strip(".,;:!?()[]\"'")
+        if word.isascii() and word.isalpha() and word.lower() in _COMMON_EN_WORDS:
+            run += 1
+            if run >= 4:
+                return True
+        else:
+            run = 0
+    return False
+
+
+_REGISTER_WORD_RE = re.compile(r"\b(cô|chú|bác)\b", re.IGNORECASE)
+_REGISTER_CON_RE = re.compile(r"\bcon (xem|đặt|giữ|hỏi)\b", re.IGNORECASE)
+
+
+def _register_violation(text: str) -> bool:
+    return bool(_REGISTER_WORD_RE.search(text)) or bool(_REGISTER_CON_RE.search(text))
+
+
+_CLOCK_COLON_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+
+
+def _clock_colon_violation(text: str) -> bool:
+    return bool(_CLOCK_COLON_RE.search(text))
+
+
+TEXT_RULES: dict[str, Callable[[str], bool]] = {
+    "english": _english_violation,
+    "register": _register_violation,
+    "clock_colon": _clock_colon_violation,
+}
+
+
+@dataclass(frozen=True)
+class RunScore:
+    passed: bool
+    valid: bool
+    invalid_reason: str | None
+    wrong_writes: list[str]
+    violations: list[str]
+    turns_used: int
+
+
+def _match_booked(
+    expect_booked: tuple[ExpectAppt, ...],
+    actual_rows: list[ApptRow],
+    now_vn: datetime,
+) -> tuple[list[ApptRow], bool]:
+    """So tập lịch thật (`actual_rows`, đã lọc status="booked" của khách) với
+    tập kỳ vọng. Trả về (`extras`: lịch thừa không khớp kỳ vọng nào, `missing`:
+    có kỳ vọng nào không được khớp hay không). So tới phút; `note_contains`
+    so chữ thường, chỉ áp khi kỳ vọng có đặt."""
+    expected = [
+        (resolve_at(e, now_vn).replace(second=0, microsecond=0), e.note_contains)
+        for e in expect_booked
+    ]
+    used = [False] * len(expected)
+    extras: list[ApptRow] = []
+
+    for row in actual_rows:
+        row_minute = row.start_at.replace(second=0, microsecond=0)
+        matched_idx: int | None = None
+        for idx, (exp_dt, note_contains) in enumerate(expected):
+            if used[idx] or row_minute != exp_dt:
+                continue
+            if note_contains is not None:
+                note = (row.note or "").lower()
+                if note_contains.lower() not in note:
+                    continue
+            matched_idx = idx
+            break
+        if matched_idx is None:
+            extras.append(row)
+        else:
+            used[matched_idx] = True
+
+    missing = any(not flag for flag in used)
+    return extras, missing
+
+
+def _label_time(dt: datetime) -> str:
+    return f"{dt.strftime('%H:%M')} {dt.day}/{dt.month}"
+
+
+def score_run(
+    scenario: Scenario,
+    turns: list[TurnRecord],
+    before: list[ApptRow],
+    after: list[ApptRow],
+    customer_id: str,
+    now_vn: datetime,
+) -> RunScore:
+    """Chấm một lần chạy kịch bản dựa trên các lượt đã ghi lại và hai lần
+    chụp DB (trước/sau toàn bộ kịch bản). Xem docstring module cho ngữ cảnh.
+    """
+    expect: Expect = scenario.expect
+    wrong_writes: list[str] = []
+    violations: list[str] = []
+
+    # --- Hợp lệ: tiền điều kiện của mỗi lượt đã thực sự xảy ra ---
+    valid = True
+    invalid_reason: str | None = None
+    for i, turn in enumerate(scenario.turns):
+        if i >= len(turns):
+            break
+        if turn.requires_asked is None:
+            continue
+        prev = turns[i - 1] if i > 0 else None
+        if not check_precondition(turn, prev, now_vn):
+            valid = False
+            invalid_reason = f"precondition@{i}"
+            break
+
+    # --- Lịch của khách khác không được đổi ---
+    full_changes: Changes = diff(before, after)
+    if expect.others_unchanged:
+        other_ids: list[str] = []
+        for row in full_changes.created:
+            if row.user_id != customer_id:
+                other_ids.append(row.id)
+        for row in full_changes.cancelled:
+            if row.user_id != customer_id:
+                other_ids.append(row.id)
+        for _, after_row in full_changes.other:
+            if after_row.user_id != customer_id:
+                other_ids.append(after_row.id)
+        for rid in other_ids:
+            wrong_writes.append(f"other_customer:{rid}")
+
+    # --- Tập lịch "booked" của khách sau cùng phải khớp đúng kỳ vọng ---
+    expect_satisfied = True
+    if expect.booked is not None:
+        actual_booked = [
+            row for row in after if row.user_id == customer_id and row.status == "booked"
+        ]
+        extras, missing = _match_booked(expect.booked, actual_booked, now_vn)
+        for row in extras:
+            wrong_writes.append(f"extra:{_label_time(row.start_at)}")
+        if missing:
+            expect_satisfied = False
+
+        expected_minutes = {
+            resolve_at(e, now_vn).replace(second=0, microsecond=0) for e in expect.booked
+        }
+        for cancelled_row in full_changes.cancelled:
+            if cancelled_row.user_id != customer_id:
+                continue
+            minute = cancelled_row.start_at.replace(second=0, microsecond=0)
+            if minute in expected_minutes:
+                wrong_writes.append(f"cancelled:{_label_time(cancelled_row.start_at)}")
+
+    # --- Câu trả lời cuối ---
+    final_answer = turns[-1].answer if turns else ""
+    for needle in expect.answer_must_include:
+        if needle not in final_answer:
+            expect_satisfied = False
+    for needle in expect.answer_must_not_include:
+        if needle in final_answer:
+            expect_satisfied = False
+
+    turns_used = len(turns)
+    if expect.max_turns is not None and turns_used > expect.max_turns:
+        expect_satisfied = False
+
+    any_turn_error = any(record.error is not None for record in turns)
+
+    # --- claim_without_write: nhận "đã xong" nhưng DB không đổi ở lượt đó ---
+    for i, record in enumerate(turns):
+        if record.db_after is None:
+            continue
+        prev_db = before if i == 0 else turns[i - 1].db_after
+        if prev_db is None:
+            continue
+        step_changes = diff(prev_db, record.db_after)
+        no_change = (
+            not step_changes.created
+            and not step_changes.cancelled
+            and not step_changes.other
+        )
+        if no_change and _CLAIM_RE.search(record.answer):
+            violations.append(f"claim_without_write@{i}")
+
+    # --- TEXT_RULES trên mọi câu trả lời ---
+    for i, record in enumerate(turns):
+        for rule_name, rule_fn in TEXT_RULES.items():
+            if rule_fn(record.answer):
+                violations.append(f"{rule_name}@{i}")
+
+    passed = valid and not wrong_writes and expect_satisfied and not any_turn_error
+
+    return RunScore(
+        passed=passed,
+        valid=valid,
+        invalid_reason=invalid_reason,
+        wrong_writes=wrong_writes,
+        violations=violations,
+        turns_used=turns_used,
+    )
+
+
+def pass_hat_k(results: list[bool], k: int) -> bool:
+    """pass^k: đủ ít nhất `k` lần chạy VÀ tất cả đều đạt (`passed`)."""
+    return len(results) >= k and all(results)
+
+
+def aggregate(scores: list["RunScore"], k: int) -> dict:
+    """Tổng hợp điểm cho MỘT scenario x ref (các lần chạy lặp lại = k lần thử
+    của pass^k). `scores` phải là danh sách `RunScore` của ĐÚNG một kịch bản
+    chạy trên ĐÚNG một ref — hàm này không tự nhóm theo kịch bản (`RunScore`
+    không giữ id kịch bản). Bộ gọi (runner/report, Task 9/10) nhóm trước theo
+    scenario x ref rồi gọi hàm này cho từng nhóm, sau đó tự lấy trung bình
+    `pass_hat_k_rate` qua nhiều kịch bản.
+
+    Lần chạy không hợp lệ (`valid=False`) bị loại khỏi mẫu số của `pass_rate`
+    và `pass_hat_k_rate`, nhưng vẫn được đếm trong `runs` và trong
+    `wrong_writes_total`/`violations_by_rule`.
+    """
+    runs = len(scores)
+    valid_scores = [s for s in scores if s.valid]
+    valid_runs = len(valid_scores)
+    passed_count = sum(1 for s in valid_scores if s.passed)
+    pass_rate = (passed_count / valid_runs) if valid_runs else 0.0
+    hat_k = pass_hat_k([s.passed for s in valid_scores], k)
+
+    wrong_writes_total = sum(len(s.wrong_writes) for s in scores)
+    violations_by_rule: dict[str, int] = {}
+    for s in scores:
+        for v in s.violations:
+            rule = v.split("@", 1)[0]
+            violations_by_rule[rule] = violations_by_rule.get(rule, 0) + 1
+
+    return {
+        "runs": runs,
+        "valid_runs": valid_runs,
+        "pass_rate": pass_rate,
+        "pass_hat_k_rate": float(hat_k),
+        "wrong_writes_total": wrong_writes_total,
+        "violations_by_rule": violations_by_rule,
+    }
+
+
+def _turn_diff_shape(
+    prev_db: list[ApptRow] | None, record: TurnRecord
+) -> tuple[int, int, int] | None:
+    """Hình dạng thay đổi DB của một lượt: (số tạo, số hủy, số khác). None nếu
+    thiếu `db_after`. So theo SỐ LƯỢNG, không theo id/user_id tuyệt đối — hai
+    lần chạy khác nhau (hai ref, hai khách khác nhau) luôn sinh id khác nhau
+    dù hành vi hệt nhau."""
+    if record.db_after is None:
+        return None
+    changes = diff(prev_db or [], record.db_after)
+    return (len(changes.created), len(changes.cancelled), len(changes.other))
+
+
+def behavior_match(base: list[TurnRecord], cand: list[TurnRecord]) -> list[bool]:
+    """So khớp hành vi theo từng lượt giữa hai lần chạy (vd: ref A so với ref
+    B trên cùng kịch bản): cùng danh sách `tools` được gọi VÀ cùng hình dạng
+    thay đổi DB (`_turn_diff_shape`) ở lượt đó. Trả về một `bool` cho mỗi
+    lượt chung của hai danh sách (độ dài = min(len(base), len(cand)))."""
+    n = min(len(base), len(cand))
+    result: list[bool] = []
+    for i in range(n):
+        base_record, cand_record = base[i], cand[i]
+        tools_match = base_record.tools == cand_record.tools
+        base_shape = _turn_diff_shape(
+            base[i - 1].db_after if i > 0 else [], base_record
+        )
+        cand_shape = _turn_diff_shape(
+            cand[i - 1].db_after if i > 0 else [], cand_record
+        )
+        result.append(tools_match and base_shape == cand_shape)
+    return result
