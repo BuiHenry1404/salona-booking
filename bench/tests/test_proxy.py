@@ -6,6 +6,7 @@ Dựng một "upstream" giả bằng aiohttp (không gọi Azure thật) trả J
 
 from __future__ import annotations
 
+import gzip
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -71,9 +72,37 @@ async def _fake_upstream_handler(request: web.Request) -> web.StreamResponse:
     return web.json_response(FAKE_CHAT_RESPONSE)
 
 
+async def _gzip_json_handler(request: web.Request) -> web.Response:
+    """Trả JSON cố định nén gzip với header Content-Encoding: gzip.
+
+    Giả lập Azure trả response nén — aiohttp ClientSession (ở proxy) tự giải
+    nén body này trước khi đọc, nên proxy KHÔNG được giữ nguyên header
+    Content-Encoding khi chuyển tiếp (xem bench/proxy.py _RESPONSE_STRIP_HEADERS).
+    """
+    payload = gzip.compress(json.dumps(FAKE_CHAT_RESPONSE).encode())
+    return web.Response(
+        status=200,
+        body=payload,
+        headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
+    )
+
+
+async def _gzip_sse_handler(request: web.Request) -> web.Response:
+    """SSE tương tự nhưng toàn bộ payload (nhiều dòng data:) được nén gzip."""
+    raw = b"".join(f"data: {json.dumps(c)}\n\n".encode() for c in SSE_CHUNKS) + b"data: [DONE]\n\n"
+    payload = gzip.compress(raw)
+    return web.Response(
+        status=200,
+        body=payload,
+        headers={"Content-Type": "text/event-stream", "Content-Encoding": "gzip"},
+    )
+
+
 @pytest.fixture
 async def fake_upstream():
     app = web.Application()
+    app.router.add_route("GET", "/gzip-json", _gzip_json_handler)
+    app.router.add_route("GET", "/gzip-sse", _gzip_sse_handler)
     app.router.add_route("*", "/{tail:.*}", _fake_upstream_handler)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -235,6 +264,33 @@ async def test_forwards_headers_and_query(proxy, fake_upstream):
     assert seen["query"] == {"api-version": "2024-02-15-preview"}
     assert seen["headers"]["api-key"] == "secret-key"
     assert seen["body"]["messages"] == [{"role": "user", "content": "hi"}]
+
+
+async def test_passthrough_decodes_gzip_json(proxy):
+    url = proxy.url + "/gzip-json"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Encoding") is None
+            data = await resp.json()
+            assert data == FAKE_CHAT_RESPONSE
+
+
+async def test_passthrough_decodes_gzip_sse(proxy):
+    url = proxy.url + "/gzip-sse"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Encoding") is None
+            raw = await resp.read()
+
+    text = raw.decode()
+    assert text.strip().endswith("data: [DONE]")
+    lines = [l for l in text.split("\n\n") if l.strip() and l.strip() != "data: [DONE]"]
+    events = [json.loads(l[len("data: "):]) for l in lines]
+    assert events == SSE_CHUNKS
 
 
 async def test_hang_returns_504_after_duration():

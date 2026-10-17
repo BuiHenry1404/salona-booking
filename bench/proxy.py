@@ -27,6 +27,12 @@ VN_TZ = timezone(timedelta(hours=7))
 # Header các bên hop-by-hop, không chuyển tiếp nguyên văn.
 _HOP_BY_HOP = {"host", "content-length", "transfer-encoding", "connection"}
 
+# Header chỉ bỏ khi chuyển response ngược về client: aiohttp ClientSession đã
+# tự giải nén body theo Content-Encoding của upstream (vd gzip) trước khi ta
+# đọc được nó, nên body ta chuyển tiếp luôn là bản đã giải nén — giữ header
+# Content-Encoding cũ sẽ khiến client tưởng body còn nén và giải nén hỏng.
+_RESPONSE_STRIP_HEADERS = _HOP_BY_HOP | {"content-encoding"}
+
 _FAULT_MODES = {None, "http500", "hang", "tool_loop"}
 
 
@@ -212,7 +218,7 @@ class FaultProxy:
                 response_headers = {
                     k: v
                     for k, v in upstream_resp.headers.items()
-                    if k.lower() not in _HOP_BY_HOP
+                    if k.lower() not in _RESPONSE_STRIP_HEADERS
                 }
                 if "text/event-stream" in content_type:
                     resp = web.StreamResponse(
