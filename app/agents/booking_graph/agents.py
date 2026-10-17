@@ -97,8 +97,9 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
     `messages` là cả thread trong ngày; `HistoryWindowMiddleware` (trong
     `extra_middleware` của graph) cắt lại đúng cửa sổ A gửi model.
 
-    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối. Tool
-    message của lượt này ở lại trong agent con, KHÔNG quay về `messages` ngoài.
+    Node không set `answer` — chỉ `draft` (và `proposal_id` của lượt này, None
+    nếu không có); `guard` mới quyết câu cuối. Tool message của lượt này ở lại
+    trong agent con, KHÔNG quay về `messages` ngoài.
     """
     async def node(state: GraphState) -> dict:
         out = await agent.ainvoke({
@@ -113,6 +114,10 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
         })
         messages = out.get("messages") or []
         reply = messages[-1] if messages else None
-        return {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER}
+        # Đề xuất của lượt này (ConfirmMiddleware). Vòng tool cạn thì câu cuối
+        # là FALLBACK chứ không phải câu hỏi xác nhận — không được chờ duyệt (G-07).
+        proposal_id = None if out.get("tool_loop_exhausted") else out.get("proposal_id")
+        return {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER,
+                "proposal_id": proposal_id}
 
     return node

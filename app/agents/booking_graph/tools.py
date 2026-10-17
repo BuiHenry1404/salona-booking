@@ -14,7 +14,7 @@ from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.user import User
 from app.services.appointment import AppointmentService
-from app.services.conversation import ConversationService
+from app.services.proposal import ProposalService
 from app.services.shop import ShopService
 
 # Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
@@ -131,7 +131,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     người khác, kể cả khi khách gõ "hủy lịch của bà Lan".
     """
     service = AppointmentService(db)
-    conversations = ConversationService(db)
+    proposals = ProposalService(db)
 
     @tool
     async def parse_time(text: str, anchor: Optional[str] = None) -> str:
@@ -206,9 +206,9 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
         (reschedule) an appointment they already have. Copy the id from the
         context block. Leave it out for a brand-new booking."""
-        # `note` do model gõ lại theo lời khách và được lưu vào
-        # `pending_confirmation` — đường này không đi qua `Appointment`, nên
-        # cap ở `Appointment._clean_note` không tự áp dụng. Lọc lại ở đây.
+        # `note` do model gõ lại theo lời khách và được lưu vào đề xuất
+        # (`proposals`) — đường này không đi qua `Appointment`, nên cap ở
+        # `Appointment._clean_note` không tự áp dụng. Lọc lại ở đây.
         note = single_line(note, NOTE_MAX)
         try:
             start = _parse_local(start_at)
@@ -257,16 +257,17 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
                                "nearest": [_moment(s) for s in nearest]},
                               ensure_ascii=False)
 
-        # Lưu vào Mongo để lượt sau đọc lại: giá trị đem đi ghi lịch lấy từ DB,
-        # KHÔNG từ chuỗi model gõ lại.
-        payload = {"start_at": start.isoformat(), "note": note}
-        if old:
-            payload["replaces_appointment_id"] = str(old.id)
-        await conversations.set_pending(str(user.id), payload)
+        # Đề xuất cất vào DB nghiệp vụ (`proposals`), không vào state model:
+        # giá trị đem đi ghi lịch lấy từ đó, KHÔNG từ chuỗi model gõ lại.
+        # `proposal_id` đi qua `ConfirmMiddleware` vào state graph (middleware
+        # gỡ nó khỏi JSON trước khi model đọc) — node `confirm` duyệt bằng id.
+        proposal = await proposals.create(user, "move" if old else "book", start, note,
+                                          target=old)
 
         result = {"held": _moment(start), "note": note}
         if old:
             result["replaces"] = {"id": str(old.id), "was": _moment(old.start_at)}
+        result["proposal_id"] = str(proposal.id)
         return json.dumps(result, ensure_ascii=False)
 
     @tool
@@ -295,18 +296,17 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         block — copy it exactly. Never invent or guess an id; if the context
         block shows none, call list_my_appointments first. If the customer has
         two or more appointments, ask which one first."""
-        # Không hủy ở đây. Hủy giống đặt: tool giữ ý định, node confirm mới làm
-        # thật khi khách "ừ". Kiểm id trước để không giữ một ý hủy vô nghĩa.
+        # Không hủy ở đây. Hủy giống đặt: tool tạo đề xuất hủy, node confirm
+        # mới làm thật khi khách đồng ý. Kiểm id trước để không giữ một ý hủy
+        # vô nghĩa; đề xuất chụp lại lịch lúc này (dời/hủy chỗ khác → không duyệt).
         try:
             appt = await service.own_booked(user, appointment_id)
         except AppError as exc:
             return json.dumps({"error": _error_code(exc)})
-        await conversations.set_pending(
-            str(user.id),
-            {"cancel_appointment_id": str(appt.id), "start_at": appt.start_at.isoformat()},
-        )
+        proposal = await proposals.create(user, "cancel", appt.start_at, None, target=appt)
         return json.dumps({"will_cancel": {"id": str(appt.id),
-                                           "at": _moment(appt.start_at)}},
+                                           "at": _moment(appt.start_at)},
+                           "proposal_id": str(proposal.id)},
                           ensure_ascii=False)
 
     return [

@@ -43,7 +43,7 @@ async def test_runs_a_tool_then_answers():
     node = node_for(scripted([tool_call_message(), AIMessage(content="Dạ mai còn trống 3 giờ chiều ạ.")]))
     result = await node(a_state())
     # Tool message KHÔNG quay về `messages` của graph ngoài: node chỉ trả draft.
-    assert result == {"draft": "Dạ mai còn trống 3 giờ chiều ạ."}
+    assert result == {"draft": "Dạ mai còn trống 3 giờ chiều ạ.", "proposal_id": None}
 
 
 async def test_tool_result_is_fed_back_to_the_model():
@@ -100,12 +100,12 @@ async def test_unknown_tool_name_does_not_crash():
 
 async def test_llm_node_returns_a_draft_not_an_answer():
     out = await node_for(scripted([AIMessage(content="Dạ.")]), tools=[])(a_state("chào"))
-    assert out == {"draft": "Dạ."}
+    assert out == {"draft": "Dạ.", "proposal_id": None}
 
 
 async def test_empty_model_reply_falls_back():
     out = await node_for(scripted([AIMessage(content="")]), tools=[])(a_state("chào"))
-    assert out == {"draft": FALLBACK_ANSWER}
+    assert out == {"draft": FALLBACK_ANSWER, "proposal_id": None}
 
 
 def test_build_agent_tags_the_real_model_respond(monkeypatch):

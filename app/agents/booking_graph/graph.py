@@ -8,6 +8,7 @@ from app.agents.booking_graph.confirm import (make_confirm_node,
                                               route_after_confirm)
 from app.agents.booking_graph.guard import make_guard_node, route_after_guard
 from app.agents.booking_graph.history import stamp
+from app.agents.booking_graph.middleware.confirm import ConfirmMiddleware
 from app.agents.booking_graph.middleware.history import HistoryWindowMiddleware
 from app.agents.booking_graph.phrase import make_phrase_node
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
@@ -49,9 +50,9 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     định: tham số mặc định chạy lúc import và mở MongoClient vào DB dev ngay cả
     trong test). Agent con vẫn `checkpointer=False` — thread thuộc graph ngoài.
     """
-    def agent(prompt, tools):
+    def agent(prompt, tools, *extra):
         return make_agent_node(build_agent(
-            prompt, tools, extra_middleware=[HistoryWindowMiddleware()]))
+            prompt, tools, extra_middleware=[HistoryWindowMiddleware(), *extra]))
 
     graph = StateGraph(GraphState)
 
@@ -62,7 +63,8 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     # build_agent để token stream ra màn hình như các node khác — trả thẳng
     # chuỗi chính là cái bẫy mà node refuse cũ mắc phải.
     graph.add_node("social", agent(SOCIAL_PROMPT, []))
-    graph.add_node("booking", agent(BOOKING_PROMPT, booking_tools(db, user)))
+    # Chỉ booking có tool đề xuất, nên chỉ booking bắt `proposal_id`.
+    graph.add_node("booking", agent(BOOKING_PROMPT, booking_tools(db, user), ConfirmMiddleware()))
     graph.add_node("guard", make_guard_node(user))
     graph.add_node("rewrite", make_rewrite_node())
     graph.add_node("phrase", make_phrase_node())
