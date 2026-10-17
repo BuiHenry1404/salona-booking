@@ -6,9 +6,9 @@ tags:
 - LLM-27
 setup:
   others:
-  - day: today
+  - day: '+1'  # "today" có thể là quá khứ nếu benchmark chạy buổi chiều/tối
     time: '10:00'
-  - day: today
+  - day: '+1'
     time: '14:00'
 turns: []
 sim:

@@ -17,3 +17,4 @@ expect:
   booked:
   - day: tomorrow
     time: '14:00'
+    note_contains: gội đầu

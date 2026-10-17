@@ -62,10 +62,17 @@ def test_all_scenarios_load_and_are_well_formed():
 
 
 def test_edge_scenarios_are_scripted_with_edge_tag():
+    """Mọi file dưới `edge/` phải là `scripted` + tag `edge`, NGOẠI TRỪ kịch bản
+    tag `compaction` (`compaction-long`): đó là kịch bản nghiệm thu riêng của dự
+    án (ConversationState compaction), không phải một mã lỗi G-xx, nên nó là
+    `simulated` và không mang tag `edge`."""
     paths = sorted((SCENARIOS_DIR / "edge").glob("*.yaml"))
     scenarios = load_scenarios(paths)
     assert len(scenarios) == len(paths)
     for scenario in scenarios:
+        if "compaction" in scenario.tags:
+            assert scenario.kind == "simulated", scenario.id
+            continue
         assert scenario.kind == "scripted", scenario.id
         assert "edge" in scenario.tags, scenario.id
 

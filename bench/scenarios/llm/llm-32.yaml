@@ -1,25 +1,22 @@
 id: LLM-32
-title: Hội thoại dài kích hoạt nén (slots phải sống sót qua compaction)
+title: Chuyển giao phiên nửa đêm 00:00 (buffer 30 phút)
 kind: simulated
 tags:
 - llm
 - LLM-32
 - slow
+- clock
 setup: {}
 turns: []
 sim:
-  goal: 'Trò chuyện dài trước khi chốt lịch làm móng bột ngày mai 4 giờ chiều: hỏi nhiều câu
-    dài dòng về giá/giờ mở cửa/nhuộm tóc, từ chối 2-3 khung giờ đầu bot đề nghị trước khi
-    chốt, rồi yêu cầu bot nhắc lại dịch vụ đã chọn và TẤT CẢ các giờ đã từ chối.'
-  persona: Khách nói rất dài dòng, mỗi tin nhắn (trên 40 từ) kể lể chi tiết không liên quan
-    (gia đình, công việc, đường xá) trước khi vào ý chính, để đủ kích hoạt ngưỡng nén hội
-    thoại; hỏi nhiều câu về giá/giờ mở cửa/nhuộm tóc trước khi chốt làm móng bột; từ chối
-    ít nhất 2 khung giờ đầu tiên được đề nghị; cuối cùng hỏi bot nhắc lại dịch vụ đã chọn
-    và tất cả các giờ đã từ chối để kiểm tra trí nhớ sau khi hội thoại đã bị nén.
-  max_turns: 20
+  goal: Đặt lịch làm tóc ngày mai 3 giờ chiều và xác nhận ngay lập tức, không trì hoãn giữa
+    hai lượt — để nếu lượt hỏi và lượt xác nhận tình cờ rơi vào hai bên ranh giới nửa đêm,
+    bộ nạp lịch sử (buffer 30 phút qua nửa đêm) vẫn phải nhận diện đúng pending vừa tạo.
+  persona: Nói 'Mai 3h chiều làm tóc nha em' rồi xác nhận ngay bằng 'Ừ' ngay khi được hỏi
+    lại, không chat thêm gì ở giữa.
+  max_turns: 4
 expect:
   others_unchanged: true
-  booked:
-  - day: tomorrow
-    time: '16:00'
-    note_contains: móng
+  # Thời điểm benchmark chạy không kiểm soát được (không đảm bảo rơi đúng quanh
+  # 00:00 giờ VN), nên không chốt được kết quả chắc chắn ở đây — xem tag `clock`.
+  booked: null

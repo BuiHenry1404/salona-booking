@@ -13,7 +13,4 @@ sim:
   max_turns: 8
 expect:
   others_unchanged: true
-  booked:
-  - day: '+2'
-    time: '12:00'
-    note_contains: móng
+  booked: null  # doc cho phép 11 giờ 30 hoặc 12 giờ trưa, không chốt một mốc duy nhất
