@@ -1,11 +1,11 @@
 import re
-import unicodedata
 from datetime import datetime
 from typing import Awaitable, Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
+from app.agents.booking_graph.reply import strip_diacritics
 from app.agents.booking_graph.state import GraphState
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -49,19 +49,6 @@ _NO_BARE_WHEN_CANCELLING = re.compile(
     r"\b(khong|ko|thoi|khoi|doi|khac|chua)\b",
     re.IGNORECASE,
 )
-
-
-def strip_diacritics(text: str) -> str:
-    """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
-
-    NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
-    là một ký tự độc lập nên phải thay tay.
-    """
-    text = (text or "").replace("đ", "d").replace("Đ", "D")
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if unicodedata.category(c) != "Mn"
-    )
 
 
 def _sentence_start(phrase: str) -> str:
