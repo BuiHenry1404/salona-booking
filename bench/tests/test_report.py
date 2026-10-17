@@ -331,3 +331,130 @@ def test_null_score_counts_as_failed_run(tmp_path):
 
     out = build_report([run_dir], base_ref="main")
     assert out  # không crash trên score=None / thiếu now_vn, customer_id, turns
+
+
+# ---------------------------------------------------------------------------
+# Review cuối: I2, I5, I6, stale_scenario, theo tag
+# ---------------------------------------------------------------------------
+
+from bench.report import _collect_columns, _build_ref_summary  # noqa: E402
+
+
+def _score(passed=True, valid=True, reason=None, ww=None) -> dict:
+    return {
+        "passed": passed,
+        "valid": valid,
+        "invalid_reason": reason,
+        "wrong_writes": ww or [],
+        "violations": [],
+        "turns_used": 1,
+    }
+
+
+def _one_ref_meta(ref="main", sha="aaa1111222", status="ready", k=1, run_id="r1", **kw):
+    m = _meta(
+        run_id=run_id,
+        k=k,
+        refs=[{
+            "ref": ref, "adapter": "a", "sha": sha, "sha7": sha[:7], "port": 8100,
+            "status": status, "error": "Segfault" if status == "crashed" else None,
+            "azure_deployment": "gpt-4o",
+        }],
+        **kw,
+    )
+    return m
+
+
+def test_crashed_ref_keeps_partial_data_and_warns(tmp_path):
+    run_dir = tmp_path / "run1"
+    _write_json(run_dir / "meta.json", _one_ref_meta(status="crashed"))
+    _write_json(
+        run_dir / "runs" / "aaa1111" / "g01" / "0.json",
+        _run_payload("main", "aaa1111222", score=_score(passed=True)),
+    )
+    out = build_report([run_dir])
+    assert "100% (n=1)" in out
+    assert "crashed" in out and "một phần" in out
+
+
+def test_unfinished_run_warns():
+    meta = _meta()
+    meta["finished_at"] = None
+    assert any("chưa chạy xong" in w for w in warnings([meta]))
+
+
+def test_same_ref_name_different_sha_are_separate_columns(tmp_path):
+    a = tmp_path / "m1"
+    b = tmp_path / "m2"
+    _write_json(a / "meta.json", _one_ref_meta(ref="feat", sha="aaa1111222", run_id="r1"))
+    _write_json(b / "meta.json", _one_ref_meta(ref="feat", sha="ccc3333444", run_id="r2"))
+    _write_json(a / "runs" / "aaa1111" / "g01" / "0.json",
+                _run_payload("feat", "aaa1111222", score=_score(passed=True)))
+    _write_json(b / "runs" / "ccc3333" / "g01" / "0.json",
+                _run_payload("feat", "ccc3333444", score=_score(passed=False)))
+    cols = _collect_columns([a, b])
+    assert sorted(cols) == ["feat@aaa1111", "feat@ccc3333"]
+
+
+def test_pass_hat_k_is_per_run_not_pooled(tmp_path):
+    # Hai run cùng (ref, sha), k=2 mỗi run: run 1 đạt 2/2, run 2 đạt 1/2.
+    # pass^k = TB(1, 0) = 0.5 — không phải "đạt tất cả 4 lần" (= 0).
+    dirs = []
+    for run_id, results in (("r1", (True, True)), ("r2", (True, False))):
+        d = tmp_path / run_id
+        _write_json(d / "meta.json", _one_ref_meta(k=2, run_id=run_id))
+        for i, ok in enumerate(results):
+            _write_json(d / "runs" / "aaa1111" / "g01" / f"{i}.json",
+                        _run_payload("main", "aaa1111222", attempt=i, score=_score(passed=ok)))
+        dirs.append(d)
+    cols = _collect_columns(dirs)
+    (key,) = cols
+    summary = _build_ref_summary(key, "ready", None, cols[key])
+    assert summary.pass_hat_k_avg == 0.5
+    assert summary.pass_rate_avg == 0.75
+
+
+def test_stale_scenario_runs_are_excluded(tmp_path):
+    run_dir = tmp_path / "run1"
+    _write_json(run_dir / "meta.json", _one_ref_meta(scenarios=["g01", "g02"]))
+    stale = _run_payload("main", "aaa1111222", scenario_id="g02", score=_score(passed=False, ww=["extra:x"]))
+    stale["stale_scenario"] = "kịch bản đã đổi"
+    _write_json(run_dir / "runs" / "aaa1111" / "g02" / "0.json", stale)
+    _write_json(run_dir / "runs" / "aaa1111" / "g01" / "0.json",
+                _run_payload("main", "aaa1111222", score=_score(passed=True)))
+    out = build_report([run_dir])
+    assert "100% (n=1)" in out
+    assert "loại khỏi tổng hợp" in out
+
+
+def test_invalid_counts_and_unfair_flag(tmp_path):
+    run_dir = tmp_path / "run1"
+    meta = _meta(k=2)
+    _write_json(run_dir / "meta.json", meta)
+    for i in range(2):
+        _write_json(run_dir / "runs" / "aaa1111" / "g01" / f"{i}.json",
+                    _run_payload("main", "aaa1111222", attempt=i, score=_score()))
+        _write_json(run_dir / "runs" / "bbb2222" / "g01" / f"{i}.json",
+                    _run_payload("feature", "bbb2222333", attempt=i,
+                                 score=_score(passed=False, valid=False, reason="precondition@1")))
+    out = build_report([run_dir], base_ref="main")
+    assert "Lần chạy không hợp lệ" in out
+    assert "2/2" in out
+    assert "so sánh không công bằng" in out
+
+
+def test_mismatches_are_shown(tmp_path):
+    run_dir = tmp_path / "run1"
+    _write_json(run_dir / "meta.json", _one_ref_meta())
+    sc = _score(passed=False)
+    sc["mismatches"] = ["note_mismatch:14:00 18/10"]
+    _write_json(run_dir / "runs" / "aaa1111" / "g01" / "0.json",
+                _run_payload("main", "aaa1111222", score=sc))
+    out = build_report([run_dir])
+    assert "note_mismatch:14:00 18/10" in out
+
+
+def test_per_tag_table(tmp_path):
+    run_dir = _build_basic_run_dir(tmp_path)
+    out = build_report([run_dir], base_ref="main")
+    assert "Theo nhóm" in out

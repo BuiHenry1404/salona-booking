@@ -145,7 +145,14 @@ def _score_from_payload(payload: dict) -> RunScore:
         wrong_writes=list(raw.get("wrong_writes") or []),
         violations=list(raw.get("violations") or []),
         turns_used=int(raw.get("turns_used") or 0),
+        mismatches=list(raw.get("mismatches") or []),
     )
+
+
+def _is_stale(payload: dict) -> bool:
+    """Lần chạy của một phiên bản kịch bản cũ (persona/setup đã đổi — xem
+    `rescore.py`): giữ trên đĩa để tra cứu nhưng KHÔNG tính vào tổng hợp."""
+    return bool(payload.get("stale_scenario"))
 
 
 def _first_with_turns(payloads: list[dict]) -> dict | None:
@@ -191,6 +198,22 @@ def warnings(metas: list[dict]) -> list[str]:
 
     for meta in metas:
         run_id = str(meta.get("run_id") or "?")
+        if "finished_at" in meta and meta.get("finished_at") is None:
+            out.append(
+                f"Run {run_id} chưa chạy xong (finished_at trống — bị dừng giữa chừng?): "
+                "số lần chạy giữa các ref có thể lệch; dùng `run --resume` để chạy tiếp."
+            )
+        for rm in meta.get("refs") or []:
+            if rm.get("status") == "crashed":
+                out.append(
+                    f"Ref {rm.get('ref')} ({rm.get('sha7')}) crashed trong run {run_id}: "
+                    "báo cáo chỉ có dữ liệu một phần của ref này."
+                )
+            elif rm.get("restarts"):
+                out.append(
+                    f"Ref {rm.get('ref')} ({rm.get('sha7')}) phải khởi động lại "
+                    f"{rm.get('restarts')} lần trong run {run_id}."
+                )
         d_start = meta.get("vn_date_start")
         d_end = meta.get("vn_date_end")
         if d_start:
@@ -311,6 +334,9 @@ class RefSummary:
     tokens_mean: dict[str, float] | None
     judge_mean: dict[str, float] = field(default_factory=dict)
     scenario_aggregates: dict[str, dict] = field(default_factory=dict)
+    total_runs: int = 0
+    invalid_runs: int = 0
+    stale_runs: int = 0
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -327,12 +353,51 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
 
 
+def _aggregate_runs(payloads: list[dict], default_k: int = 4) -> dict:
+    """Tổng hợp MỘT kịch bản × MỘT cột (ref@sha), có thể từ nhiều run (I5):
+
+    - `pass_rate`: gộp mọi lần chạy hợp lệ của mọi run (là một tỉ lệ, gộp được).
+    - `pass_hat_k`: tính RIÊNG từng run trên đúng `k` lần đầu của run đó (k
+      của run), rồi lấy trung bình — không bao giờ gộp 2k lần thành "pass^2k".
+    - Lần chạy `stale_scenario` bị loại hẳn (chỉ đếm vào `stale`)."""
+    stale = sum(1 for p in payloads if _is_stale(p))
+    live = [p for p in payloads if not _is_stale(p)]
+    by_run: dict[str, list[dict]] = {}
+    for p in live:
+        by_run.setdefault(str(p.get("_run_key") or "?"), []).append(p)
+
+    all_scores: list[RunScore] = []
+    hat_values: list[bool] = []
+    for run_payloads in by_run.values():
+        k = int(run_payloads[0].get("_k") or default_k)
+        ordered = sorted(run_payloads, key=lambda p: p.get("attempt") or 0)[:k]
+        scores = [_score_from_payload(p) for p in ordered]
+        all_scores.extend(scores)
+        per_run = aggregate(scores, k)
+        if per_run["pass_hat_k"] is not None:
+            hat_values.append(bool(per_run["pass_hat_k"]))
+
+    agg = aggregate(all_scores, max(len(all_scores), 1))
+    agg["pass_hat_k_runs"] = len(hat_values)
+    if not hat_values:
+        agg["pass_hat_k"] = None
+        agg["pass_hat_k_rate"] = None
+    else:
+        agg["pass_hat_k_rate"] = sum(hat_values) / len(hat_values)
+        agg["pass_hat_k"] = all(hat_values) if len(hat_values) == 1 else agg["pass_hat_k_rate"]
+    agg["wrong_writes_list"] = [w for sc in all_scores for w in sc.wrong_writes]
+    agg["mismatches_list"] = [m for sc in all_scores for m in sc.mismatches]
+    agg["stale"] = stale
+    agg["_live_payloads"] = live
+    return agg
+
+
 def _build_ref_summary(
     ref: str,
     status: str,
     error: str | None,
     scenario_payloads: dict[str, list[dict]],
-    k: int,
+    k: int = 4,
 ) -> RefSummary:
     pass_rates: list[float] = []
     hat_ks: list[float] = []
@@ -343,12 +408,15 @@ def _build_ref_summary(
     completes: list[float] = []
     tokens_list: list[dict] = []
     judge_axis_values: dict[str, list[float]] = {axis: [] for axis in JUDGE_AXES}
+    total_runs = invalid_runs = stale_runs = 0
 
-    for scenario_id, payloads in scenario_payloads.items():
-        scores = [_score_from_payload(p) for p in payloads]
-        agg = aggregate(scores, k)
-        agg["wrong_writes_list"] = [w for s in scores for w in s.wrong_writes]
+    for scenario_id, all_payloads in scenario_payloads.items():
+        agg = _aggregate_runs(all_payloads, k)
+        payloads = agg.pop("_live_payloads")
         scenario_aggs[scenario_id] = agg
+        stale_runs += agg["stale"]
+        total_runs += agg["runs"]
+        invalid_runs += agg["runs"] - agg["valid_runs"]
         if agg["pass_rate"] is not None:
             pass_rates.append(agg["pass_rate"])
         if agg["pass_hat_k_rate"] is not None:
@@ -399,7 +467,53 @@ def _build_ref_summary(
         tokens_mean=tokens_mean,
         judge_mean=judge_mean,
         scenario_aggregates=scenario_aggs,
+        total_runs=total_runs,
+        invalid_runs=invalid_runs,
+        stale_runs=stale_runs,
     )
+
+
+def _invalid_rate(s: RefSummary) -> float | None:
+    return (s.invalid_runs / s.total_runs) if s.total_runs else None
+
+
+def _common_pass_rate(summaries: dict[str, RefSummary]) -> dict[str, tuple[float | None, int]]:
+    """pass_rate TB trên tập kịch bản mà MỌI cột đều có pass_rate (I6): một
+    kịch bản mà một ref toàn chạy không hợp lệ không được lặng lẽ rơi khỏi
+    mẫu số của ref đó trong khi vẫn nằm trong mẫu số của ref kia."""
+    if not summaries:
+        return {}
+    common: set[str] | None = None
+    for s in summaries.values():
+        have = {sid for sid, a in s.scenario_aggregates.items() if a.get("pass_rate") is not None}
+        common = have if common is None else common & have
+    common = common or set()
+    out: dict[str, tuple[float | None, int]] = {}
+    for ref, s in summaries.items():
+        vals = [s.scenario_aggregates[sid]["pass_rate"] for sid in common]
+        out[ref] = ((sum(vals) / len(vals)) if vals else None, len(vals))
+    return out
+
+
+def _unfair_scenarios(summaries: dict[str, RefSummary]) -> set[str]:
+    """Kịch bản mà một ref không hợp lệ ở ≥ nửa số lần chạy trong khi ref
+    khác thì không (I6) — so sánh kịch bản đó giữa hai ref là không công bằng."""
+    if len(summaries) < 2:
+        return set()
+    sids: set[str] = set()
+    for s in summaries.values():
+        sids |= set(s.scenario_aggregates)
+    out: set[str] = set()
+    for sid in sids:
+        mostly_invalid: list[bool] = []
+        for s in summaries.values():
+            a = s.scenario_aggregates.get(sid)
+            if not a or not a.get("runs"):
+                continue
+            mostly_invalid.append((a["runs"] - a["valid_runs"]) * 2 >= a["runs"])
+        if any(mostly_invalid) and not all(mostly_invalid):
+            out.add(sid)
+    return out
 
 
 def _worse_flags(summaries: dict[str, RefSummary], base_ref: str | None) -> dict[str, dict[str, bool]]:
@@ -418,6 +532,8 @@ def _worse_flags(summaries: dict[str, RefSummary], base_ref: str | None) -> dict
         if s.pass_hat_k_avg is not None and base.pass_hat_k_avg is not None:
             f["pass_hat_k"] = s.pass_hat_k_avg < base.pass_hat_k_avg
         f["wrong_writes"] = s.wrong_writes_total > base.wrong_writes_total
+        if _invalid_rate(s) is not None and _invalid_rate(base) is not None:
+            f["invalid"] = _invalid_rate(s) > _invalid_rate(base)  # type: ignore[operator]
         f["violations_total"] = sum(s.violations_by_rule.values()) > sum(
             base.violations_by_rule.values()
         )
@@ -480,6 +596,23 @@ def _render_summary_table(
 
     rows.append(row("pass rate (TB qua kịch bản, n)", "pass_rate", lambda s: f"{_fmt_pct(s.pass_rate_avg)} (n={s.pass_rate_n})"))
     rows.append(row("pass^k (TB qua kịch bản, n)", "pass_hat_k", lambda s: f"{_fmt_pct(s.pass_hat_k_avg)} (n={s.pass_hat_k_n})"))
+    if len(ref_order) > 1:
+        common = _common_pass_rate(summaries)
+        rows.append(
+            row(
+                "pass rate trên kịch bản chung (n)",
+                "pass_rate_common",
+                lambda s: f"{_fmt_pct(common[s.ref][0])} (n={common[s.ref][1]})",
+            )
+        )
+    rows.append(
+        row(
+            "Lần chạy không hợp lệ (n/tổng)",
+            "invalid",
+            lambda s: f"{s.invalid_runs}/{s.total_runs}"
+            + (f" ({_fmt_pct(_invalid_rate(s))})" if s.total_runs else ""),
+        )
+    )
 
     def wrong_writes_cell(s: RefSummary) -> str:
         if s.wrong_writes_total > 0:
@@ -514,6 +647,10 @@ def _render_summary_table(
             f"out {_fmt_num(s.tokens_mean.get('output'))} / "
             f"tổng {_fmt_num(s.tokens_mean.get('total'))}"
         )
+
+    if any(summaries[ref].stale_runs for ref in ref_order):
+        stale_cells = "".join(f"<td>{summaries[ref].stale_runs}</td>" for ref in ref_order)
+        rows.append(f"<tr><th>Lần chạy kịch bản cũ (stale_scenario, loại khỏi tổng hợp)</th>{stale_cells}</tr>")
 
     tok_cells = "".join(f"<td>{tokens_cell(summaries[ref])}</td>" for ref in ref_order)
     rows.append(f"<tr><th>Token trung bình</th>{tok_cells}</tr>")
@@ -553,6 +690,7 @@ def _render_scenario_table(
     ref_order: list[str], scenario_ids: list[str], summaries: dict[str, RefSummary]
 ) -> str:
     header_cells = "".join(f"<th>{e(ref)}</th>" for ref in ref_order)
+    unfair = _unfair_scenarios(summaries)
     rows = []
     for sid in scenario_ids:
         cells = []
@@ -562,7 +700,12 @@ def _render_scenario_table(
                 cells.append("<td>—</td>")
                 continue
             hat_k = agg.get("pass_hat_k")
-            hat_k_text = "—" if hat_k is None else ("đạt k/k" if hat_k else "không đạt k/k")
+            if hat_k is None:
+                hat_k_text = "—"
+            elif isinstance(hat_k, bool):
+                hat_k_text = "đạt k/k" if hat_k else "không đạt k/k"
+            else:
+                hat_k_text = f"đạt k/k ở {_fmt_pct(hat_k)} số run (n={agg.get('pass_hat_k_runs')})"
             runs = agg.get("runs", 0)
             valid_runs = agg.get("valid_runs", 0)
             invalid = runs - valid_runs
@@ -574,13 +717,71 @@ def _render_scenario_table(
                 if wrong_list
                 else ""
             )
-            cells.append(
-                f"<td>{hat_k_text}<br/>không hợp lệ: {invalid}<br/>ghi sai: {ww_html}{ww_detail}</td>"
+            mism = agg.get("mismatches_list") or []
+            mism_html = (
+                f'<br/>không đạt kỳ vọng: <span class="tag">{"; ".join(e(m) for m in mism)}</span>'
+                if mism
+                else ""
             )
-        rows.append(f"<tr><th>{e(sid)}</th>{''.join(cells)}</tr>")
+            stale = agg.get("stale") or 0
+            stale_html = f"<br/>kịch bản cũ (loại khỏi tổng hợp): {stale}" if stale else ""
+            cells.append(
+                f"<td>{hat_k_text}<br/>pass: {_fmt_pct(agg.get('pass_rate'))}"
+                f"<br/>không hợp lệ: {invalid}/{runs}<br/>ghi sai: {ww_html}{ww_detail}"
+                f"{mism_html}{stale_html}</td>"
+            )
+        flag = (
+            '<br/><span class="bad">so sánh không công bằng</span>' if sid in unfair else ""
+        )
+        rows.append(f"<tr><th>{e(sid)}{flag}</th>{''.join(cells)}</tr>")
     return (
         "<h2>Theo kịch bản</h2>"
         f'<table><tr><th>Kịch bản</th>{header_cells}</tr>' + "".join(rows) + "</table>"
+    )
+
+
+_TAG_GROUPS = ("edge", "llm", "fault")
+
+
+def _scenario_group(sid: str, defs: dict[str, Scenario]) -> str:
+    sc = defs.get(sid)
+    if sc is not None:
+        for g in _TAG_GROUPS:
+            if g in sc.tags:
+                return g
+    return "khác"
+
+
+def _render_tag_table(
+    ref_order: list[str], summaries: dict[str, RefSummary], defs: dict[str, Scenario]
+) -> str:
+    """Tỉ lệ đạt theo nhóm edge/llm/fault (M3): cổng của B định nghĩa theo nhóm."""
+    groups: dict[str, dict[str, list[dict]]] = {}
+    for ref in ref_order:
+        for sid, agg in summaries[ref].scenario_aggregates.items():
+            groups.setdefault(_scenario_group(sid, defs), {}).setdefault(ref, []).append(agg)
+    order = [g for g in (*_TAG_GROUPS, "khác") if g in groups]
+    header_cells = "".join(f"<th>{e(ref)}</th>" for ref in ref_order)
+    rows = []
+    for g in order:
+        cells = []
+        for ref in ref_order:
+            aggs = groups[g].get(ref, [])
+            prs = [a["pass_rate"] for a in aggs if a.get("pass_rate") is not None]
+            hks = [a["pass_hat_k_rate"] for a in aggs if a.get("pass_hat_k_rate") is not None]
+            ww = sum(a.get("wrong_writes_total", 0) for a in aggs)
+            runs = sum(a.get("runs", 0) for a in aggs)
+            inv = sum(a.get("runs", 0) - a.get("valid_runs", 0) for a in aggs)
+            pr = (sum(prs) / len(prs)) if prs else None
+            hk = (sum(hks) / len(hks)) if hks else None
+            cells.append(
+                f"<td>pass {_fmt_pct(pr)} (n={len(prs)})<br/>pass^k {_fmt_pct(hk)} (n={len(hks)})"
+                f"<br/>ghi sai: {ww}<br/>không hợp lệ: {inv}/{runs}</td>"
+            )
+        rows.append(f"<tr><th>{e(g)}</th>{''.join(cells)}</tr>")
+    return (
+        "<h2>Theo nhóm (tag)</h2>"
+        f'<table><tr><th>Nhóm</th>{header_cells}</tr>' + "".join(rows) + "</table>"
     )
 
 
@@ -708,38 +909,108 @@ def _render_simulated_scenario(
 # ---------------------------------------------------------------------------
 
 
+def _collect(
+    metas: list[dict],
+) -> tuple[list[str], dict[str, dict], dict[str, dict[str, list[dict]]], list[str]]:
+    """Gom payload theo CỘT `ref@sha7` (I5) — không theo tên ref: hai run cùng
+    `--ref feat` nhưng khác commit là hai cột riêng. Đọc payload của mọi ref
+    có `sha7` (kể cả crashed — I2: giữ dữ liệu một phần). Mỗi payload được gắn
+    `_run_key`/`_k` để pass^k tính theo từng run."""
+    order: list[str] = []
+    col_meta: dict[str, dict] = {}
+    col_payloads: dict[str, dict[str, list[dict]]] = {}
+    shas_by_ref: dict[str, set[str]] = {}
+    extra_warnings: list[str] = []
+
+    for meta in metas:
+        k = int(meta.get("k") or 4)
+        run_dir: Path = meta["_run_dir"]
+        run_key = f"{meta.get('run_id') or run_dir.name}:{run_dir}"
+        for rm in meta.get("refs") or []:
+            ref = rm.get("ref")
+            if not ref:
+                continue
+            sha7 = rm.get("sha7")
+            key = f"{ref}@{sha7}" if sha7 else ref
+            if sha7:
+                shas_by_ref.setdefault(ref, set()).add(sha7)
+            status = rm.get("status") or "unknown"
+            if key not in col_meta:
+                order.append(key)
+                col_meta[key] = {"ref": ref, "status": status, "error": rm.get("error"), "k": k}
+                col_payloads[key] = {}
+            elif col_meta[key]["status"] == "ready" and status != "ready":
+                col_meta[key]["status"] = status
+                col_meta[key]["error"] = rm.get("error")
+            if sha7:
+                for sid, payloads in _iter_run_payloads(run_dir, sha7).items():
+                    for p in payloads:
+                        p["_run_key"] = run_key
+                        p["_k"] = k
+                    col_payloads[key].setdefault(sid, []).extend(payloads)
+
+    for ref, shas in shas_by_ref.items():
+        if len(shas) > 1:
+            extra_warnings.append(
+                f"Ref {ref!r} có nhiều commit giữa các run ({', '.join(sorted(shas))}) — "
+                "hiển thị thành các cột riêng ref@sha. Nên dùng tag (vd harness-b/mN) làm --ref."
+            )
+    return order, col_meta, col_payloads, extra_warnings
+
+
+def _collect_columns(run_dirs: list[Path]) -> dict[str, dict[str, list[dict]]]:
+    _, _, cols, _ = _collect([_load_meta(Path(rd)) for rd in run_dirs])
+    return cols
+
+
+def _uneven_warnings(col_payloads: dict[str, dict[str, list[dict]]]) -> list[str]:
+    """Số lần chạy (không stale) của một kịch bản lệch giữa các cột."""
+    if len(col_payloads) < 2:
+        return []
+    sids: set[str] = set()
+    for per in col_payloads.values():
+        sids |= set(per)
+    uneven = []
+    for sid in sorted(sids):
+        counts = {
+            key: sum(1 for p in per.get(sid, []) if not _is_stale(p))
+            for key, per in col_payloads.items()
+        }
+        if len(set(counts.values())) > 1:
+            uneven.append(f"{sid} ({', '.join(f'{k}={v}' for k, v in counts.items())})")
+    if not uneven:
+        return []
+    return ["Số lần chạy không đều giữa các ref: " + "; ".join(uneven) + "."]
+
+
 def build_report(run_dirs: list[Path], base_ref: str | None = None) -> str:
     metas = [_load_meta(Path(rd)) for rd in run_dirs]
     warn_list = warnings(metas)
     defs = _load_scenario_defs()
 
-    ref_order: list[str] = []
-    ref_meta: dict[str, dict] = {}
-    ref_scenario_payloads: dict[str, dict[str, list[dict]]] = {}
+    keys, col_meta, col_payloads, extra = _collect(metas)
+    warn_list += extra + _uneven_warnings(col_payloads)
 
-    for meta in metas:
-        k = int(meta.get("k") or 4)
-        run_dir: Path = meta["_run_dir"]
-        for rm in meta.get("refs") or []:
-            ref = rm.get("ref")
-            if not ref:
-                continue
-            if ref not in ref_meta:
-                ref_order.append(ref)
-                ref_meta[ref] = {
-                    "status": rm.get("status") or "unknown",
-                    "error": rm.get("error"),
-                    "k": k,
-                }
-                ref_scenario_payloads[ref] = {}
-            elif ref_meta[ref]["status"] == "ready" and rm.get("status") != "ready":
-                ref_meta[ref]["status"] = rm.get("status") or ref_meta[ref]["status"]
-                ref_meta[ref]["error"] = rm.get("error")
+    # Nhãn hiển thị: tên ref nếu tên đó chỉ ứng với một cột, ngược lại ref@sha7.
+    name_count: dict[str, int] = {}
+    for key in keys:
+        name_count[col_meta[key]["ref"]] = name_count.get(col_meta[key]["ref"], 0) + 1
+    label = {
+        key: (col_meta[key]["ref"] if name_count[col_meta[key]["ref"]] == 1 else key)
+        for key in keys
+    }
+    ref_order = [label[k] for k in keys]
+    ref_meta = {label[k]: col_meta[k] for k in keys}
+    ref_scenario_payloads = {label[k]: col_payloads[k] for k in keys}
 
-            sha7 = rm.get("sha7")
-            if rm.get("status") == "ready" and sha7:
-                for sid, payloads in _iter_run_payloads(run_dir, sha7).items():
-                    ref_scenario_payloads[ref].setdefault(sid, []).extend(payloads)
+    if base_ref and base_ref not in ref_order:
+        matches = [label[k] for k in keys if col_meta[k]["ref"] == base_ref or k == base_ref]
+        if matches:
+            if len(matches) > 1:
+                warn_list.append(
+                    f"--base {base_ref!r} khớp nhiều cột ({', '.join(matches)}); dùng {matches[0]}."
+                )
+            base_ref = matches[0]
 
     if base_ref and base_ref in ref_order:
         ref_order = [base_ref] + [r for r in ref_order if r != base_ref]
@@ -781,11 +1052,15 @@ def build_report(run_dirs: list[Path], base_ref: str | None = None) -> str:
 
     body: list[str] = [_render_warnings_html(warn_list)]
     body.append(_render_summary_table(ref_order, ref_meta, summaries, worse, base_ref))
+    body.append(_render_tag_table(ref_order, summaries, defs))
     body.append(_render_scenario_table(ref_order, scenario_ids, summaries))
 
     for sid in scenario_ids:
         title = titles[sid]
-        payloads_by_ref = {ref: ref_scenario_payloads[ref].get(sid, []) for ref in ref_order}
+        payloads_by_ref = {
+            ref: [p for p in ref_scenario_payloads[ref].get(sid, []) if not _is_stale(p)]
+            for ref in ref_order
+        }
         if not any(payloads_by_ref.values()):
             continue
         if kinds[sid] == "scripted":
