@@ -4,6 +4,7 @@
                         [--no-proxy] [--no-judge] [--keep-db] [--scenarios PATH ...]
     python -m bench run --resume <run_dir>      # chạy tiếp run dở, bỏ qua attempt đã có
     python -m bench compare <run_dir> [<run_dir> ...] [--base <ref>] -o report.html
+    python -m bench rescore <run_dir> [<run_dir> ...] [--rejudge]
 """
 
 from __future__ import annotations
@@ -65,6 +66,20 @@ def _build_parser() -> argparse.ArgumentParser:
     cmp_.add_argument("run_dirs", nargs="+", type=Path)
     cmp_.add_argument("--base", default=None, help="ref làm mốc so sánh")
     cmp_.add_argument("-o", "--output", type=Path, default=Path("report.html"))
+
+    rsc = sub.add_parser(
+        "rescore",
+        help="chấm lại các lần chạy đã lưu theo mã chấm + expect hiện tại (sao lưu vào _orig/)",
+    )
+    rsc.add_argument("run_dirs", nargs="+", type=Path)
+    rsc.add_argument("--rejudge", action="store_true", help="gọi lại judge (judge model của bench/.env)")
+    rsc.add_argument(
+        "--scenarios",
+        nargs="+",
+        type=Path,
+        default=[_DEFAULT_SCENARIOS],
+        help="file hoặc thư mục kịch bản YAML (mặc định bench/scenarios)",
+    )
     return parser
 
 
@@ -139,10 +154,64 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rescore(args: argparse.Namespace) -> int:
+    from bench import rescore
+    from bench.config import load_settings
+    from bench.scenario import load_scenarios
+
+    try:
+        scenarios = {sc.id: sc for sc in load_scenarios(_collect_scenarios(args.scenarios))}
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"lỗi: {exc}", file=sys.stderr)
+        return 2
+    for rd in args.run_dirs:
+        if not (rd / "meta.json").exists():
+            print(f"lỗi: {rd} không phải thư mục run (thiếu meta.json)", file=sys.stderr)
+            return 2
+
+    async def _go() -> None:
+        client = None
+        judge_model = None
+        secrets_: list[str] = []
+        if args.rejudge:
+            from bench.llm import make_client
+            from bench.runner import _llm_creds, secret_values
+
+            settings = load_settings()
+            if not _llm_creds(settings):
+                raise ValueError("--rejudge cần BENCH_FOUNDRY_* trong bench/.env")
+            client = make_client(settings)
+            judge_model = settings.judge_model
+            secrets_ = secret_values(settings.repo_root / ".env", settings)
+        try:
+            for rd in args.run_dirs:
+                counts = await rescore.rescore_run(
+                    rd,
+                    scenarios,
+                    rejudge=args.rejudge,
+                    client=client,
+                    judge_model=judge_model,
+                    secrets_=secrets_,
+                )
+                print(f"{rd}: {counts}")
+        finally:
+            if client is not None:
+                await client.close()
+
+    try:
+        asyncio.run(_go())
+    except ValueError as exc:
+        print(f"lỗi: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "run":
         return _cmd_run(args)
+    if args.command == "rescore":
+        return _cmd_rescore(args)
     return _cmd_compare(args)
 
 
