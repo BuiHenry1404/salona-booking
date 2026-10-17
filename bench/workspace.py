@@ -8,7 +8,11 @@ uvicorn qua HTTP. Xem AGENTS.md và global-constraints.md.
 from __future__ import annotations
 
 import asyncio
+import errno
+import os
+import fcntl
 import shutil
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -19,6 +23,23 @@ from pymongo import MongoClient
 from bench.config import BenchSettings
 
 _TELEGRAM_RE_PREFIX = "TELEGRAM_BOT_TOKEN="
+
+# Sau khi /ready trả 200, chờ thêm một chút rồi kiểm process CỦA MÌNH còn sống:
+# uvicorn chạy lifespan TRƯỚC khi bind, nên nếu bind thất bại nó thoát sau đó
+# (I1, review cuối). Test monkeypatch hằng này.
+_READY_SETTLE_S = 1.5
+
+
+def port_is_free(port: int, host: str = "127.0.0.1") -> bool:
+    """Thử bind giống uvicorn (SO_REUSEADDR — bỏ qua socket TIME_WAIT, vẫn
+    thất bại nếu có tiến trình đang LISTEN)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
 
 
 def rewrite_env(src_text: str, db_name: str, azure_endpoint: str | None) -> str:
@@ -98,6 +119,42 @@ class RefWorkspace:
 
         self._process: subprocess.Popen | None = None
         self._log_file = None
+        self._lock_fd: int | None = None
+
+    # -- Khoá worktree (I1): hai run đồng thời không được dùng chung worktree/
+    # venv/.env của cùng một sha. flock tự nhả khi process chết (kể cả SIGKILL).
+
+    @property
+    def lock_path(self) -> Path:
+        return self.settings.worktrees_dir / f"{self.sha7}.lock"
+
+    def acquire_lock(self) -> None:
+        if self._lock_fd is not None:
+            return
+        self.settings.worktrees_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(fd)
+            if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+                raise RuntimeError(
+                    f"worktree {self.sha7} đang được một run bench khác dùng "
+                    f"(khoá {self.lock_path}). Chờ run kia xong hoặc dừng nó."
+                ) from exc
+            raise
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()} {self.run_id}\n".encode())
+        self._lock_fd = fd
+
+    def release_lock(self) -> None:
+        if self._lock_fd is None:
+            return
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     def _resolve_sha(self, ref: str) -> str:
         result = subprocess.run(
@@ -117,6 +174,7 @@ class RefWorkspace:
 
     def _prepare_sync(self) -> None:
         self.settings.worktrees_dir.mkdir(parents=True, exist_ok=True)
+        self.acquire_lock()
 
         if self.path.exists():
             existing_sha = self._worktree_sha(self.path)
@@ -213,6 +271,18 @@ class RefWorkspace:
         trả về False.
         """
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # I1: cổng đang bị giữ (server mồ côi từ run trước, hoặc run khác chạy
+        # đồng thời) → /ready sẽ trả 200 từ server KIA. Từ chối ngay.
+        if not port_is_free(self.port):
+            self.status = "failed_to_start"
+            self.error = (
+                f"port busy: cổng {self.port} đang có tiến trình khác giữ "
+                "(server mồ côi từ run trước, hoặc một run bench khác đang chạy). "
+                "Dừng tiến trình đó hoặc đổi BENCH_BASE_PORT."
+            )
+            return False
+
         self._log_file = open(self.log_path, "wb")
 
         try:
@@ -242,6 +312,17 @@ class RefWorkspace:
                 try:
                     resp = await client.get(ready_url, timeout=2.0)
                     if resp.status_code == 200:
+                        # Cổng trống trước khi start nên 200 này gần như chắc
+                        # chắn từ process của mình; xác nhận nó còn sống sau
+                        # một nhịp (bind lỗi → uvicorn thoát sau lifespan).
+                        await asyncio.sleep(_READY_SETTLE_S)
+                        if self._process.poll() is not None:
+                            self.status = "failed_to_start"
+                            self.error = "server thoát ngay sau khi /ready trả 200\n" + _tail_lines(
+                                self.log_path, 50
+                            )
+                            self._close_log()
+                            return False
                         self.status = "ready"
                         return True
                 except httpx.HTTPError:

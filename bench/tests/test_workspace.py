@@ -96,6 +96,88 @@ async def test_is_alive_tracks_server_process(tmp_path):
     await ws.stop()
 
 
+_HTTP_200_SERVER = """
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b'ok')
+    def log_message(self, *a):
+        pass
+srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H)
+srv.handle_request() if len(sys.argv) > 2 else srv.serve_forever()
+"""
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _fake_ws(tmp_path, port: int, run_id: str = "t3") -> RefWorkspace:
+    settings = BenchSettings(repo_root=Path(".").resolve(), worktrees_dir=tmp_path / "wt")
+    ws = RefWorkspace(settings, ref="HEAD", port=port, run_id=run_id, azure_endpoint=None)
+    ws.path = tmp_path / f"ws-{run_id}"
+    ws.path.mkdir(parents=True, exist_ok=True)
+    ws.log_path = ws.path / "bench_server.log"
+    return ws
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_busy_port(tmp_path, monkeypatch):
+    # I1: một server cũ (mồ côi) đang giữ cổng và trả 200 cho /ready — không
+    # được nhận nhầm là server của mình.
+    port = _free_port()
+    squatter = subprocess.Popen(["python3", "-c", _HTTP_200_SERVER, str(port)])
+    try:
+        import time as _t
+
+        _t.sleep(0.5)
+        ws = _fake_ws(tmp_path, port)
+        monkeypatch.setattr(
+            ws, "_server_cmd", lambda: ["python3", "-c", "import time; time.sleep(3)"]
+        )
+        ok = await ws.start(timeout_s=3)
+        assert ok is False
+        assert ws.status == "failed_to_start"
+        assert "port busy" in (ws.error or "")
+        assert ws.is_alive() is False
+    finally:
+        squatter.kill()
+        squatter.wait()
+
+
+@pytest.mark.asyncio
+async def test_start_fails_if_server_dies_right_after_ready(tmp_path, monkeypatch):
+    import bench.workspace as wsmod
+
+    monkeypatch.setattr(wsmod, "_READY_SETTLE_S", 1.0)
+    port = _free_port()
+    ws = _fake_ws(tmp_path, port)
+    # Trả 200 đúng một lần rồi thoát.
+    monkeypatch.setattr(
+        ws, "_server_cmd", lambda: ["python3", "-c", _HTTP_200_SERVER, str(port), "once"]
+    )
+    ok = await ws.start(timeout_s=5)
+    assert ok is False
+    assert ws.status == "failed_to_start"
+
+
+def test_worktree_lock_blocks_second_user(tmp_path):
+    ws1 = _fake_ws(tmp_path, 8199, "a")
+    ws2 = _fake_ws(tmp_path, 8199, "b")
+    ws1.acquire_lock()
+    try:
+        with pytest.raises(RuntimeError, match="đang được"):
+            ws2.acquire_lock()
+    finally:
+        ws1.release_lock()
+    ws2.acquire_lock()
+    ws2.release_lock()
+
+
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_start_real_ref(tmp_path):

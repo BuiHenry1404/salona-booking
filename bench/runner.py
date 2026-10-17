@@ -415,6 +415,11 @@ async def _tear_down(rr: RefRun, keep_db: bool) -> None:
             await rr.ws.drop_db()
         except Exception:  # noqa: BLE001
             pass
+    if rr.ws is not None:
+        try:
+            rr.ws.release_lock()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _ref_meta(rr: RefRun) -> dict:
