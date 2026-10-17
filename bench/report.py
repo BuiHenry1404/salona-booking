@@ -233,9 +233,9 @@ def warnings(metas: list[dict]) -> list[str]:
 
 
 def _load_scenario_defs() -> dict[str, Scenario]:
-    """Nạp định nghĩa kịch bản thật từ `bench/scenarios/` nếu có (dùng để lấy
-    `title`/`kind` chính xác). Không có thư mục, hoặc lỗi nạp bất kỳ → trả
-    `{}` và để `_scenario_kind` suy luận từ dữ liệu lần chạy."""
+    """Nạp định nghĩa kịch bản thật từ `bench/scenarios/` nếu có — dự phòng
+    hạng hai khi payload lần chạy chưa có `kind`/`title` (thư mục run cũ).
+    Không có thư mục, hoặc lỗi nạp bất kỳ → trả `{}`."""
     try:
         if not _DEFAULT_SCENARIOS_DIR.is_dir():
             return {}
@@ -249,15 +249,31 @@ def _load_scenario_defs() -> dict[str, Scenario]:
         return {}
 
 
-def _scenario_kind(
+def _scenario_kind_and_title(
     scenario_id: str, defs: dict[str, Scenario], payloads_by_ref: dict[str, list[dict]]
-) -> str:
+) -> tuple[str, str]:
+    """Nguồn sự thật theo thứ tự ưu tiên: (1) `kind`/`title` runner đã ghi
+    thẳng vào payload (Task 10 fix round 1 — không đoán nữa khi có sẵn);
+    (2) định nghĩa kịch bản thật nạp từ `bench/scenarios/`; (3) suy luận từ
+    dữ liệu, chỉ để tương thích ngược với thư mục run cũ chưa có `kind`."""
+    for payloads in payloads_by_ref.values():
+        for p in payloads:
+            kind = p.get("kind")
+            if kind in ("scripted", "simulated"):
+                return kind, (p.get("title") or scenario_id)
+
     if scenario_id in defs:
-        return defs[scenario_id].kind
-    # Suy luận: kịch bản scripted phát lại đúng một kịch bản chữ cố định, nên
-    # mọi lần chạy (mọi ref, mọi attempt) có câu khách là tiền tố của cùng một
-    # chuỗi dài nhất (ngắn hơn khi dừng sớm vì lỗi/fault). Simulated do model
-    # sinh câu khách nên chuỗi khác nhau thật sự giữa các lần chạy.
+        return defs[scenario_id].kind, defs[scenario_id].title
+
+    return _infer_scenario_kind(payloads_by_ref), scenario_id
+
+
+def _infer_scenario_kind(payloads_by_ref: dict[str, list[dict]]) -> str:
+    # Suy luận (chỉ dùng cho thư mục run cũ, từ trước khi runner ghi `kind`):
+    # kịch bản scripted phát lại đúng một kịch bản chữ cố định, nên mọi lần
+    # chạy (mọi ref, mọi attempt) có câu khách là tiền tố của cùng một chuỗi
+    # dài nhất (ngắn hơn khi dừng sớm vì lỗi/fault). Simulated do model sinh
+    # câu khách nên chuỗi khác nhau thật sự giữa các lần chạy.
     sequences: list[tuple[str, ...]] = []
     for payloads in payloads_by_ref.values():
         for p in payloads:
@@ -402,6 +418,9 @@ def _worse_flags(summaries: dict[str, RefSummary], base_ref: str | None) -> dict
         if s.pass_hat_k_avg is not None and base.pass_hat_k_avg is not None:
             f["pass_hat_k"] = s.pass_hat_k_avg < base.pass_hat_k_avg
         f["wrong_writes"] = s.wrong_writes_total > base.wrong_writes_total
+        f["violations_total"] = sum(s.violations_by_rule.values()) > sum(
+            base.violations_by_rule.values()
+        )
         if s.first_token_median is not None and base.first_token_median is not None:
             f["first_token_median"] = s.first_token_median > base.first_token_median
         if s.first_token_p90 is not None and base.first_token_p90 is not None:
@@ -471,12 +490,16 @@ def _render_summary_table(
     rows.append(f"<tr><th>Ghi sai (tổng)</th>{ww_cells}</tr>")
 
     def violations_cell(s: RefSummary) -> str:
+        total = sum(s.violations_by_rule.values())
         if not s.violations_by_rule:
-            return "—"
-        return "<br/>".join(f"{e(rule)}: {count}" for rule, count in sorted(s.violations_by_rule.items()))
+            return "0"
+        by_rule = "<br/>".join(f"{e(rule)}: {count}" for rule, count in sorted(s.violations_by_rule.items()))
+        return f"{total}<br/>{by_rule}"
 
-    v_cells = "".join(f"<td>{violations_cell(summaries[ref])}</td>" for ref in ref_order)
-    rows.append(f"<tr><th>Vi phạm theo luật</th>{v_cells}</tr>")
+    v_cells = "".join(
+        cell(ref, "violations_total", violations_cell(summaries[ref])) for ref in ref_order
+    )
+    rows.append(f"<tr><th>Vi phạm theo luật (tổng + chi tiết)</th>{v_cells}</tr>")
 
     rows.append(row("first_token_ms trung vị", "first_token_median", lambda s: _fmt_num(s.first_token_median)))
     rows.append(row("first_token_ms p90", "first_token_p90", lambda s: _fmt_num(s.first_token_p90)))
@@ -729,12 +752,14 @@ def build_report(run_dirs: list[Path], base_ref: str | None = None) -> str:
                 seen_sids.add(sid)
                 scenario_ids.append(sid)
 
-    kinds = {
-        sid: _scenario_kind(
+    kinds: dict[str, str] = {}
+    titles: dict[str, str] = {}
+    for sid in scenario_ids:
+        kind, title = _scenario_kind_and_title(
             sid, defs, {ref: ref_scenario_payloads[ref].get(sid, []) for ref in ref_order}
         )
-        for sid in scenario_ids
-    }
+        kinds[sid] = kind
+        titles[sid] = title
 
     summaries = {
         ref: _build_ref_summary(
@@ -754,7 +779,7 @@ def build_report(run_dirs: list[Path], base_ref: str | None = None) -> str:
     body.append(_render_scenario_table(ref_order, scenario_ids, summaries))
 
     for sid in scenario_ids:
-        title = defs[sid].title if sid in defs else sid
+        title = titles[sid]
         payloads_by_ref = {ref: ref_scenario_payloads[ref].get(sid, []) for ref in ref_order}
         if not any(payloads_by_ref.values()):
             continue

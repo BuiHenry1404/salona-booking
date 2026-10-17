@@ -317,6 +317,9 @@ async def test_run_one_exception_is_recorded_not_raised(tmp_path, fakes):
     ws = FakeWorkspace.instances[0]
     data = json.loads((run_dir / "runs" / ws.sha7 / "s1" / "0.json").read_text("utf-8"))
     assert data["score"] is None and "seed failed" in data["error"]
+    # Report (Task 10) phải biết scripted/simulated mà không cần đoán —
+    # payload lỗi vẫn phải mang kind/title của kịch bản đã biết.
+    assert data["kind"] == "scripted" and data["title"] == "t"
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +424,7 @@ async def test_run_one_stops_on_timeout_without_fault(tmp_path, run_one_env):
     assert payload["stop_reason"] == "timeout@1"
     assert payload["score"].passed is False
     assert all(t.db_after == [] for t in payload["turns"])
+    assert payload["kind"] == sc.kind and payload["title"] == sc.title
 
 
 async def test_run_one_continues_after_timeout_on_fault_turn(tmp_path, run_one_env):

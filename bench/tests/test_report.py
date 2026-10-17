@@ -99,9 +99,13 @@ def _run_payload(
     score: dict | None = None,
     before: list[dict] | None = None,
     after: list[dict] | None = None,
+    kind: str = "scripted",
+    title: str = "Khách đổi ý giữa chừng",
 ) -> dict:
     return {
         "scenario_id": scenario_id,
+        "kind": kind,
+        "title": title,
         "ref": ref,
         "sha": sha,
         "adapter": "a",
@@ -209,6 +213,72 @@ def test_report_is_self_contained(tmp_path):
     out = build_report([run_dir], base_ref="main")
     assert 'src="http' not in out
     assert 'href="http' not in out
+
+
+def test_uses_payload_kind_not_heuristic(tmp_path):
+    # Hai attempt của CÙNG ref có câu khách khác nhau hoàn toàn (như kịch bản
+    # simulated do model sinh) — nếu report tự đoán sẽ ra "simulated" và mất
+    # bảng hội thoại song song theo lượt. `kind: "scripted"` trong payload
+    # phải thắng, không được đoán lại.
+    run_dir = tmp_path / "run1"
+    meta = _meta()
+    _write_json(run_dir / "meta.json", meta)
+
+    turn_a = _turn(customer_text="cho em đặt 9h sáng mai")
+    turn_b = _turn(customer_text="đổi ý rồi, huỷ giúp em cái lịch đó")
+    _write_json(
+        run_dir / "runs" / "aaa1111" / "g01" / "0.json",
+        _run_payload("main", "aaa1111222", turns=[turn_a], kind="scripted"),
+    )
+    _write_json(
+        run_dir / "runs" / "aaa1111" / "g01" / "1.json",
+        _run_payload("main", "aaa1111222", attempt=1, turns=[turn_b], kind="scripted"),
+    )
+    _write_json(
+        run_dir / "runs" / "bbb2222" / "g01" / "0.json",
+        _run_payload("feature", "bbb2222333", turns=[turn_a], kind="scripted"),
+    )
+
+    out = build_report([run_dir], base_ref="main")
+
+    assert '<div class="sim-columns">' not in out
+    assert "Lượt 0" in out
+
+
+def test_violations_worse_than_base_is_marked(tmp_path):
+    run_dir = tmp_path / "run1"
+    meta = _meta()
+    _write_json(run_dir / "meta.json", meta)
+
+    base_score = {
+        "passed": True,
+        "valid": True,
+        "invalid_reason": None,
+        "wrong_writes": [],
+        "violations": [],
+        "turns_used": 1,
+    }
+    worse_score = {
+        "passed": False,
+        "valid": True,
+        "invalid_reason": None,
+        "wrong_writes": [],
+        "violations": ["register@0", "clock_colon@0"],
+        "turns_used": 1,
+    }
+    _write_json(
+        run_dir / "runs" / "aaa1111" / "g01" / "0.json",
+        _run_payload("main", "aaa1111222", score=base_score),
+    )
+    _write_json(
+        run_dir / "runs" / "bbb2222" / "g01" / "0.json",
+        _run_payload("feature", "bbb2222333", score=worse_score),
+    )
+
+    out = build_report([run_dir], base_ref="main")
+
+    assert "Vi phạm theo luật" in out
+    assert 'class="worse"' in out
 
 
 def test_failed_to_start_ref_is_shown(tmp_path):

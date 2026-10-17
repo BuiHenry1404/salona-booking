@@ -339,6 +339,8 @@ async def run_one(
 
     return {
         "scenario_id": scenario.id,
+        "kind": scenario.kind,
+        "title": scenario.title,
         "ref": rr.spec.ref,
         "sha": ws.sha,
         "adapter": rr.spec.adapter,
@@ -539,6 +541,8 @@ async def run_bench(
                     except Exception as exc:  # noqa: BLE001 — một lần chạy hỏng không dừng cả bench
                         payload = {
                             "scenario_id": sc.id,
+                            "kind": sc.kind,
+                            "title": sc.title,
                             "ref": rr.spec.ref,
                             "sha": rr.ws.sha if rr.ws else None,
                             "adapter": rr.spec.adapter,
