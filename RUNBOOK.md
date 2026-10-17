@@ -206,6 +206,40 @@ không luôn đủ để kích nén; muốn xác nhận luồng đầu-cuối nh
 ngưỡng (vd. 300), chạy lại, rồi **khôi phục về 800** trước khi commit bất cứ
 gì.
 
+## 8b'. Checkpointer (lịch sử model theo thread)
+
+Lịch sử model nằm trong hai collection của chính DB `MONGO_DB_NAME`
+(không phải DB `checkpointing_db` mặc định của thư viện):
+
+- `checkpoints` — state graph sau mỗi bước, theo `thread_id = <user_id>:<ngày VN>`.
+- `checkpoint_writes` — ghi tạm giữa các bước.
+
+Cả hai có index TTL trên `created_at`: tự xoá sau `CHECKPOINT_TTL_DAYS` ngày
+(mặc định 7, đặt trong `.env`). Đổi TTL thì index tạo lại lúc khởi động. Xoá
+checkpoint chỉ mất lịch sử model của ngày đó — nhật ký chat hiển thị nằm ở
+`conversations`, không bị chạm.
+
+Xem thread hôm nay của một khách:
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.checkpoints.find({thread_id:{$regex:"^"+String(u._id)+":"}},{thread_id:1,checkpoint_id:1,created_at:1}).sort({checkpoint_id:-1}).limit(5).forEach(printjson)'
+```
+
+Dọn tay (vd. sau khi đổi cấu trúc state, hoặc reset dev):
+
+```bash
+# Một khách
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var p="^"+"<user_id>"+":"; db.checkpoints.deleteMany({thread_id:{$regex:p}}); db.checkpoint_writes.deleteMany({thread_id:{$regex:p}})'
+# Toàn bộ
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'db.checkpoints.deleteMany({}); db.checkpoint_writes.deleteMany({})'
+```
+
+Log `turn_superseded`: khách nhắn lượt mới khi lượt cũ còn chạy (thường do
+Azure treo) — lượt cũ bị huỷ êm, không phát `error`, không ghi `conversations`.
+
 ## 8c. Kiểm tầng gác (guard/rewrite/phrase)
 
 Mọi câu LLM đi qua node `guard` đúng một lần trước khi ra khách (spec

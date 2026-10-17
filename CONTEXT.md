@@ -63,8 +63,8 @@ khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
 | Cấu hình | **Chỉ đọc file `.env`** | Biến môi trường từ dự án khác âm thầm đè lên. `docker run -e` và biến CI **không** đặt được cấu hình |
 | Redis | **Không dùng** | 3 điều kiện mở lại ở `docs/superpowers/specs/.../README.md` |
 | Quan sát | **Langfuse tự dựng**, compose riêng | Dữ liệu khách không ra khỏi máy. Nặng nên tách khỏi `docker-compose.yml` |
-| Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate |
-| Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn |
+| Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC. Lịch sử model = thread checkpointer `<user>:<ngày VN>`, luật 30 phút qua nửa đêm giữ bằng `pick_thread` + `model_history`; `conversations` vẫn là nhật ký hiển thị | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate. Thread theo ngày là chỗ CẤT, không phải luật cắt: cửa sổ (đầu ngày/30 phút, 1500 token, `covers_until`) vẫn áp lúc đọc bằng đúng `select_window` + `session_cutoff` của `conversations`, nên đổi quy tắc vẫn không cần migrate. Thread và `conversations` dùng chung một mốc `now_ms()` cho mỗi tin — lệch một mili-giây là tin đã nén bị gửi lại |
+| Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn. Checkpoint (từ M2) không đổi điều này: LangGraph ghi state của graph ngoài vào collection riêng, bằng giá trị node TRẢ VỀ (tường minh), không qua closure; 3 lần ghi `conversations` giữ nguyên |
 | Tool | **Chỉ cấp dữ kiện JSON, không viết câu** | Câu là việc của LLM; tool viết câu thì guard không sửa được giọng |
 
 ## Xưng hô — chốt 2026-08-23, siết 2026-09-19
@@ -97,7 +97,10 @@ biên bản, không phải mẫu để chép.
 Khách ──socket──▶ run_turn
                     │
      load_context (code, 4 truy vấn song song): trạng thái tiệm · lịch sắp tới
-     [id + iso] · summary + slots + lịch sử hôm nay · cờ pending
+     [id + iso] · summary + slots + covers_until · câu đáp trước · cờ pending
+                    │
+     pick_thread: thread <user>:<ngày VN> (nối thread hôm qua qua nửa đêm);
+     lịch sử model đọc từ thread, cắt bằng model_history
                     │
    START ─▶ có pending? ──có──▶ confirm (0 LLM: ghi/dời/hủy bằng code)
               │                    ├─ chưa đồng ý ──▶ booking
@@ -106,9 +109,9 @@ Khách ──socket──▶ run_turn
                                                         │
                     mọi câu ──▶ guard (0 LLM) ──vi phạm──▶ rewrite (1 lần) ─▶ guard
                                     │                                           │
-                                    └──────────────── answer ───────────────────┘
+                                    └──────────────── answer ─▶ record (câu đáp vào thread)
                     │
-   stream token tag "respond" ─▶ complete ─▶ lưu lịch sử ─▶ nén state (nền)
+   stream token tag "respond" ─▶ complete ─▶ ghi conversations (nhật ký) ─▶ nén state (nền)
 ```
 
 - `booking` có **7 tool, 0 tool ghi**; `shop` 2 tool; `social` 0 tool.
@@ -117,6 +120,16 @@ Khách ──socket──▶ run_turn
   (`middleware/`): bố cục message theo bẫy #9, tối đa 4 lần gọi model rồi câu
   fallback, lỗi tool thành câu tiếng Việt cố định, `parallel_tool_calls=False`
   chỉ khi có tool (Azure trả 400 nếu gửi cờ này mà không kèm tool).
+- Lịch sử model (từ M2) nằm trong thread checkpointer `MongoDBSaver`
+  (`app/agents/checkpoint.py`, cùng DB `MONGO_DB_NAME`, collection `checkpoints` /
+  `checkpoint_writes`, TTL `CHECKPOINT_TTL_DAYS`). Thread chỉ giữ câu khách + câu
+  đáp đã qua guard, mỗi tin mang stamp `created_at`; tool exchange ở lại trong
+  agent con. `HistoryWindowMiddleware` (agent), `phrase` và `supervisor` đều đọc
+  qua `model_history` → model thấy đúng cửa sổ A gửi; câu khách của lượt lỗi
+  (không có câu đáp) bị bỏ như A. Mọi khoá theo lượt (kể cả `answer`,
+  `pending_confirmation`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
+  checkpoint mang giá trị lượt trước sang. Mỗi khách một lượt chạy: lượt mới huỷ
+  lượt cũ còn treo (`_ACTIVE_TURNS`, log `turn_superseded`).
 - **Mọi tool trả JSON dữ kiện, không trả câu** (bẫy #23). Mốc thời gian là
   `{"iso", "spoken"}`; model chép `spoken` nguyên văn, câu thì tự viết.
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
