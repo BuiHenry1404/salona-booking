@@ -149,3 +149,21 @@ def test_cli_rescore_calls_rescore_run(monkeypatch, run_dir):
     monkeypatch.setattr(rs, "rescore_run", fake)
     assert cli.main(["rescore", str(run_dir)]) == 0
     assert seen["rd"] == run_dir and seen["rejudge"] is False and seen["n"] > 0
+
+
+async def test_rejudge_skips_payloads_already_judged_by_same_model(run_dir, scenarios, monkeypatch):
+    # Một lần rescore --rejudge bị ngắt giữa chừng: chạy lại không gọi judge
+    # lần hai cho file đã chấm bằng đúng model đó.
+    calls = []
+
+    async def fake_judge(client, model, transcript):
+        calls.append(model)
+        return {"new": len(calls)}
+
+    monkeypatch.setattr(rs, "judge", fake_judge)
+    kw = dict(legacy_stale={}, rejudge=True, client=object(), judge_model="m1")
+    await rs.rescore_run(run_dir, scenarios, **kw)
+    await rs.rescore_run(run_dir, scenarios, **kw)
+    assert calls == ["m1"]
+    data = _read(run_dir / "runs" / "aaa1111" / "s1" / "0.json")
+    assert data["judge"] == {"new": 1}

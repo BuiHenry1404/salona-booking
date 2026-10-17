@@ -110,6 +110,7 @@ async def rescore_run(
         "unknown_scenario": 0,
         "rejudged": 0,
         "judge_failed": 0,
+        "rejudge_skipped": 0,
     }
     sem = asyncio.Semaphore(concurrency)
 
@@ -146,7 +147,10 @@ async def rescore_run(
         payload["rescored_at"] = datetime.now(VN_TZ)
         counts["rescored"] += 1
 
-        if rejudge:
+        already = payload.get("rejudged_with") == judge_model
+        if rejudge and already:
+            counts["rejudge_skipped"] += 1
+        elif rejudge:
             result = None
             if score.valid and records:
                 async with sem:
@@ -156,6 +160,7 @@ async def rescore_run(
                     counts["judge_failed"] += 1
             payload["judge"] = result
             payload["judge_model"] = judge_model
+            payload["rejudged_with"] = judge_model
         _write_json(path, payload, secrets_)
 
     await asyncio.gather(*(handle(p) for p in _payload_files(run_dir)))
