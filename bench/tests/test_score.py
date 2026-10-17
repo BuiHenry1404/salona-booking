@@ -400,3 +400,14 @@ def test_tool_name_leak_is_scored_on_answer():
     turns = [_turn_record(0, answer="dạ (list_my_appointments)", db_after=[])]
     result = score_run(scenario, turns, [], [], CUSTOMER_ID, NOW_VN)
     assert "tool_name_leak@0" in result.violations
+
+
+def test_behavior_match_uses_each_refs_own_before():
+    # I3: hai ref y hệt nhau, mỗi ref có lịch seed riêng (id khác nhau), DB
+    # không đổi ở lượt 0 → phải khớp.
+    seed_a = [_row("a1", "ua", NOW_VN)]
+    seed_b = [_row("b1", "ub", NOW_VN)]
+    base = [_turn_record(0, tools=["list_my_appointments"], db_after=seed_a)]
+    cand = [_turn_record(0, tools=["list_my_appointments"], db_after=seed_b)]
+
+    assert behavior_match(base, cand, base_before=seed_a, cand_before=seed_b) == [True]

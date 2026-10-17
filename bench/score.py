@@ -412,25 +412,33 @@ def behavior_match(
     base: list[TurnRecord],
     cand: list[TurnRecord],
     before: list[ApptRow] | None = None,
+    *,
+    base_before: list[ApptRow] | None = None,
+    cand_before: list[ApptRow] | None = None,
 ) -> list[bool]:
     """So khớp hành vi theo từng lượt giữa hai lần chạy (vd: ref A so với ref
     B trên cùng kịch bản): cùng danh sách `tools` được gọi VÀ cùng hình dạng
     thay đổi DB (`_turn_diff_shape`: giờ/trạng thái/ghi chú, không phải chỉ số
-    lượng) ở lượt đó. `before` là lần chụp DB trước lượt 0, dùng làm nền cho
-    lượt 0 của CẢ HAI danh sách (mặc định `[]`, giữ hành vi cũ khi không
-    truyền). Trả về một `bool` cho mỗi lượt chung của hai danh sách (độ dài =
-    min(len(base), len(cand)))."""
-    baseline = before if before is not None else []
+    lượng) ở lượt đó.
+
+    Nền của lượt 0: `base_before`/`cand_before` là lần chụp DB trước lượt 0
+    của TỪNG lần chạy (I3 — id lịch seed khác nhau giữa hai ref, nên dùng
+    `before` của ref này cho ref kia sẽ thấy lịch seed như "mới tạo"). `before`
+    (cũ) là nền chung khi không truyền riêng; mặc định `[]`. Trả về một `bool`
+    cho mỗi lượt chung của hai danh sách (độ dài = min(len(base), len(cand)))."""
+    shared = before if before is not None else []
+    base_root = base_before if base_before is not None else shared
+    cand_root = cand_before if cand_before is not None else shared
     n = min(len(base), len(cand))
     result: list[bool] = []
     for i in range(n):
         base_record, cand_record = base[i], cand[i]
         tools_match = base_record.tools == cand_record.tools
         base_shape = _turn_diff_shape(
-            base[i - 1].db_after if i > 0 else baseline, base_record
+            base[i - 1].db_after if i > 0 else base_root, base_record
         )
         cand_shape = _turn_diff_shape(
-            cand[i - 1].db_after if i > 0 else baseline, cand_record
+            cand[i - 1].db_after if i > 0 else cand_root, cand_record
         )
         result.append(tools_match and base_shape == cand_shape)
     return result

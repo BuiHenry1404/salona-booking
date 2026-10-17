@@ -625,7 +625,12 @@ def _render_scripted_scenario(
             if ref == base_ref:
                 continue
             cand_records = [_turn_record_from_dict(t) for t in turns_by_ref[ref]]
-            match_by_ref[ref] = behavior_match(base_records, cand_records, before=before_by_ref[base_ref])
+            match_by_ref[ref] = behavior_match(
+                base_records,
+                cand_records,
+                base_before=before_by_ref[base_ref],
+                cand_before=before_by_ref[ref],
+            )
 
     header_cells = "".join(f"<th>{e(ref)}</th>" for ref in active_refs)
     rows: list[str] = []
