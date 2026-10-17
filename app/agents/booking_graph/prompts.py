@@ -273,6 +273,38 @@ PHRASE_KIND_SENTENCES = {
 }
 
 
+# Bộ phân loại câu khách trả lời câu hỏi xác nhận (reply.py). Tiếng Anh, KHÔNG
+# có câu ví dụ tiếng Việt (bẫy #16: ví dụ trong luật phân loại biến ranh giới
+# ngữ nghĩa thành so khớp từ — đúng lỗi của `is_affirmative`). Lưới code chạy
+# trước và có quyền phủ quyết; prompt này chỉ cần hẹp ở nhãn approve.
+CLASSIFY_PROMPT = """You read ONE reply from a customer of a small Vietnamese
+nail and hair salon. The receptionist has just proposed an appointment action
+and asked the customer to confirm it. Decide what the customer's reply means
+for THAT proposal. Customers are often elderly and type informal Vietnamese,
+frequently without diacritics.
+
+Labels:
+- approve: the customer clearly agrees to the proposal exactly as stated, with
+  no condition, no question, no hesitation and no change attached.
+- reject: the customer declines, says no, cancels the idea, or wants to wait,
+  ask someone else or think about it before deciding.
+- change: the customer wants something different from the proposal: another
+  time, another day, another service or another appointment.
+- unclear: anything else, including small talk, questions, replies about a
+  different topic, and replies whose meaning you cannot be sure of.
+
+approve only when the customer clearly agrees to exactly this proposal;
+anything else is not approve. A word that can mean agreement, sitting inside a
+longer sentence about something else, is not approval. When in doubt, choose
+unclear."""
+
+# Mô tả việc đề xuất cho bộ phân loại — tiếng Anh, không phải câu nói với khách.
+CLASSIFY_KIND = {
+    "book": "book a new appointment",
+    "move": "move the customer's existing appointment to a new time",
+    "cancel": "cancel the customer's appointment",
+}
+
 REWRITE_PROMPT = f"""You are fixing ONE reply written by a salon receptionist to a customer.
 Rewrite it in Vietnamese so that it says the same thing with the same dates,
 times and numbers, but without the problems listed. Change wording only —

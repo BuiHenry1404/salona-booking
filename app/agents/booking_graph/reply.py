@@ -10,13 +10,20 @@ nửa dấu nửa không ("dạ khong em"). Bỏ dấu sinh trùng chữ ("Hồn
 "đợi" → "doi") nên lưới đôi khi phủ quyết oan — chấp nhận: phủ quyết oan chỉ tốn
 một lượt booking hỏi lại, bỏ sót là ghi nhầm lịch.
 """
+import asyncio
 import re
 import unicodedata
 from datetime import datetime
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
+
+from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.prompts import CLASSIFY_KIND, CLASSIFY_PROMPT
 from app.agents.booking_graph.timeparse import (_DAY_OFFSETS, _TIME_PATTERN,
                                                 _to_24h)
+from app.agents.llm import build_chat_model
 from app.core.clock import to_local
 from app.core.logging import get_logger
 
@@ -185,3 +192,58 @@ def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Option
     if mentions_other_time(lowered, _as_datetime(proposal["start_at"]), now):
         return "other_time"
     return None
+
+
+# --- bộ phân loại -------------------------------------------------------------
+
+# Như timeout parser (bẫy #10): Azure thật mất 2–3 giây; ngưỡng ngắn hơn là
+# nhánh model không bao giờ chạy và mọi câu thành `unclear`.
+CLASSIFY_TIMEOUT_SECONDS = 8
+
+
+class ReplyDecision(BaseModel):
+    decision: Literal["approve", "reject", "change", "unclear"]
+
+
+def _describe(proposal: Mapping[str, Any]) -> str:
+    start = _as_datetime(proposal["start_at"])
+    kind = proposal.get("kind", "book")
+    return (f"Proposal: {CLASSIFY_KIND.get(kind, kind)} at "
+            f"{format_vi_datetime(start)} ({to_local(start).isoformat()}).")
+
+
+async def classify_reply(proposal: Mapping[str, Any], bot_question: str,
+                         customer_text: str) -> str:
+    """Nhãn của model; mọi lỗi/timeout/kết quả lạ → "unclear" (không bao giờ
+    approve khi model không trả lời rõ). Tag `classify` + `streaming=False`:
+    JSON phân loại không bao giờ được stream ra màn hình khách (bẫy #8)."""
+    try:
+        model = build_chat_model(tags=["classify"], temperature=0.0, streaming=False)
+        structured = model.with_structured_output(ReplyDecision)
+        messages = [
+            SystemMessage(content=CLASSIFY_PROMPT),
+            HumanMessage(content=(
+                f"{_describe(proposal)}\n"
+                f"Receptionist's last message: {bot_question or '(none)'}\n"
+                f"Customer's reply: {customer_text}")),
+        ]
+        result = await asyncio.wait_for(structured.ainvoke(messages),
+                                        timeout=CLASSIFY_TIMEOUT_SECONDS)
+        if not isinstance(result, ReplyDecision):
+            raise TypeError(f"unexpected classifier result {type(result).__name__}")
+        return result.decision
+    except Exception as exc:
+        logger.warning("classify_failed", extra={"error": str(exc)[:200],
+                                                 "error_type": type(exc).__name__})
+        return "unclear"
+
+
+async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
+                 now: datetime) -> str:
+    """Lưới code TRƯỚC: có lý do phủ quyết thì "reject" và KHÔNG gọi model.
+    Không thì nhãn của bộ phân loại. Chỉ "approve" mới dẫn tới ghi lịch."""
+    reason = veto_reason(text, proposal, now)
+    if reason is not None:
+        logger.info("confirm_vetoed", extra={"reason": reason})
+        return "reject"
+    return await classify_reply(proposal, bot_question, text)

@@ -530,3 +530,27 @@ class TestRewritePromptDemandsVietnamese:
 
     def test_rewrite_prompt_demands_vietnamese(self):
         assert "MUST be Vietnamese" in REWRITE_PROMPT
+
+
+class TestClassifyPrompt:
+    """M3: bộ phân loại câu trả lời xác nhận. Phân loại là loại luật mà ví dụ
+    tiếng Việt CÓ HẠI (bẫy #16): ví dụ biến ranh giới ngữ nghĩa thành so khớp
+    từ — đúng thứ `is_affirmative` đã làm sai."""
+
+    def test_classify_prompt_has_no_vietnamese_examples(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        for word in ("ừ", "dạ", "không", "đồng ý", "được"):
+            assert word not in CLASSIFY_PROMPT.lower(), word
+        import re
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(CLASSIFY_PROMPT)
+
+    def test_classify_prompt_defines_the_four_labels(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        for label in ("approve", "reject", "change", "unclear"):
+            assert f"- {label}:" in CLASSIFY_PROMPT
+
+    def test_approve_is_the_narrow_label(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        assert "approve only when the customer clearly agrees to exactly this proposal" in CLASSIFY_PROMPT
+        assert "anything else is not approve" in CLASSIFY_PROMPT
