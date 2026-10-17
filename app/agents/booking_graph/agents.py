@@ -1,91 +1,72 @@
-from typing import Awaitable, Callable, List
+from typing import Awaitable, Callable, List, Sequence
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
-from app.agents.booking_graph.context import render_slots
-from app.agents.booking_graph.middleware.layout import STATE_HEADER  # noqa: F401 (re-export)
+from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
+    STATE_HEADER, MessageLayoutMiddleware)
 from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
-    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT)
+    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT, NoParallelToolsMiddleware,
+    ToolErrorMiddleware, ToolRoundLimitMiddleware)
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
-from app.core.logging import get_logger
 
-logger = get_logger(__name__)
+# Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
+RESPOND_TAG = "respond"
 
 
-def make_subagent_node(
-    prompt: str, tools: List[BaseTool], tag: str
-) -> Callable[[GraphState], Awaitable[dict]]:
-    """Một node LangGraph chạy vòng lặp gọi tool rồi trả lời.
+def build_agent(
+    prompt: str,
+    tools: List[BaseTool],
+    *,
+    tag: str = RESPOND_TAG,
+    model=None,
+    extra_middleware: Sequence[AgentMiddleware] = (),
+):
+    """Một agent `create_agent`: gọi tool rồi trả lời.
 
-    `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ node sinh câu trả
-    lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn hình.
+    `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ agent sinh câu
+    trả lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn
+    hình.
 
-    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối.
+    Thứ tự middleware (ngoài → trong): `extra_middleware` đứng ngoài cùng (M2
+    thêm lịch sử, M3 thêm confirm), rồi bố cục message, tắt parallel, giới hạn
+    vòng, lỗi tool.
+
+    `checkpointer=False`: agent con không bao giờ ghi checkpoint riêng — state
+    lượt chat thuộc graph ngoài.
     """
-    by_name = {t.name: t for t in tools}
+    return create_agent(
+        model or build_chat_model(tags=[tag], temperature=0.2),
+        tools,
+        system_prompt=prompt,
+        middleware=[
+            *extra_middleware,
+            MessageLayoutMiddleware(),
+            NoParallelToolsMiddleware(),
+            ToolRoundLimitMiddleware(),
+            ToolErrorMiddleware(),
+        ],
+        checkpointer=False,
+    )
 
+
+def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
+    """Node LangGraph bọc một agent `build_agent`.
+
+    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối. Tool
+    message của lượt này ở lại trong agent con, KHÔNG quay về `messages` ngoài.
+    """
     async def node(state: GraphState) -> dict:
-        model = build_chat_model(tags=[tag], temperature=0.2).bind_tools(tools)
-
-        # Bố cục theo độ ổn định: system (tĩnh, được cache) → lịch sử →
-        # khối bối cảnh (đổi mỗi lượt) → câu hỏi mới.
-        #
-        # Lời khách phải là thứ CUỐI model đọc. Model bắt chước giọng người
-        # đối thoại; để khối trạng thái đứng cuối là nó đáp lại bằng giọng
-        # biểu mẫu ("em giữ chỗ cho dịch vụ làm tóc"). Đây cũng đúng thứ tự
-        # `CONTEXT.md` bẫy #9 đã chốt từ đầu.
-        #
-        # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
-        history, question = state["messages"][:-1], state["messages"][-1:]
-        # Khối trạng thái đứng NGAY SAU system: đổi vài lượt một lần, ổn định
-        # hơn khối bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống
-        # lâu. Summary và slots đi CHUNG một message — tách đôi là thêm một
-        # ranh giới nữa cho thứ tự bẫy #9 có thể trượt.
-        parts = []
-        summary = state.get("summary") or []
-        if summary:
-            parts.append(STATE_HEADER + "\n" + "\n".join(f"- {s}" for s in summary))
-        rendered = render_slots(state.get("slots"))
-        if rendered:
-            parts.append(rendered)
-        state_messages = [HumanMessage(content="\n\n".join(parts))] if parts else []
-
-        messages = [
-            SystemMessage(content=prompt),
-            *state_messages,
-            *history,
-            HumanMessage(content=state.get("context_block", "")),
-            *question,
-        ]
-
-        for _ in range(MAX_TOOL_ROUNDS):
-            # Gửi một bản chụp: `messages` còn bị nối thêm ngay sau đây, mà
-            # LangChain giữ nguyên tham chiếu — trace và test sẽ thấy một danh
-            # sách khác với thứ thật sự gửi đi ở lượt đó.
-            reply = await model.ainvoke(list(messages))
-            messages.append(reply)
-
-            calls = getattr(reply, "tool_calls", None)
-            if not calls:
-                return {"draft": reply.content or FALLBACK_ANSWER}
-
-            for call in calls:
-                tool = by_name.get(call["name"])
-                if tool is None:
-                    output = f"Không có tool tên {call['name']}."
-                    logger.warning("unknown_tool_requested", extra={"name": call["name"]})
-                else:
-                    try:
-                        output = await tool.ainvoke(call["args"])
-                    except Exception as exc:
-                        logger.warning("tool_failed",
-                                       extra={"name": call["name"], "error": str(exc)})
-                        output = TOOL_ERROR_TEXT
-                messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
-
-        logger.warning("tool_loop_exhausted", extra={"tag": tag})
-        return {"draft": FALLBACK_ANSWER}
+        out = await agent.ainvoke({
+            "messages": state["messages"],
+            "context_block": state.get("context_block", ""),
+            "summary": state.get("summary") or [],
+            "slots": state.get("slots"),
+        })
+        messages = out.get("messages") or []
+        reply = messages[-1] if messages else None
+        return {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER}
 
     return node

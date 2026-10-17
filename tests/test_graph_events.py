@@ -221,3 +221,96 @@ async def test_run_turn_records_answer_source_and_previous_llm_replies(test_db, 
     assert seen_state["previous_replies"] == ["câu llm cũ"]
     assert seen_state["customer_text"] == "ừ"
     assert (await convs._all_messages(str(user.id)))[-1].source == "code"
+
+
+def _one_node_graph(node):
+    from langgraph.graph import END, START, StateGraph
+
+    from app.agents.booking_graph.state import GraphState
+    g = StateGraph(GraphState)
+    g.add_node("social", node)
+    g.add_edge(START, "social")
+    g.add_edge("social", END)
+    return g.compile()
+
+
+async def _streamed_text(graph):
+    from langchain_core.messages import HumanMessage
+    return "".join([
+        e.data["text"]
+        async for raw in graph.astream_events(
+            {"messages": [HumanMessage("chào em")], "context_block": "x"}, version="v2")
+        for e in translate_langchain_event(raw) if e.type == "token"])
+
+
+async def test_agent_tokens_carry_the_respond_tag_inside_the_graph():
+    from langchain_core.messages import AIMessage
+
+    from app.agents.booking_graph.agents import build_agent, make_agent_node
+    from tests.fakes import scripted
+    node = make_agent_node(build_agent("p", [], model=scripted([AIMessage("Dạ em chào chị.")])))
+    assert await _streamed_text(_one_node_graph(node)) == "Dạ em chào chị."
+
+
+async def test_build_agent_gives_its_model_the_respond_tag_end_to_end(monkeypatch):
+    """F10: model giả KHÔNG mang tag sẵn; tag phải đến từ `build_agent` và sống
+    sót qua agent con (`create_agent`) lồng trong graph ngoài."""
+    from langchain_core.messages import AIMessage
+
+    from app.agents.booking_graph import agents
+    from tests.fakes import scripted
+    monkeypatch.setattr(agents, "build_chat_model",
+                        lambda **kw: scripted([AIMessage("Dạ em chào chị.")], tags=kw.get("tags") or ()))
+    node = agents.make_agent_node(agents.build_agent("p", []))
+    assert await _streamed_text(_one_node_graph(node)) == "Dạ em chào chị."
+
+
+async def test_supervisor_model_never_carries_the_respond_tag(monkeypatch):
+    """F10: token JSON định tuyến của supervisor không bao giờ được lên màn hình."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from app.agents.booking_graph import supervisor
+    from tests.fakes import scripted
+    seen = []
+
+    def fake_build(**kw):
+        seen.append(kw.get("tags"))
+        return scripted([AIMessage("booking")], tags=kw.get("tags") or ())
+
+    monkeypatch.setattr(supervisor, "build_chat_model", fake_build)
+    await supervisor.supervise({"messages": [HumanMessage("mai 3 giờ")]})
+    assert seen and all(RESPOND_TAG not in (tags or []) for tags in seen)
+
+
+async def test_agent_tool_calls_still_emit_tool_started_and_finished():
+    """Giao thức Socket.IO giữ nguyên: tool chạy trong agent con vẫn phát
+    tool_started / tool_finished (ok=False khi tool ném lỗi) như vòng lặp cũ."""
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.tools import tool
+
+    from app.agents.booking_graph.agents import build_agent, make_agent_node
+    from tests.fakes import scripted, tool_call
+
+    @tool
+    async def good(day: str) -> str:
+        """x"""
+        return "ok"
+
+    @tool
+    async def bad(day: str) -> str:
+        """x"""
+        raise RuntimeError("down")
+
+    model = scripted([
+        AIMessage("", tool_calls=[{"name": "good", "args": {"day": "d"}, "id": "c1"}]),
+        tool_call("bad", {"day": "d"}, id="c2"),
+        AIMessage("Dạ."),
+    ])
+    graph = _one_node_graph(make_agent_node(build_agent("p", [good, bad], model=model)))
+    seen = [(e.type, e.data) async for raw in graph.astream_events(
+                {"messages": [HumanMessage("q")], "context_block": "x"}, version="v2")
+            for e in translate_langchain_event(raw) if e.type != "token"]
+    assert seen == [
+        ("tool_started", {"name": "good"}), ("tool_finished", {"name": "good", "ok": True}),
+        ("tool_started", {"name": "bad"}), ("tool_finished", {"name": "bad", "ok": False}),
+    ]

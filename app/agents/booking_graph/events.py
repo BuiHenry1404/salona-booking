@@ -5,7 +5,8 @@ from typing import Any, AsyncIterator, Dict, List
 from langchain_core.messages import AIMessage, HumanMessage
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.graph import RESPOND_TAG, build_graph
+from app.agents.booking_graph.agents import RESPOND_TAG
+from app.agents.booking_graph.graph import build_graph
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
 from app.models.user import User

@@ -1,7 +1,8 @@
 from langgraph.graph import END, START, StateGraph
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.agents import make_subagent_node
+from app.agents.booking_graph.agents import (RESPOND_TAG,  # noqa: F401 (re-export)
+                                             build_agent, make_agent_node)
 from app.agents.booking_graph.confirm import (make_confirm_node,
                                               route_after_confirm)
 from app.agents.booking_graph.guard import make_guard_node, route_after_guard
@@ -14,8 +15,6 @@ from app.agents.booking_graph.supervisor import route_from_state, supervise
 from app.agents.booking_graph.tools import (make_booking_tools,
                                             make_shop_tools)
 from app.models.user import User
-
-RESPOND_TAG = "respond"
 
 
 def booking_tools(db: AsyncIOMotorDatabase, user: User):
@@ -36,17 +35,15 @@ def build_graph(db: AsyncIOMotorDatabase, user: User):
     graph.add_node("confirm", make_confirm_node(db, user))
     graph.add_node(
         "shop",
-        make_subagent_node(SHOP_PROMPT, make_shop_tools(db, user), tag=RESPOND_TAG),
+        make_agent_node(build_agent(SHOP_PROMPT, make_shop_tools(db, user))),
     )
     # Không tool: xã giao và từ chối không cần dữ liệu gì. Vẫn dựng qua
-    # make_subagent_node để token stream ra màn hình như các node khác —
-    # trả thẳng chuỗi chính là cái bẫy mà node refuse cũ mắc phải.
-    graph.add_node(
-        "social", make_subagent_node(SOCIAL_PROMPT, [], tag=RESPOND_TAG)
-    )
+    # build_agent để token stream ra màn hình như các node khác — trả thẳng
+    # chuỗi chính là cái bẫy mà node refuse cũ mắc phải.
+    graph.add_node("social", make_agent_node(build_agent(SOCIAL_PROMPT, [])))
     graph.add_node(
         "booking",
-        make_subagent_node(BOOKING_PROMPT, booking_tools(db, user), tag=RESPOND_TAG),
+        make_agent_node(build_agent(BOOKING_PROMPT, booking_tools(db, user))),
     )
     graph.add_node("guard", make_guard_node(user))
     graph.add_node("rewrite", make_rewrite_node())
