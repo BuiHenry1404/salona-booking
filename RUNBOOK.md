@@ -215,7 +215,10 @@ Lịch sử model nằm trong hai collection của chính DB `MONGO_DB_NAME`
 - `checkpoint_writes` — ghi tạm giữa các bước.
 
 Cả hai có index TTL trên `created_at`: tự xoá sau `CHECKPOINT_TTL_DAYS` ngày
-(mặc định 7, đặt trong `.env`). Đổi TTL thì index tạo lại lúc khởi động. Xoá
+(mặc định 7, đặt trong `.env`). Đổi TTL rồi khởi động lại là đủ: lúc khởi động
+`make_checkpointer` sửa index TTL đang có bằng `collMod` (không xoá, không tạo
+lại index; thư viện tự làm thì Mongo ném "equivalent index already exists with
+different options" và app không lên). Xoá
 checkpoint chỉ mất lịch sử model của ngày đó — nhật ký chat hiển thị nằm ở
 `conversations`, không bị chạm.
 

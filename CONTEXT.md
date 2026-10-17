@@ -130,6 +130,16 @@ Khách ──socket──▶ run_turn
   `pending_confirmation`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
   checkpoint mang giá trị lượt trước sang. Mỗi khách một lượt chạy: lượt mới huỷ
   lượt cũ còn treo (`_ACTIVE_TURNS`, log `turn_superseded`).
+- Giới hạn đã biết của thread theo ngày (chấp nhận, không sửa):
+  - **Qua hai nửa đêm liền nhau** (nối thread hôm qua lúc 00:10, rồi lại nhắn
+    23:58 và 00:05 đêm sau): `pick_thread` chỉ nhìn thread mang tên hôm qua,
+    thread đang dùng mang tên hôm kia nên đêm thứ hai mất phần giữ 30 phút.
+  - **Cặp hỏi/đáp vắt qua mốc cắt**: câu khách stamp lúc HỎI, câu đáp lúc
+    GHI. Lượt chạy ngang mốc cắt (nửa đêm, hay mốc 30 phút) có thể giữ câu đáp
+    mà bỏ câu hỏi (vd. hỏi 23:59:58, đáp 00:00:03, đọc lúc 00:40). A ghi cả
+    cặp sau khi trả lời nên hai mốc sát nhau, không tách. Luật bỏ câu đáp mồ
+    côi đầu cửa sổ chỉ chạy khi ngân sách token cắt, nên không cứu ca này.
+    Hiếm (lượt phải chạy đúng qua mốc) và chỉ mất một câu hỏi.
 - **Mọi tool trả JSON dữ kiện, không trả câu** (bẫy #23). Mốc thời gian là
   `{"iso", "spoken"}`; model chép `spoken` nguyên văn, câu thì tự viết.
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
