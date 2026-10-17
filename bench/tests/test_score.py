@@ -383,3 +383,20 @@ def test_cancel_then_rebook_same_minute_is_not_cancelled_wrong_write():
 
     assert result.wrong_writes == []
     assert result.passed is True
+
+
+def test_tool_name_leak_rule():
+    rule = TEXT_RULES["tool_name_leak"]
+    assert rule("Dạ em gọi propose_appointment rồi ạ")
+    assert rule("dạ mai còn trống ạ (parse_time, find_free_slots)")
+    assert rule("GET_SHOP_STATUS")
+    assert rule("Dạ (foo_bar)")
+    assert not rule("Dạ mai 3 giờ chiều còn trống ạ (chị chọn giúp em nha)")
+    assert not rule("Dạ tiệm mở cửa từ 8 giờ sáng ạ")
+
+
+def test_tool_name_leak_is_scored_on_answer():
+    scenario = _scenario(Expect())
+    turns = [_turn_record(0, answer="dạ (list_my_appointments)", db_after=[])]
+    result = score_run(scenario, turns, [], [], CUSTOMER_ID, NOW_VN)
+    assert "tool_name_leak@0" in result.violations

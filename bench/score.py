@@ -43,7 +43,7 @@ def check_precondition(turn: Turn, prev: TurnRecord | None, now_vn: datetime) ->
 
 
 # ---------------------------------------------------------------------------
-# TEXT_RULES — R2: chỉ gồm 3 luật này; claim_without_write được đánh giá
+# TEXT_RULES — R2 (+ I8 tool_name_leak); claim_without_write được đánh giá
 # riêng trong score_run (cần so sánh DB giữa hai lượt, không chỉ xét chữ).
 # ---------------------------------------------------------------------------
 
@@ -93,10 +93,30 @@ def _clock_colon_violation(text: str) -> bool:
     return bool(_CLOCK_COLON_RE.search(text))
 
 
+# I8: tên 7 tool của agent (app/agents/booking_graph/tools.py) lọt vào câu trả
+# lời, hoặc một danh sách định danh snake_case trong ngoặc "(a_b, c_d)".
+AGENT_TOOL_NAMES = (
+    "get_shop_status",
+    "get_shop_hours",
+    "parse_time",
+    "find_free_slots",
+    "propose_appointment",
+    "list_my_appointments",
+    "cancel_appointment",
+)
+_TOOL_NAME_RE = re.compile(r"\b(" + "|".join(AGENT_TOOL_NAMES) + r")\b", re.IGNORECASE)
+_TOOL_LIST_RE = re.compile(r"\(\s*[a-z]+_[a-z_]+(\s*,\s*[a-z]+_[a-z_]+)*\s*\)", re.IGNORECASE)
+
+
+def _tool_name_leak_violation(text: str) -> bool:
+    return bool(_TOOL_NAME_RE.search(text)) or bool(_TOOL_LIST_RE.search(text))
+
+
 TEXT_RULES: dict[str, Callable[[str], bool]] = {
     "english": _english_violation,
     "register": _register_violation,
     "clock_colon": _clock_colon_violation,
+    "tool_name_leak": _tool_name_leak_violation,
 }
 
 
