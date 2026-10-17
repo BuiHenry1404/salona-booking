@@ -94,6 +94,9 @@ def build_agent(
 def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
     """Node LangGraph bọc một agent `build_agent`.
 
+    `messages` là cả thread trong ngày; `HistoryWindowMiddleware` (trong
+    `extra_middleware` của graph) cắt lại đúng cửa sổ A gửi model.
+
     Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối. Tool
     message của lượt này ở lại trong agent con, KHÔNG quay về `messages` ngoài.
     """
@@ -103,6 +106,9 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
             "context_block": state.get("context_block", ""),
             "summary": state.get("summary") or [],
             "slots": state.get("slots"),
+            # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
+            # bị gửi lại nguyên văn mỗi lượt (F2).
+            "history_after": state.get("history_after"),
         })
         messages = out.get("messages") or []
         reply = messages[-1] if messages else None

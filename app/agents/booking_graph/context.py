@@ -243,18 +243,30 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
     conversations = ConversationService(db)
     user_id = str(user.id)
 
-    status, upcoming, (summary, slots, history), pending = await asyncio.gather(
+    async def window():
+        # Như `context_window`, kèm `covers_until`: lịch sử model giờ đọc từ
+        # thread checkpointer, cần mốc nén để cắt bên đó (`history_after`).
+        state = await conversations.get_state(user_id)
+        after = state.covers_until if state else None
+        return state, after, await conversations.history(user_id, after=after)
+
+    status, upcoming, (state, after, history), pending = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
-        conversations.context_window(user_id),
+        window(),
         conversations.get_pending(user_id),
     )
 
+    # `history` (nhật ký `conversations`, cùng cửa sổ với thread) chỉ còn dùng cho
+    # câu đáp trước (khối bối cảnh, `previous_replies` của guard) — nó mang
+    # `source` llm/code mà thread không có. Lịch sử MODEL đọc từ thread.
     last_reply = history[-1].content if history and history[-1].role == "assistant" else None
     return {
         "context_block": build_context_block(user, status, upcoming, last_reply=last_reply),
         "history": history,
-        "summary": summary,
-        "slots": slots,
+        "summary": state.summary if state else [],
+        "slots": state.slots if state else None,
+        "history_after": after,
         "pending_confirmation": pending,
+        "user_id": user_id,
     }

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.agents.booking_graph.events import (RESPOND_TAG, AgentEvent,
@@ -144,6 +146,10 @@ async def test_run_turn_schedules_compaction_after_complete(test_db, monkeypatch
         async def astream_events(self, state, config, version):
             yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
 
+        async def aget_state(self, config):
+            return SimpleNamespace(values={"answer": "Dạ.", "messages": []}, interrupts=(),
+                                   created_at=None)
+
     monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
     scheduled = []
     monkeypatch.setattr(events, "schedule_compaction",
@@ -164,6 +170,10 @@ async def test_compaction_error_never_reaches_the_customer(test_db, monkeypatch)
     class FakeGraph:
         async def astream_events(self, state, config, version):
             yield {"event": "on_chain_end", "data": {"output": {"answer": "Dạ."}}}
+
+        async def aget_state(self, config):
+            return SimpleNamespace(values={"answer": "Dạ.", "messages": []}, interrupts=(),
+                                   created_at=None)
 
     monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
 
@@ -213,6 +223,12 @@ async def test_run_turn_records_answer_source_and_previous_llm_replies(test_db, 
         async def astream_events(self, state, config, version):
             seen_state.update(state)
             yield {"event": "on_chain_end", "data": {"output": {"answer": "Xong.", "answer_source": "code"}}}
+
+        async def aget_state(self, config):
+            # Câu đáp đọc từ checkpoint sau lượt chạy, không bắt từ sự kiện.
+            return SimpleNamespace(values={"answer": "Xong.", "answer_source": "code",
+                                           "messages": []},
+                                   interrupts=(), created_at=None)
 
     monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
     monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)

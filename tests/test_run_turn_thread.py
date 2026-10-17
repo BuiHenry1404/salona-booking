@@ -1,0 +1,291 @@
+"""`run_turn` trên thread checkpointer `<user>:<ngày VN>` (M2).
+
+Graph thật, model giả (`tests/fakes.py`), checkpointer `InMemorySaver` (fixture
+autouse `memory_checkpointer` ở conftest). Khẳng định chính: model thấy ĐÚNG
+những gì A cho nó thấy, chỉ khác nguồn — lịch sử lấy từ thread, `conversations`
+vẫn là nhật ký hiển thị.
+"""
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage
+
+from app.agents.booking_graph import agents, events, phrase, rewrite, supervisor
+from app.core.clock import TZ, now_ms
+from app.services.appointment import AppointmentService
+from app.services.auth import AuthService
+from app.services.conversation import ConversationService
+from tests.fakes import scripted, tool_call
+
+
+@pytest.fixture
+async def user(test_db):
+    return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+
+@pytest.fixture
+def models(monkeypatch):
+    """Một model giả cho supervisor, một cho cả ba agent (chỉ agent được định
+    tuyến chạy). Nén nền tắt — nó gọi LLM thật."""
+    sup = scripted([], tags=("supervisor",))
+    agent = scripted([])
+    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
+    monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
+    monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
+    monkeypatch.setattr(events, "get_callbacks", lambda: [])   # không đẩy trace Langfuse
+    return SimpleNamespace(sup=sup, agent=agent)
+
+
+def routes(*names):
+    return [AIMessage(n) for n in names]
+
+
+async def turn(test_db, user, text):
+    return [(e.type, e.data) async for e in events.run_turn(test_db, user, text)]
+
+
+def thread_config(user, now=None):
+    return {"configurable": {"thread_id": events.thread_id_for(str(user.id), now or now_ms())}}
+
+
+async def thread_values(test_db, user):
+    from app.agents.booking_graph.graph import build_graph
+    return (await build_graph(test_db, user).aget_state(thread_config(user))).values
+
+
+def contents(batch):
+    return [m.content for m in batch]
+
+
+async def test_second_turn_sees_the_first_turn_from_the_thread(test_db, user, models):
+    models.sup.replies += routes("social", "social")
+    models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ."),
+                             AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
+    assert (await turn(test_db, user, "chào em"))[-1][0] == "complete"
+    # Xoá nhật ký: lượt 2 vẫn phải thấy lượt 1 — lịch sử model đến từ thread.
+    await test_db["conversations"].update_one({}, {"$set": {"messages": []}})
+
+    assert (await turn(test_db, user, "cảm ơn em"))[-1] == (
+        "complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    batch = contents(models.agent.calls[-1])
+    assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
+    assert batch[-1] == "cảm ơn em"
+    assert batch[-2].startswith("Bây giờ là")          # khối bối cảnh sát câu khách (#6, #9)
+
+
+async def test_thread_holds_only_question_and_answer_not_tool_messages(test_db, user, models):
+    models.sup.replies += routes("booking")
+    models.agent.replies += [tool_call("get_shop_hours", {}), AIMessage("Dạ tiệm mở cửa cả tuần ạ.")]
+    await turn(test_db, user, "tiệm mở mấy giờ")
+
+    messages = (await thread_values(test_db, user))["messages"]
+    assert [type(m).__name__ for m in messages] == ["HumanMessage", "AIMessage"]
+    assert not messages[1].tool_calls
+    assert contents(messages) == ["tiệm mở mấy giờ", "Dạ tiệm mở cửa cả tuần ạ."]
+
+
+async def test_answer_of_previous_turn_never_leaks_into_this_turn(test_db, user, models):
+    """A-07: lượt 2 lỗi → `error`, không phát lại câu đáp lượt 1 (vẫn nằm trong
+    checkpoint), không ghi `conversations`. Lượt 3 chạy lại từ đầu và model không
+    thấy câu hỏi mồ côi của lượt lỗi (A không bao giờ ghi nó)."""
+    models.sup.replies += routes("social", "social", "social")
+    # F13: model lỗi MỌI lần gọi của lượt 2, để retry (M4) không nuốt mất lỗi.
+    models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ."),
+                             *[RuntimeError("azure down")] * 3]
+    await turn(test_db, user, "chào em")
+
+    second = await turn(test_db, user, "đặt lịch")
+    assert [t for t, _ in second] == ["turn_started", "error"]
+    assert "Dạ em chào chị Lan ạ." not in str(second)
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["chào em", "Dạ em chào chị Lan ạ."]
+
+    models.agent.replies[:] = [AIMessage("Dạ chị Lan nhắn lại giúp em nhé.")]
+    third = await turn(test_db, user, "alo")
+    assert third[-1] == ("complete", {"answer": "Dạ chị Lan nhắn lại giúp em nhé."})
+    batch = contents(models.agent.calls[-1])
+    assert "đặt lịch" not in batch
+    assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
+
+
+async def test_conversations_and_thread_share_timestamps(test_db, user, models):
+    from app.agents.booking_graph.history import stamped_at
+    models.sup.replies += routes("social")
+    models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ.")]
+    await turn(test_db, user, "chào em")
+
+    thread = (await thread_values(test_db, user))["messages"]
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert [m.created_at for m in stored] == [stamped_at(m) for m in thread]
+    assert stored[0].created_at < stored[1].created_at
+
+
+async def test_compacted_messages_are_not_resent_to_the_booking_model(test_db, user, models):
+    """F2: `history_after` (= covers_until) phải tới được agent con."""
+    from app.core.clock import now_utc, to_local
+    from app.models.conversation import ConversationState
+    models.sup.replies += routes("social", "social", "booking")
+    models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ."),
+                             AIMessage("Dạ chị Lan muốn làm gì ạ?"),
+                             AIMessage("Dạ chị Lan chọn giờ nào ạ?")]
+    await turn(test_db, user, "chào em")
+    await turn(test_db, user, "chị muốn làm tóc")
+    convs = ConversationService(test_db)
+    stored = await convs._all_messages(str(user.id))
+    await convs.set_state(str(user.id), ConversationState(
+        day=to_local(now_utc()).date(), covers_until=stored[1].created_at,
+        summary=["Khách chào."]))
+
+    await turn(test_db, user, "mai được không")
+    batch = contents(models.agent.calls[-1])
+    assert "chào em" not in batch and "Dạ em chào chị Lan ạ." not in batch
+    assert batch[1].endswith("- Khách chào.")
+    assert batch[2:4] == ["chị muốn làm tóc", "Dạ chị Lan muốn làm gì ạ?"]
+    # Supervisor cũng chỉ thấy phần chưa nén.
+    assert "chào em" not in contents(models.sup.calls[-1])
+
+
+async def test_used_pending_does_not_carry_over_through_the_checkpoint(
+        test_db, user, models, monkeypatch):
+    """F3: pending lấy lại từ Mongo MỖI lượt (hạn 10 phút). Pending của lượt 1
+    nằm trong checkpoint; lượt 2 không được dùng lại nó (ghi lịch hai lần)."""
+    tomorrow = (datetime.now(TZ) + timedelta(days=1)).replace(
+        hour=15, minute=0, second=0, microsecond=0)
+    await ConversationService(test_db).set_pending(
+        str(user.id), {"start_at": tomorrow.isoformat(), "note": "làm tóc"})
+    monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
+    models.sup.replies += routes("social")
+    models.agent.replies += [AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
+
+    first = await turn(test_db, user, "ừ")
+    assert first[-1][0] == "complete" and models.sup.calls == []     # đi nhánh confirm
+    assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
+
+    second = await turn(test_db, user, "cảm ơn em")
+    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert len(models.sup.calls) == 1                                 # về supervisor
+    assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
+
+
+def test_fresh_turn_fields_reset_everything_a_turn_produces():
+    fields = events.fresh_turn_fields(
+        {"context_block": "CTX", "summary": ["s"], "slots": None, "history_after": None,
+         "pending_confirmation": None, "history": [], "user_id": "u1"}, "q")
+    assert fields["pending_confirmation"] is None and "pending_confirmation" in fields
+    for key, empty in {"answer": "", "draft": "", "original_draft": "", "violations": [],
+                       "rewritten": False, "route": "", "fallback": None,
+                       "confirm_fact": None, "phrase_fact": None}.items():
+        assert fields[key] == empty, key
+    assert fields["customer_text"] == "q" and fields["user_id"] == "u1"
+    assert "messages" not in fields
+
+
+async def test_langfuse_session_is_the_user_not_the_thread(test_db, user, monkeypatch):
+    seen = {}
+
+    class FakeGraph:
+        async def astream_events(self, state, config, version):
+            seen.update(config)
+            yield {"event": "on_chain_end", "data": {"output": {}}}
+
+        async def aget_state(self, config):
+            return SimpleNamespace(values={"answer": "Dạ.", "messages": []}, interrupts=(),
+                                   created_at=None)
+
+    monkeypatch.setattr(events, "build_graph", lambda db, u: FakeGraph())
+    monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
+    await turn(test_db, user, "chào em")
+    assert seen["metadata"]["langfuse_session_id"] == str(user.id)
+    assert seen["metadata"]["langfuse_user_id"] == str(user.id)
+    assert seen["configurable"]["thread_id"].startswith(f"{user.id}:")
+
+
+def test_thread_id_changes_with_the_vn_day():
+    # 16:59 UTC = 23:59 giờ VN; 17:01 UTC = 00:01 hôm sau.
+    before = datetime(2026, 10, 17, 16, 59, tzinfo=timezone.utc)
+    after = datetime(2026, 10, 17, 17, 1, tzinfo=timezone.utc)
+    assert events.thread_id_for("u1", before) == "u1:2026-10-17"
+    assert events.thread_id_for("u1", after) == "u1:2026-10-18"
+    # Nửa đêm UTC (7 giờ sáng VN) không đổi thread.
+    assert events.thread_id_for("u1", datetime(2026, 10, 17, 23, 59, tzinfo=timezone.utc)) == \
+        events.thread_id_for("u1", datetime(2026, 10, 18, 0, 1, tzinfo=timezone.utc))
+
+
+async def _checkpoint_at(saver, thread_id, at):
+    """Một checkpoint có `ts` cho trước — `StateSnapshot.created_at` đọc từ đó."""
+    from langgraph.checkpoint.base import empty_checkpoint
+    checkpoint = empty_checkpoint()
+    checkpoint["ts"] = at.isoformat()
+    await saver.aput({"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+                     checkpoint, {"source": "loop", "step": 1, "parents": {}}, {})
+
+
+@pytest.mark.parametrize("last_at, expected_day", [
+    (datetime(2026, 10, 17, 23, 55, tzinfo=TZ), "2026-10-17"),   # 15 phút trước → nối
+    (datetime(2026, 10, 17, 23, 0, tzinfo=TZ), "2026-10-18"),    # 70 phút trước → thread mới
+])
+async def test_pick_thread_continues_yesterday_within_30_minutes_after_midnight(
+        test_db, user, memory_checkpointer, last_at, expected_day):
+    from app.agents.booking_graph.graph import build_graph
+    uid = str(user.id)
+    now = datetime(2026, 10, 18, 0, 10, tzinfo=TZ)
+    await _checkpoint_at(memory_checkpointer, f"{uid}:2026-10-17", last_at)
+    assert await events.pick_thread(build_graph(test_db, user), uid, now) == f"{uid}:{expected_day}"
+
+
+async def test_pick_thread_prefers_todays_thread_once_it_exists(test_db, user, memory_checkpointer):
+    from app.agents.booking_graph.graph import build_graph
+    uid = str(user.id)
+    now = datetime(2026, 10, 18, 0, 10, tzinfo=TZ)
+    await _checkpoint_at(memory_checkpointer, f"{uid}:2026-10-17", now - timedelta(minutes=2))
+    await _checkpoint_at(memory_checkpointer, f"{uid}:2026-10-18", now - timedelta(minutes=1))
+    assert await events.pick_thread(build_graph(test_db, user), uid, now) == f"{uid}:2026-10-18"
+
+
+async def test_pick_thread_stays_on_yesterdays_thread_while_its_messages_are_in_the_window(
+        test_db, user, memory_checkpointer):
+    """Khách nối qua nửa đêm lúc 00:10 rồi nhắn tiếp lúc 00:40: A vẫn giữ tin
+    00:10 (sau đầu ngày). Đổi sang thread hôm nay ở đây là mất nó."""
+    from app.agents.booking_graph.graph import build_graph
+    uid = str(user.id)
+    now = datetime(2026, 10, 18, 0, 40, tzinfo=TZ)
+    await _checkpoint_at(memory_checkpointer, f"{uid}:2026-10-17", now - timedelta(minutes=30))
+    assert await events.pick_thread(build_graph(test_db, user), uid, now) == f"{uid}:2026-10-17"
+
+
+def test_build_graph_uses_the_installed_checkpointer_not_a_default_argument(memory_checkpointer):
+    """F4: không mở MongoClient lúc import/định nghĩa; lấy checkpointer lúc dựng."""
+    import inspect
+    from unittest.mock import MagicMock
+
+    from app.agents.booking_graph.graph import build_graph
+    from app.models.user import User
+    assert inspect.signature(build_graph).parameters["checkpointer"].default is None
+    graph = build_graph(MagicMock(), User(phone="0912345678", hashed_password="x", full_name="Cô Lan"))
+    assert graph.checkpointer is memory_checkpointer
+
+
+async def test_two_turns_on_the_real_mongo_saver(test_db, user, models, monkeypatch):
+    """State thật (message có stamp, pending có datetime, slots) qua serializer
+    của MongoDBSaver — trong DB test, không phải checkpointing_db."""
+    from pymongo import MongoClient
+
+    from app.agents import checkpoint
+    from app.core.config import settings
+    from tests.conftest import TEST_DB_NAME, TEST_MONGO_URI
+    monkeypatch.setattr(settings, "mongo_db_name", TEST_DB_NAME)
+    client = MongoClient(TEST_MONGO_URI, tz_aware=True)
+    checkpoint.set_checkpointer(checkpoint.make_checkpointer(client))
+    try:
+        models.sup.replies += routes("social", "social")
+        models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ."),
+                                 AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
+        await turn(test_db, user, "chào em")
+        assert (await turn(test_db, user, "cảm ơn em"))[-1][0] == "complete"
+        assert contents(models.agent.calls[-1])[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
+        assert await test_db["checkpoints"].count_documents(
+            {"thread_id": events.thread_id_for(str(user.id), now_ms())}) > 0
+    finally:
+        client.close()

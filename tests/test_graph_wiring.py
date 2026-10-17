@@ -20,8 +20,10 @@ def test_every_llm_node_feeds_the_guard():
 
 
 def test_guard_goes_to_rewrite_or_end_and_rewrite_returns_to_guard():
+    """"end" của guard đi qua `record` (ghi câu đáp vào thread) rồi mới END."""
     e = edges()
-    assert ("guard", "rewrite") in e and ("guard", "__end__") in e
+    assert ("guard", "rewrite") in e and ("guard", "record") in e
+    assert ("record", "__end__") in e and ("guard", "__end__") not in e
     assert ("rewrite", "guard") in e
     assert ("rewrite", "__end__") not in e
 
