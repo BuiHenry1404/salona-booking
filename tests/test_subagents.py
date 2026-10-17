@@ -119,5 +119,21 @@ def test_build_agent_tags_the_real_model_respond(monkeypatch):
         return scripted([], tags=kw.get("tags") or ())
 
     monkeypatch.setattr("app.agents.booking_graph.agents.build_chat_model", fake_build)
-    build_agent("p", [])
+    agent = build_agent("p", [])
+    assert seen == []                    # dựng lười: chưa gọi thì chưa dựng model
+    agent._get()                         # lần dùng đầu tiên mới dựng
     assert seen == [{"tags": ["respond"], "temperature": 0.2}]
+
+
+async def test_lazy_agent_builds_its_model_once(monkeypatch):
+    seen = []
+
+    def fake_build(**kw):
+        seen.append(kw)
+        return scripted([AIMessage("Dạ."), AIMessage("Dạ lần hai.")], tags=kw.get("tags") or ())
+
+    monkeypatch.setattr("app.agents.booking_graph.agents.build_chat_model", fake_build)
+    node = make_agent_node(build_agent("p", []))
+    assert (await node(a_state()))["draft"] == "Dạ."
+    assert (await node(a_state()))["draft"] == "Dạ lần hai."
+    assert len(seen) == 1

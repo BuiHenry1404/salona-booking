@@ -1,4 +1,4 @@
-from typing import Awaitable, Callable, List, Sequence
+from typing import Any, Awaitable, Callable, List, Sequence
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -14,6 +14,36 @@ from app.agents.llm import build_chat_model
 
 # Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
 RESPOND_TAG = "respond"
+
+
+class _LazyAgent:
+    """Agent dựng ở lần gọi ĐẦU TIÊN, không phải lúc `build_graph`.
+
+    `build_graph` chạy mỗi lượt và dựng 3 agent, nhưng mỗi lượt chỉ chạy một.
+    Dựng model ngay thì (a) mất ~25 ms/model đồng bộ trên event loop, (b) thiếu
+    key LLM là `build_graph` nổ — mất luôn nhánh confirm→phrase vốn chạy được
+    như A, và test dựng graph phải có key thật. A dựng model lúc node chạy;
+    giữ đúng như vậy.
+
+    Cache trong `self` là cấu hình (model + graph đã compile), không phải trạng
+    thái lượt chat — graph ngoài dựng lại mỗi lượt.
+    """
+
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._agent = None
+
+    def _get(self):
+        if self._agent is None:
+            self._agent = self._factory()
+        return self._agent
+
+    async def ainvoke(self, *args, **kwargs):
+        return await self._get().ainvoke(*args, **kwargs)
+
+    # KHÔNG có `__getattr__` uỷ quyền: LangGraph `compile()` dò subgraph bằng
+    # `hasattr` trên closure của node — uỷ quyền là dựng model ngay lúc
+    # build_graph, mất hết tác dụng của việc dựng lười.
 
 
 def build_agent(
@@ -36,20 +66,29 @@ def build_agent(
 
     `checkpointer=False`: agent con không bao giờ ghi checkpoint riêng — state
     lượt chat thuộc graph ngoài.
+
+    Không truyền `model` thì model thật chỉ được dựng ở lần gọi đầu (`_LazyAgent`).
     """
-    return create_agent(
-        model or build_chat_model(tags=[tag], temperature=0.2),
-        tools,
-        system_prompt=prompt,
-        middleware=[
-            *extra_middleware,
-            MessageLayoutMiddleware(),
-            NoParallelToolsMiddleware(),
-            ToolRoundLimitMiddleware(),
-            ToolErrorMiddleware(),
-        ],
-        checkpointer=False,
-    )
+    middleware = [
+        *extra_middleware,
+        MessageLayoutMiddleware(),
+        NoParallelToolsMiddleware(),
+        ToolRoundLimitMiddleware(),
+        ToolErrorMiddleware(),
+    ]
+
+    def factory(chat_model=None):
+        return create_agent(
+            chat_model or build_chat_model(tags=[tag], temperature=0.2),
+            tools,
+            system_prompt=prompt,
+            middleware=middleware,
+            checkpointer=False,
+        )
+
+    if model is not None:
+        return factory(model)
+    return _LazyAgent(factory)
 
 
 def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:

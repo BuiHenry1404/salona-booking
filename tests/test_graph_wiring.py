@@ -127,3 +127,31 @@ def test_the_live_slots_scenario_can_actually_reach_compaction():
         f"{COMPACT_THRESHOLD_TOKENS} — lượt nén sẽ KHÔNG nổ và kịch bản sẽ "
         f"chạy xanh mà không hề chạm tới slots."
     )
+
+
+def test_graph_builds_without_llm_keys(monkeypatch):
+    """Dựng graph KHÔNG được cần key LLM: model chỉ dựng lúc node chạy (như A).
+    Thiếu key thì nhánh confirm→phrase... vẫn tới được node; test cũng không
+    được đòi key thật trong .env."""
+    from app.agents.llm import build_chat_model
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "azure")
+    monkeypatch.setattr(settings, "azure_openai_api_key", None)
+    monkeypatch.setattr(settings, "azure_openai_endpoint", None)
+    import pytest
+    with pytest.raises(RuntimeError):
+        build_chat_model(tags=["respond"])           # tiền đề: dựng model sẽ nổ
+
+    g = build_graph(MagicMock(), User(phone="0912345678", hashed_password="x", full_name="Cô Lan"))
+    assert {"booking", "shop", "social"} <= set(g.get_graph().nodes)
+
+
+def test_build_graph_constructs_no_chat_model(monkeypatch):
+    """Dựng model là ~25 ms đồng bộ trên event loop; build_graph chạy mỗi lượt
+    nên không được dựng model nào (kể cả qua đường dò subgraph của compile)."""
+    calls = []
+    monkeypatch.setattr("app.agents.booking_graph.agents.build_chat_model",
+                        lambda **kw: calls.append(kw))
+    build_graph(MagicMock(), User(phone="0912345678", hashed_password="x", full_name="Cô Lan"))
+    assert calls == []
