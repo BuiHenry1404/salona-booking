@@ -113,7 +113,7 @@ def _by_id() -> dict:
 # Persona ghi rõ không có ý định đặt lịch / không tự chốt → kỳ vọng viết sẵn
 # là KHÔNG có lịch nào của khách (I7), để ghi sai của chính khách bị bắt.
 _NO_BOOKING_INTENT = (
-    "LLM-09", "LLM-12", "LLM-14", "LLM-15", "LLM-24", "LLM-25", "LLM-26", "LLM-27",
+    "LLM-09", "LLM-14", "LLM-15", "LLM-24", "LLM-25", "LLM-26", "LLM-27",
 )
 
 
