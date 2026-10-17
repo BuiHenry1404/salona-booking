@@ -289,3 +289,57 @@ async def test_two_turns_on_the_real_mongo_saver(test_db, user, models, monkeypa
             {"thread_id": events.thread_id_for(str(user.id), now_ms())}) > 0
     finally:
         client.close()
+
+
+# --- Task 2.4: một thread một lượt chạy -------------------------------------
+
+async def _wait_until(predicate, timeout=5.0):
+    import asyncio
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        assert loop.time() < deadline, "timeout"
+        await asyncio.sleep(0.01)
+
+
+async def test_a_new_turn_supersedes_a_hung_turn(test_db, user, models):
+    """Azure treo ở lượt 1, khách nhắn lại: lượt 2 phải chạy (không kẹt sau
+    lượt 1), lượt 1 bị huỷ êm — không `error`, không ghi `conversations`."""
+    import asyncio
+
+    from tests.fakes import Hang
+    models.sup.replies += routes("social", "social")
+    models.agent.replies += [Hang(3600), AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
+
+    first = asyncio.create_task(turn(test_db, user, "alo em"))
+    await _wait_until(lambda: len(models.agent.calls) == 1)          # lượt 1 đang treo
+
+    second = await asyncio.wait_for(turn(test_db, user, "em ơi"), timeout=5)
+    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    await asyncio.wait({first}, timeout=1)
+    assert first.cancelled()
+
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["em ơi", "Dạ chị Lan cần gì cứ nhắn em nhé."]
+    assert "alo em" not in contents(models.agent.calls[-1])          # câu mồ côi không vào lịch sử
+    assert str(user.id) not in events._ACTIVE_TURNS
+
+
+async def test_turns_of_two_users_do_not_cancel_each_other(test_db, user, models):
+    import asyncio
+
+    from tests.fakes import Hang
+    other = await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Tư")
+    models.sup.replies += routes("social", "social")
+    models.agent.replies += [Hang(3600), AIMessage("Dạ anh Tư cần gì cứ nhắn em nhé.")]
+
+    hung = asyncio.create_task(turn(test_db, user, "alo em"))
+    await _wait_until(lambda: len(models.agent.calls) == 1)
+    try:
+        done = await asyncio.wait_for(turn(test_db, other, "em ơi"), timeout=5)
+        assert done[-1][0] == "complete"
+        assert not hung.done()
+    finally:
+        hung.cancel()
+        await asyncio.wait({hung}, timeout=1)
+    assert events._ACTIVE_TURNS == {}

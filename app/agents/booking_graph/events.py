@@ -129,6 +129,29 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
     }
 
 
+# Lượt đang chạy của từng khách. Một tiến trình, một worker (Telegram long
+# polling bắt buộc) nên khoá trong bộ nhớ là đủ.
+_ACTIVE_TURNS: Dict[str, asyncio.Task] = {}
+SUPERSEDE_WAIT_SECONDS = 2.0
+
+
+async def _supersede(user_id: str) -> Optional[asyncio.Task]:
+    """Lượt mới thay lượt cũ còn chạy của cùng khách (Azure treo, khách nhắn lại).
+
+    Hai lượt chạy chồng trên một thread là lượt cũ ghi checkpoint đè lên lượt
+    mới. Huỷ lượt cũ, chờ nó dừng (tối đa 2 giây — quá thì chạy tiếp, không để
+    khách chờ theo một lượt đã treo), rồi đăng ký lượt này.
+    """
+    me = asyncio.current_task()
+    previous = _ACTIVE_TURNS.get(user_id)
+    if previous is not None and previous is not me and not previous.done():
+        previous.cancel()
+        await asyncio.wait({previous}, timeout=SUPERSEDE_WAIT_SECONDS)
+    if me is not None:
+        _ACTIVE_TURNS[user_id] = me
+    return me
+
+
 async def run_turn(
     db: AsyncIOMotorDatabase, user: User, question: str
 ) -> AsyncIterator[AgentEvent]:
@@ -136,7 +159,28 @@ async def run_turn(
 
     Lịch sử model nằm trong thread checkpointer (`pick_thread`); `conversations`
     vẫn được ghi như cũ làm nhật ký hiển thị, cùng mốc thời gian với thread.
+
+    Mỗi khách chỉ một lượt chạy: lượt mới huỷ lượt cũ còn treo (`_supersede`).
     """
+    user_id = str(user.id)
+    me = await _supersede(user_id)
+    try:
+        async for event in _run_turn(db, user, question):
+            yield event
+    except asyncio.CancelledError:
+        # Bị lượt mới thay: im lặng — không `error`, không ghi `conversations`
+        # (lượt mới đang trả lời khách). Huỷ vì lý do khác thì không log nhầm.
+        if _ACTIVE_TURNS.get(user_id) is not me:
+            logger.info("turn_superseded", extra={"user_id": user_id})
+        raise
+    finally:
+        if me is not None and _ACTIVE_TURNS.get(user_id) is me:
+            del _ACTIVE_TURNS[user_id]
+
+
+async def _run_turn(
+    db: AsyncIOMotorDatabase, user: User, question: str
+) -> AsyncIterator[AgentEvent]:
     from app.agents.booking_graph.context import load_context
 
     user_id = str(user.id)
