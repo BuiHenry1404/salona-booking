@@ -24,6 +24,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pymongo import MongoClient
+
 from bench.adapters import ADAPTERS, TurnRecord
 from bench.config import BenchSettings, _parse_env_file
 from bench.dbread import snapshot
@@ -191,6 +193,16 @@ def _exc_text(exc: BaseException) -> str:
     return text
 
 
+def clear_appointments(mongo_uri: str, db_name: str) -> None:
+    """Xoá mọi document trong `appointments` của DB ref — chỉ collection này
+    (khách luôn mới mỗi lần chạy, các collection khác để nguyên)."""
+    client: MongoClient = MongoClient(mongo_uri)
+    try:
+        client[db_name]["appointments"].delete_many({})
+    finally:
+        client.close()
+
+
 def _customer_text(turn: Turn) -> str:
     return turn.say if turn.say is not None else (turn.intent or "")
 
@@ -270,6 +282,9 @@ async def run_one(
     now_vn = datetime.now(VN_TZ)
     started_utc = datetime.now(timezone.utc)
 
+    # Mọi lần chạy của một ref dùng chung một DB: xoá sạch lịch của lần chạy
+    # trước (kể cả lịch ghi sai) để chúng không chiếm slot của lần này.
+    await asyncio.to_thread(clear_appointments, settings.mongo_uri, ws.db_name)
     customer = await _seed(rr, scenario, settings, now_vn)
     before = await asyncio.to_thread(snapshot, settings.mongo_uri, ws.db_name)
 

@@ -401,6 +401,7 @@ class ScriptedAdapter:
 def run_one_env(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "Seeder", FakeSeeder)
     monkeypatch.setattr(runner, "snapshot", lambda uri, db: [])
+    monkeypatch.setattr(runner, "clear_appointments", lambda uri, db: None)
     monkeypatch.setitem(ADAPTERS, "fake", ScriptedAdapter)
     ScriptedAdapter.sent = []
     ScriptedAdapter.open_raises = False
@@ -606,6 +607,63 @@ async def test_tokens_give_up_after_retries(tmp_path, fakes):
     await run_bench(settings, [RefSpec("A")], [_scenario_file(tmp_path, "s1")],
                     None, k=1, use_proxy=False, judge_on=False)
     assert len(calls) == 1 + runner._TOKEN_RETRIES
+
+
+async def test_each_run_starts_with_no_leftover_appointments(tmp_path, monkeypatch):
+    """Hai lần chạy liên tiếp trên cùng một ref (cùng DB): `before` của lần
+    thứ hai chỉ có lịch seed của chính nó, không có lịch (kể cả ghi sai) của
+    lần trước. Dùng Mongo thật như test_dbread."""
+    import uuid
+
+    from pymongo import MongoClient
+
+    settings = _settings(tmp_path)
+    db_name = f"bench_test_clear_{uuid.uuid4().hex[:8]}"
+    client = MongoClient(settings.mongo_uri)
+    coll = client[db_name]["appointments"]
+
+    class MongoSeeder(FakeSeeder):
+        async def book_for(self, customer_id, at, note):
+            res = coll.insert_one(
+                {"user_id": customer_id, "start_at": at, "status": "booked", "note": note}
+            )
+            return str(res.inserted_id)
+
+    class WritingAdapter(ScriptedAdapter):
+        async def open(self, base_url, customer):
+            self.customer = customer
+
+        async def send(self, turn, index, timeout_s):
+            # Bot "ghi sai": tạo thêm một lịch không ai yêu cầu.
+            coll.insert_one({"user_id": self.customer.id, "start_at": datetime(
+                2030, 1, 1, 15, 0, tzinfo=VN_TZ), "status": "booked"})
+            return TurnRecord(index=index, customer_text=turn.say or "", answer="ok")
+
+    monkeypatch.setattr(runner, "Seeder", MongoSeeder)
+    monkeypatch.setitem(ADAPTERS, "fake", WritingAdapter)
+    ws = FakeWorkspace(settings, "HEAD", 9100, "r1", None)
+    ws.db_name = db_name
+    rr = RefRun(spec=RefSpec("HEAD", "fake"), index=0, port=9100, proxy_port=9101,
+                ws=ws, status="ready")
+    p = tmp_path / "own.yaml"
+    p.write_text(
+        "id: own\ntitle: t\nkind: scripted\nsetup:\n  own:\n"
+        "    - {day: tomorrow, time: \"10:00\"}\n"
+        "turns:\n  - say: \"chào\"\nexpect: {}\n",
+        encoding="utf-8",
+    )
+    [sc] = load_scenarios([p])
+    try:
+        first = await run_one(rr, sc, 0, settings=settings)
+        second = await run_one(rr, sc, 1, settings=settings)
+    finally:
+        client.drop_database(db_name)
+        client.close()
+
+    assert len(first["after"]) == 2  # seed + ghi sai
+    assert len(second["before"]) == 1
+    assert second["before"][0].user_id == second["customer_id"]
+    assert second["before"][0].start_at.hour == 10
 
 
 async def test_run_one_payload_serialises(tmp_path, run_one_env):
