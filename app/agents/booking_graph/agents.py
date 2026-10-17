@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
 from app.agents.booking_graph.context import render_slots
+from app.agents.booking_graph.middleware.layout import STATE_HEADER  # noqa: F401 (re-export)
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -13,9 +14,6 @@ logger = get_logger(__name__)
 MAX_TOOL_ROUNDS = 4
 FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho tiệm giúp em nhé ạ."
 
-# Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
-# bối cảnh, không phải chỉ dẫn.
-STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
 
 
 def make_subagent_node(
