@@ -307,3 +307,79 @@ def test_behavior_match_detects_time_mismatch():
     cand = [_turn_record(0, tools=["propose_appointment"], db_after=[_row("9", "b", at_16)])]
 
     assert behavior_match(base, cand, before=[]) == [False]
+
+
+# --- C2 (review cuối): ghi sai chỉ tính trên thay đổi THẬT trong lần chạy ---
+
+_TOMORROW_9 = datetime(2026, 10, 18, 9, 0, tzinfo=VN_TZ)
+_TOMORROW_14 = datetime(2026, 10, 18, 14, 0, tzinfo=VN_TZ)
+
+
+def test_untouched_seeded_appt_is_not_wrong_write():
+    # g10 attempt 1/3: lẽ ra dời 09:00 → 14:00, nhưng bot không làm gì;
+    # before == after. Không có lần ghi nào → không ghi sai, chỉ là trượt.
+    scenario = _scenario(Expect(booked=(ExpectAppt(day="tomorrow", time="14:00"),)))
+    seeded = [_row("s1", CUSTOMER_ID, _TOMORROW_9)]
+    turns = [_turn_record(0, answer="dạ", db_after=seeded)]
+
+    result = score_run(scenario, turns, seeded, list(seeded), CUSTOMER_ID, NOW_VN)
+
+    assert result.wrong_writes == []
+    assert result.passed is False
+    assert any(m.startswith("missing:") for m in result.mismatches)
+    assert any(m.startswith("unchanged:") for m in result.mismatches)
+
+
+def test_correct_time_without_note_is_note_mismatch_not_wrong_write():
+    # LLM-02 / LLM-23 attempt 3: đúng 14:00 ngày mai nhưng note None.
+    scenario = _scenario(
+        Expect(booked=(ExpectAppt(day="tomorrow", time="14:00", note_contains="móng"),))
+    )
+    after = [_row("n1", CUSTOMER_ID, _TOMORROW_14, note=None)]
+    turns = [_turn_record(0, answer="dạ", db_after=after)]
+
+    result = score_run(scenario, turns, [], after, CUSTOMER_ID, NOW_VN)
+
+    assert result.wrong_writes == []
+    assert result.passed is False
+    assert any(m.startswith("note_mismatch:") for m in result.mismatches)
+    assert not any(m.startswith("missing:") for m in result.mismatches)
+
+
+def test_reschedule_to_wrong_time_is_wrong_write():
+    scenario = _scenario(Expect(booked=(ExpectAppt(day="tomorrow", time="14:00"),)))
+    before = [_row("s1", CUSTOMER_ID, _TOMORROW_9)]
+    after = [_row("s1", CUSTOMER_ID, datetime(2026, 10, 18, 15, 0, tzinfo=VN_TZ))]
+    turns = [_turn_record(0, answer="dạ", db_after=after)]
+
+    result = score_run(scenario, turns, before, after, CUSTOMER_ID, NOW_VN)
+
+    assert result.wrong_writes == ["extra:15:00 18/10"]
+    assert result.passed is False
+
+
+def test_missing_expected_booking_is_fail_not_wrong_write():
+    scenario = _scenario(Expect(booked=(ExpectAppt(day="tomorrow", time="14:00"),)))
+    turns = [_turn_record(0, answer="dạ", db_after=[])]
+
+    result = score_run(scenario, turns, [], [], CUSTOMER_ID, NOW_VN)
+
+    assert result.wrong_writes == []
+    assert result.passed is False
+    assert result.mismatches == ["missing:14:00 18/10"]
+
+
+def test_cancel_then_rebook_same_minute_is_not_cancelled_wrong_write():
+    # T6: hủy rồi tạo lại đúng phút đó — vẫn còn lịch booked ở phút kỳ vọng.
+    scenario = _scenario(Expect(booked=(ExpectAppt(day="tomorrow", time="09:00"),)))
+    before = [_row("s1", CUSTOMER_ID, _TOMORROW_9)]
+    after = [
+        _row("s1", CUSTOMER_ID, _TOMORROW_9, status="cancelled"),
+        _row("n1", CUSTOMER_ID, _TOMORROW_9),
+    ]
+    turns = [_turn_record(0, answer="dạ", db_after=after)]
+
+    result = score_run(scenario, turns, before, after, CUSTOMER_ID, NOW_VN)
+
+    assert result.wrong_writes == []
+    assert result.passed is True

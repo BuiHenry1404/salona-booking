@@ -11,7 +11,7 @@ output thật).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
@@ -108,43 +108,54 @@ class RunScore:
     wrong_writes: list[str]
     violations: list[str]
     turns_used: int
+    # Không đạt kỳ vọng nhưng KHÔNG phải ghi sai (C2): "missing:<t>" (thiếu lịch
+    # kỳ vọng), "note_mismatch:<t>" (đúng phút, sai ghi chú), "unchanged:<t>"
+    # (lịch có sẵn không ai đụng tới nhưng lẽ ra phải dời/hủy).
+    mismatches: list[str] = field(default_factory=list)
 
 
 def _match_booked(
     expect_booked: tuple[ExpectAppt, ...],
     actual_rows: list[ApptRow],
     now_vn: datetime,
-) -> tuple[list[ApptRow], bool]:
+) -> tuple[list[ApptRow], list[ApptRow], list[datetime]]:
     """So tập lịch thật (`actual_rows`, đã lọc status="booked" của khách) với
-    tập kỳ vọng. Trả về (`extras`: lịch thừa không khớp kỳ vọng nào, `missing`:
-    có kỳ vọng nào không được khớp hay không). So tới phút; `note_contains`
-    so chữ thường, chỉ áp khi kỳ vọng có đặt."""
+    tập kỳ vọng, khớp theo PHÚT. Trả về (`extras`: lịch không khớp phút kỳ
+    vọng nào; `note_mismatch`: lịch khớp phút nhưng sai `note_contains`;
+    `missing`: các mốc kỳ vọng không có lịch nào). Ưu tiên ghép lịch có ghi
+    chú khớp trước, để một lịch đúng không bị "giành" bởi lịch sai ghi chú."""
     expected = [
         (resolve_at(e, now_vn).replace(second=0, microsecond=0), e.note_contains)
         for e in expect_booked
     ]
     used = [False] * len(expected)
-    extras: list[ApptRow] = []
+    pending = list(actual_rows)
+    note_mismatch: list[ApptRow] = []
 
-    for row in actual_rows:
-        row_minute = row.start_at.replace(second=0, microsecond=0)
-        matched_idx: int | None = None
-        for idx, (exp_dt, note_contains) in enumerate(expected):
-            if used[idx] or row_minute != exp_dt:
-                continue
-            if note_contains is not None:
-                note = (row.note or "").lower()
-                if note_contains.lower() not in note:
+    def _note_ok(row: ApptRow, needle: str | None) -> bool:
+        return needle is None or needle.lower() in (row.note or "").lower()
+
+    for require_note in (True, False):
+        still: list[ApptRow] = []
+        for row in pending:
+            row_minute = row.start_at.replace(second=0, microsecond=0)
+            matched = False
+            for idx, (exp_dt, needle) in enumerate(expected):
+                if used[idx] or row_minute != exp_dt:
                     continue
-            matched_idx = idx
-            break
-        if matched_idx is None:
-            extras.append(row)
-        else:
-            used[matched_idx] = True
+                if require_note and not _note_ok(row, needle):
+                    continue
+                used[idx] = True
+                matched = True
+                if not require_note and not _note_ok(row, needle):
+                    note_mismatch.append(row)
+                break
+            if not matched:
+                still.append(row)
+        pending = still
 
-    missing = any(not flag for flag in used)
-    return extras, missing
+    missing = [expected[i][0] for i, flag in enumerate(used) if not flag]
+    return pending, note_mismatch, missing
 
 
 def _label_time(dt: datetime) -> str:
@@ -197,25 +208,44 @@ def score_run(
             wrong_writes.append(f"other_customer:{rid}")
 
     # --- Tập lịch "booked" của khách sau cùng phải khớp đúng kỳ vọng ---
+    # C2: chỉ lịch THAY ĐỔI trong lần chạy (mới tạo, hoặc đổi giờ/trạng thái
+    # so với `before`) mới có thể là ghi sai. Lịch có sẵn còn nguyên mà lẽ ra
+    # phải dời/hủy là KHÔNG ĐẠT (`unchanged:`), không phải ghi sai; đúng phút
+    # mà sai ghi chú là `note_mismatch:`; thiếu lịch kỳ vọng là `missing:`.
+    mismatches: list[str] = []
     expect_satisfied = True
     if expect.booked is not None:
         actual_booked = [
             row for row in after if row.user_id == customer_id and row.status == "booked"
         ]
-        extras, missing = _match_booked(expect.booked, actual_booked, now_vn)
+        extras, note_bad, missing = _match_booked(expect.booked, actual_booked, now_vn)
+        before_by_id = {row.id: row for row in before}
         for row in extras:
-            wrong_writes.append(f"extra:{_label_time(row.start_at)}")
-        if missing:
+            prior = before_by_id.get(row.id)
+            if prior is not None and prior == row:
+                mismatches.append(f"unchanged:{_label_time(row.start_at)}")
+                expect_satisfied = False
+            else:
+                wrong_writes.append(f"extra:{_label_time(row.start_at)}")
+        for row in note_bad:
+            mismatches.append(f"note_mismatch:{_label_time(row.start_at)}")
+            expect_satisfied = False
+        for dt in missing:
+            mismatches.append(f"missing:{_label_time(dt)}")
             expect_satisfied = False
 
         expected_minutes = {
             resolve_at(e, now_vn).replace(second=0, microsecond=0) for e in expect.booked
         }
+        booked_minutes = {
+            row.start_at.replace(second=0, microsecond=0) for row in actual_booked
+        }
         for cancelled_row in full_changes.cancelled:
             if cancelled_row.user_id != customer_id:
                 continue
             minute = cancelled_row.start_at.replace(second=0, microsecond=0)
-            if minute in expected_minutes:
+            # T6: hủy rồi đặt lại đúng phút đó (vẫn còn lịch booked) không phải ghi sai.
+            if minute in expected_minutes and minute not in booked_minutes:
                 wrong_writes.append(f"cancelled:{_label_time(cancelled_row.start_at)}")
 
     # --- Câu trả lời cuối ---
@@ -273,6 +303,7 @@ def score_run(
         wrong_writes=wrong_writes,
         violations=violations,
         turns_used=turns_used,
+        mismatches=mismatches,
     )
 
 
