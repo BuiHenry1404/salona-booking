@@ -2,6 +2,7 @@
 
     python -m bench run --ref A[:adapter] --ref B[:adapter] [--tags edge] [--k 4]
                         [--no-proxy] [--no-judge] [--keep-db] [--scenarios PATH ...]
+    python -m bench run --resume <run_dir>      # chạy tiếp run dở, bỏ qua attempt đã có
     python -m bench compare <run_dir> [<run_dir> ...] [--base <ref>] -o report.html
 """
 
@@ -39,9 +40,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="chạy bộ kịch bản trên nhiều ref")
-    run.add_argument("--ref", action="append", required=True, help="ref git[:adapter], lặp lại được")
+    run.add_argument("--ref", action="append", help="ref git[:adapter], lặp lại được")
     run.add_argument("--tags", action="append", help="lọc kịch bản theo tag (phẩy hoặc lặp lại)")
-    run.add_argument("--k", type=int, default=4, help="số lần chạy mỗi kịch bản (pass^k)")
+    run.add_argument("--k", type=int, default=None, help="số lần chạy mỗi kịch bản (pass^k, mặc định 4)")
+    run.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="chạy tiếp thư mục run dở: ref/k/tag lấy từ meta.json nếu không truyền, "
+        "bỏ qua các <attempt>.json đã có",
+    )
     run.add_argument("--no-proxy", action="store_true", help="không chèn proxy lỗi trước Azure")
     run.add_argument("--no-judge", action="store_true", help="không gọi judge LLM")
     run.add_argument("--keep-db", action="store_true", help="giữ database Mongo của từng ref")
@@ -61,11 +69,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    import json
+
+    from bench import runner
     from bench.config import load_settings
-    from bench.runner import RefSpec, run_bench
+    from bench.runner import RefSpec
+
+    meta: dict = {}
+    if args.resume is not None:
+        try:
+            meta = json.loads((args.resume / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"lỗi: không đọc được meta.json của {args.resume}: {exc}", file=sys.stderr)
+            return 2
 
     try:
-        refs = [RefSpec.parse(r) for r in args.ref]
+        if args.ref:
+            refs = [RefSpec.parse(r) for r in args.ref]
+        elif meta.get("refs"):
+            refs = [RefSpec(r["ref"], r.get("adapter") or "a") for r in meta["refs"]]
+        else:
+            print("lỗi: cần --ref (hoặc --resume <run_dir>)", file=sys.stderr)
+            return 2
         paths = _collect_scenarios(args.scenarios)
     except (ValueError, FileNotFoundError) as exc:
         print(f"lỗi: {exc}", file=sys.stderr)
@@ -73,22 +98,31 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not paths:
         print("lỗi: không có file kịch bản nào", file=sys.stderr)
         return 2
-    if args.k < 1:
+    k = args.k if args.k is not None else int(meta.get("k") or 4)
+    if k < 1:
         print("lỗi: --k phải >= 1", file=sys.stderr)
         return 2
+    tags = _parse_tags(args.tags)
+    if tags is None and meta.get("tags"):
+        tags = set(meta["tags"])
 
-    run_dir = asyncio.run(
-        run_bench(
-            load_settings(),
-            refs,
-            paths,
-            _parse_tags(args.tags),
-            k=args.k,
-            use_proxy=not args.no_proxy,
-            judge_on=not args.no_judge,
-            keep_db=args.keep_db,
+    try:
+        run_dir = asyncio.run(
+            runner.run_bench(
+                load_settings(),
+                refs,
+                paths,
+                tags,
+                k=k,
+                use_proxy=not args.no_proxy,
+                judge_on=not args.no_judge,
+                keep_db=args.keep_db,
+                resume_dir=args.resume,
+            )
         )
-    )
+    except ValueError as exc:
+        print(f"lỗi: {exc}", file=sys.stderr)
+        return 2
     print(run_dir)
     return 0
 

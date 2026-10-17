@@ -45,6 +45,10 @@ _LANGFUSE_SETTLE_S = 15.0
 _TOKEN_RETRIES = 3
 _TOKEN_RETRY_BACKOFF_S = 15.0
 
+# I2: server của một ref chết giữa run → khởi động lại tối đa chừng này lần
+# (cùng DB, cùng cổng) rồi mới đánh dấu crashed.
+_MAX_RESTARTS = 1
+
 # Khoá .env không phải bí mật — được ghi vào meta có chủ đích.
 _NON_SECRET_KEYS = {"AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_MODEL", "AZURE_OPENAI_API_VERSION"}
 _SECRET_MARKERS = ("KEY", "SECRET", "TOKEN", "PASSWORD")
@@ -85,6 +89,8 @@ class RefRun:
     status: str = "pending"
     error: str | None = None
     azure_deployment: str | None = None
+    restarts: int = 0
+    crash_logs: list[str] = dataclasses.field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +438,8 @@ def _ref_meta(rr: RefRun) -> dict:
         "status": rr.status,
         "error": rr.error,
         "azure_deployment": rr.azure_deployment,
+        "restarts": rr.restarts,
+        "crash_logs": rr.crash_logs,
     }
 
 
@@ -449,17 +457,41 @@ async def run_bench(
     use_proxy: bool = True,
     judge_on: bool = True,
     keep_db: bool = False,
+    resume_dir: Path | None = None,
 ) -> Path:
-    """Chạy bộ kịch bản trên nhiều ref, trả thư mục run `results/<ts>-<runid>/`."""
+    """Chạy bộ kịch bản trên nhiều ref, trả thư mục run `results/<ts>-<runid>/`.
+
+    `resume_dir`: chạy tiếp một run dở (I2) — dùng lại run_id/thư mục/meta cũ,
+    bỏ qua mọi `(ref, kịch bản, attempt)` đã có file JSON. `k` phải trùng meta;
+    nếu meta có danh sách kịch bản thì chỉ chạy các kịch bản trong đó."""
+    old_meta: dict | None = None
+    if resume_dir is not None:
+        old_meta = json.loads((Path(resume_dir) / "meta.json").read_text(encoding="utf-8"))
+        if int(old_meta.get("k") or 0) != k:
+            raise ValueError(
+                f"--resume: k={k} khác k={old_meta.get('k')} của run cũ — pass^k sẽ sai"
+            )
     scenarios = load_scenarios(scenario_paths, tags)
+    if old_meta is not None and old_meta.get("scenarios"):
+        wanted = set(old_meta["scenarios"])
+        scenarios = [sc for sc in scenarios if sc.id in wanted]
     for sc in scenarios:  # fault sai định dạng → báo ngay, trước khi dựng server
         for t in sc.turns:
             if t.fault:
                 parse_fault(t.fault)
 
-    run_id = secrets.token_hex(3)
-    started = datetime.now(VN_TZ)
-    run_dir = settings.results_dir / f"{started.strftime('%Y%m%d-%H%M%S')}-{run_id}"
+    now = datetime.now(VN_TZ)
+    if old_meta is not None:
+        run_id = str(old_meta["run_id"])
+        run_dir = Path(resume_dir)  # type: ignore[arg-type]
+        try:
+            started = datetime.fromisoformat(str(old_meta["started_at"]))
+        except (KeyError, ValueError):
+            started = now
+    else:
+        run_id = secrets.token_hex(3)
+        started = now
+        run_dir = settings.results_dir / f"{started.strftime('%Y%m%d-%H%M%S')}-{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     root_env = settings.repo_root / ".env"
@@ -521,7 +553,11 @@ async def run_bench(
         "skipped": skipped,
         "notes": notes,
         "rulings": [],
+        "resumed_at": [],
     }
+    if old_meta is not None:
+        meta["vn_date_start"] = old_meta.get("vn_date_start", meta["vn_date_start"])
+        meta["resumed_at"] = list(old_meta.get("resumed_at") or []) + [now]
 
     secrets_ = secret_values(root_env, settings)
     llm_client = make_client(settings) if creds else None
@@ -543,12 +579,29 @@ async def run_bench(
                     if rr.status != "ready":
                         continue
                     assert rr.ws is not None
+                    out = run_dir / "runs" / rr.ws.sha7 / sc.id / f"{attempt}.json"
+                    if out.exists():  # --resume: đã chạy xong ở lần trước
+                        continue
                     if not rr.ws.is_alive():
-                        rr.status = "crashed"
-                        rr.error = rr.ws.log_tail()
+                        tail = rr.ws.log_tail()
+                        rr.crash_logs.append(tail)
+                        revived = False
+                        if rr.restarts < _MAX_RESTARTS:
+                            rr.restarts += 1
+                            try:
+                                await rr.ws.stop()
+                                revived = await rr.ws.start()
+                            except Exception as exc:  # noqa: BLE001
+                                rr.crash_logs.append(_exc_text(exc))
+                            if not revived and getattr(rr.ws, "error", None):
+                                rr.crash_logs.append(str(rr.ws.error))
+                        if not revived:
+                            rr.status = "crashed"
+                            rr.error = tail
                         meta["refs"] = [_ref_meta(r) for r in ref_runs]
                         _write_json(run_dir / "meta.json", meta, secrets_)
-                        continue
+                        if not revived:
+                            continue
                     try:
                         payload = await run_one(
                             rr,
@@ -573,8 +626,6 @@ async def run_bench(
                             "judge": None,
                             "tokens": None,
                         }
-                    assert rr.ws is not None
-                    out = run_dir / "runs" / rr.ws.sha7 / sc.id / f"{attempt}.json"
                     _write_json(out, payload, secrets_)
                     if payload.get("customer_id") and payload.get("started_at"):
                         pending_tokens.append(

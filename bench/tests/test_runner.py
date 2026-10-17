@@ -64,6 +64,8 @@ class FakeWorkspace:
     fail_prepare: set[str] = set()
     # ref -> số lần is_alive() trả True trước khi "chết"
     dies_after: dict[str, int] = {}
+    # ref có lần start lại (sau khi chết) thất bại
+    fail_restart: set[str] = set()
 
     def __init__(self, settings, ref, port, run_id, azure_endpoint):
         self.ref = ref
@@ -79,12 +81,18 @@ class FakeWorkspace:
         self.stopped = False
         self.dropped = False
         self.alive_checks = 0
+        self.checks_at_start = 0
+        self.starts = 0
+        self.lock_released = False
         FakeWorkspace.instances.append(self)
 
     def is_alive(self):
         self.alive_checks += 1
         limit = FakeWorkspace.dies_after.get(self.ref)
-        return limit is None or self.alive_checks <= limit
+        return limit is None or self.alive_checks - self.checks_at_start <= limit
+
+    def release_lock(self):
+        self.lock_released = True
 
     def log_tail(self, n=50):
         return "Traceback ...\nSegfault in uvicorn"
@@ -94,6 +102,12 @@ class FakeWorkspace:
             raise subprocess.CalledProcessError(1, ["uv"], stderr="uv exploded")
 
     async def start(self, timeout_s: float = 90):
+        self.starts += 1
+        self.checks_at_start = self.alive_checks
+        if self.starts > 1 and self.ref in FakeWorkspace.fail_restart:
+            self.status = "failed_to_start"
+            self.error = "restart failed"
+            return False
         if self.ref in FakeWorkspace.fail_start:
             self.status = "failed_to_start"
             self.error = "port busy\nlast log line"
@@ -135,6 +149,7 @@ def fakes(monkeypatch):
     FakeWorkspace.fail_start = set()
     FakeWorkspace.fail_prepare = set()
     FakeWorkspace.dies_after = {}
+    FakeWorkspace.fail_restart = set()
     FakeProxy.instances = []
     monkeypatch.setattr(runner, "RefWorkspace", FakeWorkspace)
     monkeypatch.setattr(runner, "FaultProxy", FakeProxy)
@@ -199,10 +214,12 @@ async def test_ref_order_rotates_per_attempt(tmp_path, fakes):
 
 
 async def test_crashed_ref_is_skipped_for_rest_of_bench(tmp_path, fakes):
-    """I2: server của ref chết giữa chừng → status crashed + log, bỏ qua tiếp."""
+    """I2: server của ref chết giữa chừng, khởi động lại cũng hỏng → status
+    crashed + log, bỏ qua tiếp."""
     calls: list[tuple] = []
     fakes.setattr(runner, "run_one", _recording_run_one(calls))
     FakeWorkspace.dies_after = {"A": 1}
+    FakeWorkspace.fail_restart = {"A"}
 
     run_dir = await run_bench(
         _settings(tmp_path), [RefSpec("A"), RefSpec("B")],
@@ -218,6 +235,68 @@ async def test_crashed_ref_is_skipped_for_rest_of_bench(tmp_path, fakes):
     assert by_ref["A"]["status"] == "crashed"
     assert "Segfault" in by_ref["A"]["error"]
     assert by_ref["B"]["status"] == "ready"
+    assert by_ref["A"]["restarts"] == 1
+
+
+async def test_crashed_ref_is_restarted_once_and_continues(tmp_path, fakes):
+    """I2: server chết → khởi động lại một lần rồi chạy tiếp; chết lần hai →
+    crashed (không khởi động lại mãi)."""
+    calls: list[tuple] = []
+    fakes.setattr(runner, "run_one", _recording_run_one(calls))
+    FakeWorkspace.dies_after = {"A": 2}
+
+    run_dir = await run_bench(
+        _settings(tmp_path), [RefSpec("A")],
+        [_scenario_file(tmp_path, "s1"), _scenario_file(tmp_path, "s2")], None,
+        k=3, use_proxy=False, judge_on=False,
+    )
+    a = FakeWorkspace.instances[0]
+    assert a.starts == 2
+    # 2 lần chạy, chết → restart rồi chạy luôn lần 3, thêm 2 lần, chết → crashed.
+    assert len(calls) == 5
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    ref_a = meta["refs"][0]
+    assert ref_a["status"] == "crashed"
+    assert ref_a["restarts"] == 1
+    assert "Segfault" in ref_a["crash_logs"][0]
+    assert a.lock_released
+
+
+async def test_resume_skips_written_attempts(tmp_path, fakes):
+    calls: list[tuple] = []
+    fakes.setattr(runner, "run_one", _recording_run_one(calls))
+    paths = [_scenario_file(tmp_path, "s1"), _scenario_file(tmp_path, "s2")]
+    run_dir = await run_bench(
+        _settings(tmp_path), [RefSpec("A")], paths, None,
+        k=2, use_proxy=False, judge_on=False,
+    )
+    ws = FakeWorkspace.instances[0]
+    (run_dir / "runs" / ws.sha7 / "s2" / "1.json").unlink()
+    calls.clear()
+
+    again = await run_bench(
+        _settings(tmp_path), [RefSpec("A")], paths, None,
+        k=2, use_proxy=False, judge_on=False, resume_dir=run_dir,
+    )
+    assert again == run_dir
+    assert calls == [(1, "s2", "A")]
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert len(meta["resumed_at"]) == 1
+    assert meta["finished_at"] is not None
+
+
+async def test_resume_rejects_different_k(tmp_path, fakes):
+    fakes.setattr(runner, "run_one", _recording_run_one([]))
+    paths = [_scenario_file(tmp_path, "s1")]
+    run_dir = await run_bench(
+        _settings(tmp_path), [RefSpec("A")], paths, None,
+        k=2, use_proxy=False, judge_on=False,
+    )
+    with pytest.raises(ValueError, match="k"):
+        await run_bench(
+            _settings(tmp_path), [RefSpec("A")], paths, None,
+            k=3, use_proxy=False, judge_on=False, resume_dir=run_dir,
+        )
 
 
 async def test_failed_ref_is_skipped_and_recorded(tmp_path, fakes):
@@ -735,3 +814,31 @@ async def test_run_one_scenario_on_head(tmp_path):
     for port in (settings.base_port, settings.base_port + 1):
         with socket.socket() as s:
             assert s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def test_cli_resume_reads_refs_and_k_from_meta(monkeypatch, tmp_path):
+    from bench import __main__ as cli
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "meta.json").write_text(json.dumps({
+        "run_id": "abc123", "k": 3, "tags": ["edge"],
+        "refs": [{"ref": "docs/x", "adapter": "a"}],
+    }), encoding="utf-8")
+    seen = {}
+
+    async def fake_run_bench(settings, refs, paths, tags, **kw):
+        seen.update(refs=refs, tags=tags, **kw)
+        return run_dir
+
+    monkeypatch.setattr(runner, "run_bench", fake_run_bench)
+    assert cli.main(["run", "--resume", str(run_dir)]) == 0
+    assert seen["refs"] == [RefSpec("docs/x", "a")]
+    assert seen["k"] == 3 and seen["tags"] == {"edge"}
+    assert seen["resume_dir"] == run_dir
+
+
+def test_cli_run_requires_ref_without_resume(capsys):
+    from bench import __main__ as cli
+
+    assert cli.main(["run"]) == 2
