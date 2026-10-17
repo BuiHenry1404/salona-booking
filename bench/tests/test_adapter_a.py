@@ -8,6 +8,7 @@ toàn bộ app thật (hộp đen).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -167,3 +168,82 @@ async def test_unknown_events_are_kept_and_rate_limited_is_error(fake_server):
     assert "connected" in event_types
     assert "weird_event" in event_types
     assert record.error == "chờ"
+
+
+@pytest.mark.asyncio
+async def test_stale_event_after_timeout_does_not_leak_into_next_turn(fake_server):
+    """Review Focus #2 fix: lượt 1 timeout trong khi server vẫn đang xử lý
+    (phát `complete` trễ); adapter phải ngắt/nối lại kết nối khi timeout nên
+    `complete` trễ đó không thể tới và lẫn vào lượt 2."""
+    turn_count = {"n": 0}
+
+    async def on_send_message(sio, sid, data):
+        turn_count["n"] += 1
+        if turn_count["n"] == 1:
+
+            async def late_reply() -> None:
+                await asyncio.sleep(0.6)  # lâu hơn timeout_s=0.2 của lượt 1
+                try:
+                    await sio.emit("tool_started", {"name": "turn1_tool"}, to=sid)
+                    await sio.emit("complete", {"answer": "turn1 answer"}, to=sid)
+                except Exception:
+                    pass  # kết nối cũ đã bị ngắt — đúng như kỳ vọng
+
+            asyncio.create_task(late_reply())
+        else:
+            await sio.emit("tool_started", {"name": "turn2_tool"}, to=sid)
+            await sio.emit("complete", {"answer": "turn2 answer"}, to=sid)
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        record1 = await adapter.send(Turn(say="turn1"), index=0, timeout_s=0.2)
+        record2 = await adapter.send(Turn(say="turn2"), index=1, timeout_s=2.0)
+        # Để cho late_reply() (vẫn đang ngủ) kịp cố gửi vào kết nối cũ và
+        # thất bại, tránh cảnh báo "task pending" khi test kết thúc.
+        await asyncio.sleep(0.6)
+    finally:
+        await adapter.close()
+
+    assert record1.error == "timeout"
+
+    assert record2.answer == "turn2 answer"
+    assert record2.tools == ["turn2_tool"]
+    assert "turn1_tool" not in record2.tools
+    assert all(
+        e.data.get("answer") != "turn1 answer"
+        for e in record2.events
+        if e.type == "complete"
+    )
+
+
+@pytest.mark.asyncio
+async def test_per_turn_state_resets(fake_server):
+    turn_count = {"n": 0}
+
+    async def on_send_message(sio, sid, data):
+        turn_count["n"] += 1
+        if turn_count["n"] == 1:
+            await sio.emit("token", {"text": "a"}, to=sid)
+            await sio.emit("tool_started", {"name": "tool1"}, to=sid)
+            await sio.emit("complete", {"answer": "answer1"}, to=sid)
+        else:
+            await sio.emit("complete", {"answer": "answer2"}, to=sid)
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        record1 = await adapter.send(Turn(say="turn1"), index=0, timeout_s=2.0)
+        record2 = await adapter.send(Turn(say="turn2"), index=1, timeout_s=2.0)
+    finally:
+        await adapter.close()
+
+    assert record1.answer == "answer1"
+    assert record1.tools == ["tool1"]
+    assert record1.first_token_ms is not None
+
+    assert record2.answer == "answer2"
+    assert record2.tools == []
+    assert record2.first_token_ms is None

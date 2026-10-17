@@ -45,11 +45,18 @@ class AdapterA(ChatAdapter):
         self._record: TurnRecord | None = None
         self._start_perf: float = 0.0
         self._done: asyncio.Event | None = None  # tạo lại mỗi lượt gửi
+        self._base_url: str = ""
+        self._token: str = ""
 
     async def open(self, base_url: str, customer: "Customer") -> None:
+        self._base_url = base_url
+        self._token = customer.token
+        await self._connect()
+
+    async def _connect(self) -> None:
         await self._sio.connect(
-            base_url,
-            auth={"token": customer.token},
+            self._base_url,
+            auth={"token": self._token},
             transports=["websocket", "polling"],
         )
 
@@ -70,10 +77,21 @@ class AdapterA(ChatAdapter):
             await asyncio.wait_for(self._done.wait(), timeout=timeout_s)
         except asyncio.TimeoutError:
             record.error = "timeout"
+            # Giao thức không có turn id: một sự kiện tới trễ của lượt này
+            # (vd: complete tới sau khi đã timeout) có thể lẫn vào lượt kế
+            # tiếp. Ngắt và nối lại kết nối Socket.IO (cùng base_url/token)
+            # để các sự kiện trễ đó chết theo kết nối cũ trước khi trả về.
+            self._record = None
+            await self._reconnect()
         finally:
             self._record = None
 
         return record
+
+    async def _reconnect(self) -> None:
+        if self._sio.connected:
+            await self._sio.disconnect()
+        await self._connect()
 
     async def close(self) -> None:
         if self._sio.connected:
