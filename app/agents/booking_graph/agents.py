@@ -5,15 +5,13 @@ from langchain_core.tools import BaseTool
 
 from app.agents.booking_graph.context import render_slots
 from app.agents.booking_graph.middleware.layout import STATE_HEADER  # noqa: F401 (re-export)
+from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
+    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT)
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-MAX_TOOL_ROUNDS = 4
-FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho tiệm giúp em nhé ạ."
-
 
 
 def make_subagent_node(
@@ -84,7 +82,7 @@ def make_subagent_node(
                     except Exception as exc:
                         logger.warning("tool_failed",
                                        extra={"name": call["name"], "error": str(exc)})
-                        output = "Tra cứu không được, thử lại giúp em ạ."
+                        output = TOOL_ERROR_TEXT
                 messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
 
         logger.warning("tool_loop_exhausted", extra={"tag": tag})
