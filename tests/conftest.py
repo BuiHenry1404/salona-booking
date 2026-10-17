@@ -61,3 +61,21 @@ async def clean_db(test_db):
         await test_db[name].drop()
     await ensure_indexes(test_db)
     yield
+
+
+@pytest.fixture(autouse=True)
+def memory_checkpointer():
+    """Graph trong test KHÔNG bao giờ ghi checkpoint vào Mongo thật.
+
+    `.env` trỏ `MONGO_DB_NAME` về DB dev; `get_checkpointer()` tự tạo
+    `MongoDBSaver` trên DB đó nếu chưa có gì được đặt. Mỗi test nhận một
+    `InMemorySaver` mới, xong thì trả lại giá trị cũ.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from app.agents import checkpoint
+    previous = checkpoint._checkpointer
+    saver = InMemorySaver()
+    checkpoint.set_checkpointer(saver)
+    yield saver
+    checkpoint.set_checkpointer(previous)
