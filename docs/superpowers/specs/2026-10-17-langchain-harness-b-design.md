@@ -13,7 +13,8 @@ Mongo (`pending_confirmation`). Baseline A (17/10/2026, k=4) cho thấy:
 - Nhóm edge chỉ đạt 28,6%. G-01/G-02/G-03 và `is-affirmative-tan-gau` ghi sai 100%:
   khách từ chối ("dạ ko em", "để chị hỏi thằng Huy đã") mà vẫn bị ghi/huỷ lịch.
 - LLM-22: đổi giờ không kèm ngày thì 2/4 lượt ghi nhầm sang hôm nay.
-- Judge chấm "tự nhiên" 1,24/5, chủ yếu vì lộ tên tool `(parse_time, …)` trong câu.
+- (Điểm judge của baseline không dùng được: benchmark tự gắn tên tool vào transcript
+  gửi judge, bot thật không lộ tên tool — 0/499 câu. Benchmark sửa lỗi này rồi chấm lại.)
 
 Người dùng quyết bám docs LangChain cho cả dự án (`create_agent` + middleware +
 `interrupt` + checkpointer Mongo), chấp nhận cài thêm thư viện, và giao cho
@@ -37,7 +38,7 @@ So với A trên cùng bộ benchmark (k=4, cùng model, cùng ngày chạy):
 - Ghi sai ở G-01, G-02, G-03, `is-affirmative-tan-gau` về **0**.
 - Nhóm edge đạt cao hơn 28,6%; nhóm llm không thấp hơn A quá nhiễu (xem "Cổng đo").
 - Fault vẫn 12/12, không lộ lỗi kỹ thuật.
-- Không lộ tên tool trong câu gửi khách.
+- Điểm judge (sau khi benchmark sửa) không thấp hơn A.
 - Code agent đọc được bằng docs LangChain: mỗi luật một middleware, test riêng được.
 
 ## Không làm
@@ -141,10 +142,9 @@ Mỗi mốc: app chạy được, `pytest` xanh, commit có tag `harness-b/m<N>`
 ### M4: guard và giới hạn thành middleware
 
 - `guard` / `rewrite` / `phrase` thành middleware `after_agent` (thứ tự và luật giữ
-  nguyên), thêm luật: **xoá/viết lại câu lộ tên tool** (`parse_time`,
-  `propose_appointment`, … hoặc ngoặc chứa tên tool).
+  nguyên). Thêm luật guard chặn câu lộ tên tool (phòng ngừa; A hiện không lộ).
 - Retry model có giới hạn và timeout LLM (sửa A-04), câu báo lỗi tiếng Việt như A.
-- **Cổng đo M4:** như M1, cộng vi phạm luật `tool_name_leak` = 0.
+- **Cổng đo M4:** như M1, cộng vi phạm luật `tool_name_leak` = 0 (A cũng phải 0).
 
 ### M5: định tuyến
 
@@ -160,6 +160,11 @@ Làm trên `bench/harness-benchmark` trước khi đo B:
 1. Hoàn tất review cuối nhánh benchmark (đang dở) và sửa các lỗi nó tìm ra.
 2. Sửa kỳ vọng bất khả thi của `LLM-11`.
 3. Thêm luật văn bản `tool_name_leak` (áp cho mọi ref, kể cả A).
+4. Sửa các lỗi chấm điểm review cuối tìm ra (transcript gửi judge gắn tên tool; ghi sai
+   đếm cả lần không ghi; `behavior_match` dùng `before` của ref gốc; gộp run theo tên ref).
+   Chấm lại baseline A từ dữ liệu đã lưu.
+5. Checkpointer của B phải nằm trong `MONGO_DB_NAME` của ref (không dùng DB mặc định
+   `checkpointing_db`), để benchmark cô lập và dọn được.
 
 Lịch đo (mỗi lần đều chạy lại A cạnh B, `--refs a,b` xen kẽ):
 
