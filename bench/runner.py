@@ -32,8 +32,15 @@ from bench.dbread import snapshot
 from bench.judge import judge, render_transcript
 from bench.llm import make_client
 from bench.proxy import _FAULT_MODES, FaultProxy
-from bench.scenario import VN_TZ, Scenario, Turn, load_scenarios, resolve_at
-from bench.score import RunScore, check_precondition, score_run
+from bench.scenario import (
+    VN_TZ,
+    Scenario,
+    Turn,
+    load_scenarios,
+    resolve_at,
+    scenario_fingerprint,
+)
+from bench.score import RunScore, check_precondition, finalize_score, score_run
 from bench.seed import Seeder, ensure_admin
 from bench.simulate import SimCustomer
 from bench.tokens import fetch_tokens, langfuse_configured
@@ -338,21 +345,7 @@ async def run_one(
 
     after = await asyncio.to_thread(snapshot, settings.mongo_uri, ws.db_name)
     score: RunScore = score_run(scenario, records, before, after, customer.id, now_vn)
-    # score_run chỉ thấy các lượt đã gửi; lượt có tiền đề sai không được gửi
-    # nên tự đánh dấu không hợp lệ ở đây (cùng định dạng `precondition@<i>`).
-    if stop_reason and stop_reason.startswith("precondition@") and score.valid:
-        score = dataclasses.replace(
-            score, valid=False, passed=False, invalid_reason=stop_reason
-        )
-    elif stop_reason and stop_reason.startswith("adapter_open_failed"):
-        # Không mở được kết nối = không lượt nào chạy; kịch bản kiểu "từ chối"
-        # (booked: []) sẽ khớp kỳ vọng một cách giả — ép trượt (vẫn hợp lệ).
-        score = dataclasses.replace(score, passed=False)
-    elif scenario.kind == "simulated" and not records:
-        # Khách giả lập không nói câu nào (lỗi model / DONE ngay) — không đo được gì.
-        score = dataclasses.replace(
-            score, valid=False, passed=False, invalid_reason="sim_no_turns"
-        )
+    score = finalize_score(score, scenario.kind, len(records), stop_reason)
 
     judge_result = None
     if judge_on and llm_client is not None and score.valid and records:
@@ -362,6 +355,7 @@ async def run_one(
         "scenario_id": scenario.id,
         "kind": scenario.kind,
         "title": scenario.title,
+        "scenario_fingerprint": scenario_fingerprint(scenario),
         "ref": rr.spec.ref,
         "sha": ws.sha,
         "adapter": rr.spec.adapter,

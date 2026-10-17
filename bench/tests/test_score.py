@@ -411,3 +411,16 @@ def test_behavior_match_uses_each_refs_own_before():
     cand = [_turn_record(0, tools=["list_my_appointments"], db_after=seed_b)]
 
     assert behavior_match(base, cand, base_before=seed_a, cand_before=seed_b) == [True]
+
+
+def test_finalize_score_applies_stop_reasons():
+    from bench.score import finalize_score
+
+    ok = RunScore(passed=True, valid=True, invalid_reason=None, wrong_writes=[],
+                  violations=[], turns_used=1)
+    pre = finalize_score(ok, "scripted", 1, "precondition@1")
+    assert (pre.valid, pre.passed, pre.invalid_reason) == (False, False, "precondition@1")
+    assert finalize_score(ok, "scripted", 0, "adapter_open_failed: x").passed is False
+    sim = finalize_score(ok, "simulated", 0, None)
+    assert (sim.valid, sim.invalid_reason) == (False, "sim_no_turns")
+    assert finalize_score(ok, "scripted", 1, None) == ok

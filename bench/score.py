@@ -10,6 +10,7 @@ output thật).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -325,6 +326,28 @@ def score_run(
         turns_used=turns_used,
         mismatches=mismatches,
     )
+
+
+def finalize_score(
+    score: RunScore, kind: str, n_records: int, stop_reason: str | None
+) -> RunScore:
+    """Điều chỉnh sau `score_run` theo lý do runner dừng kịch bản (dùng chung
+    cho runner và `bench rescore`):
+
+    - `precondition@<i>`: lượt có tiền đề sai không được gửi, `score_run` không
+      thấy nó → không hợp lệ.
+    - `adapter_open_failed`: không lượt nào chạy; kịch bản kiểu "từ chối"
+      (booked: []) sẽ khớp giả → ép trượt (vẫn hợp lệ).
+    - simulated mà không có lượt nào (lỗi model / DONE ngay) → không hợp lệ."""
+    if stop_reason and stop_reason.startswith("precondition@") and score.valid:
+        return dataclasses.replace(score, valid=False, passed=False, invalid_reason=stop_reason)
+    if stop_reason and stop_reason.startswith("adapter_open_failed"):
+        return dataclasses.replace(score, passed=False)
+    if kind == "simulated" and n_records == 0:
+        return dataclasses.replace(
+            score, valid=False, passed=False, invalid_reason="sim_no_turns"
+        )
+    return score
 
 
 def pass_hat_k(results: list[bool], k: int) -> bool:

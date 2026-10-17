@@ -174,3 +174,18 @@ def test_resolve_at():
     resolved = resolve_at(spec, now_vn)
 
     assert resolved == datetime(2026, 10, 18, 9, 30, tzinfo=VN_TZ)
+
+
+def test_scenario_fingerprint_ignores_expect_but_not_world():
+    import dataclasses
+
+    from bench.scenario import Expect, ExpectAppt, Scenario, Setup, SimGoal, scenario_fingerprint
+
+    base = Scenario(
+        id="x", title="t", kind="simulated", tags=("llm",), setup=Setup(), turns=(),
+        sim=SimGoal(goal="g", persona="p"), expect=Expect(),
+    )
+    tighter = dataclasses.replace(base, expect=Expect(booked=(ExpectAppt("tomorrow", "11:00"),)))
+    assert scenario_fingerprint(base) == scenario_fingerprint(tighter)
+    new_persona = dataclasses.replace(base, sim=SimGoal(goal="g", persona="p2"))
+    assert scenario_fingerprint(base) != scenario_fingerprint(new_persona)

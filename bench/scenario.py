@@ -8,6 +8,9 @@ mục tiêu cho khách giả lập (`SimGoal`, kịch bản "simulated"), và k�
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -214,3 +217,19 @@ def resolve_at(spec: ApptSpec | ExpectAppt, now_vn: datetime) -> datetime:
     day = resolve_day(spec.day, now_vn)
     hour, minute = (int(x) for x in spec.time.split(":"))
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=VN_TZ)
+
+
+def scenario_fingerprint(scenario: Scenario) -> str:
+    """Băm phần "thế giới" của kịch bản — kind, setup, lượt khách, mục tiêu khách
+    giả lập — KHÔNG gồm `expect`/title/tags. Hai lần chạy cùng fingerprint thì
+    khách nói và DB ban đầu như nhau, nên chấm lại lần chạy cũ theo `expect`
+    mới là hợp lệ (`bench rescore`); khác fingerprint thì lần chạy cũ là
+    `stale_scenario`."""
+    world = {
+        "kind": scenario.kind,
+        "setup": dataclasses.asdict(scenario.setup),
+        "turns": [dataclasses.asdict(t) for t in scenario.turns],
+        "sim": dataclasses.asdict(scenario.sim) if scenario.sim is not None else None,
+    }
+    raw = json.dumps(world, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
