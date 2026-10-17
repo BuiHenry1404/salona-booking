@@ -13,4 +13,6 @@ sim:
   max_turns: 4
 expect:
   others_unchanged: true
-  booked: []  # persona không có ý định đặt lịch (I7)
+  # Không kiểm lịch: persona được phép tự chọn giờ mở cửa sớm nhất rồi chốt
+  # (khách đồng ý rõ ràng thì ghi lịch là đúng). Từng đặt `[]` ở I7 là sai.
+  booked: null
