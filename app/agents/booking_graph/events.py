@@ -135,21 +135,18 @@ _ACTIVE_TURNS: Dict[str, asyncio.Task] = {}
 SUPERSEDE_WAIT_SECONDS = 2.0
 
 
-async def _supersede(user_id: str) -> Optional[asyncio.Task]:
-    """Lượt mới thay lượt cũ còn chạy của cùng khách (Azure treo, khách nhắn lại).
+async def _supersede(user_id: str, me: asyncio.Task,
+                     previous: Optional[asyncio.Task]) -> None:
+    """Huỷ lượt cũ còn chạy của cùng khách và chờ nó dừng (tối đa 2 giây — quá
+    thì chạy tiếp, không để khách chờ theo một lượt đã treo).
 
-    Hai lượt chạy chồng trên một thread là lượt cũ ghi checkpoint đè lên lượt
-    mới. Huỷ lượt cũ, chờ nó dừng (tối đa 2 giây — quá thì chạy tiếp, không để
-    khách chờ theo một lượt đã treo), rồi đăng ký lượt này.
+    Lượt này đã được ĐĂNG KÝ trước khi gọi hàm này: lượt thứ ba tới trong lúc
+    ta còn chờ sẽ huỷ ta chứ không huỷ lại lượt đầu, nên không bao giờ có hai
+    lượt cùng chạy trên một thread.
     """
-    me = asyncio.current_task()
-    previous = _ACTIVE_TURNS.get(user_id)
     if previous is not None and previous is not me and not previous.done():
         previous.cancel()
         await asyncio.wait({previous}, timeout=SUPERSEDE_WAIT_SECONDS)
-    if me is not None:
-        _ACTIVE_TURNS[user_id] = me
-    return me
 
 
 async def run_turn(
@@ -163,8 +160,12 @@ async def run_turn(
     Mỗi khách chỉ một lượt chạy: lượt mới huỷ lượt cũ còn treo (`_supersede`).
     """
     user_id = str(user.id)
-    me = await _supersede(user_id)
+    me = asyncio.current_task()
+    previous = _ACTIVE_TURNS.get(user_id)
+    if me is not None:
+        _ACTIVE_TURNS[user_id] = me          # đăng ký TRƯỚC khi huỷ/chờ lượt cũ
     try:
+        await _supersede(user_id, me, previous)
         async for event in _run_turn(db, user, question):
             yield event
     except asyncio.CancelledError:
@@ -207,6 +208,9 @@ async def _run_turn(
         turn_input = {
             "messages": [stamp(HumanMessage(content=question), asked_at)],
             **fresh_turn_fields(context, question),
+            # Mốc "bây giờ" của cả lượt cho cửa sổ lịch sử — như A, tính một lần
+            # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
+            "asked_at": asked_at,
         }
 
         async for raw in graph.astream_events(turn_input, config=config, version="v2"):
@@ -218,10 +222,17 @@ async def _run_turn(
         if answer:
             last = (values.get("messages") or [None])[-1]
             answered_at = stamped_at(last) if isinstance(last, AIMessage) else None
-            await conversations.append(user_id, "user", question, created_at=asked_at)
-            await conversations.append(user_id, "assistant", answer,
-                                       source=values.get("answer_source", "llm"),
-                                       created_at=answered_at or now_ms())
+
+            async def persist():
+                await conversations.append(user_id, "user", question, created_at=asked_at)
+                await conversations.append(user_id, "assistant", answer,
+                                           source=values.get("answer_source", "llm"),
+                                           created_at=answered_at or now_ms())
+
+            # `record` đã ghi câu đáp vào thread: nhật ký phải ghi CẢ CẶP. Bị
+            # huỷ (lượt mới thay) giữa hai lần ghi thì `conversations` có câu
+            # khách lẻ — shield để cặp ghi xong dù lượt này đã bị huỷ.
+            await asyncio.shield(asyncio.ensure_future(persist()))
 
         yield AgentEvent("complete", {"answer": answer})
 

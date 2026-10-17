@@ -109,6 +109,7 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
             # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
             # bị gửi lại nguyên văn mỗi lượt (F2).
             "history_after": state.get("history_after"),
+            "asked_at": state.get("asked_at"),
         })
         messages = out.get("messages") or []
         reply = messages[-1] if messages else None

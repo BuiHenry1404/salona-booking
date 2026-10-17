@@ -27,11 +27,37 @@ from app.core.config import settings
 _checkpointer: Optional[BaseCheckpointSaver] = None
 
 
+CHECKPOINT_COLLECTIONS = ("checkpoints", "checkpoint_writes")
+
+
+def _sync_ttl(client: MongoClient, ttl: int) -> None:
+    """Đổi `CHECKPOINT_TTL_DAYS` thì sửa index TTL đang có bằng `collMod`.
+
+    Thư viện (0.5.1) so khoá index list với tuple nên luôn gọi `create_index`;
+    cùng TTL thì vô hại, khác TTL thì Mongo ném "equivalent index already exists
+    with different options" — ngay trong lifespan fail-hard, app không lên.
+    """
+    db = client[settings.mongo_db_name]
+    existing = set(db.list_collection_names())
+    for name in CHECKPOINT_COLLECTIONS:
+        if name not in existing:
+            continue
+        for index in db[name].list_indexes():
+            if (dict(index["key"]) == {"created_at": 1}
+                    and "expireAfterSeconds" in index
+                    and index["expireAfterSeconds"] != ttl):
+                db.command("collMod", name,
+                           index={"keyPattern": {"created_at": 1}, "expireAfterSeconds": ttl})
+
+
 def make_checkpointer(client: Optional[MongoClient] = None) -> MongoDBSaver:
+    client = client or MongoClient(str(settings.mongo_uri), tz_aware=True)
+    ttl = settings.checkpoint_ttl_days * 86400
+    _sync_ttl(client, ttl)
     return MongoDBSaver(
-        client or MongoClient(str(settings.mongo_uri), tz_aware=True),
+        client,
         db_name=settings.mongo_db_name,
-        ttl=settings.checkpoint_ttl_days * 86400,
+        ttl=ttl,
         serde=JsonPlusSerializer(
             allowed_msgpack_modules=[("app.models.conversation", "ConversationSlots")]
         ),

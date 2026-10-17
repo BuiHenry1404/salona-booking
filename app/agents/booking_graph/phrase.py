@@ -27,7 +27,8 @@ def make_phrase_node():
         system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
                                       address=fact.get("address") or "anh chị")
         # Lịch sử cắt đúng như agent (tin đã nén không gửi lại) — xem history.py.
-        history = model_history(state["messages"][:-1], after=state.get("history_after"))
+        history = model_history(state["messages"][:-1], after=state.get("history_after"),
+                                now=state.get("asked_at"))
         question = state["messages"][-1:]
         # ConversationState đứng NGAY SAU system, cùng vị trí với agents.py — không thì
         # đúng lượt chốt lịch lại là lượt duy nhất "quên" cả mạch chuyện đã

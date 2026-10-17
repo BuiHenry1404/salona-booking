@@ -16,7 +16,7 @@ from app.core.clock import TZ, now_ms
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
-from tests.fakes import scripted, tool_call
+from tests.fakes import Hang, scripted, tool_call
 
 
 @pytest.fixture
@@ -343,3 +343,73 @@ async def test_turns_of_two_users_do_not_cancel_each_other(test_db, user, models
         hung.cancel()
         await asyncio.wait({hung}, timeout=1)
     assert events._ACTIVE_TURNS == {}
+
+
+async def test_three_quick_turns_only_the_newest_runs_and_the_old_ones_log(
+        test_db, user, models, monkeypatch):
+    """Lượt 3 tới khi lượt 1 còn đang dừng: lượt 3 phải huỷ lượt 2 (đã đăng ký),
+    không huỷ lại lượt 1 rồi chạy song song với lượt 2."""
+    import asyncio
+    logged = []
+    monkeypatch.setattr(events.logger, "info", lambda msg, **kw: logged.append(msg))
+    models.sup.replies += routes("social", "social", "social")
+    # Lượt 2 bị huỷ ngay khi còn chờ lượt 1 dừng — không bao giờ tới model.
+    models.agent.replies += [Hang(3600), AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
+
+    t1 = asyncio.create_task(turn(test_db, user, "q1"))
+    await _wait_until(lambda: len(models.agent.calls) == 1)
+    t2 = asyncio.create_task(turn(test_db, user, "q2"))
+    await asyncio.sleep(0)                       # t2 đăng ký và đang chờ t1 dừng
+    t3 = asyncio.create_task(turn(test_db, user, "q3"))
+
+    done = await asyncio.wait_for(t3, timeout=5)
+    await asyncio.wait({t1, t2}, timeout=1)
+    assert done[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert t1.cancelled() and t2.cancelled()
+    assert logged.count("turn_superseded") == 2
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["q3", "Dạ chị Lan cần gì cứ nhắn em nhé."]
+    assert len(models.agent.calls) == 2                       # chỉ lượt 1 và lượt 3
+    assert events._ACTIVE_TURNS == {}
+
+
+async def test_cancel_after_record_still_stores_the_whole_pair(test_db, user, models, monkeypatch):
+    """`record` đã ghi câu đáp vào thread; bị huỷ giữa hai lần ghi nhật ký thì
+    `conversations` vẫn phải có cả cặp, không có câu khách lẻ."""
+    import asyncio
+    models.sup.replies += routes("social")
+    models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ.")]
+    real_append = ConversationService.append
+    holder = {}
+
+    async def slow_append(self, user_id, role, *a, **kw):
+        await real_append(self, user_id, role, *a, **kw)
+        if role == "user":
+            holder["task"].cancel()              # lượt mới thay đúng lúc này
+            await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(ConversationService, "append", slow_append)
+    holder["task"] = asyncio.create_task(turn(test_db, user, "chào em"))
+    await asyncio.wait({holder["task"]}, timeout=2)
+    await asyncio.sleep(0.2)
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["chào em", "Dạ em chào chị Lan ạ."]
+
+
+async def test_window_now_is_the_turn_time_not_each_model_call():
+    """Cửa sổ lịch sử tính theo mốc của lượt (`asked_at`), như A tính một lần
+    lúc nạp bối cảnh — không theo đồng hồ ở từng lần gọi model."""
+    from app.agents.booking_graph.agents import build_agent, make_agent_node
+    from app.agents.booking_graph.history import stamp
+    from app.agents.booking_graph.middleware.history import HistoryWindowMiddleware
+    asked = datetime(2030, 1, 2, 0, 5, tzinfo=TZ)
+    msgs = [stamp(HumanMessage("22h"), datetime(2030, 1, 1, 22, 0, tzinfo=TZ)),
+            stamp(AIMessage("đáp 22h"), datetime(2030, 1, 1, 22, 1, tzinfo=TZ)),
+            stamp(HumanMessage("23h50"), datetime(2030, 1, 1, 23, 50, tzinfo=TZ)),
+            stamp(AIMessage("đáp 23h50"), datetime(2030, 1, 1, 23, 51, tzinfo=TZ)),
+            HumanMessage("q")]
+    model = scripted([AIMessage("Dạ.")])
+    node = make_agent_node(build_agent("p", [], model=model,
+                                       extra_middleware=[HistoryWindowMiddleware()]))
+    await node({"messages": msgs, "context_block": "CTX", "asked_at": asked})
+    assert contents(model.calls[0]) == ["p", "23h50", "đáp 23h50", "CTX", "q"]

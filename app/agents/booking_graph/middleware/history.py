@@ -20,6 +20,7 @@ from app.agents.booking_graph.history import model_history
 
 class HistoryState(AgentState):
     history_after: NotRequired[Optional[datetime]]
+    asked_at: NotRequired[Optional[datetime]]
 
 
 class HistoryWindowMiddleware(AgentMiddleware):
@@ -37,5 +38,6 @@ class HistoryWindowMiddleware(AgentMiddleware):
         if last_human is None:
             return await handler(request)
         history = model_history(messages[:last_human],
-                                after=request.state.get("history_after"))
+                                after=request.state.get("history_after"),
+                                now=request.state.get("asked_at"))
         return await handler(request.override(messages=[*history, *messages[last_human:]]))

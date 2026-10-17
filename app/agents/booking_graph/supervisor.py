@@ -30,7 +30,8 @@ async def supervise(state: GraphState) -> dict:
     # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:
     # tin đã nén hay của hôm qua không được kéo định tuyến.
     *earlier, question = state["messages"]
-    window = model_history(earlier, after=state.get("history_after"))
+    window = model_history(earlier, after=state.get("history_after"),
+                           now=state.get("asked_at"))
     recent = [*window, question][-SUPERVISOR_HISTORY_TURNS:]
 
     reply = await model.ainvoke([SystemMessage(content=SUPERVISOR_PROMPT), *recent])

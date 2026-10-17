@@ -117,3 +117,17 @@ def test_lifespan_installs_a_checkpointer_in_the_app_db_and_forgets_it_on_shutdo
 def test_tests_get_an_in_memory_checkpointer(memory_checkpointer):
     from app.agents.checkpoint import get_checkpointer
     assert get_checkpointer() is memory_checkpointer
+
+
+def test_changing_the_ttl_updates_the_existing_index_instead_of_crashing(monkeypatch, sync_client):
+    """Index TTL cũ (7 ngày) đã có; đổi CHECKPOINT_TTL_DAYS thì khởi động không
+    được nổ "equivalent index already exists with different options"."""
+    from app.agents.checkpoint import make_checkpointer
+    monkeypatch.setattr(settings, "mongo_db_name", TEST_DB_NAME)
+    make_checkpointer(sync_client)                       # tạo index với TTL mặc định
+    monkeypatch.setattr(settings, "checkpoint_ttl_days", 3)
+    saver = make_checkpointer(sync_client)
+    for collection in (saver.checkpoint_collection, saver.writes_collection):
+        ttl = [i["expireAfterSeconds"] for i in collection.index_information().values()
+               if "expireAfterSeconds" in i]
+        assert ttl == [3 * 86400]
