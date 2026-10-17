@@ -9,6 +9,7 @@ bằng venv của chính worktree đó) — không `import app`.
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 from dataclasses import dataclass
 from datetime import datetime
@@ -43,7 +44,7 @@ async def ensure_admin(ws: RefWorkspace) -> None:
     Idempotent: chạy lại không lỗi nếu tài khoản đã có.
     """
     python = ws.path / ".venv" / "bin" / "python"
-    env = {"PYTHONPATH": str(ws.path)}
+    env = {**os.environ, "PYTHONPATH": str(ws.path)}
 
     proc = await asyncio.create_subprocess_exec(
         str(python),
