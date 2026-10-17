@@ -1,0 +1,8 @@
+anthropic
+httpx
+python-socketio[asyncio_client]
+aiohttp
+pymongo
+pyyaml
+pytest
+pytest-asyncio

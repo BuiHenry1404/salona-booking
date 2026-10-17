@@ -149,3 +149,9 @@ frontend/dist/
 baseline-*.txt
 after-*.txt
 chat_transcript.txt
+
+# Benchmark hộp đen (bench/) — khoá, venv riêng, và kết quả chạy không commit.
+bench/.env
+bench/.venv/
+bench/results/
+bench/.worktrees/
