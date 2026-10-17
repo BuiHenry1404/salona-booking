@@ -74,6 +74,28 @@ async def test_start_failure_is_reported_not_raised(tmp_path, monkeypatch):
     assert "boom" in ws.error
 
 
+@pytest.mark.asyncio
+async def test_is_alive_tracks_server_process(tmp_path):
+    """I2: runner dùng is_alive()/log_tail() để phát hiện server chết giữa chừng."""
+    settings = BenchSettings(repo_root=Path(".").resolve(), worktrees_dir=tmp_path / "wt")
+    ws = RefWorkspace(settings, ref="HEAD", port=8199, run_id="t2", azure_endpoint=None)
+    ws.path = tmp_path / "ws"
+    ws.path.mkdir()
+    ws.log_path = ws.path / "bench_server.log"
+    assert ws.is_alive() is False  # chưa start
+
+    ws._process = subprocess.Popen(
+        ["python3", "-c", "print('dying'); import time; time.sleep(0.2)"],
+        stdout=open(ws.log_path, "wb"),
+        stderr=subprocess.STDOUT,
+    )
+    assert ws.is_alive() is True
+    ws._process.wait(5)
+    assert ws.is_alive() is False
+    assert "dying" in ws.log_tail()
+    await ws.stop()
+
+
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_start_real_ref(tmp_path):

@@ -262,6 +262,14 @@ class RefWorkspace:
                 pass
             self._log_file = None
 
+    def is_alive(self) -> bool:
+        """Process server còn chạy không (False nếu chưa start hoặc đã chết)."""
+        return self._process is not None and self._process.poll() is None
+
+    def log_tail(self, n: int = 50) -> str:
+        """`n` dòng cuối log server — dùng khi server chết giữa chừng."""
+        return _tail_lines(self.log_path, n)
+
     async def stop(self) -> None:
         """Dừng server (nếu đang chạy) sạch sẽ, không để lại process."""
         if self._process is not None and self._process.poll() is None:

@@ -37,8 +37,16 @@ from bench.simulate import SimCustomer
 from bench.tokens import fetch_tokens, langfuse_configured
 from bench.workspace import RefWorkspace
 
-# Langfuse ghi trace bất đồng bộ — chờ một lúc trước khi đọc token.
+# Langfuse ghi trace bất đồng bộ — chờ một lúc trước khi đọc token, rồi thử
+# lại các lần chạy chưa có trace (test monkeypatch các hằng này về 0).
 _LANGFUSE_SETTLE_S = 15.0
+_TOKEN_RETRIES = 3
+_TOKEN_RETRY_BACKOFF_S = 15.0
+
+# Khoá .env không phải bí mật — được ghi vào meta có chủ đích.
+_NON_SECRET_KEYS = {"AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_MODEL", "AZURE_OPENAI_API_VERSION"}
+_SECRET_MARKERS = ("KEY", "SECRET", "TOKEN", "PASSWORD")
+_MIN_SECRET_LEN = 6
 
 
 @dataclass(frozen=True)
@@ -129,11 +137,47 @@ def _to_jsonable(obj: Any) -> Any:
     return obj
 
 
-def _write_json(path: Path, data: Any) -> None:
+def secret_values(env_path: Path, settings: BenchSettings | None = None) -> list[str]:
+    """Giá trị bí mật cần che khi ghi JSON: mọi `AZURE_OPENAI_*` (trừ tên
+    deployment/model/version) và mọi khoá có KEY/SECRET/TOKEN/PASSWORD trong
+    `.env` gốc, cộng khoá Foundry/Langfuse của benchmark."""
+    values: list[str] = []
+    try:
+        env = _parse_env_file(env_path)
+    except OSError:
+        env = {}
+    for key, value in env.items():
+        upper = key.upper()
+        if upper in _NON_SECRET_KEYS:
+            continue
+        if upper.startswith("AZURE_OPENAI_") or any(m in upper for m in _SECRET_MARKERS):
+            values.append(value)
+    if settings is not None:
+        values += [settings.foundry_api_key or "", settings.langfuse_secret_key or ""]
+    # Dài trước để giá trị chứa giá trị khác được che trọn.
+    return sorted({v for v in values if len(v) >= _MIN_SECRET_LEN}, key=len, reverse=True)
+
+
+def redact(obj: Any, secrets_: list[str]) -> Any:
+    """Thay mọi chuỗi bí mật bằng `***` trong cây JSON (sau `_to_jsonable`)."""
+    if not secrets_:
+        return obj
+    if isinstance(obj, str):
+        for value in secrets_:
+            if value in obj:
+                obj = obj.replace(value, "***")
+        return obj
+    if isinstance(obj, dict):
+        return {k: redact(v, secrets_) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact(v, secrets_) for v in obj]
+    return obj
+
+
+def _write_json(path: Path, data: Any, secrets_: list[str] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(_to_jsonable(data), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    jsonable = redact(_to_jsonable(data), secrets_ or [])
+    path.write_text(json.dumps(jsonable, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _exc_text(exc: BaseException) -> str:
@@ -201,9 +245,12 @@ async def _play_turn(
 
     record.db_after = await asyncio.to_thread(snapshot, settings.mongo_uri, rr.ws.db_name)
 
-    # R8: timeout ở lượt không khai báo fault → dừng kịch bản.
-    if stop is None and (record.error or "").startswith("timeout") and turn.fault is None:
-        stop = f"timeout@{index}"
+    # R8 + R11: lỗi (timeout, error, rate_limited) ở lượt không khai báo fault
+    # → dừng kịch bản ngay, lần chạy vẫn hợp lệ và score_run chấm trượt. Không
+    # để lượt sau "biến" lỗi này thành tiền đề sai (không hợp lệ).
+    if stop is None and record.error is not None and turn.fault is None:
+        kind = "timeout" if record.error.startswith("timeout") else "error"
+        stop = f"{kind}@{index}"
     return record, stop
 
 
@@ -275,6 +322,15 @@ async def run_one(
     if stop_reason and stop_reason.startswith("precondition@") and score.valid:
         score = dataclasses.replace(
             score, valid=False, passed=False, invalid_reason=stop_reason
+        )
+    elif stop_reason and stop_reason.startswith("adapter_open_failed"):
+        # Không mở được kết nối = không lượt nào chạy; kịch bản kiểu "từ chối"
+        # (booked: []) sẽ khớp kỳ vọng một cách giả — ép trượt (vẫn hợp lệ).
+        score = dataclasses.replace(score, passed=False)
+    elif scenario.kind == "simulated" and not records:
+        # Khách giả lập không nói câu nào (lỗi model / DONE ngay) — không đo được gì.
+        score = dataclasses.replace(
+            score, valid=False, passed=False, invalid_reason="sim_no_turns"
         )
 
     judge_result = None
@@ -445,6 +501,7 @@ async def run_bench(
         "rulings": [],
     }
 
+    secrets_ = secret_values(root_env, settings)
     llm_client = make_client(settings) if creds else None
     pending_tokens: list[tuple[Path, str, datetime]] = []
     try:
@@ -452,12 +509,24 @@ async def run_bench(
             *(_bring_up(rr, settings, upstream) for rr in ref_runs if rr.ws is not None)
         )
         meta["refs"] = [_ref_meta(rr) for rr in ref_runs]
-        _write_json(run_dir / "meta.json", meta)
+        _write_json(run_dir / "meta.json", meta, secrets_)
 
         ready = [rr for rr in ref_runs if rr.status == "ready"]
         for attempt in range(k):
+            # Xoay thứ tự ref mỗi attempt để không ref nào luôn chạy trước.
+            shift = attempt % len(ready) if ready else 0
+            order = ready[shift:] + ready[:shift]
             for sc in runnable:
-                for rr in ready:
+                for rr in order:
+                    if rr.status != "ready":
+                        continue
+                    assert rr.ws is not None
+                    if not rr.ws.is_alive():
+                        rr.status = "crashed"
+                        rr.error = rr.ws.log_tail()
+                        meta["refs"] = [_ref_meta(r) for r in ref_runs]
+                        _write_json(run_dir / "meta.json", meta, secrets_)
+                        continue
                     try:
                         payload = await run_one(
                             rr,
@@ -482,21 +551,14 @@ async def run_bench(
                         }
                     assert rr.ws is not None
                     out = run_dir / "runs" / rr.ws.sha7 / sc.id / f"{attempt}.json"
-                    _write_json(out, payload)
+                    _write_json(out, payload, secrets_)
                     if payload.get("customer_id") and payload.get("started_at"):
                         pending_tokens.append(
                             (out, payload["customer_id"], payload["started_at"])
                         )
 
         if langfuse_configured(settings) and pending_tokens:
-            await asyncio.sleep(_LANGFUSE_SETTLE_S)
-            for out, session_id, since in pending_tokens:
-                tokens = await fetch_tokens(settings, session_id, since)
-                if tokens is None:
-                    continue
-                data = json.loads(out.read_text(encoding="utf-8"))
-                data["tokens"] = tokens
-                _write_json(out, data)
+            await _fill_tokens(settings, pending_tokens, secrets_)
     finally:
         await asyncio.gather(*(_tear_down(rr, keep_db) for rr in ref_runs))
         if llm_client is not None:
@@ -508,6 +570,34 @@ async def run_bench(
         meta["finished_at"] = finished
         meta["vn_date_end"] = finished.date()
         meta["refs"] = [_ref_meta(rr) for rr in ref_runs]
-        _write_json(run_dir / "meta.json", meta)
+        _write_json(run_dir / "meta.json", meta, secrets_)
 
     return run_dir
+
+
+async def _fill_tokens(
+    settings: BenchSettings,
+    pending: list[tuple[Path, str, datetime]],
+    secrets_: list[str],
+) -> None:
+    """Điền `tokens` vào file của từng lần chạy. Lần chạy chưa có trace
+    (`fetch_tokens` → None) được thử lại tối đa `_TOKEN_RETRIES` lần, cách
+    nhau `_TOKEN_RETRY_BACKOFF_S` giây."""
+    await asyncio.sleep(_LANGFUSE_SETTLE_S)
+    remaining = list(pending)
+    for round_ in range(1 + _TOKEN_RETRIES):
+        if round_:
+            await asyncio.sleep(_TOKEN_RETRY_BACKOFF_S)
+        still: list[tuple[Path, str, datetime]] = []
+        for item in remaining:
+            out, session_id, since = item
+            tokens = await fetch_tokens(settings, session_id, since)
+            if tokens is None:
+                still.append(item)
+                continue
+            data = json.loads(out.read_text(encoding="utf-8"))
+            data["tokens"] = tokens
+            _write_json(out, data, secrets_)
+        remaining = still
+        if not remaining:
+            break

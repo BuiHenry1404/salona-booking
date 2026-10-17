@@ -64,3 +64,11 @@ async def test_fetch_tokens_sums_generations(monkeypatch):
 async def test_fetch_tokens_none_on_http_error(monkeypatch):
     _patch_transport(monkeypatch, lambda request: httpx.Response(401, json={}))
     assert await fetch_tokens(_settings(), "user-1", SINCE) is None
+
+
+async def test_fetch_tokens_none_when_no_traces(monkeypatch):
+    _patch_transport(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"data": [], "meta": {"totalPages": 1}}),
+    )
+    assert await fetch_tokens(_settings(), "user-1", SINCE) is None

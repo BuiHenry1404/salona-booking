@@ -74,7 +74,7 @@ async def fetch_tokens(
     """Tổng token của mọi generation trong session `session_id` từ `since`.
 
     Trả `{"input", "output", "total", "generations", "traces"}` hoặc `None`
-    nếu Langfuse không cấu hình / lỗi.
+    nếu Langfuse không cấu hình / lỗi / chưa có trace nào.
     """
     if not langfuse_configured(settings):
         return None
@@ -107,6 +107,11 @@ async def fetch_tokens(
                     total_out += out
                     generations += 1
     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return None
+
+    if not traces:
+        # Chưa có trace nào (Langfuse chưa kịp ghi, hoặc tracing tắt) — không
+        # trả 0 giả; runner thử lại sau.
         return None
 
     return {

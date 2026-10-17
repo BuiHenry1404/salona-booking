@@ -62,6 +62,8 @@ class FakeWorkspace:
     instances: list["FakeWorkspace"] = []
     fail_start: set[str] = set()
     fail_prepare: set[str] = set()
+    # ref -> số lần is_alive() trả True trước khi "chết"
+    dies_after: dict[str, int] = {}
 
     def __init__(self, settings, ref, port, run_id, azure_endpoint):
         self.ref = ref
@@ -76,7 +78,16 @@ class FakeWorkspace:
         self.error = None
         self.stopped = False
         self.dropped = False
+        self.alive_checks = 0
         FakeWorkspace.instances.append(self)
+
+    def is_alive(self):
+        self.alive_checks += 1
+        limit = FakeWorkspace.dies_after.get(self.ref)
+        return limit is None or self.alive_checks <= limit
+
+    def log_tail(self, n=50):
+        return "Traceback ...\nSegfault in uvicorn"
 
     async def prepare(self):
         if self.ref in FakeWorkspace.fail_prepare:
@@ -123,6 +134,7 @@ def fakes(monkeypatch):
     FakeWorkspace.instances = []
     FakeWorkspace.fail_start = set()
     FakeWorkspace.fail_prepare = set()
+    FakeWorkspace.dies_after = {}
     FakeProxy.instances = []
     monkeypatch.setattr(runner, "RefWorkspace", FakeWorkspace)
     monkeypatch.setattr(runner, "FaultProxy", FakeProxy)
@@ -169,10 +181,43 @@ async def test_interleaving_order(tmp_path, fakes):
         judge_on=False,
     )
 
+    # attempt → scenario → ref; thứ tự ref xoay vòng theo attempt (M1).
     assert calls == [
         (0, "s1", "A"), (0, "s1", "B"), (0, "s2", "A"), (0, "s2", "B"),
-        (1, "s1", "A"), (1, "s1", "B"), (1, "s2", "A"), (1, "s2", "B"),
+        (1, "s1", "B"), (1, "s1", "A"), (1, "s2", "B"), (1, "s2", "A"),
     ]
+
+
+async def test_ref_order_rotates_per_attempt(tmp_path, fakes):
+    calls: list[tuple] = []
+    fakes.setattr(runner, "run_one", _recording_run_one(calls))
+    await run_bench(
+        _settings(tmp_path), [RefSpec("A"), RefSpec("B"), RefSpec("C")],
+        [_scenario_file(tmp_path, "s1")], None, k=4, use_proxy=False, judge_on=False,
+    )
+    assert [c[2] for c in calls] == list("ABC" "BCA" "CAB" "ABC")
+
+
+async def test_crashed_ref_is_skipped_for_rest_of_bench(tmp_path, fakes):
+    """I2: server của ref chết giữa chừng → status crashed + log, bỏ qua tiếp."""
+    calls: list[tuple] = []
+    fakes.setattr(runner, "run_one", _recording_run_one(calls))
+    FakeWorkspace.dies_after = {"A": 1}
+
+    run_dir = await run_bench(
+        _settings(tmp_path), [RefSpec("A"), RefSpec("B")],
+        [_scenario_file(tmp_path, "s1"), _scenario_file(tmp_path, "s2")], None,
+        k=2, use_proxy=False, judge_on=False,
+    )
+    assert [c for c in calls if c[2] == "A"] == [(0, "s1", "A")]
+    assert len([c for c in calls if c[2] == "B"]) == 4
+    a = FakeWorkspace.instances[0]
+    assert a.alive_checks == 2  # không kiểm lại sau khi đã đánh dấu crashed
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    by_ref = {r["ref"]: r for r in meta["refs"]}
+    assert by_ref["A"]["status"] == "crashed"
+    assert "Segfault" in by_ref["A"]["error"]
+    assert by_ref["B"]["status"] == "ready"
 
 
 async def test_failed_ref_is_skipped_and_recorded(tmp_path, fakes):
@@ -318,16 +363,18 @@ class FakeSeeder:
 
 
 class ScriptedAdapter:
-    """Trả lời theo danh sách hành vi: str = answer, "TIMEOUT", "RAISE"."""
+    """Trả lời theo danh sách hành vi: str = answer, "TIMEOUT", "RAISE", "ERR"."""
 
     behaviours: list[str] = []
     sent: list[int] = []
+    open_raises = False
 
     def __init__(self):
         self.closed = False
 
     async def open(self, base_url, customer):
-        pass
+        if ScriptedAdapter.open_raises:
+            raise ConnectionRefusedError("server gone")
 
     async def send(self, turn, index, timeout_s):
         ScriptedAdapter.sent.append(index)
@@ -337,6 +384,8 @@ class ScriptedAdapter:
         rec = TurnRecord(index=index, customer_text=turn.say or turn.intent)
         if b == "TIMEOUT":
             rec.error = "timeout"
+        elif b == "ERR":
+            rec.error = "Bạn gửi quá nhiều tin"
         else:
             rec.answer = b
         return rec
@@ -351,6 +400,7 @@ def run_one_env(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "snapshot", lambda uri, db: [])
     monkeypatch.setitem(ADAPTERS, "fake", ScriptedAdapter)
     ScriptedAdapter.sent = []
+    ScriptedAdapter.open_raises = False
     settings = _settings(tmp_path)
     ws = FakeWorkspace(settings, "HEAD", 9100, "r1", None)
     proxy = FakeProxy("https://up", 9101)
@@ -410,6 +460,148 @@ async def test_run_one_precondition_failure_marks_invalid(tmp_path, run_one_env)
     score = payload["score"]
     assert score.valid is False and score.invalid_reason == "precondition@1"
     assert score.passed is False
+
+
+async def test_run_one_open_failure_is_not_passed(tmp_path, run_one_env):
+    """C1: không mở được kết nối → không lượt nào; kịch bản booked: [] không
+    được tính là đạt."""
+    settings, rr, _ = run_one_env
+    ScriptedAdapter.open_raises = True
+    turns = '  - say: "mai 3 giờ chiều"\n  - intent: decline'
+    [sc] = load_scenarios([_scenario_file(tmp_path, "t", turns)])
+    payload = await run_one(rr, sc, 0, settings=settings)
+    assert ScriptedAdapter.sent == []
+    assert payload["stop_reason"].startswith("adapter_open_failed")
+    assert payload["score"].passed is False and payload["score"].valid is True
+
+
+async def test_simulated_with_no_turns_is_invalid(tmp_path, run_one_env, monkeypatch):
+    settings, rr, _ = run_one_env
+
+    class SilentSim:
+        def __init__(self, client, model, goal):
+            pass
+
+        async def next_message(self, turns):
+            return None
+
+    monkeypatch.setattr(runner, "SimCustomer", SilentSim)
+    sim = tmp_path / "sim1.yaml"
+    sim.write_text(SIMULATED, encoding="utf-8")
+    [sc] = load_scenarios([sim])
+    payload = await run_one(rr, sc, 0, settings=settings, llm_client=object())
+    score = payload["score"]
+    assert score.valid is False and score.invalid_reason == "sim_no_turns"
+    assert score.passed is False
+
+
+async def test_error_turn_stops_run_as_failure_not_invalid(tmp_path, run_one_env):
+    """I1: lỗi ở lượt không có fault → dừng ngay, lần chạy hợp lệ nhưng trượt
+    (không để tiền đề của lượt sau biến nó thành không hợp lệ)."""
+    settings, rr, _ = run_one_env
+    ScriptedAdapter.behaviours = ["ERR", "ok"]
+    turns = (
+        '  - say: "mai 3 giờ chiều"\n'
+        '  - intent: decline\n'
+        '    requires_asked: {day: tomorrow, time: "15:00"}'
+    )
+    [sc] = load_scenarios([_scenario_file(tmp_path, "t", turns)])
+    payload = await run_one(rr, sc, 0, settings=settings)
+    assert ScriptedAdapter.sent == [0]
+    assert payload["stop_reason"] == "error@0"
+    assert payload["score"].valid is True and payload["score"].passed is False
+
+
+async def test_error_on_fault_turn_does_not_stop(tmp_path, run_one_env):
+    settings, rr, _ = run_one_env
+    ScriptedAdapter.behaviours = ["ERR", "ok"]
+    turns = '  - say: "một"\n    fault: http500\n  - say: "hai"'
+    [sc] = load_scenarios([_scenario_file(tmp_path, "t", turns)])
+    payload = await run_one(rr, sc, 0, settings=settings)
+    assert ScriptedAdapter.sent == [0, 1]
+    assert payload["stop_reason"] is None and payload["score"].passed is True
+
+
+async def test_secrets_are_redacted_from_meta_and_run_json(tmp_path, fakes):
+    key = "sk-supersecret-azure-key-123"
+    endpoint = "https://secret-res.openai.azure.com"
+    (tmp_path / ".env").write_text(
+        f"AZURE_OPENAI_API_KEY={key}\nAZURE_OPENAI_ENDPOINT={endpoint}\n"
+        "AZURE_OPENAI_DEPLOYMENT=dep1\nLANGFUSE_SECRET_KEY=lf-secret-999\n",
+        encoding="utf-8",
+    )
+
+    async def boom(rr, scenario, attempt, **kw):
+        raise RuntimeError(f"401 from {endpoint} with api-key {key}")
+
+    fakes.setattr(runner, "run_one", boom)
+    FakeWorkspace.fail_start = {"BAD"}
+    orig_start = FakeWorkspace.start
+
+    async def leaky_start(self, timeout_s: float = 90):
+        ok = await orig_start(self, timeout_s)
+        if not ok:
+            self.error = f"crash: key={key} secret=lf-secret-999"
+        return ok
+
+    fakes.setattr(FakeWorkspace, "start", leaky_start)
+    run_dir = await run_bench(
+        _settings(tmp_path), [RefSpec("A"), RefSpec("BAD")],
+        [_scenario_file(tmp_path, "s1")], None, k=1, use_proxy=False, judge_on=False,
+    )
+    texts = [p.read_text(encoding="utf-8") for p in run_dir.rglob("*.json")]
+    assert len(texts) == 2
+    for text in texts:
+        assert key not in text and endpoint not in text and "lf-secret-999" not in text
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert "***" in {r["ref"]: r for r in meta["refs"]}["BAD"]["error"]
+    assert meta["azure_deployment"] == "dep1"  # không phải bí mật, giữ nguyên
+
+
+async def test_tokens_retried_until_traces_appear(tmp_path, fakes):
+    fakes.setattr(runner, "_TOKEN_RETRY_BACKOFF_S", 0)
+    calls: list[str] = []
+    answers = [None, None, {"input": 1, "output": 2, "total": 3, "generations": 1, "traces": 1}]
+
+    async def fake_fetch(settings, session_id, since):
+        calls.append(session_id)
+        return answers[len(calls) - 1] if len(calls) <= len(answers) else None
+
+    async def fake_run_one(rr, scenario, attempt, **kw):
+        return {"scenario_id": scenario.id, "customer_id": "cust9",
+                "started_at": datetime.now(VN_TZ), "tokens": None, "score": None}
+
+    fakes.setattr(runner, "fetch_tokens", fake_fetch)
+    fakes.setattr(runner, "run_one", fake_run_one)
+    settings = _settings(tmp_path, langfuse_host="http://lf", langfuse_public_key="pk",
+                         langfuse_secret_key="sk-langfuse")
+    run_dir = await run_bench(settings, [RefSpec("A")], [_scenario_file(tmp_path, "s1")],
+                              None, k=1, use_proxy=False, judge_on=False)
+    ws = FakeWorkspace.instances[0]
+    data = json.loads((run_dir / "runs" / ws.sha7 / "s1" / "0.json").read_text("utf-8"))
+    assert calls == ["cust9"] * 3
+    assert data["tokens"]["total"] == 3
+
+
+async def test_tokens_give_up_after_retries(tmp_path, fakes):
+    fakes.setattr(runner, "_TOKEN_RETRY_BACKOFF_S", 0)
+    calls: list[str] = []
+
+    async def fake_fetch(settings, session_id, since):
+        calls.append(session_id)
+        return None
+
+    async def fake_run_one(rr, scenario, attempt, **kw):
+        return {"scenario_id": scenario.id, "customer_id": "c1",
+                "started_at": datetime.now(VN_TZ), "tokens": None, "score": None}
+
+    fakes.setattr(runner, "fetch_tokens", fake_fetch)
+    fakes.setattr(runner, "run_one", fake_run_one)
+    settings = _settings(tmp_path, langfuse_host="http://lf", langfuse_public_key="pk",
+                         langfuse_secret_key="sk-langfuse")
+    await run_bench(settings, [RefSpec("A")], [_scenario_file(tmp_path, "s1")],
+                    None, k=1, use_proxy=False, judge_on=False)
+    assert len(calls) == 1 + runner._TOKEN_RETRIES
 
 
 async def test_run_one_payload_serialises(tmp_path, run_one_env):
