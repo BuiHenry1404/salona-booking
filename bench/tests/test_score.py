@@ -155,11 +155,58 @@ def test_text_rules():
     assert TEXT_RULES["clock_colon"](clean) is False
 
 
+def test_register_rule_ignores_harmless_phrases():
+    assert TEXT_RULES["register"]("Dạ chị chú ý giùm em nhé") is False
+    assert TEXT_RULES["register"]("Phòng khám có bác sĩ trực ạ") is False
+    assert TEXT_RULES["register"]("Cô ấy đặt lịch giúp bạn à") is False
+    # Vẫn phải bắt được khi dùng để xưng hô thật.
+    assert TEXT_RULES["register"]("Dạ bác muốn đặt giờ nào ạ?") is True
+
+
+def test_english_rule_is_case_insensitive():
+    assert TEXT_RULES["english"]("MODEL CALL limits EXCEEDED") is True
+    assert TEXT_RULES["english"]("Yêu cầu bị REJECTED rồi ạ") is True
+    assert TEXT_RULES["english"]("Đã vượt LIMIT cho phép ạ") is True
+
+
+def test_fault_turn_error_does_not_fail_run():
+    # R11: lượt có khai báo fault mà lỗi -> không tính trượt vì kịch bản đó
+    # chủ ý tạo lỗi để kiểm tra ứng xử.
+    turn0 = Turn(say="Tôi muốn đặt lịch", fault="llm_down:1")
+    scenario = _scenario(Expect(booked=None), turns=(turn0,))
+    turns = [_turn_record(0, answer="", error="llm_down", db_after=[])]
+
+    result = score_run(scenario, turns, [], [], CUSTOMER_ID, NOW_VN)
+
+    assert result.passed is True
+
+
+def test_non_fault_turn_error_still_fails_run():
+    turn0 = Turn(say="Tôi muốn đặt lịch")
+    scenario = _scenario(Expect(booked=None), turns=(turn0,))
+    turns = [_turn_record(0, answer="", error="timeout", db_after=[])]
+
+    result = score_run(scenario, turns, [], [], CUSTOMER_ID, NOW_VN)
+
+    assert result.passed is False
+
+
 def test_claim_without_write():
     scenario = _scenario(Expect(booked=None))
     before = [_row("1", CUSTOMER_ID, datetime(2026, 10, 18, 9, 0, tzinfo=VN_TZ))]
     # Không có thay đổi gì giữa before và db_after của lượt, nhưng answer nhận đã xong.
     turns = [_turn_record(0, answer="Dạ em đặt xong rồi ạ", db_after=list(before))]
+
+    result = score_run(scenario, turns, before, before, CUSTOMER_ID, NOW_VN)
+
+    assert "claim_without_write@0" in result.violations
+
+
+def test_claim_without_write_flags_uppercase_sentence_start():
+    # Bot thật viết hoa đầu câu: "Xong rồi ạ" (không phải "xong rồi ạ").
+    scenario = _scenario(Expect(booked=None))
+    before = [_row("1", CUSTOMER_ID, datetime(2026, 10, 18, 9, 0, tzinfo=VN_TZ))]
+    turns = [_turn_record(0, answer="Xong rồi ạ", db_after=list(before))]
 
     result = score_run(scenario, turns, before, before, CUSTOMER_ID, NOW_VN)
 
@@ -187,14 +234,40 @@ def test_pass_hat_k_and_aggregate():
         RunScore(False, True, None, ["extra:09:00 18/10"], ["clock_colon@0"], 2),
         RunScore(False, False, "precondition@1", [], [], 1),  # invalid, loại khỏi mẫu số
     ]
+    # Chỉ 2/3 lần hợp lệ, nhưng k=3 -> chưa đủ k lần hợp lệ để kết luận pass^k.
     agg = aggregate(scores, k=3)
 
     assert agg["runs"] == 3
     assert agg["valid_runs"] == 2
     assert agg["pass_rate"] == 0.5
-    assert agg["pass_hat_k_rate"] == 0.0
+    assert agg["pass_hat_k"] is None  # chưa đủ k lần hợp lệ -> không kết luận được
+    assert agg["pass_hat_k_rate"] is None
     assert agg["wrong_writes_total"] == 1
     assert agg["violations_by_rule"] == {"clock_colon": 1}
+
+
+def test_aggregate_pass_hat_k_with_enough_valid_runs():
+    scores = [
+        RunScore(True, True, None, [], [], 1),
+        RunScore(True, True, None, [], [], 1),
+        RunScore(False, False, "precondition@0", [], [], 1),  # invalid, loại khỏi mẫu số
+    ]
+    agg = aggregate(scores, k=2)
+
+    assert agg["valid_runs"] == 2
+    assert agg["pass_hat_k"] is True
+    assert agg["pass_hat_k_rate"] == 1.0
+
+
+def test_aggregate_undeterminable_when_no_valid_runs():
+    scores = [RunScore(False, False, "precondition@0", [], [], 1)]
+    agg = aggregate(scores, k=1)
+
+    assert agg["runs"] == 1
+    assert agg["valid_runs"] == 0
+    assert agg["pass_rate"] is None  # không có lần nào hợp lệ -> không kết luận được
+    assert agg["pass_hat_k"] is None
+    assert agg["pass_hat_k_rate"] is None
 
 
 def test_behavior_match():
@@ -222,3 +295,15 @@ def test_behavior_match():
         _turn_record(1, tools=["cancel_appointment"], db_after=cand[1].db_after),
     ]
     assert behavior_match(base, cand_diff_tools) == [True, False]
+
+
+def test_behavior_match_detects_time_mismatch():
+    # Cùng tools, cùng số lượng thay đổi, nhưng ref A đặt 15:00 còn ref B đặt
+    # 16:00 -> phải phát hiện khác hành vi (không chỉ so số lượng).
+    at_15 = datetime(2026, 10, 18, 15, 0, tzinfo=VN_TZ)
+    at_16 = datetime(2026, 10, 18, 16, 0, tzinfo=VN_TZ)
+
+    base = [_turn_record(0, tools=["propose_appointment"], db_after=[_row("1", "a", at_15)])]
+    cand = [_turn_record(0, tools=["propose_appointment"], db_after=[_row("9", "b", at_16)])]
+
+    assert behavior_match(base, cand, before=[]) == [False]

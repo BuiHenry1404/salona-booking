@@ -21,7 +21,10 @@ from bench.adapters.base import TurnRecord
 from bench.vi_time import mentions
 
 # Câu nhận "đã xong" — nếu DB không đổi ở lượt đó, đó là một lời nói dối.
-_CLAIM_RE = re.compile(r"xong rồi ạ|em (đã )?(đặt|hủy|dời) (xong|rồi)")
+# IGNORECASE: bot thật có thể viết hoa đầu câu ("Xong rồi ạ").
+_CLAIM_RE = re.compile(
+    r"xong rồi ạ|em (đã )?(đặt|hủy|dời) (xong|rồi)", re.IGNORECASE
+)
 
 
 def check_precondition(turn: Turn, prev: TurnRecord | None, now_vn: datetime) -> bool:
@@ -56,7 +59,8 @@ _COMMON_EN_WORDS = {
 
 
 def _english_violation(text: str) -> bool:
-    if "Model call" in text or "limit" in text or "rejected" in text:
+    lowered = text.lower()
+    if "model call" in lowered or "limit" in lowered or "rejected" in lowered:
         return True
     run = 0
     for raw in text.split():
@@ -70,7 +74,11 @@ def _english_violation(text: str) -> bool:
     return False
 
 
-_REGISTER_WORD_RE = re.compile(r"\b(cô|chú|bác)\b", re.IGNORECASE)
+# Loại trừ các cụm vô hại dùng "cô/chú/bác" không phải để xưng hô với khách:
+# "chú ý", "bác sĩ", "cô ấy".
+_REGISTER_WORD_RE = re.compile(
+    r"\b(cô|chú|bác)\b(?!\s+(ý|sĩ|ấy)\b)", re.IGNORECASE
+)
 _REGISTER_CON_RE = re.compile(r"\bcon (xem|đặt|giữ|hỏi)\b", re.IGNORECASE)
 
 
@@ -223,7 +231,16 @@ def score_run(
     if expect.max_turns is not None and turns_used > expect.max_turns:
         expect_satisfied = False
 
-    any_turn_error = any(record.error is not None for record in turns)
+    # R11: lỗi ở lượt có khai báo `fault` trong kịch bản KHÔNG làm trượt (kịch
+    # bản fault chủ ý mong lỗi đó xảy ra); lỗi ở lượt không có fault vẫn trượt.
+    any_turn_error = False
+    for i, record in enumerate(turns):
+        if record.error is None:
+            continue
+        if i < len(scenario.turns) and scenario.turns[i].fault is not None:
+            continue
+        any_turn_error = True
+        break
 
     # --- claim_without_write: nhận "đã xong" nhưng DB không đổi ở lượt đó ---
     for i, record in enumerate(turns):
@@ -273,15 +290,23 @@ def aggregate(scores: list["RunScore"], k: int) -> dict:
     `pass_hat_k_rate` qua nhiều kịch bản.
 
     Lần chạy không hợp lệ (`valid=False`) bị loại khỏi mẫu số của `pass_rate`
-    và `pass_hat_k_rate`, nhưng vẫn được đếm trong `runs` và trong
-    `wrong_writes_total`/`violations_by_rule`.
+    và `pass_hat_k`/`pass_hat_k_rate`, nhưng vẫn được đếm trong `runs` và
+    trong `wrong_writes_total`/`violations_by_rule`. Không bao giờ coi lần
+    chạy không hợp lệ là trượt: khi không đủ dữ liệu để kết luận (không có
+    lần chạy hợp lệ nào, hoặc chưa đủ `k` lần hợp lệ), giá trị trả về là
+    `None` thay vì `False`/`0` (R10).
     """
     runs = len(scores)
     valid_scores = [s for s in scores if s.valid]
     valid_runs = len(valid_scores)
     passed_count = sum(1 for s in valid_scores if s.passed)
-    pass_rate = (passed_count / valid_runs) if valid_runs else 0.0
-    hat_k = pass_hat_k([s.passed for s in valid_scores], k)
+    pass_rate = (passed_count / valid_runs) if valid_runs else None
+
+    hat_k: bool | None
+    if valid_runs < k:
+        hat_k = None
+    else:
+        hat_k = pass_hat_k([s.passed for s in valid_scores], k)
 
     wrong_writes_total = sum(len(s.wrong_writes) for s in scores)
     violations_by_rule: dict[str, int] = {}
@@ -294,7 +319,8 @@ def aggregate(scores: list["RunScore"], k: int) -> dict:
         "runs": runs,
         "valid_runs": valid_runs,
         "pass_rate": pass_rate,
-        "pass_hat_k_rate": float(hat_k),
+        "pass_hat_k": hat_k,
+        "pass_hat_k_rate": (None if hat_k is None else float(hat_k)),
         "wrong_writes_total": wrong_writes_total,
         "violations_by_rule": violations_by_rule,
     }
@@ -302,32 +328,58 @@ def aggregate(scores: list["RunScore"], k: int) -> dict:
 
 def _turn_diff_shape(
     prev_db: list[ApptRow] | None, record: TurnRecord
-) -> tuple[int, int, int] | None:
-    """Hình dạng thay đổi DB của một lượt: (số tạo, số hủy, số khác). None nếu
-    thiếu `db_after`. So theo SỐ LƯỢNG, không theo id/user_id tuyệt đối — hai
-    lần chạy khác nhau (hai ref, hai khách khác nhau) luôn sinh id khác nhau
-    dù hành vi hệt nhau."""
+) -> tuple[tuple, tuple, tuple] | None:
+    """Hình dạng thay đổi DB của một lượt, không phụ thuộc id/user_id tuyệt
+    đối — hai lần chạy khác nhau (hai ref, hai khách khác nhau được seed
+    riêng) luôn sinh id khác nhau dù hành vi hệt nhau. None nếu thiếu
+    `db_after`. Trả về:
+    - `created`/`cancelled`: multiset (đã sắp xếp) các `(HH:MM giờ VN, status, note)`.
+    - `other` (vd: dời giờ): multiset (đã sắp xếp) các
+      `(HH:MM trước, HH:MM sau, status sau)`.
+    """
     if record.db_after is None:
         return None
     changes = diff(prev_db or [], record.db_after)
-    return (len(changes.created), len(changes.cancelled), len(changes.other))
+    created = tuple(
+        sorted((row.start_at.strftime("%H:%M"), row.status, row.note) for row in changes.created)
+    )
+    cancelled = tuple(
+        sorted(
+            (row.start_at.strftime("%H:%M"), row.status, row.note) for row in changes.cancelled
+        )
+    )
+    other = tuple(
+        sorted(
+            (before_row.start_at.strftime("%H:%M"), after_row.start_at.strftime("%H:%M"), after_row.status)
+            for before_row, after_row in changes.other
+        )
+    )
+    return (created, cancelled, other)
 
 
-def behavior_match(base: list[TurnRecord], cand: list[TurnRecord]) -> list[bool]:
+def behavior_match(
+    base: list[TurnRecord],
+    cand: list[TurnRecord],
+    before: list[ApptRow] | None = None,
+) -> list[bool]:
     """So khớp hành vi theo từng lượt giữa hai lần chạy (vd: ref A so với ref
     B trên cùng kịch bản): cùng danh sách `tools` được gọi VÀ cùng hình dạng
-    thay đổi DB (`_turn_diff_shape`) ở lượt đó. Trả về một `bool` cho mỗi
-    lượt chung của hai danh sách (độ dài = min(len(base), len(cand)))."""
+    thay đổi DB (`_turn_diff_shape`: giờ/trạng thái/ghi chú, không phải chỉ số
+    lượng) ở lượt đó. `before` là lần chụp DB trước lượt 0, dùng làm nền cho
+    lượt 0 của CẢ HAI danh sách (mặc định `[]`, giữ hành vi cũ khi không
+    truyền). Trả về một `bool` cho mỗi lượt chung của hai danh sách (độ dài =
+    min(len(base), len(cand)))."""
+    baseline = before if before is not None else []
     n = min(len(base), len(cand))
     result: list[bool] = []
     for i in range(n):
         base_record, cand_record = base[i], cand[i]
         tools_match = base_record.tools == cand_record.tools
         base_shape = _turn_diff_shape(
-            base[i - 1].db_after if i > 0 else [], base_record
+            base[i - 1].db_after if i > 0 else baseline, base_record
         )
         cand_shape = _turn_diff_shape(
-            cand[i - 1].db_after if i > 0 else [], cand_record
+            cand[i - 1].db_after if i > 0 else baseline, cand_record
         )
         result.append(tools_match and base_shape == cand_shape)
     return result
