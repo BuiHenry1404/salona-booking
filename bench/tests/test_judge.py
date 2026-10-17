@@ -96,7 +96,7 @@ async def test_judge_failure_yields_none_on_api_error():
     assert result is None
 
 
-def test_render_transcript_formats_turns_with_tools():
+def test_render_transcript_never_shows_tool_names():
     from bench.adapters.base import TurnRecord
 
     turns = [
@@ -113,7 +113,10 @@ def test_render_transcript_formats_turns_with_tools():
 
     assert "Khách: cho em hỏi giờ mở cửa" in rendered
     assert "AI: dạ 8h-19h ạ" in rendered
-    assert "AI: dạ em đặt xong rồi ạ (propose_appointment)" in rendered
+    # C1: tool chỉ là sự kiện nội bộ, khách không thấy — không được lọt vào
+    # transcript gửi judge hay khách giả lập.
+    assert "AI: dạ em đặt xong rồi ạ\n" in rendered
+    assert "propose_appointment" not in rendered
 
 
 def test_render_transcript_empty_list():

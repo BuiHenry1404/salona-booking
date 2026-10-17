@@ -71,12 +71,16 @@ def _output_schema() -> dict:
 
 
 def render_transcript(turns: "list[TurnRecord]") -> str:
-    """"Khách: …\\nAI: …\\n" cho mỗi lượt, kèm danh sách tool đã gọi trong ngoặc."""
+    """"Khách: …\\nAI: …\\n" cho mỗi lượt — CHỈ những gì khách thật sự thấy.
+
+    Không kèm tên tool (C1, review cuối): tool là sự kiện nội bộ
+    (`tool_started`), khách không bao giờ thấy. Gắn vào câu bot làm judge chấm
+    phạt thứ bot không nói, và khách giả lập phản ứng với chữ không có thật.
+    Các trục của rubric chỉ xét lời bot nói với khách nên không cần tool."""
     lines: list[str] = []
     for turn in turns:
         lines.append(f"Khách: {turn.customer_text}")
-        suffix = f" ({', '.join(turn.tools)})" if turn.tools else ""
-        lines.append(f"AI: {turn.answer}{suffix}")
+        lines.append(f"AI: {turn.answer}")
     return "\n".join(lines) + "\n" if lines else ""
 
 
