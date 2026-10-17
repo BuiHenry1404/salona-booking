@@ -1,0 +1,20 @@
+id: g09-chon-gio
+title: 'G-09: khách chọn 9 giờ sau khi được hỏi ''9 giờ hay 10 giờ'' phải chốt đúng 9 giờ'
+kind: scripted
+tags:
+- edge
+- G-09
+setup: {}
+turns:
+- say: mai 9 giờ hay 10 giờ còn chỗ không em
+- say: dạ 9 giờ
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: 09:00
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: 09:00
+  others_unchanged: true

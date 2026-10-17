@@ -1,0 +1,18 @@
+id: LLM-18
+title: Huỷ lịch khi khách chỉ có 1 lịch duy nhất
+kind: simulated
+tags:
+- llm
+- LLM-18
+setup:
+  own:
+  - day: tomorrow
+    time: '15:00'
+turns: []
+sim:
+  goal: Huỷ lịch duy nhất ngày mai vì bận.
+  persona: Nói 'Mai chị bận rồi, huỷ lịch giùm chị nha'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked: []

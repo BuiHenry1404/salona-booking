@@ -1,0 +1,22 @@
+id: LLM-17
+title: Tra cứu danh sách lịch sắp tới của chính mình
+kind: simulated
+tags:
+- llm
+- LLM-17
+setup:
+  own:
+  - day: tomorrow
+    time: '15:00'
+    note: làm tóc
+turns: []
+sim:
+  goal: Hỏi xem mình đang có lịch hẹn nào, mấy giờ.
+  persona: Hỏi 'Xem giùm chị mấy giờ chị có lịch làm tóc', không có ý định đổi gì.
+  max_turns: 3
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'
+    note_contains: tóc

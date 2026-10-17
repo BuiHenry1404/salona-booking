@@ -1,0 +1,16 @@
+id: LLM-24
+title: Từ chối câu hỏi phiếm, thời tiết, số đề, bán bảo hiểm
+kind: simulated
+tags:
+- llm
+- LLM-24
+setup: {}
+turns: []
+sim:
+  goal: Hỏi vài câu ngoài phạm vi tiệm (thời tiết, số đề, bảo hiểm, giá vàng), không có ý
+    định đặt lịch.
+  persona: Lần lượt hỏi 'Thời tiết hôm nay mưa hay nắng em?', 'Hôm nay đài miền Nam xổ con
+    gì đẹp em?', 'Giá vàng hôm nay bao nhiêu một chỉ?'.
+  max_turns: 4
+expect:
+  others_unchanged: true

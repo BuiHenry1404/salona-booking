@@ -1,0 +1,19 @@
+id: LLM-23
+title: Đang đặt lịch thì rẽ sang hỏi bận/rảnh
+kind: simulated
+tags:
+- llm
+- LLM-23
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch gội đầu ngày mai 2 giờ chiều, giữa chừng hỏi tiệm có đông không rồi quay
+    lại xác nhận.
+  persona: Nói 'Mai 2h chiều gội đầu', hỏi xen 'Mà giờ này tiệm có đông không em', sau đó
+    xác nhận lịch 2 giờ chiều mai khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '14:00'

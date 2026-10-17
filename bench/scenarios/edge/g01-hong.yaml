@@ -1,0 +1,17 @@
+id: g01-hong
+title: 'G-01: từ chối viết tắt ''dạ hông'' không được hiểu là đồng ý'
+kind: scripted
+tags:
+- edge
+- G-01
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm móng
+- say: dạ hông
+  requires_asked:
+    day: tomorrow
+    time: '15:00'
+sim: null
+expect:
+  booked: []
+  others_unchanged: true

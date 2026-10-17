@@ -1,0 +1,23 @@
+id: g03-gio-moi
+title: 'G-03: khách đổi sang giờ mới ngay trong câu chốt, không phải đồng ý giờ cũ'
+kind: scripted
+tags:
+- edge
+- G-03
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm tóc
+- say: dạ 4 giờ nha em
+  requires_asked:
+    day: tomorrow
+    time: '15:00'
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: '16:00'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '16:00'
+  others_unchanged: true

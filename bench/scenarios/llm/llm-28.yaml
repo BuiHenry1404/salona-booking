@@ -1,0 +1,18 @@
+id: LLM-28
+title: Tiếng Việt không dấu hoàn toàn
+kind: simulated
+tags:
+- llm
+- LLM-28
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai 3 giờ chiều, gõ hoàn toàn không dấu.
+  persona: Gõ 'mai 3h chieu lam toc dc ko em' rồi xác nhận bằng 'u dung roi'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'
+    note_contains: tóc

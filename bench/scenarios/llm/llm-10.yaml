@@ -1,0 +1,15 @@
+id: LLM-10
+title: Khách nhắc mốc giờ đã qua trong quá khứ
+kind: simulated
+tags:
+- llm
+- LLM-10
+setup: {}
+turns: []
+sim:
+  goal: Hỏi đặt lịch làm tóc vào một mốc giờ sáng sớm hôm nay, có khả năng đã qua.
+  persona: Nói 'Hôm nay 3 giờ sáng chị qua làm tóc' (một mốc giờ rất sớm, nhiều khả năng đã
+    qua so với giờ hiện tại); nếu bot báo giờ đó đã qua thì đồng ý đổi sang gợi ý khác.
+  max_turns: 8
+expect:
+  others_unchanged: true

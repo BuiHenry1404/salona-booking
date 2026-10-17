@@ -1,0 +1,19 @@
+id: g06-phut
+title: 'G-06: ''mai 15h30'' phải giữ đúng phút 30, không bị cắt về giờ tròn'
+kind: scripted
+tags:
+- edge
+- G-06
+setup: {}
+turns:
+- say: mai 15h30 làm móng
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: '15:30'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '15:30'
+  others_unchanged: true

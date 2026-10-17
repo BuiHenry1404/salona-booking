@@ -1,0 +1,26 @@
+id: LLM-19
+title: Huỷ lịch khi khách có từ 2 lịch trở lên
+kind: simulated
+tags:
+- llm
+- LLM-19
+setup:
+  own:
+  - day: tomorrow
+    time: '15:00'
+    note: làm tóc
+  - day: '+3'
+    time: 09:00
+    note: làm móng
+turns: []
+sim:
+  goal: Huỷ lịch làm tóc, giữ lại lịch làm móng.
+  persona: Nói 'Huỷ lịch giúp chị với'; khi được hỏi huỷ lịch nào thì trả lời 'Huỷ cái lịch
+    làm tóc thôi, lịch làm móng giữ nguyên nha em'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: '+3'
+    time: 09:00
+    note_contains: móng

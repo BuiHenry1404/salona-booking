@@ -1,0 +1,15 @@
+id: LLM-09
+title: Khách nói thời gian chung chung
+kind: simulated
+tags:
+- llm
+- LLM-09
+setup: {}
+turns: []
+sim:
+  goal: Hỏi xếp lịch làm móng vào lúc tiệm vắng khách mà không tự nêu ngày giờ cụ thể.
+  persona: Nói 'Lúc nào tiệm vắng thì xếp chị làm móng', không tự chốt ngày giờ nào kể cả
+    khi được gợi ý khung giờ vắng.
+  max_turns: 4
+expect:
+  others_unchanged: true

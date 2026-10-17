@@ -1,0 +1,20 @@
+id: LLM-01
+title: Đặt lịch làm tóc ngày mai đầy đủ thông tin
+kind: simulated
+tags:
+- llm
+- LLM-01
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai lúc 3 giờ chiều và xác nhận ngay khi được hỏi lại.
+  persona: Khách lớn tuổi, nói ngắn gọn, giọng miền Nam nhẹ, nêu đủ ngày/giờ/dịch vụ ngay
+    từ câu đầu kiểu 'Mai 3h chiều làm tóc được không em', xác nhận bằng 'Ừ đúng rồi em' khi
+    được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'
+    note_contains: tóc

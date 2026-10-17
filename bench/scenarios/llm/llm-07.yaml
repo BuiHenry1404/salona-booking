@@ -1,0 +1,18 @@
+id: LLM-07
+title: Khách nói thiếu buổi (sáng hay chiều)
+kind: simulated
+tags:
+- llm
+- LLM-07
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch ngày mai 3 giờ mà không nói rõ sáng hay chiều, chọn chiều khi được hỏi lại.
+  persona: Nói 'Đặt cho chị ngày mai 3 giờ', khi được hỏi sáng hay chiều thì đáp 'Chiều chứ
+    sáng ai đi làm tóc', xác nhận 'Đúng rồi' khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'

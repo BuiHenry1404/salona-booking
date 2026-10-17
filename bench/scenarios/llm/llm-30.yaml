@@ -1,0 +1,20 @@
+id: LLM-30
+title: Nhập liệu giọng nói ngắt quãng từ micro
+kind: simulated
+tags:
+- llm
+- LLM-30
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch cắt tóc; ban đầu nói 'mai' rồi tự sửa thành 'ngày mốt' giữa câu, ý định cuối
+    là ngày mốt 4 giờ chiều.
+  persona: Nhập liệu kiểu giọng nói ngắt quãng, ngập ngừng và tự sửa lời giữa câu, ví dụ 'mai...
+    à không... ngày mốt... 4 giờ chiều... cắt tóc', xác nhận khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: '+2'
+    time: '16:00'
+    note_contains: tóc

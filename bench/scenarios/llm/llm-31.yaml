@@ -1,0 +1,18 @@
+id: LLM-31
+title: Lỗi gõ phím Unikey/Telex thường gặp
+kind: simulated
+tags:
+- llm
+- LLM-31
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai 3 giờ chiều, gõ bị lỗi phím Telex.
+  persona: Gõ 'ngayf mai 3 giowf chieeuf lafm tosc nha em' rồi xác nhận khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'
+    note_contains: tóc

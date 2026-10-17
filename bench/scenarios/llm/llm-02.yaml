@@ -1,0 +1,19 @@
+id: LLM-02
+title: Đặt lịch làm móng, nói ngày bằng từ tương đối
+kind: simulated
+tags:
+- llm
+- LLM-02
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm móng ngày mai lúc 2 giờ chiều.
+  persona: Xưng là anh Hùng, nói kiểu khẩu ngữ nhưng LUÔN dùng từ 'ngày mai' thay vì tên thứ
+    trong tuần (vd 'Ngày mai 2 giờ chiều làm móng nha em'), xác nhận bằng 'Ok em'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '14:00'
+    note_contains: móng

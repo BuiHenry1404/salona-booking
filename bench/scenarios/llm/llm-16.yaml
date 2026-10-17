@@ -1,0 +1,19 @@
+id: LLM-16
+title: Hỏi kết hợp vừa hỏi bận/rảnh vừa đặt lịch
+kind: simulated
+tags:
+- llm
+- LLM-16
+setup: {}
+turns: []
+sim:
+  goal: Hỏi chủ tiệm có rảnh không, đồng thời đặt lịch làm tóc ngày mai 4 giờ chiều.
+  persona: Nói 'Chủ tiệm có rảnh không, tiện đặt cho chị 4h chiều mai làm tóc', xác nhận bằng
+    'Ừ đúng rồi em'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '16:00'
+    note_contains: tóc

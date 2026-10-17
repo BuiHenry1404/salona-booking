@@ -1,0 +1,15 @@
+id: LLM-13
+title: Khách đặt vào ngày tiệm thường nghỉ (Chủ Nhật)
+kind: simulated
+tags:
+- llm
+- LLM-13
+setup: {}
+turns: []
+sim:
+  goal: Hỏi đặt lịch làm móng vào một ngày tiệm thường nghỉ (Chủ Nhật) lúc 3 giờ chiều.
+  persona: Nói 'Chủ Nhật này 3h chiều làm móng nha em', không tự đổi ngày trừ khi được gợi
+    ý.
+  max_turns: 4
+expect:
+  others_unchanged: true

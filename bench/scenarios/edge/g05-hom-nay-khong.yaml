@@ -1,0 +1,19 @@
+id: g05-hom-nay-khong
+title: 'G-05: ''hôm nay không được, mai 3h chiều'' phải hiểu là ngày mai, không phải hôm nay'
+kind: scripted
+tags:
+- edge
+- G-05
+setup: {}
+turns:
+- say: hôm nay không được, mai 3h chiều làm tóc
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: '15:00'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '15:00'
+  others_unchanged: true

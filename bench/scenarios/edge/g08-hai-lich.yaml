@@ -1,0 +1,13 @@
+id: g08-hai-lich
+title: 'G-08: đặt hai mốc giờ trong cùng một câu không được tự ý ghi đè chỉ còn một lịch sai'
+kind: scripted
+tags:
+- edge
+- G-08
+setup: {}
+turns:
+- say: đặt cho chị 9 giờ với 10 giờ sáng mai luôn nha em
+sim: null
+expect:
+  booked: null
+  others_unchanged: true

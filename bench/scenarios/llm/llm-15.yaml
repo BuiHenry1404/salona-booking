@@ -1,0 +1,14 @@
+id: LLM-15
+title: Tiệm đang rảnh — mời khách ghé qua
+kind: simulated
+tags:
+- llm
+- LLM-15
+setup: {}
+turns: []
+sim:
+  goal: Hỏi tiệm có đông khách không.
+  persona: Hỏi 'Tiệm đang đông khách không em', không có ý định đặt lịch.
+  max_turns: 3
+expect:
+  others_unchanged: true

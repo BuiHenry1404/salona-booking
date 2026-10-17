@@ -1,0 +1,19 @@
+id: LLM-22
+title: Khách đổi sang khung giờ khác sau khi đã propose
+kind: simulated
+tags:
+- llm
+- LLM-22
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm móng mai 3 giờ chiều, đổi sang 5 giờ chiều khi được hỏi xác nhận.
+  persona: Nói 'Mai 3h chiều làm móng nha em', khi được hỏi xác nhận thì nói 'Thôi đổi sang
+    5 giờ chiều đi em', rồi xác nhận 'Ừ' với giờ mới.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '17:00'
+    note_contains: móng

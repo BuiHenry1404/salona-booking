@@ -1,0 +1,15 @@
+id: LLM-08
+title: Khách nói thứ mơ hồ (tuần này hay tuần sau)
+kind: simulated
+tags:
+- llm
+- LLM-08
+setup: {}
+turns: []
+sim:
+  goal: Muốn làm móng vào Thứ Năm nhưng không nói rõ tuần này hay tuần sau.
+  persona: Chỉ nói 'Thứ Năm cho chị làm móng' (không dùng từ 'ngày mai'/'mốt'); khi được hỏi
+    lại tuần này hay tuần sau thì trả lời là muốn tuần sau.
+  max_turns: 8
+expect:
+  others_unchanged: true
