@@ -167,3 +167,17 @@ async def test_rejudge_skips_payloads_already_judged_by_same_model(run_dir, scen
     assert calls == ["m1"]
     data = _read(run_dir / "runs" / "aaa1111" / "s1" / "0.json")
     assert data["judge"] == {"new": 1}
+
+
+async def test_rejudge_retries_transient_none(run_dir, scenarios, monkeypatch):
+    results = [None, {"ok": True}]
+
+    async def flaky_judge(client, model, transcript):
+        return results.pop(0)
+
+    monkeypatch.setattr(rs, "judge", flaky_judge)
+    monkeypatch.setattr(rs, "_JUDGE_RETRY_BACKOFF_S", 0)
+    summary = await rs.rescore_run(run_dir, scenarios, legacy_stale={}, rejudge=True,
+                                   client=object(), judge_model="m1")
+    assert _read(run_dir / "runs" / "aaa1111" / "s1" / "0.json")["judge"] == {"ok": True}
+    assert summary["judge_failed"] == 0

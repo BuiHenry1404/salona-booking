@@ -45,6 +45,11 @@ LEGACY_STALE: dict[str, str] = {
 
 _ORIG_DIR = "_orig"
 
+# `judge()` trả None cả khi lỗi tạm thời (429/overload sau khi SDK đã tự retry)
+# — chấm hàng loạt thì thử lại vài lần, giãn cách, trước khi chịu None.
+_JUDGE_RETRIES = 3
+_JUDGE_RETRY_BACKOFF_S = 30.0
+
 
 def _backup(run_dir: Path) -> None:
     orig = run_dir / _ORIG_DIR
@@ -92,7 +97,7 @@ async def rescore_run(
     rejudge: bool = False,
     client=None,
     judge_model: str | None = None,
-    concurrency: int = 6,
+    concurrency: int = 3,
     secrets_: list[str] | None = None,
 ) -> dict:
     """Chấm lại mọi payload trong `run_dir`. Trả số đếm theo loại."""
@@ -147,14 +152,23 @@ async def rescore_run(
         payload["rescored_at"] = datetime.now(VN_TZ)
         counts["rescored"] += 1
 
-        already = payload.get("rejudged_with") == judge_model
+        # Đã judge lại bằng đúng model này VÀ có kết quả (None = lỗi lần trước → thử lại).
+        already = payload.get("rejudged_with") == judge_model and (
+            payload.get("judge") is not None or not (score.valid and records)
+        )
         if rejudge and already:
             counts["rejudge_skipped"] += 1
         elif rejudge:
             result = None
             if score.valid and records:
-                async with sem:
-                    result = await judge(client, judge_model, render_transcript(records))
+                transcript = render_transcript(records)
+                for attempt in range(1 + _JUDGE_RETRIES):
+                    if attempt:
+                        await asyncio.sleep(_JUDGE_RETRY_BACKOFF_S * attempt)
+                    async with sem:
+                        result = await judge(client, judge_model, transcript)
+                    if result is not None:
+                        break
                 counts["rejudged"] += 1
                 if result is None:
                     counts["judge_failed"] += 1
