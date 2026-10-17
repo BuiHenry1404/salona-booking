@@ -86,6 +86,11 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # Mỗi khách đúng một document hội thoại.
     await db["conversations"].create_index("user_id", unique=True)
 
+    # Đề xuất chờ khách đồng ý (ProposalService). KHÔNG có TTL: đề xuất đã
+    # duyệt/từ chối là dấu vết vì sao một lịch được ghi; hết hạn tính bằng
+    # `expires_at` lúc đọc, không phải bằng việc xoá document.
+    await db["proposals"].create_index([("user_id", 1), ("status", 1), ("expires_at", 1)])
+
     await db["rate_limits"].create_index("expires_at", expireAfterSeconds=0)
     await db["rate_limits"].create_index([("key", 1), ("created_at", 1)])
 
