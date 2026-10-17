@@ -112,6 +112,11 @@ Khách ──socket──▶ run_turn
 ```
 
 - `booking` có **7 tool, 0 tool ghi**; `shop` 2 tool; `social` 0 tool.
+- `booking` / `shop` / `social` là agent `create_agent` (LangChain) bọc trong node
+  (`agents.py`: `build_agent` + `make_agent_node`), chỉ trả `draft`. Middleware
+  (`middleware/`): bố cục message theo bẫy #9, tối đa 4 lần gọi model rồi câu
+  fallback, lỗi tool thành câu tiếng Việt cố định, `parallel_tool_calls=False`
+  chỉ khi có tool (Azure trả 400 nếu gửi cờ này mà không kèm tool).
 - **Mọi tool trả JSON dữ kiện, không trả câu** (bẫy #23). Mốc thời gian là
   `{"iso", "spoken"}`; model chép `spoken` nguyên văn, câu thì tự viết.
 - `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
