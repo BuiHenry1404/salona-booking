@@ -13,6 +13,7 @@ sim:
   max_turns: 3
 expect:
   others_unchanged: true
+  booked: []  # persona không có ý định đặt lịch (I7)
   answer_must_not_include:
   - còn 30 phút
   - còn 1 tiếng

@@ -104,3 +104,47 @@ def test_llm_scenario_count_is_32():
 
     ids = sorted(s.id for s in scenarios)
     assert ids == [f"LLM-{i:02d}" for i in range(1, 33)]
+
+
+def _by_id() -> dict:
+    return {s.id: s for s in load_scenarios(_all_paths())}
+
+
+# Persona ghi rõ không có ý định đặt lịch / không tự chốt → kỳ vọng viết sẵn
+# là KHÔNG có lịch nào của khách (I7), để ghi sai của chính khách bị bắt.
+_NO_BOOKING_INTENT = (
+    "LLM-09", "LLM-12", "LLM-14", "LLM-15", "LLM-24", "LLM-25", "LLM-26", "LLM-27",
+)
+
+
+@pytest.mark.parametrize("sid", _NO_BOOKING_INTENT)
+def test_no_booking_intent_scenarios_expect_no_booking(sid):
+    assert _by_id()[sid].expect.booked == ()
+
+
+def _minutes(time_text: str) -> int:
+    h, m = time_text.split(":")
+    return int(h) * 60 + int(m)
+
+
+def test_expected_bookings_do_not_overlap_seeded_others():
+    # I4: lịch dài 60 phút trên lưới 15 phút — một lịch kỳ vọng chồng lên
+    # lịch của khách khác cùng ngày là bất khả thi (LLM-11 cũ: 10:30 vs 10:00).
+    for sc in load_scenarios(_all_paths()):
+        for exp in sc.expect.booked or ():
+            for other in sc.setup.others:
+                if other.day != exp.day:
+                    continue
+                gap = abs(_minutes(exp.time) - _minutes(other.time))
+                assert gap >= 60, f"{sc.id}: kỳ vọng {exp.time} chồng lịch khác {other.time}"
+
+
+@pytest.mark.parametrize("sid", ("LLM-26", "LLM-27"))
+def test_persona_day_matches_seeded_others(sid):
+    # T11: lịch của khách khác seed ở ngày mai (+1) → persona phải nói "mai",
+    # không nói "hôm nay"/"chiều nay".
+    sc = _by_id()[sid]
+    assert all(o.day in ("+1", "tomorrow") for o in sc.setup.others)
+    text = f"{sc.sim.goal} {sc.sim.persona}".lower()
+    assert "hôm nay" not in text and "chiều nay" not in text
+    assert "mai" in text
