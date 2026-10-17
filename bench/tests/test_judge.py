@@ -75,6 +75,18 @@ async def test_judge_failure_yields_none_on_bad_json():
     assert result is None
 
 
+@pytest.mark.parametrize("bad_score", [0, 99, "cao"])
+async def test_judge_failure_yields_none_on_invalid_score(bad_score):
+    data = {axis: {"score": 4, "why": f"ly do {axis}"} for axis in JUDGE_AXES}
+    data["lap_y"]["score"] = bad_score
+    data["worst_line"] = "Da anh/chi vui long cho em biet them a."
+    client = _FakeClient(response=_FakeResponse(json.dumps(data)))
+
+    result = await judge(client, "claude-sonnet-4-6", "transcript bất kỳ")
+
+    assert result is None
+
+
 async def test_judge_failure_yields_none_on_api_error():
     request = httpx2.Request("POST", "https://example.invalid/v1/messages")
     client = _FakeClient(exc=anthropic.APIConnectionError(request=request))

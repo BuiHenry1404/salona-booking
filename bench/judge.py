@@ -52,6 +52,7 @@ def _axis_schema() -> dict:
             "why": {"type": "string"},
         },
         "required": ["score", "why"],
+        "additionalProperties": False,
     }
 
 
@@ -62,6 +63,7 @@ def _output_schema() -> dict:
         "type": "object",
         "properties": properties,
         "required": [*JUDGE_AXES, "worst_line"],
+        "additionalProperties": False,
     }
 
 
@@ -75,6 +77,11 @@ def render_transcript(turns: "list[TurnRecord]") -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _valid_score(score: object) -> bool:
+    # bool is a subclass of int in Python — reject it explicitly.
+    return isinstance(score, int) and not isinstance(score, bool) and 1 <= score <= 5
+
+
 def _valid_result(data: object) -> bool:
     if not isinstance(data, dict):
         return False
@@ -84,7 +91,11 @@ def _valid_result(data: object) -> bool:
             return False
         if "score" not in item or "why" not in item:
             return False
-    return "worst_line" in data
+        if not _valid_score(item["score"]):
+            return False
+        if not isinstance(item["why"], str):
+            return False
+    return isinstance(data.get("worst_line"), str)
 
 
 async def judge(client, model: str, transcript: str) -> dict | None:
