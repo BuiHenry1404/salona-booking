@@ -48,7 +48,10 @@ def _axis_schema() -> dict:
     return {
         "type": "object",
         "properties": {
-            "score": {"type": "integer", "minimum": 1, "maximum": 5},
+            # Anthropic structured outputs don't support numeric constraint
+            # keywords (minimum/maximum) — the 1..5 range is enforced in code
+            # by `_valid_score` instead.
+            "score": {"type": "integer"},
             "why": {"type": "string"},
         },
         "required": ["score", "why"],

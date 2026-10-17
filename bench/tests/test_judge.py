@@ -75,7 +75,7 @@ async def test_judge_failure_yields_none_on_bad_json():
     assert result is None
 
 
-@pytest.mark.parametrize("bad_score", [0, 99, "cao"])
+@pytest.mark.parametrize("bad_score", [0, 99, "cao", True])
 async def test_judge_failure_yields_none_on_invalid_score(bad_score):
     data = {axis: {"score": 4, "why": f"ly do {axis}"} for axis in JUDGE_AXES}
     data["lap_y"]["score"] = bad_score
