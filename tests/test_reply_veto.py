@@ -192,3 +192,12 @@ def test_minutes_other_than_the_proposal_veto(text):
 @pytest.mark.parametrize("text", ["ok 15:00", "ừ 3 giờ 00 chiều", "ừ 3 giờ chiều 2 người"])
 def test_same_minute_or_no_minute_does_not_veto(text):
     assert veto_reason(text, P_BOOK, NOW) is None, text
+
+
+def test_live_bug4_bare_doi_on_a_move_reaches_the_classifier():
+    """Lỗi live 4: "u doi di em" với đề xuất DỜI không bị lưới chặn (đúng —
+    "dời" là động từ đồng ý của việc dời); chính bộ phân loại đọc nhầm thành
+    `change` (sửa ở `_describe`). Với đề xuất ĐẶT MỚI thì "doi" là "đổi"."""
+    assert veto_reason("u doi di em", P_MOVE, NOW) is None
+    assert veto_reason("u doi di em", P_BOOK, NOW) == "negation"
+    assert veto_reason("không phải hôm nay, mai đó em, 4 giờ chiều mai", P_MOVE, NOW) == "negation"

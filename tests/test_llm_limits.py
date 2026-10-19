@@ -230,3 +230,50 @@ async def test_supervisor_stall_degrades_to_booking_not_to_an_error(test_db, use
     assert asyncio.get_running_loop().time() - started < 5
     assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt ngày nào ạ?"})
     assert not any(kind == "error" for kind, _ in out)
+
+
+async def test_stalled_azure_on_the_real_sdk_degrades_instead_of_timing_out(
+        test_db, user, models, monkeypatch):
+    """Lỗi live 1 dựng lại với openai SDK THẬT trỏ vào một socket nhận kết nối
+    mà không bao giờ trả lời (Azure treo). Trước: supervisor 3 lần × timeout →
+    `agent_turn_timeout`. Giờ: hết ngân sách riêng → booking trả lời."""
+    import socket
+    import threading
+    from pydantic import SecretStr
+
+    hole = socket.socket()
+    hole.bind(("127.0.0.1", 0))
+    hole.listen(50)
+    conns = []
+
+    def accept():
+        while True:
+            try:
+                conns.append(hole.accept()[0])
+            except OSError:
+                return
+
+    threading.Thread(target=accept, daemon=True).start()
+    try:
+        monkeypatch.setattr(settings, "llm_provider", "azure")
+        monkeypatch.setattr(settings, "azure_openai_api_key", SecretStr("khoa-gia"))
+        monkeypatch.setattr(settings, "azure_openai_endpoint",
+                            f"http://127.0.0.1:{hole.getsockname()[1]}")
+        monkeypatch.setattr(supervisor, "build_chat_model", llm.build_chat_model)
+        monkeypatch.setattr(supervisor, "SUPERVISOR_TIMEOUT_SECONDS", 0.5)
+        monkeypatch.setattr(events, "TURN_TIMEOUT_SECONDS", 6.0)
+        models.agent.replies += [AIMessage("Dạ chị muốn làm móng ngày nào ạ?")]
+        logged = []
+        monkeypatch.setattr(events.logger, "error", lambda msg, **kw: logged.append(msg))
+
+        started = asyncio.get_running_loop().time()
+        out = await turn(test_db, user, "em ơi mai cô muốn làm móng")
+
+        assert asyncio.get_running_loop().time() - started < 3
+        assert out[-1] == ("complete", {"answer": "Dạ chị muốn làm móng ngày nào ạ?"})
+        assert logged == []
+        assert len(conns) >= 1                       # SDK thật đã gọi tới "Azure"
+    finally:
+        hole.close()
+        for c in conns:
+            c.close()
