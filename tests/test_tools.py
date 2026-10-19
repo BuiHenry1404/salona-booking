@@ -163,12 +163,61 @@ async def test_propose_checks_availability_BEFORE_asking_the_customer(test_db):
 
 
 async def test_propose_rejects_a_time_outside_opening_hours(test_db):
+    """Lỗi live 2: 3 giờ sáng từng ra `slot_unavailable` kèm 8 giờ sáng… và
+    model nói "3 giờ đã kín". Ngoài giờ mở cửa KHÔNG phải "có người đặt"."""
     user = await a_user(test_db)
     result = await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
         {"start_at": tomorrow_at(3).isoformat(), "note": None}   # 3 giờ sáng
     )
     out = json.loads(result)
+    assert out["error"] == "outside_hours"
+    assert "nearest" not in out
+    assert out["asked"]["spoken"].endswith("3 giờ sáng")
+    assert out["open"]["spoken"] and out["close"]["spoken"]
+    assert await pending_proposal(test_db, user) is None
+
+
+async def test_propose_rejects_a_date_without_a_time(test_db):
+    """"2026-10-20" đọc ra nửa đêm: phải là mã riêng, không phải giờ đã kín."""
+    user = await a_user(test_db)
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": tomorrow_at(15).date().isoformat()}))
+    assert out == {"error": "missing_time"}
+    assert await pending_proposal(test_db, user) is None
+
+
+async def test_propose_rejects_a_time_already_passed(test_db):
+    user = await a_user(test_db)
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": (tomorrow_at(15) - timedelta(days=2)).isoformat()}))
+    assert out["error"] == "time_passed"
+    assert "nearest" not in out
+
+
+async def test_propose_on_a_closed_day_says_closed(test_db):
+    user = await a_user(test_db)
+    when = tomorrow_at(15)
+    closed = (when.weekday() + 1) % 7                 # quy ước shop: 0 = Chủ Nhật
+    await ShopService(test_db).set_hours("08:00", "19:00", [closed])
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": when.isoformat()}))
+    assert out["error"] == "closed_day"
+    assert out["asked"]["iso"] == when.isoformat()
+
+
+async def test_slot_unavailable_says_which_time_was_checked(test_db):
+    """Model chỉ được nói "kín" về đúng giờ đã kiểm: `asked` mang giờ đó."""
+    user = await a_user(test_db)
+    when = tomorrow_at(15)
+    await AppointmentService(test_db).create(
+        await a_user(test_db, phone="0911111111", name="Chị Hoa"), when, note="x")
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": when.isoformat()}))
     assert out["error"] == "slot_unavailable"
+    assert out["asked"] == {"iso": when.isoformat(), "spoken": format_vi_datetime(when)}
+    assert "3 giờ chiều" in out["asked"]["spoken"]
+    hours = [datetime.fromisoformat(n["iso"]).hour for n in out["nearest"]]
+    assert all(13 <= h <= 16 for h in hours), out["nearest"]   # quanh 3 giờ chiều, không phải 8 giờ sáng
 
 
 async def test_list_then_cancel(test_db):

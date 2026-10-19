@@ -243,10 +243,18 @@ class TestHardWonRulesSurvive:
         giờ xuất hiện là tốn prompt và nói sai về hệ thống."""
         for code in ("already_yours", "slot_unavailable", "appointment_not_found",
                      "not_your_appointment", "bad_time_format",
-                     "bad_day_format"):
+                     "bad_day_format", "outside_hours", "closed_day",
+                     "time_passed", "missing_time"):
             assert code in BOOKING_PROMPT, code
         assert "never read the code itself" in BOOKING_PROMPT
         assert "- unavailable:" not in BOOKING_PROMPT
+
+    def test_only_the_checked_time_may_be_called_taken(self):
+        """Lỗi live 2: 3 giờ sáng ra `slot_unavailable`, model nói "3 giờ
+        chiều đã kín". Giờ ngoài lịch tiệm không phải "có người đặt", và chỉ
+        `asked` — giờ đã kiểm — mới được gọi là kín."""
+        assert "`asked`" in BOOKING_PROMPT
+        assert "NOT booked by anyone" in BOOKING_PROMPT
 
 
 class TestSupervisorStaysMachineReadable:
@@ -379,8 +387,10 @@ class TestBookingPromptSlimmed:
         # mã `unavailable` khỏi danh sách vì nó KHÔNG tới được, thêm mã
         # `already_yours` (khách đã có đúng lịch ở giờ đó — nguyên nhân duy
         # nhất mà câu đáp ngược hẳn với "chọn giờ khác") — đo được 6417 ký tự
-        # — mốc lên 6500.
-        assert len(BOOKING_PROMPT) < 6500
+        # — mốc lên 6500. Harness B M4 fix (2026-10-19, lỗi live 2): bốn mã
+        # giờ mới (`outside_hours`, `closed_day`, `time_passed`,
+        # `missing_time`) và luật `asked` — đo được 6829 — mốc lên 6900.
+        assert len(BOOKING_PROMPT) < 6900
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

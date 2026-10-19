@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -14,11 +15,17 @@ from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.user import User
 from app.services.appointment import AppointmentService
+from app.core.config import settings
 from app.services.proposal import ProposalService
-from app.services.shop import ShopService
+from app.services.shop import ShopService, fits_before_closing
 
 # Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
 WHOLE_DAY = 200
+
+# Chỉ có ngày, không có giờ: `fromisoformat("2026-10-20")` đọc ra NỬA ĐÊM, và
+# nửa đêm thì không có trong danh sách trống → từng thành `slot_unavailable`
+# kèm 8 giờ sáng… và model nói "3 giờ đã kín" (lỗi live 2).
+_DATE_ONLY = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*$")
 
 logger = get_logger(__name__)
 
@@ -198,9 +205,15 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         NO tool writes an appointment directly — it is written only when the
         customer agrees on the NEXT turn.
         On success the result carries `held`; say `held.spoken` exactly as
-        written. `error: "slot_unavailable"` carries `nearest`, the free slots
-        closest to what they asked for; an empty `nearest` means no slot is
-        available for that request — ask them for another day or another time.
+        written. Every error about the time carries `asked`: the time that was
+        actually checked — talk about THAT time, never another hour.
+        `error: "slot_unavailable"` means someone already booked `asked`; it
+        carries `nearest`, the free slots closest to it; an empty `nearest`
+        means no slot is available for that request — ask them for another
+        day or another time. `outside_hours` (with `open`/`close`),
+        `closed_day` and `time_passed` mean the salon cannot take `asked` at
+        all — it is NOT taken by anyone. `missing_time` means you sent a date
+        with no clock time — ask the customer what time.
         `note` is the service only (what they want done) — never the time or
         the day; those live in `start_at`.
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
@@ -210,10 +223,29 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # (`proposals`) — đường này không đi qua `Appointment`, nên cap ở
         # `Appointment._clean_note` không tự áp dụng. Lọc lại ở đây.
         note = single_line(note, NOTE_MAX)
+        if _DATE_ONLY.match(start_at or ""):
+            return json.dumps({"error": "missing_time"})
         try:
             start = _parse_local(start_at)
         except ValueError:
             return json.dumps({"error": "bad_time_format"})
+
+        # Giờ không thể đặt vì LỊCH TIỆM (quá khứ, ngày nghỉ, ngoài giờ mở cửa)
+        # trả mã riêng TRƯỚC khi xem giờ trống — không thì nó rơi vào
+        # `slot_unavailable` ("có người đặt rồi") và model báo kín một giờ chưa
+        # ai đặt (lỗi live 2). Mã nào cũng mang `asked`: giờ ĐÃ kiểm.
+        asked = _moment(start)
+        if start <= now_utc():
+            return json.dumps({"error": "time_passed", "asked": asked}, ensure_ascii=False)
+        hours = await service.shop.get_hours()
+        if (to_local(start).weekday() + 1) % 7 in hours.closed_days:
+            return json.dumps({"error": "closed_day", "asked": asked}, ensure_ascii=False)
+        if not fits_before_closing(hours, start, settings.booking_slot_minutes):
+            return json.dumps({
+                "error": "outside_hours", "asked": asked,
+                "open": {"hhmm": hours.open_time, "spoken": format_vi_hhmm(hours.open_time)},
+                "close": {"hhmm": hours.close_time, "spoken": format_vi_hhmm(hours.close_time)},
+            }, ensure_ascii=False)
 
         # Dời lịch: kiểm id TRƯỚC khi giữ chỗ. Id bịa mà vẫn giữ chỗ thì khách
         # chốt "ừ" xong là ra hai lịch — đúng BUG-1.
@@ -253,7 +285,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
             # Ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày: khách
             # xin 4 giờ chiều mà gợi ý 8 giờ sáng là gợi ý vô ích.
             nearest = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
-            return json.dumps({"error": "slot_unavailable",
+            return json.dumps({"error": "slot_unavailable", "asked": asked,
                                "nearest": [_moment(s) for s in nearest]},
                               ensure_ascii=False)
 
