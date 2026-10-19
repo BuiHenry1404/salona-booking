@@ -14,8 +14,8 @@ class GraphState(TypedDict, total=False):
     context_block: str
     summary: List[str]
     slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
-    pending_confirmation: Optional[Dict[str, Any]]
     proposal_id: Optional[str]       # đề xuất chờ khách đồng ý (DB `proposals`)
+    gate_next: str                   # confirm → "end" | "phrase" | "booking" | "supervisor" | "guard"
     asked_at: datetime                 # mốc câu khách (now_ms) — "bây giờ" của cửa sổ lịch sử
     history_after: Optional[datetime]  # covers_until của state nén; tin ≤ mốc này không gửi model
     route: str

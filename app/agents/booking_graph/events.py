@@ -103,8 +103,10 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
 
     Thread checkpointer GIỮ state lượt trước: khoá nào không có trong input là
     mang giá trị cũ sang — `answer` cũ làm `route_after_guard` bỏ qua guard,
-    `pending_confirmation` cũ (đã dùng hoặc đã quá 10 phút) đưa START thẳng vào
-    confirm và ghi lịch lần hai. Pending vì vậy đọc lại từ Mongo MỖI lượt.
+    `confirm_fact` cũ làm guard tưởng đang chốt lịch.
+
+    KHÔNG có `proposal_id` ở đây: lượt resume phải giữ nguyên đề xuất đang chờ;
+    lượt mới (không resume) tự đặt `proposal_id=None` trong `run_turn`.
     """
     return {
         "answer": "",
@@ -114,6 +116,7 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         "violations": [],
         "rewritten": False,
         "route": "",
+        "gate_next": "",
         "fallback": None,
         "confirm_fact": None,
         "phrase_fact": None,
@@ -121,7 +124,6 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         "summary": context.get("summary") or [],
         "slots": context.get("slots"),
         "history_after": context.get("history_after"),
-        "pending_confirmation": context.get("pending_confirmation"),
         "previous_replies": [m.content for m in context.get("history") or []
                              if m.role == "assistant" and m.source == "llm"],
         "customer_text": question,

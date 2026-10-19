@@ -15,7 +15,7 @@ from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
                                               SOCIAL_PROMPT)
 from app.agents.booking_graph.rewrite import make_rewrite_node
 from app.agents.booking_graph.state import GraphState
-from app.agents.booking_graph.supervisor import route_from_state, supervise
+from app.agents.booking_graph.supervisor import supervise
 from app.agents.booking_graph.tools import (make_booking_tools,
                                             make_shop_tools)
 from app.agents.checkpoint import get_checkpointer
@@ -70,20 +70,26 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     graph.add_node("phrase", make_phrase_node())
     graph.add_node("record", record)
 
-    # Nhánh tắt: có pending_confirmation thì bỏ qua supervisor hoàn toàn.
-    graph.add_conditional_edges(
-        START, route_from_state, {"confirm": "confirm", "supervisor": "supervisor"}
-    )
+    # Không còn nhánh tắt START → confirm: câu trả lời xác nhận tới bằng
+    # resume (`Command(resume=...)`) vào ĐÚNG node confirm đang chờ; input mới
+    # luôn đi từ supervisor.
+    graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(
         "supervisor",
         lambda state: state["route"],
         {"booking": "booking", "shop": "shop", "social": "social"},
     )
 
-    # Nhánh chưa-đồng-ý của confirm không tự trả lời mà chuyển tiếp sang
-    # booking; nhánh đã ghi lịch sang phrase để LLM viết câu chốt theo số liệu.
+    # confirm (sau record — câu hỏi xác nhận đã qua guard và nằm trong thread):
+    # - end: không có đề xuất chờ;
+    # - phrase: đã ghi → LLM viết câu chốt theo số liệu;
+    # - booking: khách từ chối/đổi ý → booking trả lời như tin mới;
+    # - supervisor: đề xuất hết hạn/không còn pending → tin mới từ đầu;
+    # - guard: hỏi lại MỘT câu (code viết) rồi record → confirm chờ tiếp.
     graph.add_conditional_edges(
-        "confirm", route_after_confirm, {"booking": "booking", "phrase": "phrase"}
+        "confirm", route_after_confirm,
+        {"end": END, "phrase": "phrase", "booking": "booking",
+         "supervisor": "supervisor", "guard": "guard"},
     )
     graph.add_edge("phrase", "guard")
 
@@ -93,7 +99,7 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         graph.add_edge(node, "guard")
     graph.add_conditional_edges("guard", route_after_guard, {"rewrite": "rewrite", "end": "record"})
     graph.add_edge("rewrite", "guard")
-    graph.add_edge("record", END)
+    graph.add_edge("record", "confirm")
 
     return graph.compile(
         checkpointer=checkpointer if checkpointer is not None else get_checkpointer())

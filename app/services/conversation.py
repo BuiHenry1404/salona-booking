@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence, TypeVar
+from typing import Dict, List, Optional, Sequence, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -77,8 +77,7 @@ class ConversationService:
         if doc:
             return Conversation(**doc)
         now = now_utc()
-        payload = {"user_id": user_id, "messages": [], "pending_confirmation": None,
-                   "created_at": now, "updated_at": now}
+        payload = {"user_id": user_id, "messages": [], "created_at": now, "updated_at": now}
         result = await self.collection.insert_one(payload)
         payload["_id"] = result.inserted_id
         return Conversation(**payload)
@@ -197,34 +196,6 @@ class ConversationService:
             for m in await self._all_messages(user_id)
             if start <= m.created_at < end
         ]
-
-    async def set_pending(self, user_id: str, payload: Optional[Dict[str, Any]]) -> None:
-        value = {**payload, "asked_at": now_utc()} if payload else None
-        await self.collection.update_one(
-            {"user_id": user_id},
-            {"$set": {"pending_confirmation": value, "updated_at": now_utc()},
-             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
-            upsert=True,
-        )
-
-    async def get_pending(
-        self, user_id: str, max_age_minutes: int = 10
-    ) -> Optional[Dict[str, Any]]:
-        """Cờ hết hạn sau 10 phút: quá đó thì khách nói "ừ" cũng phải hỏi lại,
-        vì nhiều khả năng họ đang nói về chuyện khác."""
-        doc = await self.collection.find_one({"user_id": user_id})
-        pending = (doc or {}).get("pending_confirmation")
-        if not pending:
-            return None
-
-        asked_at = pending.get("asked_at")
-        if asked_at is None:
-            return None
-        if asked_at.tzinfo is None:
-            asked_at = asked_at.replace(tzinfo=now_utc().tzinfo)
-        if now_utc() - asked_at > timedelta(minutes=max_age_minutes):
-            return None
-        return pending
 
     async def get_state(self, user_id: str) -> Optional[ConversationState]:
         """ConversationState của HÔM NAY (giờ VN). Ngày khác coi như không có — cắt lúc

@@ -12,14 +12,6 @@ VALID_ROUTES = {"booking", "shop", "social"}
 SUPERVISOR_HISTORY_TURNS = 4
 
 
-def route_from_state(state: GraphState) -> str:
-    """Nhánh tắt: khách vừa được hỏi xác nhận thì câu trả lời đi thẳng vào thực thi.
-
-    Tiết kiệm một lượt LLM và loại bỏ khả năng supervisor hiểu "ừ" thành ý định mới.
-    """
-    return "confirm" if state.get("pending_confirmation") else "supervisor"
-
-
 async def supervise(state: GraphState) -> dict:
     """Phân loại ý định.
 

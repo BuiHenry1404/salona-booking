@@ -83,5 +83,7 @@ class Conversation(BaseDocument):
 
     user_id: str
     messages: List[ChatMessage] = Field(default_factory=list)
+    # Không còn ghi (M3): cờ chờ xác nhận nay là đề xuất trong `proposals`
+    # (ProposalService). Giữ field để document cũ vẫn đọc được.
     pending_confirmation: Optional[Dict[str, Any]] = None
     state: Optional[ConversationState] = None

@@ -9,7 +9,7 @@ Dùng để bắt những thứ pytest không bắt được: câu trả lời s
 hoặc quên gọi tool. Sinh ra sau đợt rà 2026-08-23 — xem kết quả và các lỗi tìm
 được ở docs/test-scenarios/03-llm-live-run-2026-08-23.md.
 
-Mỗi kịch bản một tài khoản riêng vì hội thoại và cờ pending_confirmation lưu
+Mỗi kịch bản một tài khoản riêng vì hội thoại và đề xuất chờ xác nhận lưu
 theo user_id: dùng chung thì kịch bản sau thừa hưởng ngữ cảnh của kịch bản
 trước và không còn đọc được nữa. Cũng nhờ vậy mà không đụng trần chat 30
 tin/giờ mỗi khách.

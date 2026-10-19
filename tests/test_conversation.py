@@ -138,28 +138,20 @@ async def test_messages_on_a_day_is_not_trimmed_by_token_budget(test_db):
     assert len(await svc.messages_on("u1", today)) == 80
 
 
-async def test_pending_confirmation_round_trip(test_db):
-    svc = ConversationService(test_db)
-    await svc.set_pending("u1", {"start_at": "2026-08-07T08:00:00+00:00", "note": "làm tóc"})
-    pending = await svc.get_pending("u1")
-    assert pending["note"] == "làm tóc"
+async def test_new_conversation_documents_carry_no_pending_flag(test_db):
+    """M3: cờ chờ xác nhận chuyển sang `proposals`; document mới không mang nó."""
+    await ConversationService(test_db).get_or_create("u1")
+    doc = await test_db["conversations"].find_one({"user_id": "u1"})
+    assert "pending_confirmation" not in doc
+    assert not hasattr(ConversationService, "set_pending")
+    assert not hasattr(ConversationService, "get_pending")
 
 
-async def test_pending_confirmation_expires(test_db):
-    svc = ConversationService(test_db)
-    await svc.set_pending("u1", {"start_at": "x", "note": "làm tóc"})
-    stale = now_utc() - timedelta(minutes=30)
-    await test_db["conversations"].update_one(
-        {"user_id": "u1"}, {"$set": {"pending_confirmation.asked_at": stale}}
-    )
-    assert await svc.get_pending("u1", max_age_minutes=10) is None
-
-
-async def test_clearing_pending(test_db):
-    svc = ConversationService(test_db)
-    await svc.set_pending("u1", {"start_at": "x", "note": None})
-    await svc.set_pending("u1", None)
-    assert await svc.get_pending("u1") is None
+async def test_an_old_document_with_a_pending_flag_still_loads(test_db):
+    await test_db["conversations"].insert_one(
+        {"user_id": "u1", "messages": [], "pending_confirmation": {"start_at": "x"}})
+    conv = await ConversationService(test_db).get_or_create("u1")
+    assert conv.user_id == "u1"
 
 
 async def test_history_never_starts_with_an_orphaned_answer(test_db):

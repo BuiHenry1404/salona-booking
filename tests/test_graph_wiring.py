@@ -22,19 +22,34 @@ def test_every_llm_node_feeds_the_guard():
 
 
 def test_guard_goes_to_rewrite_or_end_and_rewrite_returns_to_guard():
-    """"end" của guard đi qua `record` (ghi câu đáp vào thread) rồi mới END."""
+    """"end" của guard đi qua `record` (ghi câu đáp vào thread) rồi tới confirm."""
     e = edges()
     assert ("guard", "rewrite") in e and ("guard", "record") in e
-    assert ("record", "__end__") in e and ("guard", "__end__") not in e
+    assert ("guard", "__end__") not in e
     assert ("rewrite", "guard") in e
     assert ("rewrite", "__end__") not in e
 
 
-def test_confirm_goes_to_phrase_then_guard_never_straight_to_end():
+def test_record_then_confirm_after_guard():
+    """Câu hỏi xác nhận phải qua guard và nằm trong thread TRƯỚC khi interrupt."""
     e = edges()
-    assert ("confirm", "phrase") in e and ("confirm", "booking") in e
-    assert ("confirm", "__end__") not in e
+    assert ("record", "confirm") in e
+    assert ("record", "__end__") not in e
+
+
+def test_confirm_goes_to_phrase_booking_supervisor_or_end():
+    e = edges()
+    for target in ("phrase", "booking", "supervisor", "guard", "__end__"):
+        assert ("confirm", target) in e, target
+    assert ("confirm", "shop") not in e and ("confirm", "social") not in e
     assert ("phrase", "guard") in e
+
+
+def test_there_is_no_confirm_shortcut_from_start():
+    """Câu trả lời xác nhận vào confirm bằng resume, không bằng cạnh từ START."""
+    e = edges()
+    assert ("__start__", "confirm") not in e
+    assert ("__start__", "supervisor") in e
 
 
 def test_booking_node_has_the_two_shop_tools_but_no_write_tool():

@@ -11,9 +11,8 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph import agents, events, phrase, rewrite, supervisor
+from app.agents.booking_graph import agents, events, rewrite, supervisor
 from app.core.clock import TZ, now_ms
-from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from tests.fakes import Hang, scripted, tool_call
@@ -147,35 +146,14 @@ async def test_compacted_messages_are_not_resent_to_the_booking_model(test_db, u
     assert "chào em" not in contents(models.sup.calls[-1])
 
 
-async def test_used_pending_does_not_carry_over_through_the_checkpoint(
-        test_db, user, models, monkeypatch):
-    """F3: pending lấy lại từ Mongo MỖI lượt (hạn 10 phút). Pending của lượt 1
-    nằm trong checkpoint; lượt 2 không được dùng lại nó (ghi lịch hai lần)."""
-    tomorrow = (datetime.now(TZ) + timedelta(days=1)).replace(
-        hour=15, minute=0, second=0, microsecond=0)
-    await ConversationService(test_db).set_pending(
-        str(user.id), {"start_at": tomorrow.isoformat(), "note": "làm tóc"})
-    monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
-    models.sup.replies += routes("social")
-    models.agent.replies += [AIMessage("Dạ chị Lan cần gì cứ nhắn em nhé.")]
-
-    first = await turn(test_db, user, "ừ")
-    assert first[-1][0] == "complete" and models.sup.calls == []     # đi nhánh confirm
-    assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
-
-    second = await turn(test_db, user, "cảm ơn em")
-    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
-    assert len(models.sup.calls) == 1                                 # về supervisor
-    assert len(await AppointmentService(test_db).upcoming_for(user)) == 1
-
-
 def test_fresh_turn_fields_reset_everything_a_turn_produces():
     fields = events.fresh_turn_fields(
         {"context_block": "CTX", "summary": ["s"], "slots": None, "history_after": None,
-         "pending_confirmation": None, "history": [], "user_id": "u1"}, "q")
-    assert fields["pending_confirmation"] is None and "pending_confirmation" in fields
+         "history": [], "user_id": "u1"}, "q")
+    # Lượt resume dùng chung hàm này: đề xuất đang chờ KHÔNG được đặt lại ở đây.
+    assert "proposal_id" not in fields and "pending_confirmation" not in fields
     for key, empty in {"answer": "", "draft": "", "original_draft": "", "violations": [],
-                       "rewritten": False, "route": "", "fallback": None,
+                       "rewritten": False, "route": "", "gate_next": "", "fallback": None,
                        "confirm_fact": None, "phrase_fact": None}.items():
         assert fields[key] == empty, key
     assert fields["customer_text"] == "q" and fields["user_id"] == "u1"

@@ -239,7 +239,11 @@ def build_context_block(
 
 
 async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> dict:
-    """Nạp mọi thứ song song để không cộng dồn độ trễ của bốn truy vấn."""
+    """Nạp mọi thứ song song để không cộng dồn độ trễ của ba truy vấn.
+
+    Không còn đọc cờ chờ xác nhận (M3): đề xuất đang chờ nằm ở `proposals`, và
+    graph biết nó qua `interrupt` trên thread, không qua khối bối cảnh.
+    """
     conversations = ConversationService(db)
     user_id = str(user.id)
 
@@ -250,11 +254,10 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         after = state.covers_until if state else None
         return state, after, await conversations.history(user_id, after=after)
 
-    status, upcoming, (state, after, history), pending = await asyncio.gather(
+    status, upcoming, (state, after, history) = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
         window(),
-        conversations.get_pending(user_id),
     )
 
     # `history` (nhật ký `conversations`, cùng cửa sổ với thread) chỉ còn dùng cho
@@ -267,6 +270,5 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         "summary": state.summary if state else [],
         "slots": state.slots if state else None,
         "history_after": after,
-        "pending_confirmation": pending,
         "user_id": user_id,
     }

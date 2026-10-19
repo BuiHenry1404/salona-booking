@@ -1,6 +1,6 @@
 import pytest
 
-from app.agents.booking_graph.supervisor import route_from_state, supervise
+from app.agents.booking_graph.supervisor import supervise
 
 
 class FakeModel:
@@ -31,7 +31,7 @@ def a_state(text="mai 3h chiều làm tóc được không con", **extra):
     from langchain_core.messages import HumanMessage
     return {"messages": [HumanMessage(content=text)], "user_id": "u1",
             "context_block": "Bạn đang nói chuyện với: Cô Lan (0912345678).",
-            "pending_confirmation": None, **extra}
+            **extra}
 
 
 @pytest.mark.asyncio
@@ -87,11 +87,3 @@ async def test_supervisor_is_not_given_the_tool_schemas(patch_model):
     await supervise(a_state())
     assert not hasattr(model, "bound_tools")
 
-
-def test_pending_confirmation_short_circuits_the_supervisor():
-    state = a_state("ừ", pending_confirmation={"start_at": "2026-08-07T08:00:00+00:00"})
-    assert route_from_state(state) == "confirm"
-
-
-def test_no_pending_confirmation_goes_to_supervisor():
-    assert route_from_state(a_state()) == "supervisor"
