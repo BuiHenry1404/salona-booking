@@ -1,7 +1,7 @@
 from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain_core.tools import BaseTool
 
 from app.agents.booking_graph.middleware.guard import GuardMiddleware
@@ -17,6 +17,16 @@ from app.models.user import User
 
 # Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
 RESPOND_TAG = "respond"
+
+# Lỗi model của agent (Azure 500, timeout 20 giây): thử lại ĐÚNG một lần sau
+# ~0,5 giây; vẫn lỗi thì ném — `run_turn` đổi thành câu "Máy đang bận..." như A.
+MODEL_RETRIES = 1
+MODEL_RETRY_DELAY_SECONDS = 0.5
+
+
+def model_retry_middleware() -> ModelRetryMiddleware:
+    return ModelRetryMiddleware(max_retries=MODEL_RETRIES, on_failure="error",
+                                initial_delay=MODEL_RETRY_DELAY_SECONDS)
 
 
 class _LazyAgent:
@@ -66,7 +76,8 @@ def build_agent(
 
     Thứ tự middleware (ngoài → trong): có `user` thì Phrase rồi Guard đứng
     ngoài cùng; rồi `extra_middleware` (M2 thêm lịch sử, M3 thêm confirm), bố
-    cục message, tắt parallel, giới hạn vòng, lỗi tool. `after_agent` chạy
+    cục message, tắt parallel, giới hạn vòng, lỗi tool, thử lại model một
+    lần. `after_agent` chạy
     NGƯỢC danh sách nên Guard chạy SAU CÙNG — kể cả khi Phrase hay giới hạn
     vòng nhảy thẳng tới cuối. Không có `user` (test agent trần) thì không có
     guard/phrase: agent chỉ trả câu thô.
@@ -84,11 +95,15 @@ def build_agent(
         NoParallelToolsMiddleware(),
         ToolRoundLimitMiddleware(),
         ToolErrorMiddleware(),
+        # Trong cùng (sát model): một lần thử lại chạy lại đúng lần gọi model,
+        # các middleware ngoài không chạy lại.
+        model_retry_middleware(),
     ]
 
     def factory(chat_model=None):
         return create_agent(
-            chat_model or build_chat_model(tags=[tag], temperature=0.2),
+            # max_retries=0: SDK không tự thử lại — ModelRetryMiddleware lo (F11).
+            chat_model or build_chat_model(tags=[tag], temperature=0.2, max_retries=0),
             tools,
             system_prompt=prompt,
             middleware=middleware,

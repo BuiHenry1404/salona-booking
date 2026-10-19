@@ -122,7 +122,7 @@ def test_build_agent_tags_the_real_model_respond(monkeypatch):
     agent = build_agent("p", [])
     assert seen == []                    # dựng lười: chưa gọi thì chưa dựng model
     agent._get()                         # lần dùng đầu tiên mới dựng
-    assert seen == [{"tags": ["respond"], "temperature": 0.2}]
+    assert seen == [{"tags": ["respond"], "temperature": 0.2, "max_retries": 0}]
 
 
 async def test_lazy_agent_builds_its_model_once(monkeypatch):

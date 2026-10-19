@@ -19,6 +19,11 @@ from app.services.conversation_state import ConversationStateService
 
 logger = get_logger(__name__)
 
+# Trần thời gian của MỘT lượt (A-04): Azure treo thì khách nhận câu lỗi như A
+# thay vì chờ mãi. Lớn hơn 2 lần gọi model (20 giây × (1 + 1 lần thử lại)).
+TURN_TIMEOUT_SECONDS = 60
+TURN_ERROR_MESSAGE = "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."
+
 
 # Giữ tham chiếu mạnh: event loop chỉ giữ weak-ref, tác vụ nền không ai giữ
 # có thể bị GC giữa chừng — mất lượt nén mà không có dòng log nào.
@@ -190,13 +195,23 @@ async def _run_turn(
 
     yield AgentEvent("turn_started")
 
+    # Trần thời gian chỉ bọc lúc CHỜ graph (và các lần đọc/ghi state của nó),
+    # không bao giờ bọc `yield`: hết giờ khi người nhận đang `sio.emit` thì
+    # CancelledError nổ ở phía người nhận, không có `error` nào được gửi (F12).
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + TURN_TIMEOUT_SECONDS
+
+    async def bounded(awaitable):
+        async with asyncio.timeout_at(deadline):
+            return await awaitable
+
     try:
         # Một mốc cho câu khách ở CẢ HAI nơi (thread và conversations):
         # covers_until đọc từ conversations phải khớp đúng tin bên thread.
         asked_at = now_ms()
-        context = await load_context(db, user, question)
+        context = await bounded(load_context(db, user, question))
         graph = build_graph(db, user)
-        thread_id = await pick_thread(graph, user_id, asked_at)
+        thread_id = await bounded(pick_thread(graph, user_id, asked_at))
 
         # Langfuse v3: handler không mang danh tính, danh tính đi qua metadata.
         # session_id = user_id (không phải thread_id): trace của một khách
@@ -213,7 +228,7 @@ async def _run_turn(
             # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
             "asked_at": asked_at,
         }
-        snapshot = await graph.aget_state(config)
+        snapshot = await bounded(graph.aget_state(config))
         # Đang chờ = có interrupt, HOẶC confirm là bước kế tiếp mà chưa kịp
         # interrupt VÀ có đề xuất: lượt resume trước bị huỷ SAU `aupdate_state`
         # (checkpoint mới, next=confirm) nhưng trước khi confirm xong — coi đó là
@@ -238,18 +253,23 @@ async def _run_turn(
             # pending write cũ bị bỏ, và node vẫn nhận câu khách MỚI NHẤT.
             #
             # KHÔNG đặt lại `proposal_id` — đó chính là thứ đang chờ duyệt.
-            await graph.aupdate_state(config, fields, as_node="record")
+            await bounded(graph.aupdate_state(config, fields, as_node="record"))
             turn_input = Command(resume=question)
         else:
             # Tin mới: chạy từ START. Đề xuất cũ (nếu còn trong checkpoint,
             # vd. lượt trước lỗi giữa chừng) không bao giờ được mang sang.
             turn_input = {**fields, "proposal_id": None}
 
-        async for raw in graph.astream_events(turn_input, config=config, version="v2"):
+        stream = graph.astream_events(turn_input, config=config, version="v2")
+        while True:
+            try:
+                raw = await bounded(anext(stream))
+            except StopAsyncIteration:
+                break
             for event in translate_langchain_event(raw):
                 yield event
 
-        values = (await graph.aget_state(config)).values or {}
+        values = (await bounded(graph.aget_state(config))).values or {}
         answer = values.get("answer", "")
         if answer:
             last = (values.get("messages") or [None])[-1]
@@ -279,7 +299,9 @@ async def _run_turn(
                 })
 
     except Exception as exc:
-        logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})
-        yield AgentEvent("error", {
-            "message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."
-        })
+        if isinstance(exc, TimeoutError) and loop.time() >= deadline:
+            logger.error("agent_turn_timeout", extra={"user_id": user_id,
+                                                      "seconds": TURN_TIMEOUT_SECONDS})
+        else:
+            logger.error("agent_turn_failed", extra={"user_id": user_id, "error": str(exc)})
+        yield AgentEvent("error", {"message": TURN_ERROR_MESSAGE})
