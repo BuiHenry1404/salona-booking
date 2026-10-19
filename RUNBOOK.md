@@ -278,6 +278,9 @@ Mọi câu LLM đi qua guard đúng một lần trước khi ra khách — từ 
 - `agent_turn_timeout{seconds}` (ở `events.py`) — lượt quá `TURN_TIMEOUT_SECONDS`
   (60s); khách nhận `error` "Máy đang bận…". Model agent lỗi sau 1 lần thử lại
   (`ModelRetryMiddleware`) thì là `agent_turn_failed` với cùng câu.
+- `supervisor_failed{error, error_type}` (ở `supervisor.py`) — bước định tuyến
+  lỗi hoặc quá `SUPERVISOR_TIMEOUT_SECONDS` (8s, kể cả 1 lần thử lại SDK); lượt
+  đi tiếp vào `booking`. Thấy nhiều là Azure chậm — lượt vẫn trả lời.
 - `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của `write_phrase` lỗi
   hoặc quá `PHRASE_TIMEOUT_SECONDS` (8s); dùng thẳng `fallback`.
 - `anchor_ignored{anchor}` (ở `tools.py`) — tool gọi `apply_anchor` với neo

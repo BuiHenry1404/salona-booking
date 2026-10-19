@@ -140,8 +140,12 @@ Khách ──socket──▶ run_turn
   vòng nhảy thẳng tới cuối.
 - Giới hạn LLM (M4, sửa A-04): mọi model có `timeout=20` giây; chỉ model agent
   tắt retry của SDK (`max_retries=0`) vì `ModelRetryMiddleware` đã thử lại —
-  supervisor/rewrite/phrase/timeparse/classify giữ retry SDK như A (F11). Trần
-  lượt 60 giây bọc từng lần KÉO sự kiện từ graph (`asyncio.timeout_at` quanh
+  rewrite/phrase/timeparse/classify giữ retry SDK như A (F11) nhưng đều bọc
+  `wait_for` 8 giây. Supervisor có ngân sách RIÊNG: `wait_for` 8 giây, SDK thử
+  lại tối đa 1 lần, treo/lỗi → route `booking` + log `supervisor_failed` (lỗi
+  live M4: 20 giây × 3 lần của supervisor > trần 60 giây, mất cả lượt). Trần
+  lượt phải lớn hơn tổng xấu nhất của một đường: phân loại 8 + agent 20 × 2 +
+  0,5 + rewrite 8 ≈ 56,5 giây — có test chặn. Trần lượt 60 giây bọc từng lần KÉO sự kiện từ graph (`asyncio.timeout_at` quanh
   `anext`), KHÔNG bọc `yield`: bọc cả vòng `async for` thì hết giờ lúc người
   nhận đang `sio.emit` nổ CancelledError phía người nhận và khách không nhận
   `error` nào (F12).

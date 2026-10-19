@@ -39,8 +39,10 @@ def build_chat_model(
     `streaming=False` dành cho những lượt gọi sinh JSON chứ không sinh câu trả
     lời — parser thời gian ở task 4b là một. Không có gì để hiện dần cho khách xem.
 
-    `max_retries=None` giữ retry mặc định của SDK (như A) cho supervisor,
-    rewrite, phrase, timeparse, classify. Chỉ model agent truyền 0: ở đó
+    `max_retries=None` giữ retry mặc định của SDK (như A) cho rewrite,
+    phrase, timeparse, classify — cả bốn bọc `wait_for` 8 giây nên retry SDK
+    không kéo dài được bước. Supervisor truyền 1 và cũng bọc `wait_for` 8 giây
+    (review M4 I-1). Model agent truyền 0: ở đó
     `ModelRetryMiddleware` thử lại đúng một lần — SDK thử thêm nữa là nhân số
     lần gọi lên và vượt trần thời gian lượt (F11).
 

@@ -20,7 +20,12 @@ from app.services.conversation_state import ConversationStateService
 logger = get_logger(__name__)
 
 # Trần thời gian của MỘT lượt (A-04): Azure treo thì khách nhận câu lỗi như A
-# thay vì chờ mãi. Lớn hơn 2 lần gọi model (20 giây × (1 + 1 lần thử lại)).
+# thay vì chờ mãi. Phải lớn hơn TỔNG ngân sách xấu nhất trên một đường của
+# lượt, không chỉ phần agent: bước phân loại (supervisor 8 giây ở tin mới, bộ
+# phân loại 8 giây ở resume) + một lần gọi model agent kèm thử lại (20 giây ×
+# (1 + 1) + 0,5 giây) + rewrite của guard (8 giây) ≈ 56,5 giây. Có test chặn
+# (`test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap`): một lần
+# gọi treo phải xuống cấp (fallback, thử lại), không ăn hết trần.
 TURN_TIMEOUT_SECONDS = 60
 TURN_ERROR_MESSAGE = "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."
 

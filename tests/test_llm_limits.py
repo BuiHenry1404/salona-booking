@@ -146,3 +146,34 @@ async def test_next_turn_after_a_timeout_runs_normally(test_db, user, models, mo
     models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ.")]
     assert (await turn(test_db, user, "chào em"))[-1] == (
         "complete", {"answer": "Dạ em chào chị Lan ạ."})
+
+
+# --- ngân sách cả lượt (review M4 I-1) ----------------------------------------
+
+def test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap():
+    """Một lần gọi treo phải XUỐNG CẤP (fallback/thử lại) chứ không ăn hết trần
+    lượt. Mỗi đường của một lượt — tin mới (supervisor) hay resume (bộ phân
+    loại) — cộng ngân sách xấu nhất: bước phân loại + một lần gọi model agent
+    kèm thử lại + rewrite của guard. Live: supervisor 3 × 20 giây > 60 giây."""
+    from app.agents.booking_graph import guard, reply
+    agent_call = (llm.LLM_TIMEOUT_SECONDS * (1 + agents.MODEL_RETRIES)
+                  + agents.MODEL_RETRY_DELAY_SECONDS * 1.25 * agents.MODEL_RETRIES)
+    fresh = supervisor.SUPERVISOR_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
+    resume = reply.CLASSIFY_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
+    assert fresh < events.TURN_TIMEOUT_SECONDS
+    assert resume < events.TURN_TIMEOUT_SECONDS
+
+
+async def test_supervisor_stall_degrades_to_booking_not_to_an_error(test_db, user, models, monkeypatch):
+    """Lỗi live 1: supervisor treo → lượt vẫn trả lời (route booking), không
+    `error`, và xong sớm hơn hẳn trần lượt."""
+    monkeypatch.setattr(supervisor, "SUPERVISOR_TIMEOUT_SECONDS", 0.2)
+    models.sup.replies += [Hang(30, AIMessage("social"))]
+    models.agent.replies += [AIMessage("Dạ chị muốn đặt ngày nào ạ?")]
+
+    started = asyncio.get_running_loop().time()
+    out = await turn(test_db, user, "em ơi mai cô muốn làm móng")
+
+    assert asyncio.get_running_loop().time() - started < 5
+    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt ngày nào ạ?"})
+    assert not any(kind == "error" for kind, _ in out)
