@@ -146,7 +146,11 @@ Khách ──socket──▶ run_turn
   (lượt resume bị huỷ trước khi confirm interrupt lại). `ProposalService.approve`
   chạy trong `asyncio.shield`: huỷ lượt giữa lúc ghi thì việc duyệt vẫn xong;
   lượt sau thấy `approving` thì chờ tối đa 3 giây, thấy `approved` thì đi thẳng
-  câu chốt (duyệt lại idempotent) — khách luôn nghe xác nhận cho lịch có thật. Mỗi khách một lượt chạy: lượt mới huỷ
+  câu chốt (duyệt lại idempotent) — khách luôn nghe xác nhận cho lịch có thật.
+  Lượt bị huỷ sau `record` khi ĐÃ có đề xuất nhưng confirm chưa kịp interrupt:
+  tin sau được coi là câu trả lời đề xuất — lưới code + bộ phân loại vẫn gác
+  việc ghi. Không có đề xuất thì next=confirm không tính là đang chờ: tin sau là
+  tin mới từ supervisor. Mỗi khách một lượt chạy: lượt mới huỷ
   lượt cũ còn treo (`_ACTIVE_TURNS`, log `turn_superseded`).
 - Giới hạn đã biết của thread theo ngày (chấp nhận, không sửa):
   - **Qua hai nửa đêm liền nhau** (nối thread hôm qua lúc 00:10, rồi lại nhắn

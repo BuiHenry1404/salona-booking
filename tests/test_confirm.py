@@ -502,3 +502,24 @@ async def test_a_cancelled_resume_leaves_the_interrupt_waiting():
     await run(Command(resume="B"))
     assert log == [("resumed_with", "A"), ("resumed_with", "B"), ("finished", "B")]
     assert (await app.aget_state(cfg)).values["x"] == "B"
+
+
+async def test_an_approval_outliving_the_wait_is_logged_and_writes_nothing_here(
+        test_db, classifier, monkeypatch):
+    from app.agents.booking_graph import confirm as confirm_module
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+    await test_db["proposals"].update_one({"_id": ObjectId(pid)}, {"$set": {
+        "status": "approving", "approving_at": now_utc()}})
+    monkeypatch.setattr(confirm_module, "APPROVING_WAIT_SECONDS", 0.2)
+    logged = []
+    monkeypatch.setattr(confirm_module.logger, "warning", lambda event, **kw: logged.append(event))
+
+    values = await answer(graph, "ừ")
+
+    assert "approval_still_running" in logged
+    assert values["gate_next"] == "supervisor"
+    assert classifier["calls"] == 0
+    assert await test_db["appointments"].count_documents({}) == 0

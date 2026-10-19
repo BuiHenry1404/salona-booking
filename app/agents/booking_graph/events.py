@@ -217,10 +217,16 @@ async def _run_turn(
         }
         snapshot = await graph.aget_state(config)
         # Đang chờ = có interrupt, HOẶC confirm là bước kế tiếp mà chưa kịp
-        # interrupt lại: lượt resume trước bị huỷ SAU `aupdate_state` (checkpoint
-        # mới, next=confirm) nhưng trước khi confirm xong. Coi đó là tin mới thì
-        # câu "ừ" thứ hai đi vào supervisor và khách không nghe câu chốt.
-        if getattr(snapshot, "interrupts", ()) or "confirm" in (getattr(snapshot, "next", None) or ()):
+        # interrupt VÀ có đề xuất: lượt resume trước bị huỷ SAU `aupdate_state`
+        # (checkpoint mới, next=confirm) nhưng trước khi confirm xong — coi đó là
+        # tin mới thì "ừ" thứ hai đi vào supervisor, khách không nghe câu chốt.
+        # Không có đề xuất thì next=confirm chỉ là lượt bị cắt sau record: tin
+        # sau là tin MỚI, resume ở đây là trả `complete` rỗng (review M3).
+        values = getattr(snapshot, "values", None) or {}
+        waiting = bool(getattr(snapshot, "interrupts", ())) or (
+            "confirm" in (getattr(snapshot, "next", None) or ())
+            and bool(values.get("proposal_id")))
+        if waiting:
             # Thread đang chờ khách trả lời đề xuất (node confirm interrupt ở
             # lượt trước): câu khách là câu trả lời. Các khoá lượt mới ghi
             # TRƯỚC bằng `aupdate_state` (như thể `record` vừa ghi — cạnh

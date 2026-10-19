@@ -380,3 +380,54 @@ async def test_resume_cancelled_while_classifying_then_yes_books_once(test_db, u
     assert third[-1][0] == "complete", third[-1]
     assert third[-1][1]["answer"].startswith("Xong rồi ạ")
     assert await appointments(test_db) == 1
+
+
+# --- fix round 2 ---------------------------------------------------------------
+
+async def test_new_message_after_cut_before_confirm_without_proposal(test_db, user, models):
+    """Lượt bị huỷ giữa `record` và `confirm` khi KHÔNG có đề xuất: checkpoint có
+    next=confirm nhưng `proposal_id` rỗng. Tin sau là tin MỚI (supervisor), không
+    được resume rồi trả `complete` rỗng và mất khỏi `conversations` (review M3)."""
+    from app.agents.booking_graph.graph import build_graph
+    models.sup.replies += [AIMessage("social")]
+    models.agent.replies += [AIMessage("Dạ chào chị ạ")]
+    assert (await turn(test_db, user, "chào em"))[-1][1]["answer"] == "Dạ chào chị ạ"
+
+    graph = build_graph(test_db, user)
+    config = {"configurable": {
+        "thread_id": await events.pick_thread(graph, str(user.id), events.now_ms())}}
+    await graph.aupdate_state(config, {}, as_node="record")          # cắt sau record
+    snap = await graph.aget_state(config)
+    assert "confirm" in snap.next and not snap.interrupts and not snap.values.get("proposal_id")
+
+    models.sup.replies += [AIMessage("shop")]
+    models.agent.replies += [AIMessage("Dạ sơn gel 150 nghìn ạ")]
+    out = await turn(test_db, user, "sơn gel bao nhiêu em")
+
+    assert out[-1] == ("complete", {"answer": "Dạ sơn gel 150 nghìn ạ"})
+    assert len(models.sup.calls) == 2
+    doc = await test_db["conversations"].find_one({"user_id": str(user.id)})
+    assert doc["messages"][-1]["content"] == "Dạ sơn gel 150 nghìn ạ"
+
+
+async def test_proposal_set_but_not_yet_interrupted_treats_next_message_as_the_reply(
+        test_db, user, models):
+    """Lượt đề xuất bị huỷ sau `record`, trước khi confirm interrupt: tin sau là
+    câu TRẢ LỜI đề xuất — lưới + bộ phân loại vẫn gác việc ghi ("dạ ko em" → không ghi)."""
+    from app.agents.booking_graph.graph import build_graph
+    from app.services.proposal import ProposalService
+    p = await ProposalService(test_db).create(user, "book", tomorrow_at(15), None)
+    models.sup.replies += [AIMessage("social")]
+    models.agent.replies += [AIMessage(QUESTION)]
+    await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+    graph = build_graph(test_db, user)
+    config = {"configurable": {
+        "thread_id": await events.pick_thread(graph, str(user.id), events.now_ms())}}
+    await graph.aupdate_state(config, {"proposal_id": str(p.id)}, as_node="record")
+
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn giờ nào ạ?")]
+    out = await turn(test_db, user, "dạ ko em")
+
+    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?"})
+    assert await appointments(test_db) == 0
+    assert len(models.sup.calls) == 1                   # trả lời đề xuất, không về START

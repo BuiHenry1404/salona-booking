@@ -143,6 +143,11 @@ def make_confirm_node(
             await asyncio.sleep(APPROVING_POLL_SECONDS)
             waited += APPROVING_POLL_SECONDS
             proposal = await proposals.get(user, proposal_id)
+        if proposal is not None and proposal.status == "approving":
+            # Việc duyệt (shield) còn chạy quá thời gian chờ: câu khách thành tin
+            # mới; đề xuất sẽ tự thành approved (hoặc failed sau 60 giây).
+            logger.warning("approval_still_running", extra={"proposal_id": proposal_id,
+                                                            "waited": waited})
 
         if proposal is not None and proposal.status == "approved":
             # Lượt resume trước đã ghi rồi bị huỷ trước khi kịp nói câu chốt
