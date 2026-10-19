@@ -247,7 +247,8 @@ Azure treo) — lượt cũ bị huỷ êm, không phát `error`, không ghi `co
 
 ## 8c. Kiểm tầng gác (guard/rewrite/phrase)
 
-Mọi câu LLM đi qua node `guard` đúng một lần trước khi ra khách (spec
+Mọi câu LLM đi qua guard đúng một lần trước khi ra khách — từ M4 là
+`GuardMiddleware` (`after_agent`) trong mỗi agent, luật ở `guard.apply_guard` (spec
 `docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`; xem bẫy #21
 ở `CONTEXT.md`). Log qua `structlog`, không ném lỗi ra khách:
 
@@ -255,7 +256,7 @@ Mọi câu LLM đi qua node `guard` đúng một lần trước khi ra khách (s
   kiểm tất định: `repeat` (giống câu đáp gần đây, xem `REPEAT_RATIO`/
   `REPEAT_LOOKBACK` ở `guard.py`), `pronoun` (giọng "cô/chú/bác" hoặc đại từ
   sai giới với `address` suy từ tên khách), `clock` (giờ viết bằng chữ hoặc
-  `HH:MM` thay vì "3 giờ chiều"). Sang node `rewrite`.
+  `HH:MM` thay vì "3 giờ chiều"). Gọi `rewrite_once` đúng một lần.
 - `guard_rewritten` — bản viết lại (LLM, tag `rewrite`, một lần, không stream)
   qua hết mọi phép kiểm lại (cộng `content` — còn đủ mốc ngày-giờ/số của bản
   gốc). Đây là câu được phát.
@@ -263,15 +264,21 @@ Mọi câu LLM đi qua node `guard` đúng một lần trước khi ra khách (s
   `content_kept`). Guard trả **draft GỐC** (`answer_source="llm"`), không phát
   bản rewrite hỏng — không có lần rewrite thứ hai.
 - `rewrite_failed{error,codes}` (ở `rewrite.py`) — lời gọi LLM viết lại lỗi
-  hoặc quá `REWRITE_TIMEOUT_SECONDS` (8s); node trả nguyên draft, guard sẽ thấy
+  hoặc quá `REWRITE_TIMEOUT_SECONDS` (8s); `rewrite_once` trả None, guard thấy
   lại đúng các `codes` cũ và thành `guard_gave_up`.
 - `phrase_fallback{codes}` — nhánh riêng cho câu chốt lịch sau `confirm`
-  (`_guard_phrase` trong `guard.py`): câu do `phrase` node viết thiếu `when`
+  (`_guard_phrase` trong `guard.py`): câu do `PhraseMiddleware` viết thiếu `when`
   (mốc ngày-giờ từ DB), thiếu cách gọi khách (`address`), thiếu câu báo lỗi khi
   đặt hỏng, hoặc phạm ba phép kiểm thường — dùng ngay câu cứng
   `state["fallback"]`, không rewrite (đây là khoảnh khắc chốt lịch, sai số liệu
   không được phép).
-- `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của node `phrase` lỗi
+- `guard_tool_name_stripped` — câu của agent có tên tool (`parse_time`, …) hay
+  nhóm ngoặc chứa định danh snake_case; guard xoá bằng code trước khi kiểm.
+  Phòng ngừa — A chưa lộ lần nào; thấy log này là prompt/model đổi, nên soi.
+- `agent_turn_timeout{seconds}` (ở `events.py`) — lượt quá `TURN_TIMEOUT_SECONDS`
+  (60s); khách nhận `error` "Máy đang bận…". Model agent lỗi sau 1 lần thử lại
+  (`ModelRetryMiddleware`) thì là `agent_turn_failed` với cùng câu.
+- `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của `write_phrase` lỗi
   hoặc quá `PHRASE_TIMEOUT_SECONDS` (8s); dùng thẳng `fallback`.
 - `anchor_ignored{anchor}` (ở `tools.py`) — tool gọi `apply_anchor` với neo
   không hợp lệ (không parse được thành `datetime`), bỏ qua neo, hỏi lại khách

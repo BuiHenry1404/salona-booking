@@ -55,7 +55,7 @@ khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
 |---|---|---|
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
 | Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** (kể cả bọc HITL) | `propose_appointment` / `cancel_appointment` chỉ tạo **đề xuất** trong collection `proposals` (`ProposalService.create`); state graph chỉ mang `proposal_id`. Node `confirm` `interrupt()`, lượt sau CODE quyết (lưới phủ quyết `reply.py` trước, bộ phân loại tag `classify` sau) và chỉ `ProposalService.approve(user, proposal_id)` ghi: đúng chủ, còn hạn 10 phút, đề xuất tạo trước lượt duyệt, một lần duy nhất (claim pending→approving, không transaction), lịch đích của dời/hủy chưa đổi. Giá trị lấy từ DB, không từ chuỗi model gõ lại. Checkpoint KHÔNG phải nguồn sự thật cho ghi lịch (TTL xoá được nó) |
-| Câu trả lời | **Mọi câu qua `guard` (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp** | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
+| Câu trả lời | **Mọi câu qua guard (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp; tên tool bị xoá bằng code** — từ M4 guard là `GuardMiddleware` (`after_agent`, chạy sau cùng trong mỗi agent), luật không đổi, một bản duy nhất ở `guard.apply_guard` | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
 | Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` = summary (văn xuôi) + slots (dạng trường), cả hai đều là bản nén của tầng 2, không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
 | Bot Telegram | **Không có AI**, 4 nút | Tất định, không tốn token, test không cần LLM |
@@ -107,32 +107,49 @@ Khách ──socket──▶ run_turn
    START ─▶ supervisor (LLM, 1 chữ) ─▶ booking | shop | social                  │
                                           │ (booking: tool tạo đề xuất →        │
                                           │  proposal_id qua ConfirmMiddleware) │
-                    mọi câu ──▶ guard (0 LLM) ──vi phạm──▶ rewrite (1 lần) ─▶ guard
-                                    │                                           │
-                                    └── answer ─▶ record (câu đáp vào thread) ─▶ confirm
+   trong MỖI agent (middleware, M4):
+     PhraseMiddleware (before_agent): có confirm_fact → câu chốt thay model, nhảy tới cuối
+     model ⇄ tool (thử lại model 1 lần; timeout 20 giây mỗi lần gọi)
+     GuardMiddleware (after_agent, chạy SAU CÙNG): xoá tên tool → 3 phép kiểm (0 LLM)
+       ──vi phạm──▶ rewrite (1 lần) ─▶ kiểm lại (+content) ─▶ answer
+                    │
+     agent ──answer──▶ record (câu đáp vào thread) ─▶ confirm
                                                                                  │
    confirm: không có đề xuất ─────────────────────────────────────────────▶ END
             có đề xuất, lượt này ─▶ interrupt (câu hỏi xác nhận đã stream xong) ─▶ END
             lượt sau (resume): đọc đề xuất từ DB, lưới code → bộ phân loại
-              ├─ approve ─▶ ProposalService.approve ─▶ phrase (LLM viết câu chốt) ─▶ guard
+              ├─ approve ─▶ ProposalService.approve ─▶ booking + confirm_fact (PhraseMiddleware: LLM viết câu chốt; Guard kiểm)
               ├─ reject/change ─▶ booking (câu khách là tin mới)
-              ├─ unclear lần 1 ─▶ guard (câu hỏi lại do code viết) ─▶ record ─▶ confirm chờ tiếp
+              ├─ unclear lần 1 ─▶ booking + confirm_fact clarify (câu hỏi lại do code viết; Guard kiểm) ─▶ record ─▶ confirm chờ tiếp
               └─ hết hạn / không còn pending ─▶ supervisor
                     │
    stream token tag "respond" ─▶ complete ─▶ ghi conversations (nhật ký) ─▶ nén state (nền)
+   (cả lượt chịu trần TURN_TIMEOUT_SECONDS = 60 giây: hết giờ / model lỗi sau 1 lần thử lại
+    → `error` "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé." như A)
 ```
 
 - `booking` có **7 tool, 0 tool ghi**; `shop` 2 tool; `social` 0 tool.
 - `booking` / `shop` / `social` là agent `create_agent` (LangChain) bọc trong node
-  (`agents.py`: `build_agent` + `make_agent_node`), chỉ trả `draft`. Middleware
-  (`middleware/`): bố cục message theo bẫy #9, tối đa 4 lần gọi model rồi câu
-  fallback, lỗi tool thành câu tiếng Việt cố định, `parallel_tool_calls=False`
-  chỉ khi có tool (Azure trả 400 nếu gửi cờ này mà không kèm tool).
+  (`agents.py`: `build_agent` + `make_agent_node`), trả `answer` đã qua guard
+  (kèm `draft` thô để soi). Middleware (`middleware/`), ngoài → trong: Phrase,
+  Guard, lịch sử, confirm (booking), bố cục message theo bẫy #9, tắt
+  `parallel_tool_calls` chỉ khi có tool (Azure trả 400 nếu gửi cờ này mà không
+  kèm tool), tối đa 4 lần gọi model rồi câu fallback, lỗi tool thành câu tiếng
+  Việt cố định, thử lại model đúng 1 lần (`ModelRetryMiddleware`). `after_agent`
+  chạy ngược danh sách nên Guard chạy sau cùng — kể cả khi Phrase hay giới hạn
+  vòng nhảy thẳng tới cuối.
+- Giới hạn LLM (M4, sửa A-04): mọi model có `timeout=20` giây; chỉ model agent
+  tắt retry của SDK (`max_retries=0`) vì `ModelRetryMiddleware` đã thử lại —
+  supervisor/rewrite/phrase/timeparse/classify giữ retry SDK như A (F11). Trần
+  lượt 60 giây bọc từng lần KÉO sự kiện từ graph (`asyncio.timeout_at` quanh
+  `anext`), KHÔNG bọc `yield`: bọc cả vòng `async for` thì hết giờ lúc người
+  nhận đang `sio.emit` nổ CancelledError phía người nhận và khách không nhận
+  `error` nào (F12).
 - Lịch sử model (từ M2) nằm trong thread checkpointer `MongoDBSaver`
   (`app/agents/checkpoint.py`, cùng DB `MONGO_DB_NAME`, collection `checkpoints` /
   `checkpoint_writes`, TTL `CHECKPOINT_TTL_DAYS`). Thread chỉ giữ câu khách + câu
   đáp đã qua guard, mỗi tin mang stamp `created_at`; tool exchange ở lại trong
-  agent con. `HistoryWindowMiddleware` (agent), `phrase` và `supervisor` đều đọc
+  agent con. `HistoryWindowMiddleware` (agent), `write_phrase` và `supervisor` đều đọc
   qua `model_history` → model thấy đúng cửa sổ A gửi; câu khách của lượt lỗi
   (không có câu đáp) bị bỏ như A. Mọi khoá theo lượt (kể cả `answer`,
   `confirm_fact`, `gate_next`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
@@ -164,7 +181,10 @@ Khách ──socket──▶ run_turn
     Hiếm (lượt phải chạy đúng qua mốc) và chỉ mất một câu hỏi.
 - **Mọi tool trả JSON dữ kiện, không trả câu** (bẫy #23). Mốc thời gian là
   `{"iso", "spoken"}`; model chép `spoken` nguyên văn, câu thì tự viết.
-- `guard` là chỗ **duy nhất** đặt `answer`. `rewrite` mang tag riêng, không stream.
+- Guard (`GuardMiddleware` → `guard.apply_guard`) là chỗ **duy nhất** đặt `answer`.
+  `rewrite` mang tag riêng, không stream. Câu hỏi xác nhận đi qua guard TRONG
+  agent, rồi `record`, rồi mới tới `confirm` interrupt — interrupt nằm ở node
+  ngoài chính vì thứ tự này (câu hỏi phải được kiểm trước khi chờ khách).
 - Khối bối cảnh dựng bằng code mỗi lượt và **thắng** lịch sử lẫn `ConversationState` (summary + slots).
 
 ## 23 cái bẫy — đã trả giá, đừng "sửa cho gọn"
@@ -224,7 +244,7 @@ Khách ──socket──▶ run_turn
 
 20. **`ConversationState.summary` chỉ ghi diễn biến, không ghi trạng thái lịch — khối bối cảnh thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng cách bỏ cầu chì.
 
-21. **Guard là code, không phải rubric.** 3 phép kiểm tất định (`repeat`, `pronoun`, `clock`) + kiểm số liệu `content` sau rewrite. Thêm phép kiểm mờ ("câu này có tự nhiên không") là biến guard thành LLM chấm — bẫy #18 đã đo là không phân giải được. Rewrite **chỉ một lần**; lần hai hỏng thì trả **draft GỐC**, không trả bản rewrite. `repeat` bỏ qua khi hai câu khác tập chữ số (số liệu mới = nội dung mới) và khi khách **xin** nhắc lại.
+21. **Guard là code, không phải rubric.** Từ M4 sống ở `GuardMiddleware` (`middleware/guard.py`, `after_agent`), luật ở MỘT hàm thuần `guard.apply_guard` — node `guard`/`rewrite`/`phrase` cũ đã xoá, đừng dựng lại bản thứ hai. Trước mọi phép kiểm, `strip_tool_names` xoá tên tool (`TOOL_NAMES`) và nhóm ngoặc chứa định danh snake_case — tất định, không gọi LLM; áp cho cả bản viết lại và câu cứng (phòng ngừa: A chưa lộ tên tool lần nào). 3 phép kiểm tất định (`repeat`, `pronoun`, `clock`) + kiểm số liệu `content` sau rewrite. Thêm phép kiểm mờ ("câu này có tự nhiên không") là biến guard thành LLM chấm — bẫy #18 đã đo là không phân giải được. Rewrite **chỉ một lần**; lần hai hỏng thì trả **draft GỐC**, không trả bản rewrite. `repeat` bỏ qua khi hai câu khác tập chữ số (số liệu mới = nội dung mới) và khi khách **xin** nhắc lại.
 
 **Conversation state**
 

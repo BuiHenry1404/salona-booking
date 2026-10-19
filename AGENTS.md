@@ -66,7 +66,7 @@ pytest tests/test_timeparse_llm.py -m llm -v     # calls real Azure ($$$); exclu
 ```
 main.py                  entrypoint; lifespan init (Mongo fail-hard, LLM warn-and-continue)
 app/services/            all business logic (appointment, auth, shop, conversation, rate_limit)
-app/agents/booking_graph/  LangGraph: supervisor → agents → guard → record → confirm (interrupt); 5 tools, none writes
+app/agents/booking_graph/  LangGraph: supervisor → agents (guard/phrase are middleware) → record → confirm (interrupt); 5 tools, none writes
 app/api/v1/              thin REST layer over services
 app/repositories/        pymongo access; translates DuplicateKeyError → domain errors
 scripts/seed_dev_users.py  idempotent; no public signup (admin creates users)
