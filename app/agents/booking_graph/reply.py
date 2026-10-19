@@ -48,16 +48,24 @@ def _words(*alternatives: str) -> re.Pattern:
 
 
 # --- phủ định -----------------------------------------------------------------
-# "hủy" để riêng: đang chốt HỦY thì "ừ hủy đi" là ĐỒNG Ý (bẫy #19).
-_NEG = ("không", "ko", "k", "hông", "hổng", "hong", "chưa", "thôi", "khỏi", "khoan",
-        "đổi", "khác")
-_NEG_BARE = ("khong", "ko", "k", "hong", "chua", "thoi", "khoi", "khoan", "doi", "khac")
-_NEGATION = _words(*_NEG, "hủy")
-_NEGATION_BARE = _words(*_NEG_BARE, "huy")
-_NEGATION_CANCELLING = _words(*_NEG)
-_NEGATION_CANCELLING_BARE = _words(*_NEG_BARE)
+# Bộ CÓ DẤU so trên câu gốc. Bộ KHÔNG DẤU chỉ so trên những chữ khách gõ KHÔNG
+# dấu (chữ có dấu bị che trước — `_unaccented_only`): bỏ dấu cả câu thì "Hồng"
+# thành "hong", "đợi" thành "doi", "thời" thành "thoi", "chùa" thành "chua" —
+# phủ quyết oan những câu đồng ý thật (review M3). "dạ khong em" (nửa dấu nửa
+# không) vẫn bị bắt vì "khong" được gõ không dấu.
+#
+# "hủy" để riêng: đang chốt HỦY thì "ừ hủy đi" là ĐỒNG Ý (bẫy #19). Cùng lý do,
+# đang chốt DỜI thì "dời"/"đổi" là động từ đồng ý ("ừ dời đi em").
+_NEG = ("không", "ko", "k", "hông", "hổng", "hong", "chưa", "thôi", "khỏi", "khoan", "khác")
+_NEG_BARE = ("khong", "ko", "k", "hong", "chua", "thoi", "khoi", "khoan", "khac")
+_NEG_BY_KIND = {
+    "book": (_words(*_NEG, "đổi", "hủy"), _words(*_NEG_BARE, "doi", "huy")),
+    "move": (_words(*_NEG, "hủy"), _words(*_NEG_BARE, "huy")),
+    "cancel": (_words(*_NEG, "đổi"), _words(*_NEG_BARE, "doi")),
+}
 
 # --- hoãn ---------------------------------------------------------------------
+# Mẫu NHIỀU chữ: so trên câu đã bỏ dấu toàn bộ — cụm "de chi hoi" khó trùng nhầm.
 _DEFERRAL = re.compile(
     r"\bđể\s+\w+(\s+\w+)?\s+(hỏi|xem|gọi|tính|nghĩ|bàn)\b|\bxem lại\b|\bhỏi lại\b"
     r"|\bsuy nghĩ\b|\btính sau\b", re.IGNORECASE)
@@ -68,13 +76,26 @@ _DEFERRAL_BARE = re.compile(
 # --- câu hỏi ------------------------------------------------------------------
 # Từ để hỏi ở BẤT KỲ đâu (F5): câu tán gẫu "mất bao lâu hả chị, … cho chắc"
 # không có "?" và không kết thúc bằng từ hỏi, nhưng rõ ràng là đang hỏi.
+# "có gì" là "nếu có chuyện gì" ("có gì em nhắn chị nha"), không phải câu hỏi.
 _ASKING = _words("hả", "bao lâu", "bao nhiêu", "mấy", "sao", "gì", "đâu", "nào")
-_ASKING_BARE = _words("ha", "bao lau", "bao nhieu", "may", "sao", "gi", "dau", "nao")
-_ASK_ENDINGS = {"không", "hả", "chưa", "sao", "nào", "vậy",
-                "khong", "ha", "chua", "nao", "vay"}
-# Tiểu từ lịch sự cuối câu, bỏ trước khi xem từ cuối: "vậy em", "chưa ạ".
-_TRAILING_PARTICLES = {"ạ", "a", "à", "em", "chị", "chi", "anh", "nha", "nhé", "nhe",
-                       "ơi", "oi"}
+# "may" không dấu vừa là "mấy" vừa là "may" (may quá) — chỉ tính khi đi kèm đơn vị.
+_ASKING_BARE = re.compile(
+    r"\b(ha|bao lau|bao nhieu|sao|gi|dau|nao)\b"
+    r"|\bmay\s+(gio|h|tieng|phut|ngay|nguoi|lan|buoi)\b", re.IGNORECASE)
+_NOT_ASKING = re.compile(r"\bcó gì\b|\bco gi\b", re.IGNORECASE)
+_ASK_ENDINGS = {"không", "hả", "chưa", "sao", "nào"}
+_ASK_ENDINGS_BARE = {"khong", "ha", "chua", "sao", "nao"}
+# Tiểu từ xưng hô cuối câu: "vậy em", "chưa ạ" — bỏ trước khi xem từ cuối.
+_ADDRESS_PARTICLES = {"ạ", "a", "à", "em", "chị", "chi", "anh", "ơi", "oi"}
+# Tiểu từ rủ rê: "ừ vậy nha", "ok vậy đi" là ĐỒNG Ý, không phải hỏi.
+_SOFT_PARTICLES = {"nha", "nhé", "nhe", "nghen", "đi", "di"}
+
+
+def _unaccented_only(lowered: str) -> str:
+    """Giữ những chữ khách gõ không dấu; chữ có dấu thay bằng "_"."""
+    return re.sub(r"\w+", lambda m: m.group() if strip_diacritics(m.group()) == m.group()
+                  else "_", lowered)
+
 
 # --- giờ / ngày khác ----------------------------------------------------------
 # Dùng lại mẫu của parser (bẫy #11: không sửa, không nới — chỉ đọc). Bản không
@@ -82,6 +103,12 @@ _TRAILING_PARTICLES = {"ạ", "a", "à", "em", "chị", "chi", "anh", "nha", "nh
 _TIME = re.compile(_TIME_PATTERN, re.IGNORECASE)
 _TIME_BARE = re.compile(strip_diacritics(_TIME_PATTERN), re.IGNORECASE)
 _PERIOD_FROM_BARE = {strip_diacritics(p): p for p in ("sáng", "trưa", "chiều", "tối")}
+# Phút ngay sau giờ: "15h30", "3 giờ rưỡi", "3 giờ 15". Số phút phải HAI chữ số
+# để "3 giờ chiều 2 người" không thành 3:02. Cộng hai dạng không cần "giờ":
+# "15:30", "3 rưỡi". Không đụng parser (bẫy #11) — chỉ đọc thêm ở đây.
+_MINUTE_AFTER = re.compile(r"\s*(rưỡi|ruoi|\d{2})\b", re.IGNORECASE)
+_COLON_TIME = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+_HALF_PAST = re.compile(r"\b(\d{1,2})\s*(rưỡi|ruoi)\b", re.IGNORECASE)
 
 _DAYS = sorted(_DAY_OFFSETS, key=len, reverse=True)
 _DAY = _words(*_DAYS)
@@ -110,24 +137,42 @@ def _hour_differs(raw_hour: int, period: Optional[str], start_hour: int) -> bool
     return raw_hour % 12 != start_hour % 12
 
 
+def _minute_of(token: str) -> int:
+    return 30 if token.lower() in ("rưỡi", "ruoi") else int(token)
+
+
+def _times(text: str, pattern: re.Pattern, periods=None):
+    """(giờ, buổi, phút|None) cho mọi mốc giờ nhắc trong câu."""
+    for m in pattern.finditer(text):
+        period = m.group(2)
+        if periods is not None and period:
+            period = periods.get(period)
+        after = _MINUTE_AFTER.match(text, m.end())
+        yield int(m.group(1)), period, (_minute_of(after.group(1)) if after else None)
+    for m in _COLON_TIME.finditer(text):
+        yield int(m.group(1)), None, int(m.group(2))
+    for m in _HALF_PAST.finditer(text):
+        yield int(m.group(1)), None, 30
+
+
 def mentions_other_time(text: str, start: datetime, now: datetime) -> bool:
     """Khách nhắc một giờ, một ngày hay một thứ KHÁC với đề xuất.
 
     "ừ mà 4 giờ được không", "ok nhưng thứ năm nha", "dạ 4 giờ nha em" — có chữ
     đồng ý nhưng đang đổi giờ. Giờ không có buổi so theo `hour % 12` ("3 giờ" và
-    15:00 là một); có buổi thì so đủ 24 giờ ("3 giờ sáng" khác 15:00).
+    15:00 là một); có buổi thì so đủ 24 giờ ("3 giờ sáng" khác 15:00). Có phút
+    thì so cả phút ("15h30", "3 rưỡi" khác 15:00).
     """
     lowered = (text or "").lower()
     bare = strip_diacritics(lowered)
     typed_bare = bare == lowered            # khách gõ hoàn toàn không dấu
     local_start, local_now = to_local(start), to_local(now)
 
-    for m in _TIME.finditer(lowered):
-        if _hour_differs(int(m.group(1)), m.group(2), local_start.hour):
+    for hour, period, minute in [*_times(lowered, _TIME),
+                                 *_times(bare, _TIME_BARE, _PERIOD_FROM_BARE)]:
+        if _hour_differs(hour, period, local_start.hour):
             return True
-    for m in _TIME_BARE.finditer(bare):
-        period = _PERIOD_FROM_BARE.get(m.group(2)) if m.group(2) else None
-        if _hour_differs(int(m.group(1)), period, local_start.hour):
+        if minute is not None and minute != local_start.minute:
             return True
 
     def day_differs(offset: int) -> bool:
@@ -161,14 +206,24 @@ def mentions_other_time(text: str, start: datetime, now: datetime) -> bool:
     return False
 
 
-def _is_question(lowered: str, bare: str) -> bool:
-    if "?" in lowered or _ASKING.search(lowered) or _ASKING_BARE.search(bare):
+def _is_question(lowered: str, unaccented: str) -> bool:
+    lowered = _NOT_ASKING.sub(" ", lowered)
+    unaccented = _NOT_ASKING.sub(" ", unaccented)
+    if "?" in lowered or _ASKING.search(lowered) or _ASKING_BARE.search(unaccented):
         return True
     tokens = re.findall(r"\w+", lowered)
-    while tokens and tokens[-1] in _TRAILING_PARTICLES:
+    while tokens and tokens[-1] in _ADDRESS_PARTICLES:
         tokens.pop()
-    return bool(tokens) and (tokens[-1] in _ASK_ENDINGS
-                             or strip_diacritics(tokens[-1]) in _ASK_ENDINGS)
+    # "vậy" cuối câu là hỏi ("thế à vậy"), nhưng "ừ vậy nha/đi" là đồng ý: chỉ
+    # tính khi KHÔNG có tiểu từ rủ rê đứng sau.
+    if tokens and tokens[-1] in ("vậy", "vay"):
+        return True
+    while tokens and tokens[-1] in _SOFT_PARTICLES:
+        tokens.pop()
+    if not tokens:
+        return False
+    last = tokens[-1]
+    return last in _ASK_ENDINGS or (strip_diacritics(last) == last and last in _ASK_ENDINGS_BARE)
 
 
 def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Optional[str]:
@@ -179,15 +234,14 @@ def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Option
     """
     lowered = (text or "").strip().lower()
     bare = strip_diacritics(lowered)
-    cancelling = proposal.get("kind") == "cancel"
+    unaccented = _unaccented_only(lowered)
 
-    negation = _NEGATION_CANCELLING if cancelling else _NEGATION
-    negation_bare = _NEGATION_CANCELLING_BARE if cancelling else _NEGATION_BARE
-    if negation.search(lowered) or negation_bare.search(bare):
+    negation, negation_bare = _NEG_BY_KIND.get(proposal.get("kind"), _NEG_BY_KIND["book"])
+    if negation.search(lowered) or negation_bare.search(unaccented):
         return "negation"
     if _DEFERRAL.search(lowered) or _DEFERRAL_BARE.search(bare):
         return "deferral"
-    if _is_question(lowered, bare):
+    if _is_question(lowered, unaccented):
         return "question"
     if mentions_other_time(lowered, _as_datetime(proposal["start_at"]), now):
         return "other_time"

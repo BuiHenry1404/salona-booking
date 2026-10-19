@@ -140,3 +140,55 @@ def test_strip_diacritics_handles_d_bar():
     assert strip_diacritics("Đúng rồi đó") == "Dung roi do"
     assert strip_diacritics("") == ""
     assert strip_diacritics(None) == ""
+
+
+# --- fix round 1 (review M3) --------------------------------------------------
+
+# Câu ĐỒNG Ý thật mà bản cũ phủ quyết oan vì bỏ dấu cả câu ("Hồng" → "hong",
+# "đợi" → "doi", ...) hoặc vì "có gì" / "vậy nha" / "may quá".
+REVIEW_FALSE_VETOES = [
+    "dạ Hồng đồng ý", "dạ cô Hà đồng ý nha", "dạ được, lần đầu chị làm",
+    "ok em, thời gian đó được", "ừ sáng chị đi chùa xong chị qua", "dạ được đợi chị nha",
+    "dạ được, có gì em nhắn chị nha", "ừ 3 giờ chiều mai nha em, có gì nhắn chị nha",
+    "ừ vậy nha em", "ok, may quá còn chỗ", "ừ vậy đi em",
+]
+
+
+@pytest.mark.parametrize("text", REVIEW_FALSE_VETOES)
+def test_review_false_vetoes_now_pass_to_the_classifier(text):
+    assert veto_reason(text, P_BOOK, NOW) is None, text
+
+
+@pytest.mark.parametrize("text", [
+    "dạ khong em", "dạ chua em", "vâng nhưng ko em", "dạ thoi em",   # nửa dấu nửa không
+    "may gio xong vay", "mấy giờ xong vậy", "thế à vậy",            # câu hỏi thật
+])
+def test_mixed_and_real_questions_still_veto(text):
+    assert veto_reason(text, P_BOOK, NOW) is not None, text
+
+
+@pytest.mark.parametrize("text", ["ừ dời đi em", "dạ dời giúp chị", "ok đổi đi em",
+                                  "ừ đổi qua giờ đó đi", "u doi di em", "ừ dời qua 3 giờ chiều mai nha"])
+def test_doi_is_agreement_when_moving(text):
+    assert veto_reason(text, P_MOVE, NOW) is None, text
+
+
+@pytest.mark.parametrize("text", ["ok đổi đi em", "u doi di em"])
+def test_doi_stays_a_veto_when_booking(text):
+    assert veto_reason(text, P_BOOK, NOW) == "negation"
+
+
+@pytest.mark.parametrize("text", ["không dời nữa", "thôi khỏi dời", "dời sang giờ khác"])
+def test_a_real_negative_still_wins_when_moving(text):
+    assert veto_reason(text, P_MOVE, NOW) == "negation"
+
+
+@pytest.mark.parametrize("text", ["15h30", "dạ 3 rưỡi nha", "15:30 nha em", "3 giờ rưỡi chiều",
+                                  "ừ 3 giờ 15 chiều", "3 gio ruoi"])
+def test_minutes_other_than_the_proposal_veto(text):
+    assert veto_reason(text, P_BOOK, NOW) == "other_time", text
+
+
+@pytest.mark.parametrize("text", ["ok 15:00", "ừ 3 giờ 00 chiều", "ừ 3 giờ chiều 2 người"])
+def test_same_minute_or_no_minute_does_not_veto(text):
+    assert veto_reason(text, P_BOOK, NOW) is None, text
