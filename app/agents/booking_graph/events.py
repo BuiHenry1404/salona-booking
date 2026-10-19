@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import RESPOND_TAG
@@ -207,13 +208,23 @@ async def _run_turn(
             "callbacks": get_callbacks(),
             "metadata": get_trace_metadata(user_id=user_id, conversation_id=user_id),
         }
-        turn_input = {
+        fields = {
             "messages": [stamp(HumanMessage(content=question), asked_at)],
             **fresh_turn_fields(context, question),
             # Mốc "bây giờ" của cả lượt cho cửa sổ lịch sử — như A, tính một lần
             # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
             "asked_at": asked_at,
         }
+        if (await graph.aget_state(config)).interrupts:
+            # Thread đang chờ khách trả lời đề xuất (node confirm interrupt ở
+            # lượt trước): câu khách là câu trả lời. `update` áp TRƯỚC khi
+            # confirm chạy lại, nên node thấy câu khách và các khoá lượt mới.
+            # KHÔNG đặt lại `proposal_id` — đó chính là thứ đang chờ duyệt.
+            turn_input = Command(resume=question, update=fields)
+        else:
+            # Tin mới: chạy từ START. Đề xuất cũ (nếu còn trong checkpoint,
+            # vd. lượt trước lỗi giữa chừng) không bao giờ được mang sang.
+            turn_input = {**fields, "proposal_id": None}
 
         async for raw in graph.astream_events(turn_input, config=config, version="v2"):
             for event in translate_langchain_event(raw):
