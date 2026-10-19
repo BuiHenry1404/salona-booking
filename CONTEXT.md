@@ -151,6 +151,13 @@ Khách ──socket──▶ run_turn
   `anext`), KHÔNG bọc `yield`: bọc cả vòng `async for` thì hết giờ lúc người
   nhận đang `sio.emit` nổ CancelledError phía người nhận và khách không nhận
   `error` nào (F12).
+- Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
+  là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
+  qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,
+  `onComplete`/`onError`). Model agent nổ giữa stream rồi thử lại thì stream
+  lại từ đầu — token hai lần nối nhau trên màn hình cho tới khi `complete`/`error`
+  tới và thay cả bubble. Client mới (Telegram ở Plan 3, client khác) phải giữ
+  đúng luật này: không bao giờ coi chuỗi token là câu cuối.
 - Lịch sử model (từ M2) nằm trong thread checkpointer `MongoDBSaver`
   (`app/agents/checkpoint.py`, cùng DB `MONGO_DB_NAME`, collection `checkpoints` /
   `checkpoint_writes`, TTL `CHECKPOINT_TTL_DAYS`). Thread chỉ giữ câu khách + câu

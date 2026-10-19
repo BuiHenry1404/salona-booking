@@ -239,6 +239,23 @@ describe("useAgentStream", () => {
     expect(result.current.messages[0]).toMatchObject({ role: "user", text: "hỏi gì đó" });
   });
 
+  it("Q2. error giữa stream: bỏ bubble dở (kể cả token nối của lần thử lại), chỉ còn câu lỗi", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() => result.current.send("hỏi gì đó"));
+    act(() => socket.fire("token", { text: "Dạ em giữ" }));
+    act(() => socket.fire("token", { text: "Dạ em giữ chỗ" })); // lần thử lại stream lại từ đầu
+    act(() => socket.fire("error", { message: "Máy đang bận chút xíu ạ" }));
+
+    const bot = result.current.messages.filter((m) => m.role === "bot");
+    expect(bot.map((m) => m.text)).toEqual(["Máy đang bận chút xíu ạ"]);
+
+    // Lượt sau stream bình thường vào bubble MỚI.
+    act(() => socket.fire("token", { text: "Dạ" }));
+    act(() => socket.fire("complete", { answer: "Dạ chị cần gì ạ?" }));
+    expect(result.current.messages.filter((m) => m.role === "bot").map((m) => m.text))
+      .toEqual(["Máy đang bận chút xíu ạ", "Dạ chị cần gì ạ?"]);
+  });
+
   it("R. unmount: off ĐÚNG từng exact handler, release đúng 1 lần", () => {
     const { unmount } = renderHook(() => useAgentStream());
     unmount();

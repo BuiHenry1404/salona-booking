@@ -165,6 +165,11 @@ async def run_turn(
 ) -> AsyncIterator[AgentEvent]:
     """Chạy một lượt chat và phát sự kiện theo thứ tự thời gian thực.
 
+    `token` chỉ là nháp: model thử lại giữa stream thì token stream lại từ đầu.
+    Mỗi lượt kết thúc bằng ĐÚNG một `complete` (câu cuối, client THAY bubble
+    bằng nó) hoặc `error` (client thay bubble bằng câu lỗi) — xem CONTEXT.md
+    "Hợp đồng stream".
+
     Lịch sử model nằm trong thread checkpointer (`pick_thread`); `conversations`
     vẫn được ghi như cũ làm nhật ký hiển thị, cùng mốc thời gian với thread.
 
