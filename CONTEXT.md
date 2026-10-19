@@ -138,7 +138,15 @@ Khách ──socket──▶ run_turn
   `confirm_fact`, `gate_next`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
   checkpoint mang giá trị lượt trước sang. `proposal_id` thì KHÔNG nằm trong đó:
   lượt resume phải giữ đề xuất đang chờ; input mới tự đặt `proposal_id=None`
-  (lượt lỗi giữa chừng không để lại đề xuất mồ côi trong state). Mỗi khách một lượt chạy: lượt mới huỷ
+  (lượt lỗi giữa chừng không để lại đề xuất mồ côi trong state).
+- Resume = `aupdate_state(fields, as_node="record")` rồi `Command(resume=câu khách)`
+  KHÔNG kèm `update`: lượt resume bị huỷ (lượt mới thay) để lại `update` của nó
+  thành pending write, và lần resume sau ghi `answer` hai lần trong một bước →
+  `InvalidUpdateError` mãi. "Đang chờ" = có interrupt HOẶC `confirm` là bước kế
+  (lượt resume bị huỷ trước khi confirm interrupt lại). `ProposalService.approve`
+  chạy trong `asyncio.shield`: huỷ lượt giữa lúc ghi thì việc duyệt vẫn xong;
+  lượt sau thấy `approving` thì chờ tối đa 3 giây, thấy `approved` thì đi thẳng
+  câu chốt (duyệt lại idempotent) — khách luôn nghe xác nhận cho lịch có thật. Mỗi khách một lượt chạy: lượt mới huỷ
   lượt cũ còn treo (`_ACTIVE_TURNS`, log `turn_superseded`).
 - Giới hạn đã biết của thread theo ngày (chấp nhận, không sửa):
   - **Qua hai nửa đêm liền nhau** (nối thread hôm qua lúc 00:10, rồi lại nhắn
@@ -277,9 +285,13 @@ rồi" hết là đồng ý; vá kiểu nào thì code vẫn đang QUYẾT "đ�
 từ. M3 đảo hướng:
 
 - Code chỉ được quyết "chắc chắn KHÔNG đồng ý" (`reply.veto_reason`: phủ định,
-  hoãn, câu hỏi — có từ để hỏi ở bất kỳ đâu, giờ/ngày/thứ khác đề xuất), trên
-  cả bản có dấu lẫn không dấu. Phủ quyết oan ("chị Hồng" → "hong") chỉ tốn một
-  lượt booking hỏi lại; bỏ sót là ghi nhầm — nên lưới nghiêng về phủ quyết.
+  hoãn, câu hỏi — có từ để hỏi ở bất kỳ đâu, giờ/phút/ngày/thứ khác đề xuất).
+  Từ đơn không dấu ("hong", "doi", "thoi", "chua") chỉ so trên những chữ khách
+  GÕ không dấu — bỏ dấu cả câu thì "chị Hồng", "đợi", "thời gian", "đi chùa" bị
+  phủ quyết oan (review M3); "dạ khong em" nửa dấu nửa không vẫn bị bắt. Cụm
+  nhiều chữ và mốc giờ vẫn so trên câu bỏ dấu toàn bộ. Đang chốt DỜI thì
+  "dời/đổi" là đồng ý (như "hủy" khi chốt hủy); "có gì" và "vậy nha/đi" không
+  phải câu hỏi.
 - Câu lưới cho qua mới tới bộ phân loại (model, tag `classify`, prompt tiếng
   Anh không ví dụ tiếng Việt — bẫy #16). Chỉ ghi khi model nói approve **và**
   lưới không phủ quyết. Lỗi/timeout model = `unclear`.
