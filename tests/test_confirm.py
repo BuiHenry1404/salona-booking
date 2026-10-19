@@ -361,7 +361,8 @@ async def test_first_unclear_asks_once_and_keeps_the_proposal(test_db, classifie
 
     values = await answer(graph, "cho cô dùng thử")
 
-    assert values["gate_next"] == "guard"
+    # "phrase": agent booking đặt nguyên văn câu hỏi lại (PhraseMiddleware), guard kiểm.
+    assert values["gate_next"] == "phrase"
     assert values["proposal_id"] == pid                  # vẫn chờ đề xuất này
     assert values["draft"] == values["fallback"] == clarify_question(
         "book", format_vi_datetime(tomorrow_at(15)), "chị Lan")

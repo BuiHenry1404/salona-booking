@@ -7,7 +7,6 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.booking_graph.guard import REPEAT_LOOKBACK, REWRITE_TIMEOUT_SECONDS
 from app.agents.booking_graph.prompts import REWRITE_PROMPT, VIOLATION_HINTS
-from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
 
@@ -43,20 +42,6 @@ async def rewrite_once(draft: str, codes: List[str], previous_replies: Sequence[
         logger.warning("rewrite_failed", extra={"error": str(exc), "codes": codes})
         return None
     return (reply.content or "").strip() or None
-
-
-def make_rewrite_node():
-    """Node rewrite của graph ngoài — chỉ còn tới Task 4.2 (GuardMiddleware)."""
-    async def node(state: GraphState) -> dict:
-        draft = state.get("draft") or ""
-        new = await rewrite_once(draft, state.get("violations") or [],
-                                 state.get("previous_replies") or [],
-                                 state.get("context_block") or "")
-        if not new:
-            return {"rewritten": True}
-        return {"draft": new, "original_draft": draft, "rewritten": True}
-
-    return node
 
 
 def _address_from_block(block: str) -> str:

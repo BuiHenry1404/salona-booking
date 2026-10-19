@@ -6,14 +6,11 @@ from app.agents.booking_graph.agents import (RESPOND_TAG,  # noqa: F401 (re-expo
                                              build_agent, make_agent_node)
 from app.agents.booking_graph.confirm import (make_confirm_node,
                                               route_after_confirm)
-from app.agents.booking_graph.guard import make_guard_node, route_after_guard
 from app.agents.booking_graph.history import stamp
 from app.agents.booking_graph.middleware.confirm import ConfirmMiddleware
 from app.agents.booking_graph.middleware.history import HistoryWindowMiddleware
-from app.agents.booking_graph.phrase import make_phrase_node
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, SHOP_PROMPT,
                                               SOCIAL_PROMPT)
-from app.agents.booking_graph.rewrite import make_rewrite_node
 from app.agents.booking_graph.state import GraphState
 from app.agents.booking_graph.supervisor import supervise
 from app.agents.booking_graph.tools import (make_booking_tools,
@@ -32,8 +29,8 @@ def booking_tools(db: AsyncIOMotorDatabase, user: User):
 async def record(state: GraphState) -> dict:
     """Ghi câu đáp cuối vào thread — lịch sử model của lượt sau.
 
-    Chỉ câu đã qua guard, mang mốc `now_ms()` (run_turn ghi `conversations` bằng
-    đúng mốc này). Không có câu đáp thì không ghi gì: câu khách đứng lẻ là dấu
+    Chỉ câu đã qua guard (GuardMiddleware trong agent), mang mốc `now_ms()`
+    (run_turn ghi `conversations` bằng đúng mốc này). Không có câu đáp thì không ghi gì: câu khách đứng lẻ là dấu
     vết lượt hỏng, `model_history` bỏ nó như A.
     """
     answer = state.get("answer") or ""
@@ -51,8 +48,10 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     trong test). Agent con vẫn `checkpointer=False` — thread thuộc graph ngoài.
     """
     def agent(prompt, tools, *extra):
+        # `user` → mỗi agent có PhraseMiddleware + GuardMiddleware: câu nào ra
+        # khỏi agent cũng đã qua guard đúng một lần (rewrite tối đa một lần).
         return make_agent_node(build_agent(
-            prompt, tools, extra_middleware=[HistoryWindowMiddleware(), *extra]))
+            prompt, tools, user=user, extra_middleware=[HistoryWindowMiddleware(), *extra]))
 
     graph = StateGraph(GraphState)
 
@@ -65,9 +64,6 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     graph.add_node("social", agent(SOCIAL_PROMPT, []))
     # Chỉ booking có tool đề xuất, nên chỉ booking bắt `proposal_id`.
     graph.add_node("booking", agent(BOOKING_PROMPT, booking_tools(db, user), ConfirmMiddleware()))
-    graph.add_node("guard", make_guard_node(user))
-    graph.add_node("rewrite", make_rewrite_node())
-    graph.add_node("phrase", make_phrase_node())
     graph.add_node("record", record)
 
     # Không còn nhánh tắt START → confirm: câu trả lời xác nhận tới bằng
@@ -80,26 +76,23 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         {"booking": "booking", "shop": "shop", "social": "social"},
     )
 
-    # confirm (sau record — câu hỏi xác nhận đã qua guard và nằm trong thread):
+    # Mọi agent → record → confirm. Guard/rewrite/câu chốt nằm TRONG agent
+    # (middleware), nên câu hỏi xác nhận đã qua guard và nằm trong thread
+    # TRƯỚC khi confirm interrupt.
+    for node in ("social", "shop", "booking"):
+        graph.add_edge(node, "record")
+    graph.add_edge("record", "confirm")
+
+    # confirm:
     # - end: không có đề xuất chờ;
-    # - phrase: đã ghi → LLM viết câu chốt theo số liệu;
+    # - phrase: đã ghi (approve) hoặc hỏi lại MỘT câu (clarify) → agent booking
+    #   mang `confirm_fact`; PhraseMiddleware viết câu thay cho model, Guard kiểm;
     # - booking: khách từ chối/đổi ý → booking trả lời như tin mới;
-    # - supervisor: đề xuất hết hạn/không còn pending → tin mới từ đầu;
-    # - guard: hỏi lại MỘT câu (code viết) rồi record → confirm chờ tiếp.
+    # - supervisor: đề xuất hết hạn/không còn pending → tin mới từ đầu.
     graph.add_conditional_edges(
         "confirm", route_after_confirm,
-        {"end": END, "phrase": "phrase", "booking": "booking",
-         "supervisor": "supervisor", "guard": "guard"},
+        {"end": END, "phrase": "booking", "booking": "booking", "supervisor": "supervisor"},
     )
-    graph.add_edge("phrase", "guard")
-
-    # Mọi câu LLM đi qua guard ĐÚNG MỘT lần trước khi ra END; rewrite tối đa
-    # một lần rồi quay lại guard để kiểm, không viết lại lần hai.
-    for node in ("social", "shop", "booking"):
-        graph.add_edge(node, "guard")
-    graph.add_conditional_edges("guard", route_after_guard, {"rewrite": "rewrite", "end": "record"})
-    graph.add_edge("rewrite", "guard")
-    graph.add_edge("record", "confirm")
 
     return graph.compile(
         checkpointer=checkpointer if checkpointer is not None else get_checkpointer())

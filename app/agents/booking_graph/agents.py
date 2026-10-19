@@ -1,16 +1,19 @@
-from typing import Any, Awaitable, Callable, List, Sequence
+from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.middleware.guard import GuardMiddleware
 from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
     STATE_HEADER, MessageLayoutMiddleware)
 from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
     FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT, NoParallelToolsMiddleware,
     ToolErrorMiddleware, ToolRoundLimitMiddleware)
+from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
+from app.models.user import User
 
 # Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
 RESPOND_TAG = "respond"
@@ -52,6 +55,7 @@ def build_agent(
     *,
     tag: str = RESPOND_TAG,
     model=None,
+    user: Optional[User] = None,
     extra_middleware: Sequence[AgentMiddleware] = (),
 ):
     """Một agent `create_agent`: gọi tool rồi trả lời.
@@ -60,16 +64,21 @@ def build_agent(
     trả lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn
     hình.
 
-    Thứ tự middleware (ngoài → trong): `extra_middleware` đứng ngoài cùng (M2
-    thêm lịch sử, M3 thêm confirm), rồi bố cục message, tắt parallel, giới hạn
-    vòng, lỗi tool.
+    Thứ tự middleware (ngoài → trong): có `user` thì Phrase rồi Guard đứng
+    ngoài cùng; rồi `extra_middleware` (M2 thêm lịch sử, M3 thêm confirm), bố
+    cục message, tắt parallel, giới hạn vòng, lỗi tool. `after_agent` chạy
+    NGƯỢC danh sách nên Guard chạy SAU CÙNG — kể cả khi Phrase hay giới hạn
+    vòng nhảy thẳng tới cuối. Không có `user` (test agent trần) thì không có
+    guard/phrase: agent chỉ trả câu thô.
 
     `checkpointer=False`: agent con không bao giờ ghi checkpoint riêng — state
     lượt chat thuộc graph ngoài.
 
     Không truyền `model` thì model thật chỉ được dựng ở lần gọi đầu (`_LazyAgent`).
     """
+    outer = [PhraseMiddleware(), GuardMiddleware(user)] if user is not None else []
     middleware = [
+        *outer,
         *extra_middleware,
         MessageLayoutMiddleware(),
         NoParallelToolsMiddleware(),
@@ -97,9 +106,13 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
     `messages` là cả thread trong ngày; `HistoryWindowMiddleware` (trong
     `extra_middleware` của graph) cắt lại đúng cửa sổ A gửi model.
 
-    Node không set `answer` — chỉ `draft` (và `proposal_id` của lượt này, None
-    nếu không có); `guard` mới quyết câu cuối. Tool message của lượt này ở lại
-    trong agent con, KHÔNG quay về `messages` ngoài.
+    Trả `draft` (câu thô của agent) và — khi agent có GuardMiddleware —
+    `answer` / `answer_source` / `violations` do guard quyết. Tool message của
+    lượt này ở lại trong agent con, KHÔNG quay về `messages` ngoài.
+
+    `proposal_id` của lượt này (None nếu không có) — TRỪ lượt câu chốt
+    (`confirm_fact`): agent không chạy tool nên không đụng tới đề xuất; câu
+    hỏi lại (clarify) phải giữ nguyên đề xuất để confirm chờ tiếp.
     """
     async def node(state: GraphState) -> dict:
         out = await agent.ainvoke({
@@ -111,13 +124,24 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
             # bị gửi lại nguyên văn mỗi lượt (F2).
             "history_after": state.get("history_after"),
             "asked_at": state.get("asked_at"),
+            # GuardMiddleware / PhraseMiddleware.
+            "previous_replies": state.get("previous_replies") or [],
+            "customer_text": state.get("customer_text") or "",
+            "confirm_fact": state.get("confirm_fact"),
+            "fallback": state.get("fallback"),
         })
         messages = out.get("messages") or []
         reply = messages[-1] if messages else None
-        # Đề xuất của lượt này (ConfirmMiddleware). Vòng tool cạn thì câu cuối
-        # là FALLBACK chứ không phải câu hỏi xác nhận — không được chờ duyệt (G-07).
-        proposal_id = None if out.get("tool_loop_exhausted") else out.get("proposal_id")
-        return {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER,
-                "proposal_id": proposal_id}
+        result = {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER}
+        for key in ("answer", "answer_source", "violations"):
+            if key in out:
+                result[key] = out[key]
+        if not state.get("confirm_fact"):
+            # Đề xuất của lượt này (ConfirmMiddleware). Vòng tool cạn thì câu
+            # cuối là FALLBACK chứ không phải câu hỏi xác nhận — không được chờ
+            # duyệt (G-07).
+            result["proposal_id"] = (None if out.get("tool_loop_exhausted")
+                                     else out.get("proposal_id"))
+        return result
 
     return node

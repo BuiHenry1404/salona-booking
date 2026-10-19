@@ -152,9 +152,8 @@ def test_fresh_turn_fields_reset_everything_a_turn_produces():
          "history": [], "user_id": "u1"}, "q")
     # Lượt resume dùng chung hàm này: đề xuất đang chờ KHÔNG được đặt lại ở đây.
     assert "proposal_id" not in fields and "pending_confirmation" not in fields
-    for key, empty in {"answer": "", "draft": "", "original_draft": "", "violations": [],
-                       "rewritten": False, "route": "", "gate_next": "", "fallback": None,
-                       "confirm_fact": None, "phrase_fact": None}.items():
+    for key, empty in {"answer": "", "draft": "", "violations": [], "route": "",
+                       "gate_next": "", "fallback": None, "confirm_fact": None}.items():
         assert fields[key] == empty, key
     assert fields["customer_text"] == "q" and fields["user_id"] == "u1"
     assert "messages" not in fields

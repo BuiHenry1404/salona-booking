@@ -103,8 +103,9 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
     """Mọi khoá một lượt sinh ra, đặt lại cho lượt mới.
 
     Thread checkpointer GIỮ state lượt trước: khoá nào không có trong input là
-    mang giá trị cũ sang — `answer` cũ làm `route_after_guard` bỏ qua guard,
-    `confirm_fact` cũ làm guard tưởng đang chốt lịch.
+    mang giá trị cũ sang — `answer` cũ thành câu đáp của lượt không sinh câu nào,
+    `confirm_fact` cũ làm agent booking tưởng đang chốt lịch (PhraseMiddleware
+    thay model) và guard kiểm theo luật câu chốt.
 
     KHÔNG có `proposal_id` ở đây: lượt resume phải giữ nguyên đề xuất đang chờ;
     lượt mới (không resume) tự đặt `proposal_id=None` trong `run_turn`.
@@ -113,14 +114,11 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         "answer": "",
         "answer_source": "llm",
         "draft": "",
-        "original_draft": "",
         "violations": [],
-        "rewritten": False,
         "route": "",
         "gate_next": "",
         "fallback": None,
         "confirm_fact": None,
-        "phrase_fact": None,
         "context_block": context["context_block"],
         "summary": context.get("summary") or [],
         "slots": context.get("slots"),

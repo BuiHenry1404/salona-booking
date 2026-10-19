@@ -5,7 +5,7 @@ Thay node regex cũ (`is_affirmative` + cờ `pending_confirmation` trong
 
 1. Agent booking gọi `propose_appointment` / `cancel_appointment` → đề xuất nằm
    trong DB (`proposals`), state chỉ mang `proposal_id` (ConfirmMiddleware).
-2. Câu hỏi xác nhận của agent đi qua guard → record như mọi câu khác (stream
+2. Câu hỏi xác nhận của agent đi qua guard (middleware) → record như mọi câu khác (stream
    token `respond` bình thường), rồi tới đây: `interrupt(...)`. Lượt chat kết
    thúc với `complete` như A.
 3. Lượt sau `run_turn` resume bằng câu khách. Node đọc lại đề xuất từ DB (theo
@@ -181,13 +181,14 @@ def make_confirm_node(
         if decision == "unclear":
             marked = await proposals.mark_unclear(user, proposal_id)
             if marked is not None and marked.status == "pending":
-                # Lần đầu không rõ: hỏi lại MỘT câu, giữ đề xuất. Câu này đi qua
-                # guard như câu chốt (fallback = chính nó) rồi record, và
-                # confirm interrupt lại trên cùng đề xuất.
+                # Lần đầu không rõ: hỏi lại MỘT câu, giữ đề xuất. Câu này đi
+                # đường câu chốt (agent booking: PhraseMiddleware đặt nguyên
+                # văn, GuardMiddleware kiểm, fallback = chính nó) rồi record,
+                # và confirm interrupt lại trên cùng đề xuất.
                 when = format_vi_datetime(proposal.start_at)
                 ask = clarify_question(proposal.kind, when, address)
                 logger.info("confirm_unclear", extra={"proposal_id": proposal_id})
-                return {"draft": ask, "fallback": ask, "gate_next": "guard",
+                return {"draft": ask, "fallback": ask, "gate_next": "phrase",
                         "confirm_fact": {"kind": "clarify", "when": when, "note": None,
                                          "address": address, "error": None}}
         elif decision == "change":

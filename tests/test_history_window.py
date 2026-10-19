@@ -239,7 +239,7 @@ async def test_phrase_sends_only_the_window(monkeypatch):
     monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: model)
     t = now_ms() - timedelta(minutes=10)
     old, new = _pair("cũ", "đáp cũ", t), _pair("mới", "đáp mới", t + timedelta(minutes=2))
-    await phrase.make_phrase_node()({
+    await phrase.write_phrase({
         "messages": [*old, *new, HumanMessage("ừ")], "context_block": "CTX",
         "history_after": t + timedelta(minutes=1),
         "confirm_fact": {"kind": "booked", "when": "x"}, "fallback": "f"})

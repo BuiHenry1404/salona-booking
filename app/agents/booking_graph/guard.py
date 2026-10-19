@@ -13,7 +13,6 @@ from difflib import SequenceMatcher
 from typing import Awaitable, Callable, List, Optional, Sequence
 
 from app.agents.booking_graph.context import address_phrase, derive_address
-from app.agents.booking_graph.state import GraphState
 from app.core.logging import get_logger
 from app.models.user import User
 
@@ -302,38 +301,6 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     if not content_kept(draft, rewritten):
         second.append("content")
     return _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)
-
-
-def make_guard_node(user: User):
-    """Node guard của graph ngoài — chỉ còn tới khi GuardMiddleware thay hẳn
-    (Task 4.2). Dùng chung `_guard_phrase` / `_after_rewrite` với `apply_guard`."""
-    address = address_phrase(user.full_name)
-    _, name = derive_address(user.full_name)
-
-    async def node(state: GraphState) -> dict:
-        draft = state.get("draft") or ""
-        fact = state.get("phrase_fact") or state.get("confirm_fact")
-        if fact:
-            return _guard_phrase(state, draft, fact, address)
-        codes = find_violations(
-            draft, previous_replies=state.get("previous_replies") or [],
-            address=address, name=name, customer_text=state.get("customer_text") or "",
-        )
-        if state.get("rewritten"):
-            original = state.get("original_draft") or draft
-            if not content_kept(original, draft):
-                codes.append("content")
-            return _after_rewrite(original, draft, codes=codes, rewrite_ran=draft != original)
-        if codes:
-            logger.info("guard_violation", extra={"codes": codes})
-            return {"violations": codes}
-        return {"answer": draft, "answer_source": "llm", "violations": []}
-
-    return node
-
-
-def route_after_guard(state: GraphState) -> str:
-    return "end" if state.get("rewritten") or state.get("answer") else "rewrite"
 
 
 def _guard_phrase(state, draft, fact, address):

@@ -1,10 +1,11 @@
-"""Hình dạng graph khoá cứng: mọi câu LLM qua guard đúng một lần; rewrite tối đa một lần."""
+"""Hình dạng graph khoá cứng: agent (guard bên trong) → record → confirm."""
 import inspect
 from unittest.mock import MagicMock
 
 from app.agents.booking_graph import confirm, guard, phrase, reply, tools
 from app.agents.booking_graph.middleware import confirm as confirm_middleware
 from app.agents.booking_graph.middleware import guard as guard_middleware
+from app.agents.booking_graph.middleware import phrase as phrase_middleware
 from app.services import proposal as proposal_service
 from app.agents.booking_graph.graph import build_graph
 from app.models.user import User
@@ -15,35 +16,47 @@ def edges():
     return {(e.source, e.target) for e in g.edges}
 
 
-def test_every_llm_node_feeds_the_guard():
+def test_every_agent_feeds_record_then_confirm():
+    """Guard nằm TRONG agent (GuardMiddleware): câu ra khỏi agent đã qua guard,
+    record ghi nó vào thread, rồi confirm mới interrupt — câu hỏi xác nhận đã
+    được kiểm TRƯỚC khi chờ khách."""
     e = edges()
     for node in ("booking", "shop", "social"):
-        assert (node, "guard") in e, node
+        assert (node, "record") in e, node
         assert (node, "__end__") not in e, node
-
-
-def test_guard_goes_to_rewrite_or_end_and_rewrite_returns_to_guard():
-    """"end" của guard đi qua `record` (ghi câu đáp vào thread) rồi tới confirm."""
-    e = edges()
-    assert ("guard", "rewrite") in e and ("guard", "record") in e
-    assert ("guard", "__end__") not in e
-    assert ("rewrite", "guard") in e
-    assert ("rewrite", "__end__") not in e
-
-
-def test_record_then_confirm_after_guard():
-    """Câu hỏi xác nhận phải qua guard và nằm trong thread TRƯỚC khi interrupt."""
-    e = edges()
     assert ("record", "confirm") in e
     assert ("record", "__end__") not in e
 
 
-def test_confirm_goes_to_phrase_booking_supervisor_or_end():
+def test_no_guard_node_left_in_outer_graph():
+    nodes = set(build_graph(MagicMock(), User(phone="0912345678", hashed_password="x",
+                                              full_name="Cô Lan")).get_graph().nodes)
+    assert not nodes & {"guard", "rewrite", "phrase"}
+    assert {"supervisor", "booking", "shop", "social", "record", "confirm"} <= nodes
+
+
+def test_confirm_goes_to_booking_supervisor_or_end():
+    """Câu chốt (approve) và câu hỏi lại (clarify) đi qua agent booking mang
+    `confirm_fact` — PhraseMiddleware thay model, Guard kiểm."""
     e = edges()
-    for target in ("phrase", "booking", "supervisor", "guard", "__end__"):
+    for target in ("booking", "supervisor", "__end__"):
         assert ("confirm", target) in e, target
     assert ("confirm", "shop") not in e and ("confirm", "social") not in e
-    assert ("phrase", "guard") in e
+    from app.agents.booking_graph.confirm import route_after_confirm
+    assert route_after_confirm({"gate_next": "phrase"}) == "phrase"
+
+
+def test_every_agent_runs_phrase_then_guard_middleware():
+    from app.agents.booking_graph.agents import build_agent
+    from app.agents.booking_graph.middleware.guard import GuardMiddleware
+    from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
+    from tests.fakes import scripted
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    nodes = set(build_agent("p", [], model=scripted([]), user=user).get_graph().nodes)
+    assert f"{PhraseMiddleware().name}.before_agent" in nodes
+    assert f"{GuardMiddleware(user).name}.after_agent" in nodes
+    bare = set(build_agent("p", [], model=scripted([])).get_graph().nodes)
+    assert not any(n.endswith("_agent") for n in bare)
 
 
 def test_there_is_no_confirm_shortcut_from_start():
@@ -81,7 +94,7 @@ def test_no_code_path_books_from_slots():
                  'state["slots"]', 'state.get("slots")')
     # F9: mọi module trên đường ghi/chốt lịch, kể cả đường mới của M3.
     for module in (confirm, guard, phrase, tools, reply, confirm_middleware, guard_middleware,
-                   proposal_service):
+                   phrase_middleware, proposal_service):
         source = inspect.getsource(module)
         for needle in forbidden:
             assert needle not in source, (
