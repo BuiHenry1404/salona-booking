@@ -54,7 +54,7 @@ khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
 | Chủ đề | Chốt | Vì sao |
 |---|---|---|
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
-| Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** | `propose_appointment` giữ chỗ, `cancel_appointment` giữ ý hủy; node `confirm` mới ghi/hủy khi khách "ừ". Giá trị lấy từ DB, không từ chuỗi model gõ lại |
+| Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** (kể cả bọc HITL) | `propose_appointment` / `cancel_appointment` chỉ tạo **đề xuất** trong collection `proposals` (`ProposalService.create`); state graph chỉ mang `proposal_id`. Node `confirm` `interrupt()`, lượt sau CODE quyết (lưới phủ quyết `reply.py` trước, bộ phân loại tag `classify` sau) và chỉ `ProposalService.approve(user, proposal_id)` ghi: đúng chủ, còn hạn 10 phút, đề xuất tạo trước lượt duyệt, một lần duy nhất (claim pending→approving, không transaction), lịch đích của dời/hủy chưa đổi. Giá trị lấy từ DB, không từ chuỗi model gõ lại. Checkpoint KHÔNG phải nguồn sự thật cho ghi lịch (TTL xoá được nó) |
 | Câu trả lời | **Mọi câu qua `guard` (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp** | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
 | Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` = summary (văn xuôi) + slots (dạng trường), cả hai đều là bản nén của tầng 2, không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
@@ -64,7 +64,7 @@ khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
 | Redis | **Không dùng** | 3 điều kiện mở lại ở `docs/superpowers/specs/.../README.md` |
 | Quan sát | **Langfuse tự dựng**, compose riêng | Dữ liệu khách không ra khỏi máy. Nặng nên tách khỏi `docker-compose.yml` |
 | Phiên hội thoại | **Một phiên mỗi ngày**, cắt lúc ĐỌC. Lịch sử model = thread checkpointer `<user>:<ngày VN>`, luật 30 phút qua nửa đêm giữ bằng `pick_thread` + `model_history`; `conversations` vẫn là nhật ký hiển thị | Lịch sử chỉ để hiểu "giờ đó", "ừ". Cắt lúc đọc nên đổi quy tắc không cần migrate. Thread theo ngày là chỗ CẤT, không phải luật cắt: cửa sổ (đầu ngày/30 phút, 1500 token, `covers_until`) vẫn áp lúc đọc bằng đúng `select_window` + `session_cutoff` của `conversations`, nên đổi quy tắc vẫn không cần migrate. Thread và `conversations` dùng chung một mốc `now_ms()` cho mỗi tin — lệch một mili-giây là tin đã nén bị gửi lại |
-| Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn. Checkpoint (từ M2) không đổi điều này: LangGraph ghi state của graph ngoài vào collection riêng, bằng giá trị node TRẢ VỀ (tường minh), không qua closure; 3 lần ghi `conversations` giữ nguyên |
+| Ghi Mongo | **Không gộp** 3 `update_one` mỗi lượt | ~350 ghi/ngày trên document nhỏ. Gộp phải cho tool ghi vào state qua closure — tác dụng phụ ẩn. Checkpoint (từ M2) không đổi điều này: LangGraph ghi state của graph ngoài vào collection riêng, bằng giá trị node TRẢ VỀ (tường minh), không qua closure; 3 lần ghi `conversations` giữ nguyên. `ConfirmMiddleware` (M3) đưa `proposal_id` vào state bằng `Command(update=...)` — giá trị trả về của bước tool, cũng tường minh; đề xuất thì do service ghi vào `proposals`, không vào state |
 | Tool | **Chỉ cấp dữ kiện JSON, không viết câu** | Câu là việc của LLM; tool viết câu thì guard không sửa được giọng |
 
 ## Xưng hô — chốt 2026-08-23, siết 2026-09-19
@@ -96,20 +96,28 @@ biên bản, không phải mẫu để chép.
 ```
 Khách ──socket──▶ run_turn
                     │
-     load_context (code, 4 truy vấn song song): trạng thái tiệm · lịch sắp tới
-     [id + iso] · summary + slots + covers_until · câu đáp trước · cờ pending
+     load_context (code, 3 truy vấn song song): trạng thái tiệm · lịch sắp tới
+     [id + iso] · summary + slots + covers_until · câu đáp trước
                     │
      pick_thread: thread <user>:<ngày VN> (nối thread hôm qua qua nửa đêm);
      lịch sử model đọc từ thread, cắt bằng model_history
                     │
-   START ─▶ có pending? ──có──▶ confirm (0 LLM: ghi/dời/hủy bằng code)
-              │                    ├─ chưa đồng ý ──▶ booking
-              │                    └─ đã chốt ─────▶ phrase (LLM viết câu chốt)
-              └─không──▶ supervisor (LLM, 1 chữ) ─▶ booking | shop | social
-                                                        │
+     thread đang chờ (interrupt)? ──có──▶ Command(resume=câu khách) ─▶ confirm ┐
+                    │ không (input mới, proposal_id=None)                      │
+   START ─▶ supervisor (LLM, 1 chữ) ─▶ booking | shop | social                  │
+                                          │ (booking: tool tạo đề xuất →        │
+                                          │  proposal_id qua ConfirmMiddleware) │
                     mọi câu ──▶ guard (0 LLM) ──vi phạm──▶ rewrite (1 lần) ─▶ guard
                                     │                                           │
-                                    └──────────────── answer ─▶ record (câu đáp vào thread)
+                                    └── answer ─▶ record (câu đáp vào thread) ─▶ confirm
+                                                                                 │
+   confirm: không có đề xuất ─────────────────────────────────────────────▶ END
+            có đề xuất, lượt này ─▶ interrupt (câu hỏi xác nhận đã stream xong) ─▶ END
+            lượt sau (resume): đọc đề xuất từ DB, lưới code → bộ phân loại
+              ├─ approve ─▶ ProposalService.approve ─▶ phrase (LLM viết câu chốt) ─▶ guard
+              ├─ reject/change ─▶ booking (câu khách là tin mới)
+              ├─ unclear lần 1 ─▶ guard (câu hỏi lại do code viết) ─▶ record ─▶ confirm chờ tiếp
+              └─ hết hạn / không còn pending ─▶ supervisor
                     │
    stream token tag "respond" ─▶ complete ─▶ ghi conversations (nhật ký) ─▶ nén state (nền)
 ```
@@ -127,8 +135,10 @@ Khách ──socket──▶ run_turn
   agent con. `HistoryWindowMiddleware` (agent), `phrase` và `supervisor` đều đọc
   qua `model_history` → model thấy đúng cửa sổ A gửi; câu khách của lượt lỗi
   (không có câu đáp) bị bỏ như A. Mọi khoá theo lượt (kể cả `answer`,
-  `pending_confirmation`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
-  checkpoint mang giá trị lượt trước sang. Mỗi khách một lượt chạy: lượt mới huỷ
+  `confirm_fact`, `gate_next`) đặt lại mỗi lượt bằng `fresh_turn_fields` — không thì
+  checkpoint mang giá trị lượt trước sang. `proposal_id` thì KHÔNG nằm trong đó:
+  lượt resume phải giữ đề xuất đang chờ; input mới tự đặt `proposal_id=None`
+  (lượt lỗi giữa chừng không để lại đề xuất mồ côi trong state). Mỗi khách một lượt chạy: lượt mới huỷ
   lượt cũ còn treo (`_ACTIVE_TURNS`, log `turn_superseded`).
 - Giới hạn đã biết của thread theo ngày (chấp nhận, không sửa):
   - **Qua hai nửa đêm liền nhau** (nối thread hôm qua lúc 00:10, rồi lại nhắn
@@ -161,8 +171,8 @@ Khách ──socket──▶ run_turn
 **Agent và streaming** — *lỗi 6, 8, 10 đều KHÔNG làm test nào đỏ vì fail-soft nuốt bằng chứng.*
 
 6. Khối bối cảnh **phải nói hôm nay là ngày nào, ở dòng đầu** — thiếu thì model đặt lệch cả năm mà chuỗi ISO vẫn hợp lệ nên không gì chặn.
-7. Node `booking` có **7 tool, 0 tool ghi**: 5 tool lịch + 2 tool đọc của shop (thêm 14/9 để trả lời câu kép). Thêm `create_appointment` là phá cả hai lớp bảo vệ — hàng rào là `test_there_is_NO_tool_that_writes_an_appointment`.
-8. Chỉ stream token mang tag `respond`. Parser thời gian `tags=["timeparse"]` + `streaming=False`; `rewrite` mang tag `rewrite`. Lọt tag là JSON chạy ngang màn hình khách.
+7. Node `booking` có **7 tool, 0 tool ghi**: 5 tool lịch + 2 tool đọc của shop (thêm 14/9 để trả lời câu kép). Thêm `create_appointment` là phá cả hai lớp bảo vệ — hàng rào là `test_there_is_NO_tool_that_writes_an_appointment`. Từ M3 hai tool đề xuất ghi một document `proposals` (không phải lịch) — y như A từng ghi cờ pending; `ConfirmMiddleware` không đăng ký tool nào và không có `HumanInTheLoopMiddleware` (HITL bọc một tool ghi, tức là phải CÓ tool ghi). `tests/test_write_fence.py` quét AST `app/agents`: chỉ node `confirm` được gọi `ProposalService.approve`, không chỗ nào gọi thẳng create/reschedule/cancel của `AppointmentService`.
+8. Chỉ stream token mang tag `respond`. Parser thời gian `tags=["timeparse"]` + `streaming=False`; bộ phân loại câu trả lời xác nhận `tags=["classify"]` + `streaming=False` (timeout 8 giây như parser, lỗi/timeout = `unclear`, không bao giờ approve); `rewrite` mang tag `rewrite`. Lọt tag là JSON chạy ngang màn hình khách. Câu hỏi lại khi khách trả lời không rõ do CODE viết nên không có token — tới khách qua `complete`, như mọi câu fallback của A.
 9. Khối bối cảnh **không nằm trong system prompt** — nó đổi mỗi lượt, đặt đầu là cache không bao giờ trúng. Thứ tự: **System → summary + slots → lịch sử → bối cảnh → tin mới**. Thứ tự này từng bị code làm ngược (bối cảnh rơi xuống sau câu hỏi mới) và có một test khoá chặt cái sai đó lại; sửa 2026-09-13.
 10. Timeout parser **8 giây**. Ngưỡng cũ 2s mà Azure thật mất 2,2–2,4s → nhánh LLM chưa từng chạy. `test_timeout_leaves_room_for_a_real_azure_call` chốt.
 11. **Đừng nới regex parser** — nó chỉ trả lời khi khớp trọn vẹn. Thêm mẫu "thứ Năm" là nuốt luôn "thứ Năm tuần sau". `TestRegexDefers` canh.
@@ -198,7 +208,7 @@ Khách ──socket──▶ run_turn
 
 **Nghiệp vụ và tầng gác**
 
-19. **Dời lịch KHÔNG phải đặt thêm.** `propose_appointment` nhận `replaces_appointment_id`; `confirm` gọi `AppointmentService.reschedule` — **đặt mới trước, hủy cũ sau** (đặt hụt thì khách vẫn còn lịch cũ; hủy trước rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất: giờ mới chồng lên chính lịch cũ thì phải nhả cũ trước, sau khi đã kiểm quá khứ/giờ mở cửa/hạn mức. Id để dời và hủy nằm ở đuôi `[id: ..., iso: ...]` mỗi dòng "Lịch sắp tới" của khối bối cảnh — dựng từ DB mỗi lượt, không phụ thuộc lượt trước gọi tool gì. **Hủy cũng qua `confirm`**; khi đang chốt hủy thì chữ "hủy" trong "ừ hủy đi" là ĐỒNG Ý (`is_affirmative(..., cancelling=True)`) — dùng chung bộ từ phủ định là khách không bao giờ hủy được.
+19. **Dời lịch KHÔNG phải đặt thêm.** `propose_appointment` nhận `replaces_appointment_id`; `confirm` gọi `AppointmentService.reschedule` — **đặt mới trước, hủy cũ sau** (đặt hụt thì khách vẫn còn lịch cũ; hủy trước rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất: giờ mới chồng lên chính lịch cũ thì phải nhả cũ trước, sau khi đã kiểm quá khứ/giờ mở cửa/hạn mức. Id để dời và hủy nằm ở đuôi `[id: ..., iso: ...]` mỗi dòng "Lịch sắp tới" của khối bối cảnh — dựng từ DB mỗi lượt, không phụ thuộc lượt trước gọi tool gì. **Hủy cũng qua `confirm`** (đề xuất `kind="cancel"`); khi đang chốt hủy thì chữ "hủy" trong "ừ hủy đi" là ĐỒNG Ý — lưới phủ quyết `reply.veto_reason` bỏ "hủy"/"huy" khỏi bộ từ phủ định khi `kind == "cancel"` (trước M3 là `is_affirmative(..., cancelling=True)`); dùng chung bộ từ phủ định là khách không bao giờ hủy được. Đề xuất dời/hủy chụp lại lịch đích (`target_snapshot`: status + start_at); lúc duyệt mà lịch đã bị hủy/dời chỗ khác (REST, Telegram) thì không duyệt — khách đồng ý với lịch họ đã thấy.
 
 20. **`ConversationState.summary` chỉ ghi diễn biến, không ghi trạng thái lịch — khối bối cảnh thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng cách bỏ cầu chì.
 
@@ -206,7 +216,7 @@ Khách ──socket──▶ run_turn
 
 **Conversation state**
 
-22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh. Từng có thêm slot `target_appointment_id`, bỏ 2026-09-20: nó được hỏi, được lọc bằng một truy vấn Mongo mỗi lượt nén, được lưu — rồi **không nơi nào đọc**, vì khối bối cảnh đã in id thật mỗi lượt và đó mới là thứ chữa BUG-2.
+22. Slots trong `ConversationState` do **LLM sinh**, không phải code. Chúng luôn **thua** khối bối cảnh, và không có đường code nào đặt/dời/hủy lịch dựa trên chúng — `test_no_code_path_books_from_slots` canh (từ M3 quét cả `reply`, `middleware/confirm`, `services/proposal`). Từng có thêm slot `target_appointment_id`, bỏ 2026-09-20: nó được hỏi, được lọc bằng một truy vấn Mongo mỗi lượt nén, được lưu — rồi **không nơi nào đọc**, vì khối bối cảnh đã in id thật mỗi lượt và đó mới là thứ chữa BUG-2.
 23. **Tool trả JSON, KHÔNG trả câu.** Trước 2026-09-20, 5/7 tool trả câu tiếng Việt hoàn chỉnh và prompt bảo model chép lại — giọng chết cứng, và tầng `guard`/`rewrite` sinh ra để làm giọng tự nhiên không với tới được vì khuôn câu đã bị tool áp đặt. Tool cũng nhét cả **mệnh lệnh** vào kết quả trả về ("Hãy hỏi khách xác nhận"), làm cùng một luật có hai bản ở `prompts.py` và `tools.py` rồi trôi lệch. Mốc thời gian cấp cả `iso` lẫn `spoken`: bỏ `spoken` đi là bắt model tự định dạng giờ, đúng thứ `guard.check_clock` sinh ra để chặn. `test_tools_return_data_not_instructions` canh.
 
 ## Ràng buộc giao diện — không được phá
@@ -250,38 +260,37 @@ cho **chính họ**.
 
 ## Việc còn dở
 
-### VIỆC TIẾP THEO — bug `is_affirmative`, nặng nhất đang mở
+### ĐÃ ĐÓNG ở M3 (harness B) — bug `is_affirmative`
 
-**Một câu tán gẫu đặt được lịch thật cho khách.**
-
-`is_affirmative()` (`app/agents/booking_graph/confirm.py:22-26`) khớp `_YES`
-bằng `\b(...)\b` nên trúng **"phải"**, **"được"**, **"dạ"**, **"đúng"** ở
-**bất kỳ đâu** trong câu. Đã tái hiện hai lần trên DB sạch:
+**Một câu tán gẫu từng đặt được lịch thật cho khách.** `is_affirmative()` khớp
+từ đồng ý ("phải", "được", "dạ", "đúng") ở **bất kỳ đâu** trong câu:
 
 ```
 is_affirmative("Mà làm móng bột mất bao lâu hả chị, … việc gì cũng
-                phải tính trước cho chắc")  ->  True
+                phải tính trước cho chắc")  ->  True   # ghi lịch thật
 ```
 
-→ node `confirm` **ghi lịch thật** giữa cuộc, khách không hề chốt. Và lượt đó
-AI **vẫn hỏi khách xác nhận** trong khi DB đã ghi xong: AI nói một đằng, DB làm
-một nẻo.
+Bug này đã hai lần làm hỏng nghiệm thu `LLM-32` mà không ai nhận ra lúc đó.
 
-Bug này đã **hai lần liên tiếp** làm hỏng nghiệm thu mà không ai nhận ra lúc đó
-— hai lần chạy `LLM-32` rơi vào hai trạng thái DB khác nhau, và lần thứ hai suýt
-dẫn tới một kết luận sai về chất lượng hệ thống (đã sửa lại trong `NOTE.md`).
+**Cách đóng (M3) và vì sao không vá regex:** bỏ "phải" khỏi `_YES` thì "phải
+rồi" hết là đồng ý; vá kiểu nào thì code vẫn đang QUYẾT "đồng ý" bằng so khớp
+từ. M3 đảo hướng:
 
-**Vì sao không sửa nhanh được:** bỏ "phải" khỏi `_YES` là "phải rồi" hết được
-hiểu là đồng ý. Phải chuyển từ khớp **từ đơn** sang khớp **cụm**, và giữ nguyên
-hai thứ đang đúng:
+- Code chỉ được quyết "chắc chắn KHÔNG đồng ý" (`reply.veto_reason`: phủ định,
+  hoãn, câu hỏi — có từ để hỏi ở bất kỳ đâu, giờ/ngày/thứ khác đề xuất), trên
+  cả bản có dấu lẫn không dấu. Phủ quyết oan ("chị Hồng" → "hong") chỉ tốn một
+  lượt booking hỏi lại; bỏ sót là ghi nhầm — nên lưới nghiêng về phủ quyết.
+- Câu lưới cho qua mới tới bộ phân loại (model, tag `classify`, prompt tiếng
+  Anh không ví dụ tiếng Việt — bẫy #16). Chỉ ghi khi model nói approve **và**
+  lưới không phủ quyết. Lỗi/timeout model = `unclear`.
+- `unclear` lần đầu → bot hỏi lại MỘT câu (code viết), đề xuất vẫn chờ; lần hai
+  liên tiếp → bỏ đề xuất, câu khách sang booking.
+- Cờ `pending_confirmation` trong `conversations` bỏ hẳn (field model giữ để đọc
+  document cũ). Thay bằng `proposals` + `interrupt()` + `ProposalService.approve`.
 
-- `is_affirmative(..., cancelling=True)` — khi đang chốt hủy thì "hủy" trong
-  "ừ hủy đi" là ĐỒNG Ý, không phải phủ định (bẫy #19);
-- `_YES_BARE` — bản không dấu, phải sửa song song, không thì tiếng Việt không
-  dấu đi một đường khác.
-
-Hàng rào đang có: `tests/test_confirm.py`. Thêm test cho các câu tán gẫu **chứa**
-từ đồng ý nhưng **không phải** đồng ý — đó là ca chưa ai phủ.
+Hàng rào: `tests/test_reply_veto.py` (bảng câu G-01/G-02/G-03/tán gẫu/G-07, có
+và không dấu), `tests/test_confirm_flow.py` (đầu-cuối với bộ phân loại giả LUÔN
+approve — các câu đó vẫn không ghi), `tests/test_proposal_service.py`.
 
 **Trước khi mở cho khách thật**
 
