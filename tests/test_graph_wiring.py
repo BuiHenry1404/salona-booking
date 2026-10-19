@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from app.agents.booking_graph import confirm, guard, phrase, reply, tools
 from app.agents.booking_graph.middleware import confirm as confirm_middleware
+from app.agents.booking_graph.middleware import guard as guard_middleware
 from app.services import proposal as proposal_service
 from app.agents.booking_graph.graph import build_graph
 from app.models.user import User
@@ -79,7 +80,8 @@ def test_no_code_path_books_from_slots():
     forbidden = ("ConversationSlots", "sanitize_slots", "render_slots",
                  'state["slots"]', 'state.get("slots")')
     # F9: mọi module trên đường ghi/chốt lịch, kể cả đường mới của M3.
-    for module in (confirm, guard, phrase, tools, reply, confirm_middleware, proposal_service):
+    for module in (confirm, guard, phrase, tools, reply, confirm_middleware, guard_middleware,
+                   proposal_service):
         source = inspect.getsource(module)
         for needle in forbidden:
             assert needle not in source, (

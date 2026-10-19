@@ -1,0 +1,228 @@
+"""GuardMiddleware (`after_agent`): luật guard/rewrite/câu chốt cũ, nay chạy trong agent.
+
+Các test node cũ của `test_rewrite.py`/`test_phrase.py` chuyển sang đây, gọi
+thẳng `GuardMiddleware(user).aafter_agent(state, None)`; `rewrite_once` được
+thay bằng hàm giả đếm số lần gọi.
+"""
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage
+
+from app.agents.booking_graph import rewrite
+from app.agents.booking_graph.guard import TOOL_NAMES, strip_tool_names
+from app.agents.booking_graph.middleware.guard import GuardMiddleware
+from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
+from app.models.user import User
+
+
+USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám")
+FACT = {"kind": "booked", "when": "Thứ Ba 15/9, 9 giờ sáng", "note": "cắt tóc",
+        "address": "anh Tám", "error": None}
+FALLBACK = "Xong rồi ạ. Hẹn gặp anh Tám Thứ Ba 15/9, 9 giờ sáng nhé."
+
+
+@pytest.fixture
+def rewrites(monkeypatch):
+    """`rewrite_once` giả: trả lần lượt `replies`, ghi lại tham số mỗi lần gọi."""
+    calls = []
+
+    def _install(*replies):
+        queue = list(replies)
+
+        async def fake(draft, codes, previous_replies, context_block):
+            calls.append({"draft": draft, "codes": list(codes),
+                          "previous": list(previous_replies), "context_block": context_block})
+            return queue.pop(0) if queue else None
+
+        monkeypatch.setattr(rewrite, "rewrite_once", fake)
+        return calls
+
+    return _install
+
+
+def a_state(draft, previous=(), customer="giá bao nhiêu", **extra):
+    return {"messages": [HumanMessage(content=customer), AIMessage(content=draft)],
+            "previous_replies": list(previous), "customer_text": customer,
+            "context_block": "", **extra}
+
+
+async def guard(state):
+    return await GuardMiddleware(USER).aafter_agent(state, None)
+
+
+class TestGuard:
+    async def test_clean_draft_becomes_the_answer_unchanged(self, rewrites):
+        calls = rewrites()
+        out = await guard(a_state("Dạ anh Tám, mai 9 giờ sáng ạ."))
+        assert out == {"answer": "Dạ anh Tám, mai 9 giờ sáng ạ.", "answer_source": "llm",
+                       "violations": []}
+        assert calls == []
+
+    async def test_violation_asks_for_exactly_one_rewrite_with_the_codes(self, rewrites):
+        calls = rewrites("Dạ anh Tám, chủ tiệm sẽ báo giá ạ.")
+        out = await guard(a_state("Chị hỏi chủ tiệm giúp em nhé.", previous=["Câu trước."],
+                                  context_block="Gọi khách là: anh Tám."))
+        assert len(calls) == 1
+        assert calls[0] == {"draft": "Chị hỏi chủ tiệm giúp em nhé.", "codes": ["pronoun"],
+                            "previous": ["Câu trước."], "context_block": "Gọi khách là: anh Tám."}
+        assert out["answer"] == "Dạ anh Tám, chủ tiệm sẽ báo giá ạ."
+
+    async def test_second_pass_with_violations_falls_back_to_the_original_draft(self, rewrites):
+        calls = rewrites("Chị vẫn sai nè.", "không bao giờ dùng tới")
+        out = await guard(a_state("Chị sai lần đầu."))
+        assert out["answer"] == "Chị sai lần đầu."
+        assert out["violations"] == ["pronoun"]
+        assert len(calls) == 1, "rewrite tối đa MỘT lần"
+
+    async def test_second_pass_clean_uses_the_rewrite(self, rewrites):
+        rewrites("Dạ anh Tám, chủ tiệm sẽ báo giá ạ.")
+        out = await guard(a_state("Chị hỏi chủ tiệm nhé."))
+        assert out == {"answer": "Dạ anh Tám, chủ tiệm sẽ báo giá ạ.", "answer_source": "llm",
+                       "violations": []}
+
+    async def test_second_pass_that_lost_a_time_falls_back(self, rewrites):
+        rewrites("Dạ anh Tám, em giữ chỗ rồi ạ.")
+        out = await guard(a_state("Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."))
+        assert out["answer"] == "Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
+        assert "content" in out["violations"]
+
+    async def test_an_unfixable_repeat_ships_the_rewrite_not_the_original(self, rewrites):
+        """Bản gốc là chính câu lặp — không được phát lại (LLM-32, 2026-09-19)."""
+        lap = "Dạ anh Tám, em chỉ xem và đặt lịch của chính anh chị thôi ạ."
+        rewrites("Dạ anh Tám, em chỉ xem và đặt lịch của chính anh chị thôi nhé ạ.")
+        out = await guard(a_state(lap, previous=[lap]))
+        assert out["violations"] == ["repeat"]
+        assert out["answer"] != lap
+
+    async def test_an_unfixable_content_loss_still_ships_the_original(self, rewrites):
+        """Ngược lại: mất mốc giờ thì bản gốc vẫn an toàn hơn. Đừng nới ca này."""
+        original = "Dạ anh Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
+        prev = [original]
+        rewrites("Dạ anh Tám, em giữ chỗ rồi ạ.")
+        out = await guard(a_state(original, previous=prev))
+        assert "content" in out["violations"]
+        assert out["answer"] == original
+
+    async def test_repeat_uses_previous_llm_replies(self, rewrites):
+        calls = rewrites()
+        prev = ["Em chỉ xem và đặt lịch của anh Tám thôi. Anh muốn đặt hay xem lịch của mình ạ?"]
+        out = await guard(a_state(prev[0], previous=prev))
+        assert calls[0]["codes"] == ["repeat"]
+        assert out["violations"] == ["repeat"]
+
+    async def test_failed_rewrite_ships_the_original(self, rewrites):
+        """rewrite_once trả None (model lỗi/quá giờ/rỗng): không viết lại lần hai."""
+        calls = rewrites(None)
+        out = await guard(a_state("Chị hỏi chủ tiệm giúp em nhé."))
+        assert out["answer"] == "Chị hỏi chủ tiệm giúp em nhé."
+        assert out["violations"] == ["pronoun"] and len(calls) == 1
+
+    async def test_empty_agent_reply_is_guarded_as_the_fallback(self, rewrites):
+        rewrites()
+        out = await guard(a_state(""))
+        assert out["answer"] == FALLBACK_ANSWER
+
+    async def test_the_last_ai_message_is_the_draft(self, rewrites):
+        rewrites()
+        state = a_state("Dạ anh Tám, mai 9 giờ sáng ạ.")
+        state["messages"] = [AIMessage("câu cũ"), HumanMessage("q"), *state["messages"][1:]]
+        assert (await guard(state))["answer"] == "Dạ anh Tám, mai 9 giờ sáng ạ."
+
+
+class TestToolNames:
+    def test_tool_names_match_the_real_tools(self):
+        from unittest.mock import MagicMock
+
+        from app.agents.booking_graph.graph import booking_tools
+        names = {t.name for t in booking_tools(MagicMock(), USER)}
+        assert set(TOOL_NAMES) == names
+
+    def test_clean_text_is_returned_untouched(self):
+        text = "Dạ anh Tám,\n  mai 9 giờ sáng (cắt tóc) ạ ."
+        assert strip_tool_names(text) is text
+
+    async def test_tool_name_in_parentheses_is_removed(self, rewrites):
+        rewrites()
+        out = await guard(a_state("Dạ em xem rồi (parse_time, find_free_slots) ạ."))
+        assert out["answer"] == "Dạ em xem rồi ạ."
+
+    def test_snake_case_identifier_in_brackets_is_removed(self):
+        assert strip_tool_names("Dạ còn trống [slot_keys] 3 giờ chiều ạ.") == "Dạ còn trống 3 giờ chiều ạ."
+
+    @pytest.mark.parametrize("name", TOOL_NAMES)
+    def test_every_bare_name_is_removed(self, name):
+        out = strip_tool_names(f"Dạ em dùng {name} để xem rồi ạ.")
+        assert name not in out
+        assert out == "Dạ em dùng để xem rồi ạ."
+
+    def test_a_list_of_names_leaves_no_stray_commas(self):
+        out = strip_tool_names("Em gọi `parse_time`, find_free_slots và get_shop_status rồi ạ.")
+        assert out == "Em gọi rồi ạ."
+
+    async def test_bare_tool_name_never_ships(self, rewrites):
+        """Kể cả nhánh `guard_gave_up`: bản gốc lẫn bản viết lại đều đã bị xoá tên."""
+        rewrites("Chị ơi em gọi propose_appointment rồi.")
+        out = await guard(a_state("Chị ơi em gọi find_free_slots rồi."))
+        assert out["violations"]                       # vẫn sai đại từ → gave up
+        for name in TOOL_NAMES:
+            assert name not in out["answer"]
+
+    async def test_repeat_only_gave_up_branch_strips_the_rewrite_too(self, rewrites):
+        lap = "Dạ anh Tám, em chỉ xem và đặt lịch của chính anh chị thôi ạ."
+        rewrites(lap + " Em đã gọi list_my_appointments.")
+        out = await guard(a_state(lap, previous=[lap]))
+        assert "list_my_appointments" not in out["answer"]
+
+    async def test_tool_names_are_stripped_before_the_checks(self, rewrites):
+        calls = rewrites()
+        out = await guard(a_state("Dạ anh Tám, em xem get_shop_hours rồi, mai 9 giờ sáng ạ."))
+        assert calls == []
+        assert out["answer"] == "Dạ anh Tám, em xem rồi, mai 9 giờ sáng ạ."
+
+
+def phrase_state(draft, **extra):
+    return {"messages": [HumanMessage(content="ừ"), AIMessage(content=draft)],
+            "context_block": "Gọi khách là: anh Tám.", "confirm_fact": FACT, "fallback": FALLBACK,
+            "previous_replies": [], "customer_text": "ừ", **extra}
+
+
+class TestGuardForPhrase:
+    async def test_missing_when_falls_back_without_rewrite(self, rewrites):
+        calls = rewrites()
+        out = await guard(phrase_state("Dạ anh Tám, em đặt xong rồi nhé."))
+        assert out["answer"] == FALLBACK and out["answer_source"] == "code"
+        assert calls == []
+
+    async def test_wrong_address_falls_back(self, rewrites):
+        rewrites()
+        out = await guard(phrase_state("Chị Tám ơi, Thứ Ba 15/9, 9 giờ sáng em đặt rồi ạ."))
+        assert out["answer"] == FALLBACK
+
+    async def test_good_phrase_is_used(self, rewrites):
+        rewrites()
+        out = await guard(phrase_state(
+            "Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em giữ cho anh rồi, mai gặp nhé."))
+        assert out["answer"].startswith("Dạ anh Tám") and out["answer_source"] == "llm"
+
+    async def test_failed_kind_must_carry_the_error(self, rewrites):
+        rewrites()
+        fact = {**FACT, "kind": "failed", "when": None, "error": "Giờ đó đã có người đặt"}
+        fb = "Dạ Giờ đó đã có người đặt ạ. Anh Tám chọn giờ khác giúp em nhé."
+        out = await guard(phrase_state("Dạ anh Tám, em chưa đặt được ạ.",
+                                       confirm_fact=fact, fallback=fb))
+        assert out["answer"] == fb
+
+    async def test_phrase_fact_path_uses_fallback_on_wrong_numbers(self, rewrites):
+        """`phrase_fact` (PhraseMiddleware ghi) đi đúng đường câu chốt như
+        `confirm_fact`: giờ sai → câu cứng, không rewrite."""
+        calls = rewrites()
+        out = await guard(phrase_state("Dạ anh Tám, Thứ Ba 15/9, 10 giờ sáng em giữ rồi ạ.",
+                                       confirm_fact=None, phrase_fact=FACT))
+        assert out["answer"] == FALLBACK and out["answer_source"] == "code"
+        assert "when" in out["violations"]
+        assert calls == []
+
+    async def test_tool_name_in_a_phrase_is_stripped(self, rewrites):
+        rewrites()
+        out = await guard(phrase_state(
+            "Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em giữ rồi (propose_appointment) ạ."))
+        assert out["answer"] == "Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em giữ rồi ạ."

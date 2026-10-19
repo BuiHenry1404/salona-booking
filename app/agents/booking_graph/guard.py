@@ -10,7 +10,7 @@ sẵn ngôn ngữ đầu ra.
 """
 import re
 from difflib import SequenceMatcher
-from typing import List, Sequence
+from typing import Awaitable, Callable, List, Optional, Sequence
 
 from app.agents.booking_graph.context import address_phrase, derive_address
 from app.agents.booking_graph.state import GraphState
@@ -64,6 +64,42 @@ _CLOCK_WORDS = re.compile(rf"\b{_NUMBER_WORD}\s+(?:giờ|tháng)\b|\bngày\s+{_N
 # khác số ký tự nhau, nên chặn tên khách sau xưng hô bằng cách soi phần văn
 # bản đứng trước khớp, không dùng lookbehind biến thiên độ dài.
 _HONORIFIC_BEFORE = re.compile(r"\b(?:anh|chị|em|cô|chú|bác|ông|bà)\s+$")
+
+# Tên tool của agent booking/shop. Khách không bao giờ được thấy (UI "Không hiện
+# tên tool"); A chưa lộ lần nào — luật này là PHÒNG NGỪA, xoá tất định bằng code,
+# không gọi LLM thêm.
+TOOL_NAMES = ("parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
+              "cancel_appointment", "get_shop_hours", "get_shop_status")
+_TOOL_ALT = "|".join(TOOL_NAMES)
+_SNAKE_IDENT = r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+"
+# Nhóm ngoặc chứa tên tool hoặc định danh snake_case: "(parse_time, find_free_slots)".
+_TOOL_GROUP = re.compile(
+    rf"[ \t]*[(\[][^()\[\]]*?\b(?:{_TOOL_ALT}|{_SNAKE_IDENT})\b[^()\[\]]*[)\]]")
+# Tên trần (có thể kèm backtick, "()" hoặc cả một danh sách nối bằng dấu phẩy/"và").
+_BARE_NAME = rf"`?\b(?:{_TOOL_ALT})\b(?:\(\))?`?"
+_TOOL_BARE = re.compile(rf"{_BARE_NAME}(?:[ \t]*(?:,|và|and)[ \t]*{_BARE_NAME})*")
+_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([.,!?…;:])")
+
+RewriteOnce = Callable[[str, List[str], Sequence[str], str], Awaitable[Optional[str]]]
+
+
+def strip_tool_names(text: str) -> str:
+    """Bỏ tên tool khỏi câu sắp gửi khách: nhóm ngoặc chứa tên tool/định danh
+    snake_case, tên trần; rồi gộp khoảng trắng và bỏ khoảng trắng trước dấu câu.
+
+    Không có gì để bỏ thì trả NGUYÊN chuỗi (kể cả xuống dòng) — câu sạch không
+    bị đụng tới."""
+    if not text:
+        return text
+    cleaned = _TOOL_BARE.sub("", _TOOL_GROUP.sub("", text))
+    if cleaned == text:
+        return text
+    cleaned = _SPACE_BEFORE_PUNCT.sub(r"\1", _MULTI_SPACE.sub(" ", cleaned))
+    # Dấu phẩy mồ côi ở đầu câu/sau dấu phẩy khác ("em dùng , để xem").
+    cleaned = re.sub(r",(?:\s*,)+", ",", cleaned)
+    return "\n".join(line.strip() for line in cleaned.split("\n")).strip()
+
 
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
 _NUMBER = re.compile(r"\d+")
@@ -203,9 +239,74 @@ def find_violations(draft: str, *, previous_replies: Sequence[str], address: str
     return codes
 
 
+def _after_rewrite(original: str, rewritten: str, *, codes: List[str],
+                   rewrite_ran: bool) -> dict:
+    """Lần kiểm thứ hai (sau đúng MỘT lần rewrite): `codes` là vi phạm của bản
+    viết lại, đã cộng "content" nếu mất số liệu. Không viết lại lần hai."""
+    if codes:
+        extra = {"codes": codes, "rewritten": True}
+        if not rewrite_ran:
+            # `rewrite` chạy nhưng không đổi được gì — draft vẫn là bản gốc.
+            # Phân biệt với ca rewrite ĐỔI xong rồi vẫn sai, vì hai nguyên
+            # nhân khác nhau: model không sửa được, hay sửa sai.
+            extra["rewrite_ran"] = False
+        # Bản GỐC an toàn hơn cho mọi lỗi — trừ đúng một ca: lỗi LẶP. Ở đó bản
+        # gốc CHÍNH LÀ câu lặp, trả nó về là phát đúng thứ vừa bị bắt. Bản viết
+        # lại dù chưa đạt thì ít nhất cũng khác chữ. Chỉ áp dụng khi lặp là lỗi
+        # DUY NHẤT: còn "content" (mất số liệu), "pronoun" hay "clock" thì bản
+        # gốc vẫn thắng.
+        only_repeat = set(codes) == {"repeat"} and rewritten != original
+        shipped = rewritten if only_repeat else original
+        extra["shipped"] = "rewrite" if only_repeat else "original"
+        logger.warning("guard_gave_up", extra=extra)
+        return {"answer": shipped, "answer_source": "llm", "violations": codes}
+    logger.info("guard_rewritten")
+    return {"answer": rewritten, "answer_source": "llm", "violations": []}
+
+
+async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
+    """Nơi DUY NHẤT quyết câu trả lời (`answer`) — GuardMiddleware gọi hàm này.
+
+    - Câu chốt lịch (`phrase_fact`/`confirm_fact`): sai số liệu → câu cứng
+      `fallback` ngay, không rewrite.
+    - Câu thường: vi phạm → `rewrite_once` ĐÚNG MỘT lần; bản viết lại vẫn vi
+      phạm (kể cả mất số liệu) → trả draft GỐC, trừ ca chỉ lỗi `repeat`.
+
+    Tên tool bị xoá (tất định, không gọi LLM) khỏi draft TRƯỚC mọi phép kiểm và
+    khỏi mọi câu đi ra — kể cả bản viết lại và câu cứng.
+    """
+    address = address_phrase(user.full_name)
+    _, name = derive_address(user.full_name)
+    raw = state.get("draft") or ""
+    draft = strip_tool_names(raw)
+    if draft != raw:
+        logger.warning("guard_tool_name_stripped")
+
+    fact = state.get("phrase_fact") or state.get("confirm_fact")
+    if fact:
+        out = _guard_phrase(state, draft, fact, address)
+        return {**out, "answer": strip_tool_names(out["answer"])}
+
+    previous = state.get("previous_replies") or []
+    customer_text = state.get("customer_text") or ""
+    codes = find_violations(draft, previous_replies=previous, address=address, name=name,
+                            customer_text=customer_text)
+    if not codes:
+        return {"answer": draft, "answer_source": "llm", "violations": []}
+
+    logger.info("guard_violation", extra={"codes": codes})
+    new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
+    rewritten = strip_tool_names(new) if new else draft
+    second = find_violations(rewritten, previous_replies=previous, address=address, name=name,
+                             customer_text=customer_text)
+    if not content_kept(draft, rewritten):
+        second.append("content")
+    return _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)
+
+
 def make_guard_node(user: User):
-    """Nơi DUY NHẤT set `answer`. Lần 1: vi phạm → xin rewrite. Lần 2: vi phạm
-    (kể cả mất số liệu) → trả draft GỐC, không phải bản rewrite đã sai."""
+    """Node guard của graph ngoài — chỉ còn tới khi GuardMiddleware thay hẳn
+    (Task 4.2). Dùng chung `_guard_phrase` / `_after_rewrite` với `apply_guard`."""
     address = address_phrase(user.full_name)
     _, name = derive_address(user.full_name)
 
@@ -213,8 +314,7 @@ def make_guard_node(user: User):
         draft = state.get("draft") or ""
         fact = state.get("phrase_fact") or state.get("confirm_fact")
         if fact:
-            return _guard_phrase(state, draft, fact, address)          # Task 4
-
+            return _guard_phrase(state, draft, fact, address)
         codes = find_violations(
             draft, previous_replies=state.get("previous_replies") or [],
             address=address, name=name, customer_text=state.get("customer_text") or "",
@@ -223,32 +323,17 @@ def make_guard_node(user: User):
             original = state.get("original_draft") or draft
             if not content_kept(original, draft):
                 codes.append("content")
-            if codes:
-                extra = {"codes": codes, "rewritten": bool(state.get("rewritten"))}
-                if draft == original:
-                    # `rewrite` chạy nhưng không đổi được gì — draft vẫn là bản
-                    # gốc. Phân biệt với ca rewrite ĐỔI xong rồi vẫn sai, vì hai
-                    # nguyên nhân khác nhau: model không sửa được, hay sửa sai.
-                    extra["rewrite_ran"] = False
-                # Bản GỐC an toàn hơn cho mọi lỗi — trừ đúng một ca: lỗi LẶP.
-                # Ở đó bản gốc CHÍNH LÀ câu lặp, trả nó về là phát đúng thứ vừa
-                # bị bắt. Bản viết lại dù chưa đạt thì ít nhất cũng khác chữ.
-                # Chỉ áp dụng khi lặp là lỗi DUY NHẤT: còn "content" (mất số
-                # liệu), "pronoun" hay "clock" thì bản gốc vẫn thắng.
-                only_repeat = set(codes) == {"repeat"} and draft != original
-                shipped = draft if only_repeat else original
-                extra["shipped"] = "rewrite" if only_repeat else "original"
-                logger.warning("guard_gave_up", extra=extra)
-                return {"answer": shipped, "answer_source": "llm", "violations": codes}
-            logger.info("guard_rewritten")
-            return {"answer": draft, "answer_source": "llm", "violations": []}
-
+            return _after_rewrite(original, draft, codes=codes, rewrite_ran=draft != original)
         if codes:
             logger.info("guard_violation", extra={"codes": codes})
             return {"violations": codes}
         return {"answer": draft, "answer_source": "llm", "violations": []}
 
     return node
+
+
+def route_after_guard(state: GraphState) -> str:
+    return "end" if state.get("rewritten") or state.get("answer") else "rewrite"
 
 
 def _guard_phrase(state, draft, fact, address):
@@ -269,7 +354,3 @@ def _guard_phrase(state, draft, fact, address):
         logger.info("phrase_fallback", extra={"codes": bad})
         return {"answer": fallback, "answer_source": "code", "violations": bad}
     return {"answer": draft, "answer_source": "code" if draft == fallback else "llm", "violations": []}
-
-
-def route_after_guard(state: GraphState) -> str:
-    return "end" if state.get("rewritten") or state.get("answer") else "rewrite"
