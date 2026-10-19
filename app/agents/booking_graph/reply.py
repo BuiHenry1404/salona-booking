@@ -12,7 +12,6 @@ một lượt booking hỏi lại, bỏ sót là ghi nhầm lịch.
 """
 import asyncio
 import re
-import unicodedata
 from datetime import datetime
 from typing import Any, Literal, Mapping, Optional
 
@@ -26,21 +25,9 @@ from app.agents.booking_graph.timeparse import (_DAY_OFFSETS, _TIME_PATTERN,
 from app.agents.llm import build_chat_model
 from app.core.clock import to_local
 from app.core.logging import get_logger
+from app.core.text import strip_diacritics  # noqa: F401 (re-export)
 
 logger = get_logger(__name__)
-
-
-def strip_diacritics(text: str) -> str:
-    """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
-
-    NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
-    là một ký tự độc lập nên phải thay tay.
-    """
-    text = (text or "").replace("đ", "d").replace("Đ", "D")
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if unicodedata.category(c) != "Mn"
-    )
 
 
 def _words(*alternatives: str) -> re.Pattern:
