@@ -168,6 +168,11 @@ Khách ──socket──▶ run_turn
   lại từ đầu — token hai lần nối nhau trên màn hình cho tới khi `complete`/`error`
   tới và thay cả bubble. Client mới (Telegram ở Plan 3, client khác) phải giữ
   đúng luật này: không bao giờ coi chuỗi token là câu cuối.
+  Cố ý giữ (review M4 M-3): `strip_tool_names` của guard chỉ áp lên câu cuối
+  (`answer`), KHÔNG lên token `respond` đang stream — tên tool lỡ lọt sẽ nháy
+  trên màn hình tới khi `complete` thay bubble. Chỉ là phòng ngừa (A chưa lộ
+  lần nào; metric bench `tool_name_leak` đọc câu cuối); lọc token thì phải
+  đệm token qua ranh giới chữ, không đáng.
 - Lịch sử model (từ M2) nằm trong thread checkpointer `MongoDBSaver`
   (`app/agents/checkpoint.py`, cùng DB `MONGO_DB_NAME`, collection `checkpoints` /
   `checkpoint_writes`, TTL `CHECKPOINT_TTL_DAYS`). Thread chỉ giữ câu khách + câu
