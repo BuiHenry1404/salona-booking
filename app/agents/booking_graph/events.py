@@ -215,12 +215,27 @@ async def _run_turn(
             # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
             "asked_at": asked_at,
         }
-        if (await graph.aget_state(config)).interrupts:
+        snapshot = await graph.aget_state(config)
+        # Đang chờ = có interrupt, HOẶC confirm là bước kế tiếp mà chưa kịp
+        # interrupt lại: lượt resume trước bị huỷ SAU `aupdate_state` (checkpoint
+        # mới, next=confirm) nhưng trước khi confirm xong. Coi đó là tin mới thì
+        # câu "ừ" thứ hai đi vào supervisor và khách không nghe câu chốt.
+        if getattr(snapshot, "interrupts", ()) or "confirm" in (getattr(snapshot, "next", None) or ()):
             # Thread đang chờ khách trả lời đề xuất (node confirm interrupt ở
-            # lượt trước): câu khách là câu trả lời. `update` áp TRƯỚC khi
-            # confirm chạy lại, nên node thấy câu khách và các khoá lượt mới.
+            # lượt trước): câu khách là câu trả lời. Các khoá lượt mới ghi
+            # TRƯỚC bằng `aupdate_state` (như thể `record` vừa ghi — cạnh
+            # record → confirm có sẵn), rồi resume KHÔNG kèm `update`.
+            #
+            # Không dùng `Command(resume, update=fields)`: lượt resume bị huỷ
+            # giữa chừng (lượt mới thay) để lại `update` của nó thành pending
+            # write trên checkpoint đang chờ; lần resume sau ghi `answer` LẦN
+            # HAI trong cùng một bước → InvalidUpdateError, khách nhận "Máy
+            # đang bận" mãi (review M3). `aupdate_state` tạo checkpoint mới nên
+            # pending write cũ bị bỏ, và node vẫn nhận câu khách MỚI NHẤT.
+            #
             # KHÔNG đặt lại `proposal_id` — đó chính là thứ đang chờ duyệt.
-            turn_input = Command(resume=question, update=fields)
+            await graph.aupdate_state(config, fields, as_node="record")
+            turn_input = Command(resume=question)
         else:
             # Tin mới: chạy từ START. Đề xuất cũ (nếu còn trong checkpoint,
             # vd. lượt trước lỗi giữa chừng) không bao giờ được mang sang.

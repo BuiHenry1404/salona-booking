@@ -14,6 +14,7 @@ Không transaction (mongo:7 standalone trong compose): giao thức claim.
 Duyệt lại một đề xuất đã approved trả đúng kết quả cũ (idempotent). `approving`
 treo quá 60 giây (tiến trình chết giữa chừng) đọc ra là `failed`.
 """
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Optional
@@ -39,6 +40,10 @@ APPROVING_STALE_SECONDS = 60
 UNCLEAR_LIMIT = 2
 
 TARGET_CHANGED = "Lịch này vừa thay đổi"
+
+# Lần duyệt đang chạy nền sau khi lượt gọi nó bị huỷ (shield). Giữ tham chiếu
+# mạnh: event loop chỉ giữ weak-ref, task không ai giữ có thể bị GC giữa chừng.
+_INFLIGHT_APPROVALS: set = set()
 
 
 @dataclass
@@ -111,7 +116,20 @@ class ProposalService:
 
     async def approve(self, user: User, proposal_id: str, *, turn_at: datetime) -> ApprovalResult:
         """Cổng ghi. `turn_at` = mốc câu khách của lượt đang duyệt (`asked_at`):
-        đề xuất phải được tạo TRƯỚC mốc đó — đồng ý chỉ đến từ lượt sau."""
+        đề xuất phải được tạo TRƯỚC mốc đó — đồng ý chỉ đến từ lượt sau.
+
+        Chạy trong `asyncio.shield`: lượt chat bị huỷ (lượt mới thay) giữa lúc
+        duyệt thì việc duyệt VẪN chạy xong — claim, ghi lịch, rồi approved.
+        Không shield thì `CancelledError` lọt qua `except Exception`: lịch đã ghi
+        mà đề xuất kẹt `approving` → 60 giây sau thành `failed`, và khách không
+        bao giờ nghe câu chốt cho một lịch có thật (review M3).
+        """
+        task = asyncio.ensure_future(self._approve(user, proposal_id, turn_at=turn_at))
+        _INFLIGHT_APPROVALS.add(task)
+        task.add_done_callback(_INFLIGHT_APPROVALS.discard)
+        return await asyncio.shield(task)
+
+    async def _approve(self, user: User, proposal_id: str, *, turn_at: datetime) -> ApprovalResult:
         user_id = str(user.id)
         claimed = await self.repo.claim(user_id, proposal_id, now=now_utc(), turn_at=turn_at)
         if claimed is None:
@@ -128,8 +146,13 @@ class ProposalService:
             await self.repo.transition(claimed.id, "approving", "failed", {"error": str(exc)[:200]})
             raise
 
-        await self.repo.transition(claimed.id, "approving", "approved", {
+        flipped = await self.repo.transition(claimed.id, "approving", "approved", {
             "approved_at": now_utc(), "result_appointment_id": str(appointment.id)})
+        if not flipped:
+            # Ai đó đã đổi trạng thái giữa claim và đây (vd. đọc thấy `approving`
+            # quá 60 giây rồi chuyển `failed`). Lịch ĐÃ ghi — báo approved theo
+            # sự thật của lịch, và để lại dấu vết.
+            logger.warning("proposal_state_race", extra={"proposal_id": proposal_id})
         logger.info("proposal_approved", extra={"proposal_id": proposal_id, "kind": claimed.kind})
         return ApprovalResult("approved", kind=claimed.kind, proposal=claimed,
                               appointment=appointment)

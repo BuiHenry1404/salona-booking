@@ -281,3 +281,102 @@ async def test_resume_on_the_real_mongo_saver(test_db, user, models, monkeypatch
         assert await appointments(test_db) == 1
     finally:
         client.close()
+
+
+# --- fix round 1 (review M3) --------------------------------------------------
+
+async def test_cancelled_resume_mid_approve_then_yes_gives_the_confirmation(
+        test_db, user, models, monkeypatch):
+    """Lượt "ừ" bị huỷ (lượt mới thay) đúng lúc đang ghi lịch. Lịch vẫn ghi xong
+    (shield), interrupt vẫn treo; lượt "ừ ạ" sau đó phải nhận câu chốt — đúng
+    một lịch, đề xuất `approved` — chứ không bị coi là tin mới."""
+    import asyncio
+
+    from app.services import appointment as appointment_module
+    await propose_turn(test_db, user, models)
+
+    async def slow_notify(appt):
+        await asyncio.sleep(0.6)
+    monkeypatch.setattr(appointment_module.notifications, "appointment_created", slow_notify)
+
+    second = asyncio.create_task(turn(test_db, user, "ừ"))
+    await asyncio.sleep(0.2)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+
+    models.phrase.replies.clear()
+    models.phrase.replies += [AIMessage("")]                 # câu chốt = câu cứng
+    third = await turn(test_db, user, "ừ ạ")
+
+    assert third[-1][0] == "complete"
+    assert third[-1][1]["answer"].startswith("Xong rồi ạ")
+    assert await appointments(test_db) == 1
+    assert (await test_db["proposals"].find_one({}))["status"] == "approved"
+    assert models.classifier["calls"] <= 1                    # chỉ lượt bị huỷ (nếu kịp)
+
+
+async def test_resume_across_midnight_keeps_the_pending_interrupt(test_db, user, models, monkeypatch):
+    """Hỏi xác nhận lúc 23:59, khách "ừ" lúc 00:01: `pick_thread` nối thread hôm
+    qua (luật 30 phút), thấy interrupt đang chờ → resume → ghi đúng một lịch."""
+    from datetime import time as dtime
+
+    from app.core.clock import now_ms
+    real_now = now_ms()
+    local = real_now.astimezone(TZ)
+    midnight = datetime.combine(local.date() + timedelta(days=1), dtime.min, tzinfo=TZ)
+    skew = {"delta": midnight - timedelta(seconds=60) - real_now}       # → 23:59:00
+
+    monkeypatch.setattr(events, "now_ms", lambda: now_ms() + skew["delta"])
+    real_last = events._last_checkpoint_at
+    first_delta = skew["delta"]
+
+    async def skewed_last(graph, thread_id):
+        at = await real_last(graph, thread_id)
+        return at + first_delta if at else None
+    monkeypatch.setattr(events, "_last_checkpoint_at", skewed_last)
+
+    await propose_turn(test_db, user, models)
+    yesterday_thread = events.thread_id_for(str(user.id), midnight - timedelta(seconds=60))
+
+    skew["delta"] = first_delta + timedelta(seconds=120)                 # → 00:01:00
+    models.phrase.replies += [AIMessage("")]
+    out = await turn(test_db, user, "ừ")
+
+    assert out[-1][1]["answer"].startswith("Xong rồi ạ")
+    assert await appointments(test_db) == 1
+    assert len(models.sup.calls) == 1                                    # resume, không về START
+    from app.agents.booking_graph.graph import build_graph
+    snap = await build_graph(test_db, user).aget_state(
+        {"configurable": {"thread_id": yesterday_thread}})
+    assert snap.values["messages"][-2].content == "ừ"
+
+
+async def test_resume_cancelled_while_classifying_then_yes_books_once(test_db, user, models, monkeypatch):
+    """Lượt "ừ" bị huỷ khi bộ phân loại còn đang chạy (chưa ghi gì). Lần resume
+    sau không được nổ InvalidUpdateError vì update của lượt bị huỷ còn treo, và
+    phải ghi đúng một lịch."""
+    import asyncio
+    await propose_turn(test_db, user, models)
+    calls = {"n": 0}
+
+    async def slow_then_approve(proposal, bot_question, customer_text):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await asyncio.sleep(5)
+        return "approve"
+    monkeypatch.setattr(reply, "classify_reply", slow_then_approve)
+
+    second = asyncio.create_task(turn(test_db, user, "ừ"))
+    await asyncio.sleep(0.2)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    assert await appointments(test_db) == 0
+
+    models.phrase.replies += [AIMessage("")]
+    third = await turn(test_db, user, "ừ đúng rồi em")
+
+    assert third[-1][0] == "complete", third[-1]
+    assert third[-1][1]["answer"].startswith("Xong rồi ạ")
+    assert await appointments(test_db) == 1

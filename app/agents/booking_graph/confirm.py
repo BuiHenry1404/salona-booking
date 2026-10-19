@@ -17,6 +17,7 @@ lượt resume bị huỷ giữa chừng (lượt mới thay), lần resume sau 
 không còn pending và coi câu khách là tin mới — `approve` idempotent nên không
 bao giờ ghi hai lần.
 """
+import asyncio
 from typing import Awaitable, Callable, Optional
 
 from langchain_core.messages import AIMessage
@@ -33,6 +34,11 @@ from app.services.proposal import (PROPOSAL_MAX_AGE_MINUTES,  # noqa: F401 (re-e
                                    ApprovalResult, ProposalService)
 
 logger = get_logger(__name__)
+
+# Lượt resume trước bị huỷ giữa lúc duyệt: việc duyệt (shield) còn đang chạy.
+# Chờ nó xong một chút rồi đọc lại, thay vì coi câu khách là tin mới.
+APPROVING_WAIT_SECONDS = 3.0
+APPROVING_POLL_SECONDS = 0.1
 
 
 def _sentence_start(phrase: str) -> str:
@@ -131,6 +137,23 @@ def make_confirm_node(
 
         # --- từ đây: lượt SAU, câu khách vừa tới -----------------------------
         proposal = await proposals.get(user, proposal_id)
+        waited = 0.0
+        while (proposal is not None and proposal.status == "approving"
+               and waited < APPROVING_WAIT_SECONDS):
+            await asyncio.sleep(APPROVING_POLL_SECONDS)
+            waited += APPROVING_POLL_SECONDS
+            proposal = await proposals.get(user, proposal_id)
+
+        if proposal is not None and proposal.status == "approved":
+            # Lượt resume trước đã ghi rồi bị huỷ trước khi kịp nói câu chốt
+            # (interrupt vẫn treo). Duyệt lại là idempotent — cùng một lịch —
+            # nên đi đường chốt như thường: khách nghe xác nhận cho lịch có thật.
+            logger.info("proposal_already_approved", extra={"proposal_id": proposal_id})
+            out = await execute_proposal(db, user, proposal_id,
+                                         turn_at=state.get("asked_at") or now_utc())
+            if out is not None:
+                return {**out, "proposal_id": None, "gate_next": "phrase"}
+
         if proposal is None or proposal.status != "pending":
             # Hết hạn, đã duyệt (lượt resume trước bị huỷ sau khi ghi), bị
             # thay, hay không phải của khách này: không ghi gì, câu khách là

@@ -413,17 +413,92 @@ async def test_another_customers_proposal_id_in_state_never_writes(test_db, clas
     assert await status_of(test_db, pid) == "pending"
 
 
-async def test_resume_after_an_already_approved_proposal_does_not_write_again(test_db, classifier):
-    """F22: lượt resume trước bị huỷ SAU khi đã ghi — interrupt vẫn treo. Lần
-    resume sau thấy đề xuất không còn pending: câu khách là tin mới, không ghi."""
+async def test_resume_after_an_already_approved_proposal_confirms_without_writing_again(
+        test_db, classifier):
+    """F22 + review M3: lượt resume trước bị huỷ SAU khi đã ghi — interrupt vẫn
+    treo. Lần resume sau thấy đề xuất `approved`: duyệt lại idempotent (cùng một
+    lịch) và đi đường chốt, để khách nghe xác nhận cho lịch có thật."""
     user = await a_user(test_db)
     pid = await book_proposal(test_db, user)
     graph = one_node_graph(test_db, user)
     await ask(graph, pid)
-    await ProposalService(test_db).approve(user, pid, turn_at=later())
+    first = await ProposalService(test_db).approve(user, pid, turn_at=later())
 
-    values = await answer(graph, "ừ")
+    values = await answer(graph, "ừ ạ")
 
-    assert values["gate_next"] == "supervisor"
+    assert values["gate_next"] == "phrase"
+    assert values["confirm_fact"]["kind"] == "booked"
+    assert values["proposal_id"] is None
     assert classifier["calls"] == 0
     assert await test_db["appointments"].count_documents({}) == 1
+    assert str(first.appointment.id) == str(
+        (await test_db["proposals"].find_one({"_id": ObjectId(pid)}))["result_appointment_id"])
+
+
+async def test_resume_waits_for_an_approval_still_running(test_db, classifier, monkeypatch):
+    """Đề xuất còn `approving` (việc duyệt shield của lượt bị huỷ chưa xong):
+    node chờ ngắn rồi đọc lại, thấy `approved` → câu chốt."""
+    import asyncio
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+    await test_db["proposals"].update_one({"_id": ObjectId(pid)}, {"$set": {
+        "status": "approving", "approving_at": now_utc()}})
+
+    async def finish_later():
+        await asyncio.sleep(0.4)
+        appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")
+        await test_db["proposals"].update_one({"_id": ObjectId(pid)}, {"$set": {
+            "status": "approved", "result_appointment_id": str(appt.id)}})
+
+    task = asyncio.create_task(finish_later())
+    values = await answer(graph, "ừ ạ")
+    await task
+
+    assert values["gate_next"] == "phrase"
+    assert values["confirm_fact"]["kind"] == "booked"
+    assert await test_db["appointments"].count_documents({}) == 1
+
+
+async def test_a_cancelled_resume_leaves_the_interrupt_waiting():
+    """Hợp đồng thư viện mà cách sửa dựa vào (probe của review): resume bị huỷ
+    giữa chừng thì interrupt VẪN treo, lần resume sau chạy lại node từ đầu."""
+    import asyncio
+    from typing import TypedDict
+
+    from langgraph.types import interrupt
+
+    log = []
+
+    class S(TypedDict, total=False):
+        x: str
+
+    async def node(s):
+        v = interrupt({"q": 1})
+        log.append(("resumed_with", v))
+        await asyncio.sleep(0.5)
+        log.append(("finished", v))
+        return {"x": v}
+
+    g = StateGraph(S)
+    g.add_node("c", node)
+    g.add_edge(START, "c")
+    g.add_edge("c", END)
+    app = g.compile(checkpointer=InMemorySaver())
+    cfg = {"configurable": {"thread_id": "t"}}
+
+    async def run(inp):
+        async for _ in app.astream_events(inp, config=cfg, version="v2"):
+            pass
+
+    await run({"x": ""})
+    task = asyncio.create_task(run(Command(resume="A")))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (await app.aget_state(cfg)).interrupts            # vẫn chờ
+    await run(Command(resume="B"))
+    assert log == [("resumed_with", "A"), ("resumed_with", "B"), ("finished", "B")]
+    assert (await app.aget_state(cfg)).values["x"] == "B"

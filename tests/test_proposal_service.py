@@ -316,3 +316,71 @@ async def test_create_requires_a_target_for_move_and_cancel(test_db):
         await ProposalService(test_db).create(user, "move", tomorrow_at(10), None)
     with pytest.raises(ValueError):
         await ProposalService(test_db).create(user, "cancel", tomorrow_at(10), None)
+
+
+# --- fix round 1 (review M3) --------------------------------------------------
+
+async def test_concurrent_approve_writes_once(test_db):
+    """Năm lần duyệt chạy chồng: đúng một claim thắng, đúng một lịch. Lần nào báo
+    approved (thắng, hoặc đọc sau khi đã xong — idempotent) cũng cùng một lịch."""
+    import asyncio
+    user = await a_user(test_db)
+    p = await ProposalService(test_db).create(user, "book", tomorrow_at(15), None)
+
+    results = await asyncio.gather(*[
+        ProposalService(test_db).approve(user, str(p.id), turn_at=later()) for _ in range(5)])
+
+    assert await test_db["appointments"].count_documents({}) == 1
+    approved = [r for r in results if r.outcome == "approved"]
+    assert approved and len({str(r.appointment.id) for r in approved}) == 1
+    assert all(r.outcome == "approved" or r.reason == "approving" for r in results)
+
+
+async def test_cancelling_the_caller_mid_approve_still_finishes_the_approval(test_db, monkeypatch):
+    """Lượt chat bị huỷ giữa lúc duyệt (lượt mới thay): shield cho việc duyệt chạy
+    xong — một lịch, đề xuất `approved` — thay vì kẹt `approving` rồi `failed`."""
+    import asyncio
+
+    from app.services import appointment as appointment_module
+    user = await a_user(test_db)
+    p = await ProposalService(test_db).create(user, "book", tomorrow_at(15), None)
+
+    async def slow_notify(appt):
+        await asyncio.sleep(0.6)
+    monkeypatch.setattr(appointment_module.notifications, "appointment_created", slow_notify)
+
+    task = asyncio.create_task(ProposalService(test_db).approve(user, str(p.id), turn_at=later()))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait(proposal_module._INFLIGHT_APPROVALS, timeout=3)
+
+    doc = await test_db["proposals"].find_one({"_id": p.id})
+    assert doc["status"] == "approved"
+    assert await test_db["appointments"].count_documents({}) == 1
+    again = await ProposalService(test_db).approve(user, str(p.id), turn_at=later())
+    assert again.outcome == "approved" and str(again.appointment.id) == doc["result_appointment_id"]
+
+
+async def test_a_lost_final_state_flip_is_logged(test_db, monkeypatch):
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    p = await service.create(user, "book", tomorrow_at(15), None)
+    real = service.repo.transition
+
+    async def racing(pid, from_status, to_status, *a, **kw):
+        if to_status == "approved":
+            await real(pid, "approving", "failed", {"error": "approving_stale"})
+        return await real(pid, from_status, to_status, *a, **kw)
+
+    events = []
+    monkeypatch.setattr(service.repo, "transition", racing)
+    monkeypatch.setattr(proposal_module.logger, "warning",
+                        lambda event, **kw: events.append(event))
+
+    result = await service.approve(user, str(p.id), turn_at=later())
+
+    assert "proposal_state_race" in events
+    assert result.outcome == "approved"                # lịch đã ghi thật
+    assert await test_db["appointments"].count_documents({}) == 1
