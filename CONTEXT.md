@@ -145,7 +145,9 @@ Khách ──socket──▶ run_turn
   lại tối đa 1 lần, treo/lỗi → route `booking` + log `supervisor_failed` (lỗi
   live M4: 20 giây × 3 lần của supervisor > trần 60 giây, mất cả lượt). Trần
   lượt phải lớn hơn tổng xấu nhất của một đường: phân loại 8 + agent 20 × 2 +
-  0,5 + rewrite 8 ≈ 56,5 giây — có test chặn. Trần lượt 60 giây bọc từng lần KÉO sự kiện từ graph (`asyncio.timeout_at` quanh
+  0,5 + rewrite 8 ≈ 56,5 giây — có test chặn. Model agent chỉ thử lại lỗi
+  TẠM THỜI (`agents.is_transient`: timeout, mất kết nối, 429, 5xx);
+  400/401/403/404/content filter nổ ngay. Trần lượt 60 giây bọc từng lần KÉO sự kiện từ graph (`asyncio.timeout_at` quanh
   `anext`), KHÔNG bọc `yield`: bọc cả vòng `async for` thì hết giờ lúc người
   nhận đang `sio.emit` nổ CancelledError phía người nhận và khách không nhận
   `error` nào (F12).

@@ -84,9 +84,62 @@ async def turn(test_db, user, text):
     return [(e.type, e.data) async for e in events.run_turn(test_db, user, text)]
 
 
+def api_error(status, message="azure"):
+    """Lỗi openai SDK thật (cần httpx.Response) — retry chỉ nhận lỗi tạm thời."""
+    import httpx
+    import openai
+    request = httpx.Request("POST", "https://gia.openai.azure.com/chat")
+    if status == "timeout":
+        return openai.APITimeoutError(request=request)
+    if status == "connection":
+        return openai.APIConnectionError(request=request)
+    response = httpx.Response(status, request=request)
+    classes = {400: openai.BadRequestError, 401: openai.AuthenticationError,
+               403: openai.PermissionDeniedError, 404: openai.NotFoundError,
+               429: openai.RateLimitError, 500: openai.InternalServerError}
+    cls = classes.get(status, openai.APIStatusError)
+    return cls(message, response=response, body=None)
+
+
+@pytest.mark.parametrize("status", ["timeout", "connection", 429, 500, 502, 503])
+def test_transient_errors_are_retried(status):
+    assert agents.is_transient(api_error(status))
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_deterministic_errors_are_not_retried(status):
+    assert not agents.is_transient(api_error(status))
+
+
+def test_content_filter_and_unknown_errors_are_not_retried():
+    assert not agents.is_transient(api_error(400, "content_filter: ResponsibleAIPolicyViolation"))
+    assert not agents.is_transient(RuntimeError("lỗi lập trình"))
+    assert not agents.is_transient(ValueError("context length"))
+
+
+def test_plain_timeouts_are_transient():
+    import httpx
+    assert agents.is_transient(asyncio.TimeoutError())
+    assert agents.is_transient(httpx.ReadTimeout("chậm"))
+    assert agents.is_transient(httpx.ConnectError("mất mạng"))
+
+
+def test_retry_middleware_uses_the_transient_filter():
+    assert agents.model_retry_middleware().retry_on is agents.is_transient
+
+
+async def test_a_400_is_not_retried(test_db, user, models):
+    """Content filter / 400: thử lại chỉ tốn gấp đôi thời gian rồi vẫn hỏng."""
+    models.sup.replies += [AIMessage("social")]
+    models.agent.replies += [api_error(400, "content_filter"), AIMessage("không bao giờ tới")]
+    out = await turn(test_db, user, "chào em")
+    assert out[-1] == ("error", {"message": BUSY})
+    assert len(models.agent.calls) == 1
+
+
 async def test_one_retry_then_vietnamese_error(test_db, user, models):
     models.sup.replies += [AIMessage("social")]
-    models.agent.replies += [RuntimeError("azure 500"), RuntimeError("azure 500 lần hai"),
+    models.agent.replies += [api_error(500, "azure 500"), api_error(503, "azure 503 lần hai"),
                              AIMessage("không bao giờ tới")]
     out = await turn(test_db, user, "chào em")
     assert out[-1] == ("error", {"message": BUSY})
@@ -96,7 +149,7 @@ async def test_one_retry_then_vietnamese_error(test_db, user, models):
 
 async def test_one_failure_is_retried_transparently(test_db, user, models):
     models.sup.replies += [AIMessage("social")]
-    models.agent.replies += [RuntimeError("azure 500"), AIMessage("Dạ em chào chị Lan ạ.")]
+    models.agent.replies += [api_error("timeout"), AIMessage("Dạ em chào chị Lan ạ.")]
     out = await turn(test_db, user, "chào em")
     assert out[-1] == ("complete", {"answer": "Dạ em chào chị Lan ạ."})
     assert ("error", {"message": BUSY}) not in out
