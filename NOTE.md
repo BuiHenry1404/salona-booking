@@ -6,6 +6,9 @@
 
 Cập nhật: 2026-08-23
 
+> **Frontend đã tách sang repository riêng.** Giao diện khách + chủ tiệm (React)
+> không còn nằm trong repo này — phát triển và chạy từ repo frontend độc lập.
+
 ## Đang ở đâu
 
 **Cả 4 plan đã xong** — backend, agent/memory/streaming, Telegram bot, React

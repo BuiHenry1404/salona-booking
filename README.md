@@ -15,13 +15,13 @@ Swagger: http://localhost:8000/docs
 
 ## Giao diện web
 
-```bash
-cd frontend && npm install && npm run dev
-```
+Giao diện (khách + chủ tiệm) đã tách sang repository riêng — repo này **chỉ**
+chứa backend. Clone và chạy frontend từ repo đó rồi trỏ `VITE_API_BASE` về
+backend này.
 
-Chi tiết xem [`frontend/README.md`](frontend/README.md). Nhớ thêm
-`http://localhost:5173` vào `ALLOWED_ORIGINS` trong `.env`, nếu không mọi
-request từ giao diện đều bị CORS chặn.
+Nhớ thêm origin của giao diện (ví dụ `http://localhost:5173`) vào
+`ALLOWED_ORIGINS` trong `.env`, nếu không mọi request từ giao diện đều bị CORS
+chặn (áp dụng cho cả REST lẫn Socket.IO).
 
 ## Tạo tài khoản chủ tiệm đầu tiên
 

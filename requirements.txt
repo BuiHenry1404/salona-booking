@@ -15,6 +15,10 @@ pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
 pydantic-settings==2.1.0
 email-validator==2.1.0
 
+# ZoneInfo("Asia/Ho_Chi_Minh") cần IANA tz database trên Windows (không có sẵn
+# như Linux/macOS). Thiếu thì app không khởi động được.
+tzdata>=2024.1
+
 # HTTP client
 httpx==0.25.2
 

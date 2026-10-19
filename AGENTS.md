@@ -3,6 +3,10 @@
 FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Backend only so far
 (Plan 1–2 done: 281 tests green). Next: Plan 3 (Telegram bot), Plan 4 (React frontend).
 
+> **Frontend đã tách ra repo riêng** — repo này chỉ còn backend. Giao diện khách
+> và chủ tiệm (React) được phát triển/chạy từ repository frontend độc lập, không
+> nằm trong cây thư mục này nữa.
+
 ## Read first (in this order)
 
 1. `CONTEXT.md` — the *why*: locked decisions, 13 already-fixed traps (do NOT "clean them up"),

@@ -16,6 +16,9 @@ gì **không được phá**. Chi tiết nằm ở file khác, đã ghi kèm t�
 
 Đặt lịch cho **một tiệm nail–tóc nhỏ ở Việt Nam**.
 
+> **Ghi chú 2026:** giao diện web (khách + chủ tiệm) đã tách sang repository
+> frontend riêng. Repo này chỉ còn backend + agent + Telegram.
+
 | Ai | Qua đâu |
 |---|---|
 | Khách | Web React — chat với AI đặt lịch, xem lịch của mình |
