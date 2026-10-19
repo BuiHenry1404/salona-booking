@@ -151,9 +151,11 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         give it — it cannot see earlier turns.
         `anchor`: pass it whenever the customer is changing or answering about a
         time already on the table — the appointment being moved (its `iso:` in
-        the context block) or the slot just proposed (`held.iso` in
-        propose_appointment's result). The tool then fills a missing day or
-        part of the day from it instead of asking again.
+        the context block), the slot just proposed (`held.iso` in
+        propose_appointment's result), or the proposal the customer just
+        declined (the `iso` on the context block line tagged
+        [declined: ...]). The tool then fills a missing day or part of the
+        day from it, and keeps its day when the text names no day.
         Result has `missing` -> ask the customer for exactly that ONE missing
         piece, one piece per turn, and nothing else. The value "sáng hay chiều"
         is quoted from the tool's own output, not an example: it means the hour

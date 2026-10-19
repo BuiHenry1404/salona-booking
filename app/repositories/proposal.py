@@ -5,6 +5,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from app.core.clock import now_utc
 from app.models.proposal import Proposal
 from app.repositories.base import BaseRepository
 
@@ -30,9 +31,15 @@ class ProposalRepository(BaseRepository[Proposal]):
     async def supersede_pending(self, user_id: str) -> int:
         result = await self.collection.update_many(
             {"user_id": user_id, "status": "pending"},
-            {"$set": {"status": "superseded"}},
+            {"$set": {"status": "superseded", "updated_at": now_utc()}},
         )
         return result.modified_count
+
+    async def latest_for_user(self, user_id: str) -> Optional[Proposal]:
+        """Đề xuất MỚI NHẤT của khách (theo lúc tạo), bất kể trạng thái."""
+        doc = await self.collection.find_one({"user_id": user_id},
+                                             sort=[("created_at", -1)])
+        return Proposal(**doc) if doc else None
 
     async def get_owned(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
         oid = _oid(proposal_id)
@@ -64,7 +71,9 @@ class ProposalRepository(BaseRepository[Proposal]):
             return False
         result = await self.collection.update_one(
             {"_id": oid, "status": from_status, **(match or {})},
-            {"$set": {"status": to_status, **(extra or {})}},
+            # `updated_at` = lúc đổi trạng thái: khối bối cảnh dùng nó để biết
+            # khách KHÔNG chốt từ khi nào (dòng "[declined: …]", lỗi live 3/6).
+            {"$set": {"status": to_status, "updated_at": now_utc(), **(extra or {})}},
         )
         return result.modified_count == 1
 

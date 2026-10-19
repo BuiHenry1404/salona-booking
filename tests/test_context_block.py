@@ -1,4 +1,5 @@
 from datetime import datetime
+import pytest
 
 from app.agents.booking_graph.context import (address_phrase,
                                               build_context_block,
@@ -298,3 +299,79 @@ class TestLastReplyIsQuotedSoItIsNotRepeated:
         lines = block.splitlines()
         assert lines.index(next(l for l in lines if "Câu cũ." in l)) < len(lines) - 1
         assert lines[-1].startswith("Nếu có gì")
+
+
+# --- dòng "khách vừa KHÔNG chốt" ở lượt kế (lỗi live 3/5/6) -------------------
+
+class TestDeclinedLineInLoadContext:
+    @pytest.fixture
+    async def lan(self, test_db):
+        from app.services.auth import AuthService
+        return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    @staticmethod
+    def tomorrow_at(hour):
+        from datetime import timedelta
+        from app.core.clock import TZ
+        local = datetime.now(TZ) + timedelta(days=1)
+        return local.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+    async def test_a_fresh_rejection_is_in_the_block(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        assert "KHÔNG chốt" in block and "[declined: book" in block
+
+    async def test_a_newer_proposal_hides_the_old_decline(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        await proposals.create(lan, "book", self.tomorrow_at(16), "làm tóc")
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        assert "declined" not in block
+
+    async def test_a_customer_message_after_the_decline_ends_it(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.core.clock import now_ms
+        from app.services.conversation import ConversationService
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        await ConversationService(test_db).append(str(lan.id), "user", "vậy giờ sao em",
+                                                  created_at=now_ms())
+        block = (await load_context(test_db, lan, "à mà thôi"))["context_block"]
+        assert "declined" not in block
+
+    async def test_an_old_decline_is_not_shown(self, test_db, lan, monkeypatch):
+        from datetime import timedelta
+        from app.agents.booking_graph import context
+        from app.core.clock import now_utc
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        later = now_utc() + timedelta(minutes=context.DECLINED_MAX_AGE_MINUTES + 1)
+        monkeypatch.setattr(context, "now_utc", lambda: later)
+        block = (await context.load_context(test_db, lan, "sao em"))["context_block"]
+        assert "declined" not in block
+
+    async def test_move_line_names_both_times_and_says_the_old_one_stays(self, test_db, lan):
+        from app.agents.booking_graph.context import format_vi_datetime, load_context
+        from app.services.appointment import AppointmentService
+        from app.services.proposal import ProposalService
+        appt = await AppointmentService(test_db).create(lan, self.tomorrow_at(15), note="x")
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "move", self.tomorrow_at(16), None, target=appt)
+        await proposals.supersede(lan, str(p.id))
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        line = next(x for x in block.splitlines() if "declined" in x)
+        assert format_vi_datetime(self.tomorrow_at(15)) in line
+        assert format_vi_datetime(self.tomorrow_at(16)) in line
+        assert "lịch cũ vẫn giữ nguyên" in line
+        assert f"[declined: move, iso: {self.tomorrow_at(16).isoformat()}]" in line

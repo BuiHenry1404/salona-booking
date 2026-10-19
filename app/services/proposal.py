@@ -185,6 +185,11 @@ class ProposalService:
         logger.info("proposal_not_approvable", extra={"proposal_id": proposal_id, "reason": reason})
         return ApprovalResult("not_approvable", kind=current.kind, proposal=current, reason=reason)
 
+    async def latest(self, user: User) -> Optional[Proposal]:
+        """Đề xuất mới nhất của khách — trạng thái thô trong DB (không chuẩn hoá
+        hạn như `get`): khối bối cảnh chỉ cần biết nó đã bị từ chối hay chưa."""
+        return await self.repo.latest_for_user(str(user.id))
+
     async def reject(self, user: User, proposal_id: str) -> bool:
         return await self._close(user, proposal_id, "rejected")
 

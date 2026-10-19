@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -12,6 +12,7 @@ from app.models.shop import ShopStatusView
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
+from app.services.proposal import PROPOSAL_MAX_AGE_MINUTES, ProposalService
 from app.services.shop import ShopService
 
 logger = get_logger(__name__)
@@ -163,12 +164,65 @@ def display_name(full_name: Optional[str]) -> str:
     return name or full_name or "khách"
 
 
+# Dòng chốt CUỐI khối bối cảnh. Dòng bổ sung (vd. đề xuất vừa bị từ chối)
+# chèn TRƯỚC nó — `with_line`.
+CLOSING_LINE = "Nếu có gì trong cuộc trò chuyện mâu thuẫn với phần trên, hãy tin phần trên."
+
+# --- đề xuất khách vừa KHÔNG chốt (lỗi live 3/5/6) ----------------------------
+# Sau "dạ ko em" agent booking không biết gì về đề xuất vừa bị từ chối (record
+# chỉ lưu câu đáp, tool message ở lại trong agent con), nên đề xuất lại ngay,
+# mở lại việc hủy, hay lấy nhầm ngày. Code viết MỘT dòng từ hàng `proposals`
+# (không từ model), có cả `iso` để làm neo cho `parse_time`. Dòng này sống ở
+# lượt từ chối (confirm chèn vào) và đúng MỘT lượt sau (load_context), tới khi
+# có đề xuất mới. Tag `[declined: …]` là tên mà BOOKING_PROMPT trỏ tới.
+DECLINED_STATUSES = ("rejected", "superseded", "expired")
+DECLINED_MAX_AGE_MINUTES = PROPOSAL_MAX_AGE_MINUTES
+_DECLINED_TAIL = {
+    "book": "chưa đặt lịch nào",
+    "move": "chưa dời, lịch cũ vẫn giữ nguyên",
+    "cancel": "chưa hủy, lịch vẫn còn",
+}
+
+
+def declined_line(proposal, *, expired: bool = False) -> str:
+    """Một dòng code viết: khách đã KHÔNG chốt đề xuất nào, và chưa ghi gì."""
+    kind = proposal.kind
+    when = format_vi_datetime(proposal.start_at)
+    if kind == "move":
+        snap = getattr(proposal, "target_snapshot", None)
+        old = f"{format_vi_datetime(snap.start_at)} " if snap is not None else ""
+        what = f"dời lịch {old}sang {when}"
+    elif kind == "cancel":
+        what = f"hủy lịch {when}"
+    else:
+        what = f"đặt lịch {when}"
+    head = (f"Đề xuất {what} đã HẾT HẠN, khách chưa chốt" if expired
+            else f"Khách vừa KHÔNG chốt đề xuất {what}")
+    tail = _DECLINED_TAIL.get(kind, _DECLINED_TAIL["book"])
+    return (f"{head} — chưa ghi gì, {tail}. "
+            f"[declined: {kind}, iso: {to_local(proposal.start_at).isoformat()}]")
+
+
+def with_line(block: str, line: str) -> str:
+    """Chèn `line` vào khối bối cảnh, TRƯỚC dòng chốt (dòng chốt luôn cuối)."""
+    if not line:
+        return block
+    if block.endswith(CLOSING_LINE):
+        return f"{block[:-len(CLOSING_LINE)]}{line}\n{CLOSING_LINE}"
+    return f"{block}\n{line}" if block else line
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def build_context_block(
     user: User,
     status: ShopStatusView,
     upcoming: List[Appointment],
     now: Optional[datetime] = None,
     last_reply: Optional[str] = None,
+    declined: Optional[str] = None,
 ) -> str:
     """Khối bối cảnh dựng hoàn toàn bằng code — LLM không bao giờ sinh ra nó.
 
@@ -229,11 +283,12 @@ def build_context_block(
             "Không nói lại nguyên văn câu này; cùng ý thì phải diễn đạt khác."
         )
 
+    if declined:
+        lines.append(declined)
+
     # Dòng chốt: nếu lịch sử chat nói khác (khách nhắc tên con cháu, nhắc một
     # giờ hẹn đã đổi), thì phần này mới là đúng.
-    lines.append(
-        "Nếu có gì trong cuộc trò chuyện mâu thuẫn với phần trên, hãy tin phần trên."
-    )
+    lines.append(CLOSING_LINE)
 
     return "\n".join(lines)
 
@@ -254,21 +309,46 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         after = state.covers_until if state else None
         return state, after, await conversations.history(user_id, after=after)
 
-    status, upcoming, (state, after, history) = await asyncio.gather(
+    status, upcoming, (state, after, history), latest = await asyncio.gather(
         ShopService(db).get_status(),
         AppointmentService(db).upcoming_for(user),
         window(),
+        ProposalService(db).latest(user),
     )
+    declined = await _recent_decline(conversations, user_id, latest)
 
     # `history` (nhật ký `conversations`, cùng cửa sổ với thread) chỉ còn dùng cho
     # câu đáp trước (khối bối cảnh, `previous_replies` của guard) — nó mang
     # `source` llm/code mà thread không có. Lịch sử MODEL đọc từ thread.
     last_reply = history[-1].content if history and history[-1].role == "assistant" else None
     return {
-        "context_block": build_context_block(user, status, upcoming, last_reply=last_reply),
+        "context_block": build_context_block(user, status, upcoming, last_reply=last_reply,
+                                             declined=declined),
         "history": history,
         "summary": state.summary if state else [],
         "slots": state.slots if state else None,
         "history_after": after,
         "user_id": user_id,
     }
+
+
+async def _recent_decline(conversations: ConversationService, user_id: str,
+                          latest) -> Optional[str]:
+    """Dòng "[declined: …]" cho lượt này, hoặc None.
+
+    Chỉ khi đề xuất MỚI NHẤT của khách đã bị từ chối/thay/hết hạn (có đề xuất
+    mới hơn là chuyện cũ đã qua), trong vòng `DECLINED_MAX_AGE_MINUTES`, và
+    khách CHƯA nhắn câu nào sau lúc đó — tức đúng một lượt sau lượt từ chối
+    (câu của lượt từ chối mang mốc TRƯỚC lúc đề xuất đổi trạng thái).
+    """
+    if latest is None or latest.status not in DECLINED_STATUSES:
+        return None
+    closed = _aware(latest.updated_at)
+    if now_utc() - closed > timedelta(minutes=DECLINED_MAX_AGE_MINUTES):
+        return None
+    # Đọc cả nhật ký, không chỉ cửa sổ `history`: nén có thể đã cắt câu khách
+    # của lượt kế khỏi cửa sổ, khi đó dòng này sống lâu hơn một lượt.
+    messages = await conversations._all_messages(user_id)
+    if any(m.role == "user" and _aware(m.created_at) > closed for m in messages):
+        return None
+    return declined_line(latest, expired=latest.status == "expired")

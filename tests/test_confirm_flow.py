@@ -431,3 +431,99 @@ async def test_proposal_set_but_not_yet_interrupted_treats_next_message_as_the_r
     assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?"})
     assert await appointments(test_db) == 0
     assert len(models.sup.calls) == 1                   # trả lời đề xuất, không về START
+
+
+# --- lỗi live 3/5/6: sau khi khách KHÔNG chốt, agent phải biết ---------------
+
+def context_seen(models, call=-1) -> str:
+    """Khối bối cảnh (HumanMessage "Bây giờ là…") trong lần gọi model agent."""
+    batch = models.agent.calls[call]
+    return next(str(m.content) for m in batch if str(m.content).startswith("Bây giờ là"))
+
+
+async def test_decline_tells_the_agent_what_was_declined(test_db, user, models):
+    """Lỗi live 3: "dạ ko em" → agent không biết đề xuất vừa bị từ chối nên
+    đề xuất lại ngay. Giờ khối bối cảnh của lượt đó nói rõ, từ DB."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+
+    await turn(test_db, user, "dạ ko em")
+
+    ctx = context_seen(models)
+    assert "KHÔNG chốt" in ctx
+    assert format_vi_datetime(tomorrow_at(15)) in ctx
+    assert f"[declined: book, iso: {tomorrow_at(15).isoformat()}]" in ctx
+    assert "chưa ghi gì" in ctx
+    assert ctx.count("[declined:") == 1
+    # Dòng nằm TRƯỚC dòng chốt "hãy tin phần trên".
+    assert ctx.rstrip().endswith("hãy tin phần trên.")
+
+
+async def test_decline_line_survives_one_more_turn_then_drops(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng ạ.")]
+    await turn(test_db, user, "dạ ko em")
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [AIMessage("Dạ chưa đặt gì ạ.")]
+    await turn(test_db, user, "vậy giờ sao em")
+    assert "[declined: book" in context_seen(models)          # lượt kế: còn
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [AIMessage("Dạ chị cần gì ạ?")]
+    await turn(test_db, user, "à mà thôi")
+    assert "[declined: book" not in context_seen(models)      # thêm một lượt: hết
+
+
+async def test_change_decision_is_handed_over_too(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    models.classifier["label"] = "change"
+    models.agent.replies += [AIMessage("Dạ chị muốn đổi sang giờ nào ạ?")]
+    await turn(test_db, user, "để coi")
+    assert "[declined: book" in context_seen(models)
+    assert await test_db["proposals"].count_documents({"status": "superseded"}) == 1
+
+
+async def test_unclear_twice_hands_the_drop_over(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    models.classifier["label"] = "unclear"
+    await turn(test_db, user, "cho cô dùng thử")
+    models.agent.replies += [AIMessage("Dạ chị cần em giúp gì thêm ạ?")]
+    await turn(test_db, user, "ờ thì để coi")
+    assert "[declined: book" in context_seen(models)
+
+
+async def test_cancel_deferral_then_status_question_knows_the_cancel_is_off(test_db, user, models):
+    """Lỗi live 6: "để cô hỏi thằng Huy đã" (hoãn) rồi "lịch cô còn hay mất
+    rồi em?" — lượt sau phải thấy: chưa hủy, lịch vẫn còn."""
+    appt = await AppointmentService(test_db).create(user, tomorrow_at(15), note="làm tóc")
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [tool_call("cancel_appointment", {"appointment_id": str(appt.id)}),
+                             AIMessage("Dạ chị muốn hủy lịch mai 3 giờ chiều đúng không ạ?")]
+    await turn(test_db, user, "hủy giùm cô cái lịch đó đi em")
+
+    models.agent.replies += [AIMessage("Dạ vâng ạ.")]
+    await turn(test_db, user, "để cô hỏi thằng Huy đã")
+    assert "chưa hủy, lịch vẫn còn" in context_seen(models)
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [AIMessage("Dạ lịch vẫn còn ạ.")]
+    await turn(test_db, user, "ủa vậy giờ lịch cô còn hay mất rồi em?")
+    ctx = context_seen(models)
+    assert "chưa hủy, lịch vẫn còn" in ctx
+    assert "[declined: cancel" in ctx
+    assert await appointments(test_db) == 1
+
+
+async def test_expired_proposal_is_handed_over_as_expired(test_db, user, models, monkeypatch):
+    await propose_turn(test_db, user, models)
+    future = now_utc() + timedelta(minutes=PROPOSAL_MAX_AGE_MINUTES + 1)
+    monkeypatch.setattr(proposal_module, "now_utc", lambda: future)
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [AIMessage("Dạ chị muốn đặt lại giờ nào ạ?")]
+
+    await turn(test_db, user, "ừ")
+
+    ctx = context_seen(models)
+    assert "HẾT HẠN" in ctx and "[declined: book" in ctx
+    assert await appointments(test_db) == 0

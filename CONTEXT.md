@@ -119,9 +119,9 @@ Khách ──socket──▶ run_turn
             có đề xuất, lượt này ─▶ interrupt (câu hỏi xác nhận đã stream xong) ─▶ END
             lượt sau (resume): đọc đề xuất từ DB, lưới code → bộ phân loại
               ├─ approve ─▶ ProposalService.approve ─▶ booking + confirm_fact (PhraseMiddleware: LLM viết câu chốt; Guard kiểm)
-              ├─ reject/change ─▶ booking (câu khách là tin mới)
+              ├─ reject/change ─▶ booking (câu khách là tin mới) + dòng "[declined: …]" trong khối bối cảnh
               ├─ unclear lần 1 ─▶ booking + confirm_fact clarify (câu hỏi lại do code viết; Guard kiểm) ─▶ record ─▶ confirm chờ tiếp
-              └─ hết hạn / không còn pending ─▶ supervisor
+              └─ hết hạn / không còn pending ─▶ supervisor (hết hạn: + dòng "[declined: …]" HẾT HẠN)
                     │
    stream token tag "respond" ─▶ complete ─▶ ghi conversations (nhật ký) ─▶ nén state (nền)
    (cả lượt chịu trần TURN_TIMEOUT_SECONDS = 60 giây: hết giờ / model lỗi sau 1 lần thử lại
@@ -151,6 +151,16 @@ Khách ──socket──▶ run_turn
   `anext`), KHÔNG bọc `yield`: bọc cả vòng `async for` thì hết giờ lúc người
   nhận đang `sio.emit` nổ CancelledError phía người nhận và khách không nhận
   `error` nào (F12).
+- Đề xuất khách KHÔNG chốt (lỗi live M4 3/5/6): reject/change/unclear lần 2/hết
+  hạn → confirm chèn vào khối bối cảnh MỘT dòng code viết từ hàng `proposals`
+  ("Khách vừa KHÔNG chốt đề xuất … — chưa ghi gì, … [declined: <kind>, iso: …]",
+  `context.declined_line`), trước dòng chốt. `load_context` dựng lại đúng dòng
+  đó ở lượt KẾ (đề xuất mới nhất đã rejected/superseded/expired, ≤ 10 phút, khách
+  chưa nhắn câu nào sau lúc đổi trạng thái — `proposals.updated_at`), rồi thôi.
+  BOOKING_PROMPT rule 8: không đề xuất/hủy lại trừ khi CHÍNH tin này xin; câu
+  không nêu ngày thì dùng iso của dòng đó làm neo. `parse_vi_time`: có neo mà
+  câu nêu giờ cụ thể và KHÔNG nêu ngày thì ngày của neo thắng ngày LLM tự điền
+  (`put_on_anchor_day`; regex parser không đổi — bẫy #11).
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,

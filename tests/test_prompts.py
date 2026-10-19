@@ -249,6 +249,22 @@ class TestHardWonRulesSurvive:
         assert "never read the code itself" in BOOKING_PROMPT
         assert "- unavailable:" not in BOOKING_PROMPT
 
+    def test_after_a_decline_the_agent_does_not_push_again(self):
+        """Lỗi live 3/5/6: sau "dạ ko em" agent đề xuất lại ngay, mở lại việc
+        hủy khi khách chỉ hỏi lịch còn không, và lấy nhầm HÔM NAY cho "4 giờ
+        chiều". Dòng `[declined: …]` của khối bối cảnh là chỗ dựa."""
+        flat = " ".join(BOOKING_PROMPT.split())
+        assert "[declined: ...]" in flat
+        assert "nothing was written" in flat
+        assert ("Do not call propose_appointment or cancel_appointment again unless "
+                "THIS message") in flat
+        assert "pass its iso as parse_time's anchor" in flat
+        assert "Call cancel_appointment only when THIS message asks to cancel" in flat
+        assert "still exists is answered from the context block" in flat
+
+    def test_parse_time_points_at_the_declined_line_as_an_anchor(self):
+        assert "[declined: ...]" in " ".join(_tool_descriptions()["parse_time"].split())
+
     def test_only_the_checked_time_may_be_called_taken(self):
         """Lỗi live 2: 3 giờ sáng ra `slot_unavailable`, model nói "3 giờ
         chiều đã kín". Giờ ngoài lịch tiệm không phải "có người đặt", và chỉ
@@ -390,7 +406,10 @@ class TestBookingPromptSlimmed:
         # — mốc lên 6500. Harness B M4 fix (2026-10-19, lỗi live 2): bốn mã
         # giờ mới (`outside_hours`, `closed_day`, `time_passed`,
         # `missing_time`) và luật `asked` — đo được 6829 — mốc lên 6900.
-        assert len(BOOKING_PROMPT) < 6900
+        # Cùng đợt (lỗi live 3/5/6): rule 8 mới về dòng `[declined: …]` và hai
+        # câu "chỉ hủy khi CHÍNH tin này xin hủy" ở rule 1 — đo được 7495 —
+        # mốc lên 7500.
+        assert len(BOOKING_PROMPT) < 7500
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

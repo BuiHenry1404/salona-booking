@@ -25,7 +25,8 @@ from langgraph.types import interrupt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph import reply
-from app.agents.booking_graph.context import address_phrase, format_vi_datetime
+from app.agents.booking_graph.context import (address_phrase, declined_line,
+                                              format_vi_datetime, with_line)
 from app.agents.booking_graph.state import GraphState
 from app.core.clock import now_utc
 from app.core.logging import get_logger
@@ -166,7 +167,13 @@ def make_confirm_node(
             status = proposal.status if proposal else "not_found"
             logger.info("proposal_expired" if status == "expired" else "proposal_not_pending",
                         extra={"proposal_id": proposal_id, "status": status})
-            return {"proposal_id": None, "gate_next": "supervisor"}
+            out = {"proposal_id": None, "gate_next": "supervisor"}
+            if status == "expired":
+                # Agent phải biết đề xuất cũ đã hết hạn, chưa ghi gì — không
+                # thì "ừ" muộn được hiểu như một lời đặt mới mơ hồ.
+                out["context_block"] = with_line(state.get("context_block", ""),
+                                                 declined_line(proposal, expired=True))
+            return out
 
         facts = {"kind": proposal.kind, "start_at": proposal.start_at}
         decision = await reply.decide(text, facts, bot_question=question, now=now_utc())
@@ -198,8 +205,16 @@ def make_confirm_node(
 
         # Chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại", "thôi 10
         # giờ đi em" là chuyện của booking (có lịch sử và đủ tool).
+        #
+        # Agent booking KHÔNG thấy tool message của lượt trước (record chỉ lưu
+        # câu đáp), nên phải được nói bằng code: đề xuất nào vừa bị từ chối,
+        # và chưa ghi gì (lỗi live 3/5/6). Thiếu dòng này nó đề xuất lại ngay,
+        # mở lại việc hủy, hoặc mất ngày đang bàn. Lượt sau load_context dựng
+        # lại đúng dòng này từ DB.
         logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
-        return {"proposal_id": None, "gate_next": "booking"}
+        return {"proposal_id": None, "gate_next": "booking",
+                "context_block": with_line(state.get("context_block", ""),
+                                           declined_line(proposal))}
 
     return node
 
