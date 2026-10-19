@@ -321,6 +321,14 @@ CLASSIFY_KIND = {
     "cancel": "cancel the customer's appointment",
 }
 
+# Lỗi live M4 #4: không dấu, "doi" vừa là "dời" (đồng ý DỜI) vừa là "đổi", và
+# bộ phân loại đọc "u doi di em" thành `change`. Một câu tiếng Anh cho dời/hủy,
+# KHÔNG kèm ví dụ tiếng Việt (bẫy #15/#16). Lưới code vẫn chạy trước: "u doi
+# qua 5 giờ" bị `other_time` chặn trước khi tới đây.
+CLASSIFY_GO_AHEAD = ("A reply that only tells the receptionist to go ahead with this "
+                     "action — using the action's own verb, with or without "
+                     "diacritics, and no other time, day or condition — means approve.")
+
 REWRITE_PROMPT = f"""You are fixing ONE reply written by a salon receptionist to a customer.
 Rewrite it in Vietnamese so that it says the same thing with the same dates,
 times and numbers, but without the problems listed. Change wording only —

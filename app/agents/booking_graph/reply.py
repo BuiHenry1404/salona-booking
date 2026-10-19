@@ -19,7 +19,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from app.agents.booking_graph.context import format_vi_datetime
-from app.agents.booking_graph.prompts import CLASSIFY_KIND, CLASSIFY_PROMPT
+from app.agents.booking_graph.prompts import (CLASSIFY_GO_AHEAD, CLASSIFY_KIND,
+                                              CLASSIFY_PROMPT)
 from app.agents.booking_graph.timeparse import (_DAY_OFFSETS, _TIME_PATTERN,
                                                 _to_24h)
 from app.agents.llm import build_chat_model
@@ -249,8 +250,11 @@ class ReplyDecision(BaseModel):
 def _describe(proposal: Mapping[str, Any]) -> str:
     start = _as_datetime(proposal["start_at"])
     kind = proposal.get("kind", "book")
-    return (f"Proposal: {CLASSIFY_KIND.get(kind, kind)} at "
+    text = (f"Proposal: {CLASSIFY_KIND.get(kind, kind)} at "
             f"{format_vi_datetime(start)} ({to_local(start).isoformat()}).")
+    # Dời/hủy có động từ riêng mà khách hay dùng để giục ("dời đi", "hủy đi");
+    # đặt mới thì không — giữ nguyên mô tả cũ.
+    return f"{text} {CLASSIFY_GO_AHEAD}" if kind in ("move", "cancel") else text
 
 
 async def classify_reply(proposal: Mapping[str, Any], bot_question: str,
