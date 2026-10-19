@@ -214,6 +214,44 @@ def _is_question(lowered: str, unaccented: str) -> bool:
     return last in _ASK_ENDINGS or (strip_diacritics(last) == last and last in _ASK_ENDINGS_BARE)
 
 
+# --- giục làm đúng việc đang chốt (lỗi live B2 #1) -----------------------------
+# "u doi di em" với đề xuất DỜI: model thật vẫn đọc "doi" thành "đổi" (`change`)
+# dù đã có câu CLASSIFY_GO_AHEAD. Câu CHỈ gồm tiểu từ đồng ý + ĐÚNG động từ của
+# việc đang chốt + tiểu từ đệm thì code quyết approve, không hỏi model. Chạy SAU
+# lưới phủ quyết ("không dời nữa", "thôi khỏi dời", "dời qua 5 giờ hả em?" đã bị
+# chặn trước), và mọi chữ trong câu phải thuộc ba bộ dưới — thêm bất kỳ chữ nào
+# khác (giờ, ngày, "nữa", "qua", "mai"...) là trả cho bộ phân loại như cũ.
+# Đặt MỚI không có động từ riêng để giục ("đặt đi" vẫn qua model) — không áp.
+# Chữ không dấu chỉ tính khi khách gõ KHÔNG dấu: "đợi" có dấu không phải "doi".
+_GO_VERBS = {"move": ({"dời", "đổi"}, {"doi"}), "cancel": ({"hủy", "huỷ"}, {"huy"})}
+_GO_AGREE = ({"ừ", "ờ", "ừm", "ok", "oke", "okie", "okay", "dạ", "vâng", "được", "đc"},
+             {"u", "o", "um", "ok", "oke", "okie", "okay", "da", "vang", "duoc", "dc"})
+_GO_FILLER = ({"đi", "nha", "nhé", "nhá", "nghen", "em", "giùm", "giúp", "dùm", "hộ", "cho",
+               "cô", "chú", "chị", "anh", "bác", "ạ", "luôn", "ơi", "lịch", "đó", "cái", "mình"},
+              {"di", "nha", "nhe", "nghen", "em", "gium", "giup", "dum", "ho", "cho", "co", "chu",
+               "chi", "anh", "bac", "a", "luon", "lun", "oi", "lich", "do", "cai", "minh"})
+
+
+def _in_set(token: str, sets) -> bool:
+    accented, bare = sets
+    return token in accented or (strip_diacritics(token) == token and token in bare)
+
+
+def is_go_ahead(text: str, kind: Optional[str]) -> bool:
+    """Câu chỉ giục làm đúng việc dời/hủy đang chốt (code quyết, không model).
+
+    Chỉ trả lời câu hỏi "có phải giục không" — gọi SAU `veto_reason`.
+    """
+    verbs = _GO_VERBS.get(kind or "")
+    if verbs is None:
+        return False
+    tokens = re.findall(r"\w+", (text or "").lower())
+    if not any(_in_set(t, verbs) for t in tokens):
+        return False
+    return all(_in_set(t, verbs) or _in_set(t, _GO_AGREE) or _in_set(t, _GO_FILLER)
+               for t in tokens)
+
+
 def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Optional[str]:
     """Lý do chắc chắn KHÔNG phải đồng ý, hoặc None (lưới không có ý kiến).
 
@@ -291,4 +329,7 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     if reason is not None:
         logger.info("confirm_vetoed", extra={"reason": reason})
         return "reject"
+    if is_go_ahead(text, proposal.get("kind")):
+        logger.info("confirm_go_ahead", extra={"kind": proposal.get("kind")})
+        return "approve"
     return await classify_reply(proposal, bot_question, text)

@@ -161,6 +161,13 @@ Khách ──socket──▶ run_turn
   không nêu ngày thì dùng iso của dòng đó làm neo. `parse_vi_time`: có neo mà
   câu nêu giờ cụ thể và KHÔNG nêu ngày thì ngày của neo thắng ngày LLM tự điền
   (`put_on_anchor_day`; regex parser không đổi — bẫy #11).
+- Giục dời/hủy bằng chính động từ (lỗi live B2 #1, "u doi di em" vẫn bị model
+  thật đọc là `change`): với đề xuất `move`/`cancel`, câu CHỈ gồm tiểu từ đồng ý +
+  đúng động từ của việc đó (dời/đổi/doi; hủy/huỷ/huy) + tiểu từ đệm (đi, nha,
+  em, giùm, cho cô…) → `reply.is_go_ahead` quyết approve bằng CODE, không gọi bộ
+  phân loại. Chạy SAU lưới phủ quyết; thêm bất kỳ chữ nào khác (giờ, ngày, "nữa",
+  "qua"…) là trả cho bộ phân loại như cũ. Chữ không dấu chỉ tính khi gõ không dấu
+  ("đợi" ≠ "doi"). Đặt mới không áp.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,
