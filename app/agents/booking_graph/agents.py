@@ -200,6 +200,8 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
             "customer_text": state.get("customer_text") or "",
             "confirm_fact": state.get("confirm_fact"),
             "fallback": state.get("fallback"),
+            # PhraseMiddleware: nút "Đồng ý" bỏ qua LLM, đi `code_phrase`.
+            "confirm_source": state.get("confirm_source"),
         })
         messages = out.get("messages") or []
         reply = messages[-1] if messages else None

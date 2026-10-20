@@ -821,17 +821,19 @@ async def button(test_db, user, decision, proposal_id):
 
 
 async def test_button_yes_books_without_classifier(test_db, user, models):
+    """Task 3: nút "Đồng ý" không gọi model phrase nữa — câu chốt do CODE viết
+    (`code_phrase`), nên `models.phrase` KHÔNG được gọi dù có kịch bản sẵn."""
     await propose_turn(test_db, user, models)
     when = format_vi_datetime(tomorrow_at(15))
-    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.")]
     proposal = await pending(test_db, user)
 
     values = await button(test_db, user, "yes", str(proposal["_id"]))
 
     assert await appointments(test_db) == 1
-    assert values["answer"] == f"Dạ xong rồi chị Lan, hẹn chị {when} nhé."
+    assert values["answer"] == f"Dạ, em đặt lịch cho chị Lan vào {when} rồi ạ."
     assert values["confirm_source"] == "button"
     assert models.classifier["calls"] == 0
+    assert models.phrase.calls == []
 
 
 async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
@@ -850,8 +852,6 @@ async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
 
 async def test_second_button_press_is_idempotent(test_db, user, models):
     await propose_turn(test_db, user, models)
-    when = format_vi_datetime(tomorrow_at(15))
-    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.")]
     proposal = await pending(test_db, user)
     pid = str(proposal["_id"])
 
@@ -900,8 +900,6 @@ async def test_confirm_source_resets_to_text_after_a_button_approval(test_db, us
     thì một lượt bấm nút để lại "button" cho mọi lượt gõ chữ sau đó trên cùng
     thread (Task 3 đọc khoá này để quyết cách viết câu chốt)."""
     await propose_turn(test_db, user, models)
-    when15 = format_vi_datetime(tomorrow_at(15))
-    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when15} nhé.")]
     proposal = await pending(test_db, user)
 
     await button(test_db, user, "yes", str(proposal["_id"]))
@@ -939,7 +937,6 @@ async def test_button_yes_also_offers_the_queued_booking(test_db, hung, models):
     await turn(test_db, hung, "thu 4 nay chu muon cat toc luc 9h sang voi 2h chieu cho thang chau nua")
     proposal = await pending(test_db, hung)
 
-    models.phrase.replies += [AIMessage(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")]
     values = await button(test_db, hung, "yes", str(proposal["_id"]))
 
     booked = await AppointmentService(test_db).upcoming_for(hung)

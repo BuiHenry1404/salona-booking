@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph.phrase import write_phrase
+from app.agents.booking_graph.phrase import code_phrase, write_phrase
 
 FACT = {"kind": "booked", "when": "Thứ Ba 15/9, 9 giờ sáng", "note": "cắt tóc", "address": "anh Tám", "error": None}
 FALLBACK = "Xong rồi ạ. Hẹn gặp anh Tám Thứ Ba 15/9, 9 giờ sáng nhé."
@@ -97,3 +97,33 @@ class TestWritePhrase:
         model = patch_model("Dạ anh Tám, em ghi xong rồi ạ.")
         await write_phrase(a_state())
         assert "NOT held" not in model.calls[0][0].content
+
+
+class TestCodePhrase:
+    """`code_phrase`: câu chốt đường nút, viết bằng CODE — không gọi LLM."""
+
+    def test_code_phrase_avoids_a_template_already_used(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan",
+                "context": "first_time"}
+        first = code_phrase(fact, [])
+        second = code_phrase(fact, [first])
+        assert first != second and "3 giờ chiều" in second and "chị Lan" in second
+
+    def test_code_phrase_failed_uses_fallback(self):
+        assert code_phrase({"kind": "failed", "fallback": "X"}, []) == "X"
+
+    def test_code_phrase_defaults_missing_context_to_first_time(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan"}
+        with_context = code_phrase({**fact, "context": "first_time"}, [])
+        without_context = code_phrase(fact, [])
+        assert without_context == with_context
+
+    def test_code_phrase_runs_out_of_templates_falls_back_to_first(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan",
+                "context": "first_time"}
+        first = code_phrase(fact, [])
+        second = code_phrase(fact, [first])
+        third = code_phrase(fact, [first, second])
+        # Cả 3 mẫu đều đã "dùng" (coi như trùng) — hết mẫu rơi về mẫu đầu.
+        exhausted = code_phrase(fact, [first, second, third])
+        assert exhausted == first

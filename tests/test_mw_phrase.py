@@ -99,6 +99,16 @@ async def test_before_agent_returns_none_without_a_fact():
     assert await PhraseMiddleware().abefore_agent({"messages": []}, None) is None
 
 
+async def test_button_turn_does_not_call_the_phrase_model(phrase_model):
+    """Task 3: nút "Đồng ý" (`confirm_source == "button"`) dùng câu chốt do
+    CODE viết (`code_phrase`) — không gọi model phrase, không tốn LLM."""
+    written = phrase_model()
+    out = await node_for(must_not_run())(a_state(confirm_source="button"))
+    assert written.calls == []
+    assert WHEN in out["answer"] and "anh Tám" in out["answer"]
+    assert out["violations"] == []
+
+
 async def test_phrase_tokens_stream_with_the_respond_tag(phrase_model):
     """Câu chốt LLM stream như A (bẫy #8): token mang tag `respond`."""
     text = f"Dạ anh Tám, em giữ cho anh {WHEN} rồi nhé."
