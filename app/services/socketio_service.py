@@ -4,6 +4,8 @@ import socketio
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph import run_turn
+from app.agents.booking_graph.button import BUTTON_LABELS, ButtonReply
+from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.errors import RateLimitedError
@@ -58,6 +60,15 @@ class SocketIOService:
             user = await self.auth_service.get_user_by_id(user_id)
             if user:
                 await self.handle_message(sid, user, (data or {}).get("message", ""))
+
+        @self.sio.event
+        async def confirm_proposal(sid, data):
+            user_id = self.sid_to_user.get(sid)
+            if not user_id:
+                return
+            user = await self.auth_service.get_user_by_id(user_id)
+            if user:
+                await self.handle_button(sid, user, data or {})
 
     async def _authenticate(self, auth) -> Optional[User]:
         if not auth or "token" not in auth:
@@ -115,6 +126,31 @@ class SocketIOService:
 
         try:
             async for event in run_turn(self.db, user, question):
+                await self.sio.emit(event.type, event.data, room=sid)
+        except Exception as exc:
+            logger.error("chat_turn_failed", extra={"error": str(exc)})
+            await self.sio.emit(
+                "error",
+                {"message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."},
+                room=sid,
+            )
+
+    async def handle_button(self, sid: str, user: User, data: dict) -> None:
+        """Nút Đồng ý/Không trên đề xuất — đường riêng, KHÔNG qua trần chat
+        (`check_and_hit`): chi phí LLM của bước này đã tính vào lượt đã sinh ra
+        đề xuất, bấm nút không gọi thêm model nào mà bị trừ hạn mức oan.
+        """
+        payload = data or {}
+        proposal_id = payload.get("proposal_id")
+        decision = payload.get("decision")
+        label = BUTTON_LABELS.get(decision)
+        if not isinstance(proposal_id, str) or not proposal_id or label is None:
+            await self.sio.emit("error", {"message": TURN_ERROR_MESSAGE}, room=sid)
+            return
+
+        reply = ButtonReply(decision=decision, proposal_id=proposal_id, label=label)
+        try:
+            async for event in run_turn(self.db, user, reply):
                 await self.sio.emit(event.type, event.data, room=sid)
         except Exception as exc:
             logger.error("chat_turn_failed", extra={"error": str(exc)})

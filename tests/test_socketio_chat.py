@@ -253,3 +253,54 @@ class TestTooFastWording:
         from app.services.socketio_service import SocketIOService
 
         assert "12 phút" in SocketIOService._too_fast_message(720)
+
+
+class TestConfirmProposalEvent:
+    """Nút Đồng ý/Không: đường riêng, không qua trần chat (Task 5)."""
+
+    async def test_confirm_proposal_runs_a_button_turn_without_rate_limit(
+        self, service, test_db, monkeypatch
+    ):
+        from app.agents.booking_graph.button import ButtonReply
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        received = {}
+
+        async def fake_turn(db, u, reply):
+            received["reply"] = reply
+            yield AgentEvent("complete", {"answer": "Dạ xong rồi ạ", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        rate_limit_calls = []
+        monkeypatch.setattr(
+            service.rate_limit, "check_and_hit",
+            lambda *a, **kw: rate_limit_calls.append((a, kw)),
+        )
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": "yes"})
+
+        assert received["reply"] == ButtonReply("yes", "p1", "Đồng ý")
+        assert rate_limit_calls == []
+        assert ("complete", {"answer": "Dạ xong rồi ạ", "proposal": None}, "s1") in service.sio.sent
+
+    async def test_confirm_proposal_rejects_bad_payload(
+        self, service, test_db, monkeypatch
+    ):
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": "maybe"})
+
+        assert called == []
+        assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]

@@ -159,6 +159,27 @@ def test_fresh_turn_fields_reset_everything_a_turn_produces():
     assert "messages" not in fields
 
 
+async def test_button_turn_when_nothing_is_waiting_replies_stale(test_db, user, models):
+    """Khách bấm nút nhưng thread không đang chờ (đề xuất đã hết hạn, hay bấm
+    trùng): không chạy graph, chỉ trả câu "hết hạn" — nhưng vẫn ghi cả câu
+    khách bấm (label) lẫn câu đáp vào `conversations`, để lịch sử cho thấy
+    khách đã bấm gì (controller ruling, Task 5)."""
+    from app.agents.booking_graph.button import ButtonReply
+    from app.agents.booking_graph.confirm import BUTTON_STALE_REPLY
+    from app.agents.booking_graph.context import address_phrase
+
+    reply = ButtonReply("yes", "p1", "Đồng ý")
+    result = [(e.type, e.data) async for e in events.run_turn(test_db, user, reply)]
+
+    expected = BUTTON_STALE_REPLY.replace("anh chị", address_phrase(user.full_name))
+    assert [t for t, _ in result] == ["turn_started", "complete"]
+    assert result[-1] == ("complete", {"answer": expected, "proposal": None})
+    assert not models.agent.calls and not models.sup.calls      # graph không chạy
+
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["Đồng ý", expected]
+
+
 async def test_langfuse_session_is_the_user_not_the_thread(test_db, user, monkeypatch):
     seen = {}
 

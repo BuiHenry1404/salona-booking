@@ -8,7 +8,9 @@ from langgraph.types import Command
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import RESPOND_TAG
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking_graph.confirm import BUTTON_STALE_REPLY
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.agents.booking_graph.graph import build_graph
 from app.agents.booking_graph.history import stamp, stamped_at
 from app.core.clock import now_ms, to_local
@@ -207,9 +209,14 @@ async def pending_proposal_payload(
 
 
 async def run_turn(
-    db: AsyncIOMotorDatabase, user: User, question: str
+    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
 ) -> AsyncIterator[AgentEvent]:
     """Chạy một lượt chat và phát sự kiện theo thứ tự thời gian thực.
+
+    `question` là câu khách gõ, HOẶC `ButtonReply` (Task 5 — khách bấm
+    Đồng ý/Không thay vì gõ chữ): `label` của nó đóng vai câu khách
+    (`customer_text`, ghi vào `conversations` và thread), `decision`/
+    `proposal_id` resume thẳng vào node `confirm` qua `Command(resume={...})`.
 
     `token` chỉ là nháp: model thử lại giữa stream thì token stream lại từ đầu.
     Mỗi lượt kết thúc bằng ĐÚNG một `complete` (câu cuối, client THAY bubble
@@ -242,12 +249,16 @@ async def run_turn(
 
 
 async def _run_turn(
-    db: AsyncIOMotorDatabase, user: User, question: str
+    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
 ) -> AsyncIterator[AgentEvent]:
     from app.agents.booking_graph.context import load_context
 
     user_id = str(user.id)
     conversations = ConversationService(db)
+    button = question if isinstance(question, ButtonReply) else None
+    # Nút bấm KHÔNG gõ chữ — "label" ("Đồng ý"/"Không") đóng vai câu khách ở
+    # mọi nơi dùng `question` làm văn bản (bối cảnh, thread, `conversations`).
+    question_text = button.label if button is not None else question
 
     yield AgentEvent("turn_started")
 
@@ -265,7 +276,7 @@ async def _run_turn(
         # Một mốc cho câu khách ở CẢ HAI nơi (thread và conversations):
         # covers_until đọc từ conversations phải khớp đúng tin bên thread.
         asked_at = now_ms()
-        context = await bounded(load_context(db, user, question))
+        context = await bounded(load_context(db, user, question_text))
         graph = build_graph(db, user)
         thread_id = await bounded(pick_thread(graph, user_id, asked_at))
 
@@ -278,8 +289,8 @@ async def _run_turn(
             "metadata": get_trace_metadata(user_id=user_id, conversation_id=user_id),
         }
         fields = {
-            "messages": [stamp(HumanMessage(content=question), asked_at)],
-            **fresh_turn_fields(context, question),
+            "messages": [stamp(HumanMessage(content=question_text), asked_at)],
+            **fresh_turn_fields(context, question_text),
             # Mốc "bây giờ" của cả lượt cho cửa sổ lịch sử — như A, tính một lần
             # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
             "asked_at": asked_at,
@@ -295,6 +306,25 @@ async def _run_turn(
         waiting = bool(getattr(snapshot, "interrupts", ())) or (
             "confirm" in (getattr(snapshot, "next", None) or ())
             and bool(values.get("proposal_id")))
+
+        if button is not None and not waiting:
+            # Controller ruling (Task 5): nút bấm tới khi KHÔNG có gì đang chờ
+            # (đề xuất đã hết hạn, hay bấm trùng) — không chạm graph (idempotent
+            # phía `confirm` chỉ áp dụng trong lượt resume thật, không phải ở
+            # đây). Vẫn ghi cả câu khách bấm lẫn câu đáp vào `conversations` để
+            # lịch sử cho khách thấy đã bấm gì, dù không có gì để chạy.
+            stale_answer = BUTTON_STALE_REPLY.replace(
+                "anh chị", address_phrase(user.full_name))
+
+            async def persist_stale():
+                await conversations.append(user_id, "user", question_text, created_at=asked_at)
+                await conversations.append(user_id, "assistant", stale_answer,
+                                           source="code", created_at=now_ms())
+
+            await asyncio.shield(asyncio.ensure_future(persist_stale()))
+            yield AgentEvent("complete", {"answer": stale_answer, "proposal": None})
+            return
+
         if waiting:
             # Thread đang chờ khách trả lời đề xuất (node confirm interrupt ở
             # lượt trước): câu khách là câu trả lời. Các khoá lượt mới ghi
@@ -310,7 +340,13 @@ async def _run_turn(
             #
             # KHÔNG đặt lại `proposal_id` — đó chính là thứ đang chờ duyệt.
             await bounded(graph.aupdate_state(config, fields, as_node="record"))
-            turn_input = Command(resume=question)
+            if button is not None:
+                # Node `confirm` (`_handle_button`) đọc đúng cặp khoá này —
+                # CODE quyết thẳng, không qua `reply.decide`.
+                turn_input = Command(resume={"button": button.decision,
+                                             "proposal_id": button.proposal_id})
+            else:
+                turn_input = Command(resume=question)
         else:
             # Tin mới: chạy từ START. Đề xuất cũ (nếu còn trong checkpoint,
             # vd. lượt trước lỗi giữa chừng) không bao giờ được mang sang.
@@ -333,7 +369,7 @@ async def _run_turn(
             answered_at = stamped_at(last) if isinstance(last, AIMessage) else None
 
             async def persist():
-                await conversations.append(user_id, "user", question, created_at=asked_at)
+                await conversations.append(user_id, "user", question_text, created_at=asked_at)
                 await conversations.append(user_id, "assistant", answer,
                                            source=values.get("answer_source", "llm"),
                                            created_at=answered_at or now_ms())

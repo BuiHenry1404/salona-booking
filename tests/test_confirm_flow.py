@@ -867,7 +867,8 @@ async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_qu
 # Resume không còn là câu gõ chữ mà là dict {"button": "yes"|"no", "proposal_id"}:
 # CODE quyết thẳng trên `ProposalService.approve`/`reject`, bộ phân loại
 # KHÔNG chạy. Gọi thẳng graph đã dựng (như `graph_values`) thay vì `run_turn`,
-# vì `run_turn` chỉ biết gửi resume bằng câu gõ chữ (Task 5 mới nối nút bấm).
+# để kiểm node `confirm` tách biệt khỏi tầng chuyển tải — `run_turn` nhận
+# `ButtonReply` có bài test riêng ở cuối phần này (Task 5).
 
 
 async def button(test_db, user, decision, proposal_id):
@@ -1004,3 +1005,26 @@ async def test_button_yes_also_offers_the_queued_booking(test_db, hung, models):
     answer = values["answer"]
     assert when2 in answer and "cắt tóc cho thằng cháu" in answer
     assert models.classifier["calls"] == 0
+
+
+async def test_run_turn_resumes_a_button_reply_end_to_end(test_db, user, models):
+    """Task 5: `run_turn` nhận `ButtonReply` (không phải câu gõ chữ) và resume
+    đúng node `confirm` qua `Command(resume={"button", "proposal_id"})` — cả
+    tầng chuyển tải (Socket.IO → `run_turn`) lẫn node đều được kiểm cùng lúc,
+    khác bài test `button()` ở trên vốn gọi thẳng graph."""
+    from app.agents.booking_graph.button import ButtonReply
+
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+    when = format_vi_datetime(tomorrow_at(15))
+
+    out = await turn(test_db, user, ButtonReply("yes", str(proposal["_id"]), "Đồng ý"))
+
+    assert out[-1] == ("complete", {
+        "answer": f"Dạ, em đặt lịch cho chị Lan vào {when} rồi ạ.", "proposal": None})
+    assert await appointments(test_db) == 1
+    assert models.classifier["calls"] == 0
+    assert models.phrase.calls == []
+
+    stored = (await test_db["conversations"].find_one({"user_id": str(user.id)}))["messages"]
+    assert stored[-2]["content"] == "Đồng ý"               # lịch sử cho thấy khách đã bấm gì
