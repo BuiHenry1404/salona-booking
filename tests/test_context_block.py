@@ -335,6 +335,26 @@ class TestDeclinedLineInLoadContext:
         block = (await load_context(test_db, lan, "sao em"))["context_block"]
         assert "declined" not in block
 
+    async def test_a_customer_message_in_the_same_millisecond_as_the_close_ends_it(self):
+        """Mongo lưu mốc giờ ở độ phân giải mili-giây. Câu khách ghi cùng
+        mili-giây với lúc đề xuất đóng (máy nhanh, test chạy sát nhau) vẫn là
+        câu SAU lúc từ chối: câu của lượt từ chối luôn đứng trước một lượt LLM
+        phân loại, không bao giờ cùng mili-giây. So `>` thì dòng declined sống
+        thêm một lượt và test trên chập chờn theo tốc độ máy."""
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from app.agents.booking_graph.context import _recent_decline
+        from app.core.clock import now_ms
+        closed = now_ms()
+        latest = SimpleNamespace(status="rejected", updated_at=closed, kind="book",
+                                 start_at=closed + timedelta(days=1), note=None)
+
+        class Conversations:
+            async def _all_messages(self, user_id):
+                return [SimpleNamespace(role="user", created_at=closed)]
+
+        assert await _recent_decline(Conversations(), "u1", latest) is None
+
     async def test_a_customer_message_after_the_decline_ends_it(self, test_db, lan):
         from app.agents.booking_graph.context import load_context
         from app.core.clock import now_ms

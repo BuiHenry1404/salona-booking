@@ -41,13 +41,12 @@ henry/develop
 ```
 
 Mỗi nhánh rẽ từ nhánh trên nó vì đều sửa cùng vùng `prompts.py`/`tools.py`.
-**PR #6** (`henry/develop` → `main`) và **PR #7** (`feat/conversation-state` →
-`henry/develop`) đang mở. Cách gộp là quyết định của chủ dự án — có thể squash
-cả chồng, hoặc merge lần lượt từ dưới lên.
+PR #6 và PR #7 đã gộp trên GitHub (20/10/2026). `feat/langchain-harness` gộp
+vào `henry/develop` rồi `main` cùng ngày; `main` giờ chạy Harness B.
 
 Ba file `hoi-thoai-dai-*.txt` ở gốc repo là transcript chạy thật, **untracked
-có chủ ý**. Bốn file `after-*.txt` bị một lệnh `git rebase` khôi phục lại sau
-khi chủ dự án đã xoá — chờ quyết định, đừng tự xử.
+có chủ ý**. Bốn file `after-*.txt` đã xoá hẳn khỏi repo (20/10/2026) theo ý
+chủ dự án — một lệnh `git rebase` từng khôi phục nhầm.
 
 ## Chốt cứng — đừng mở lại
 
