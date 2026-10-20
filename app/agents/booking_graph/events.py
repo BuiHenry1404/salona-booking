@@ -177,12 +177,25 @@ async def pending_proposal_payload(
     `_run_turn`). Đọc lại từ `ProposalService` (không tin thẳng state đồ hoạ)
     vì nó tự chuẩn hoá đề xuất đã hết hạn/treo quá lâu lúc đọc — hết hạn thì
     không còn gì để hỏi khách nữa.
+
+    `ProposalService.get` có thể GHI (tự chuyển expired/stale-approving) nên
+    có thể nổ (Mongo chập chờn, timeout): câu đáp đã `persist` xong TRƯỚC khi
+    hàm này chạy, nổ ở đây mà không bắt thì lượt rơi vào `except` ngoài của
+    `_run_turn` và trả `error` dù khách đã nghe/đã lưu câu đáp — khách thấy cả
+    câu đáp lẫn câu lỗi cho cùng một lượt. Lỗi ở đây chỉ đáng làm mất NÚT bấm
+    (`proposal: None`), không đáng làm mất cả lượt.
     """
     values = getattr(snapshot, "values", None) or {}
     proposal_id = values.get("proposal_id")
     if not getattr(snapshot, "interrupts", ()) or not proposal_id:
         return None
-    proposal = await ProposalService(db).get(user, proposal_id)
+    try:
+        proposal = await ProposalService(db).get(user, proposal_id)
+    except Exception as exc:
+        logger.warning("pending_proposal_payload_failed", extra={
+            "proposal_id": proposal_id, "error": str(exc), "error_type": type(exc).__name__,
+        })
+        return None
     if proposal is None or proposal.status != "pending":
         return None
     return {

@@ -110,6 +110,28 @@ async def test_complete_carries_the_pending_proposal(test_db, user, models):
     }
 
 
+async def test_pending_proposal_lookup_failure_still_completes_the_turn(
+        test_db, user, models, monkeypatch):
+    """Review Task 4: `ProposalService.get` có thể GHI (tự chuyển expired/
+    stale-approving) nên có thể nổ (Mongo chập chờn). Câu đáp đã lưu vào
+    `conversations` TRƯỚC khi `pending_proposal_payload` chạy — nổ ở đó không
+    được làm mất cả lượt (`error` thay vì `complete`), chỉ đáng mất nút bấm."""
+    async def boom(self, user, proposal_id):
+        raise RuntimeError("mongo chập chờn")
+    monkeypatch.setattr(ProposalService, "get", boom)
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+
+    assert out[-1] == ("complete", {"answer": QUESTION, "proposal": None})
+    doc = await test_db["conversations"].find_one({"user_id": str(user.id)})
+    assert doc["messages"][-1]["content"] == QUESTION      # câu đáp vẫn được ghi
+
+
 async def test_proposal_turn_ends_waiting_on_an_interrupt(test_db, user, models):
     await propose_turn(test_db, user, models)
     from app.agents.booking_graph.graph import build_graph
