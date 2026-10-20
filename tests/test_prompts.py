@@ -411,8 +411,9 @@ class TestBookingPromptSlimmed:
         # mốc lên 7500. Chat tay B2 (2026-10-20, lỗi #3): câu "tối đa 3 giờ
         # trống, không đọc danh sách dài" ở rule 2 — đo được 7598 — mốc lên 7700.
         # Lỗi #4: rule 1 cấm nói đã đặt/dời/hủy khi mới giữ — đo được 7701 —
-        # mốc lên 7800.
-        assert len(BOOKING_PROMPT) < 7800
+        # mốc lên 7800. Lỗi #5: vế loại trừ ở rule 4 (nhắc người thân khi hoãn
+        # hay đặt hộ không phải ca bảo mật) — đo được 8105 — mốc lên 8200.
+        assert len(BOOKING_PROMPT) < 8200
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -599,3 +600,9 @@ class TestLiveChatB2:
     def test_no_claim_of_a_write_while_only_holding(self):
         """Lỗi #4: "em đã đặt lịch … xác nhận giúp em nhé?" khi mới giữ chỗ."""
         assert "never say it is already booked, moved or cancelled" in BOOKING_PROMPT.lower()
+
+    def test_mentioning_a_relative_is_not_a_privacy_case(self):
+        """Lỗi #5: "để cô hỏi thằng Huy đã" → "Em chỉ xem và đặt lịch của chị…"."""
+        assert "will ask someone before deciding" in BOOKING_PROMPT
+        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
+        assert "relative" in rule4 and "message you when they are ready" in rule4

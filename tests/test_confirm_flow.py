@@ -541,3 +541,51 @@ async def test_live_b2_claim_while_only_holding_is_rewritten_end_to_end(test_db,
     assert out[-1] == ("complete", {"answer":
                        f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"})
     assert await appointments(test_db) == 0
+
+
+async def test_live_b2_deferral_naming_a_relative_goes_to_booking_with_the_carve_out(
+        test_db, user, models):
+    """Lỗi live B2 #5: "để cô hỏi thằng Huy đã" → câu từ chối quyền riêng tư
+    (BOOKING_PROMPT rule 4). Lượt hoãn đi vào agent BOOKING (không supervisor,
+    không ghi), và system prompt nó đọc có vế loại trừ: nhắc người thân khi hoãn
+    không phải hỏi lịch người khác."""
+    appt = await AppointmentService(test_db).create(user, tomorrow_at(15), note="làm tóc")
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [tool_call("cancel_appointment", {"appointment_id": str(appt.id)}),
+                             AIMessage("Dạ chị muốn hủy lịch mai 3 giờ chiều đúng không ạ?")]
+    await turn(test_db, user, "hủy giùm cô cái lịch đó đi em")
+
+    models.agent.replies += [AIMessage("Dạ, chị hỏi rồi nhắn em nhé.")]
+    await turn(test_db, user, "để cô hỏi thằng Huy đã")
+
+    assert len(models.sup.calls) == 1 and models.classifier["calls"] == 0
+    system = models.agent.calls[-1][0].content
+    assert "will ask someone before deciding" in system
+    assert await appointments(test_db) == 1
+
+
+# Gọi Azure THẬT — chạy tay: `pytest tests/test_confirm_flow.py -m llm -v`.
+@pytest.mark.llm
+@pytest.mark.parametrize("deferral", ["để cô hỏi thằng Huy đã", "de chu hoi lai no"])
+async def test_deferral_naming_a_relative_gets_no_privacy_refusal_llm(test_db, user, deferral):
+    from langchain_core.messages import HumanMessage
+    from app.agents.booking_graph.agents import build_agent
+    from app.agents.booking_graph.context import declined_line, load_context, with_line
+    from app.agents.booking_graph.graph import booking_tools
+    from app.agents.booking_graph.prompts import BOOKING_PROMPT
+
+    appt = await AppointmentService(test_db).create(user, tomorrow_at(15), note="làm tóc")
+    proposals = ProposalService(test_db)
+    proposal = await proposals.create(user, "cancel", appt.start_at, None, target=appt)
+    await proposals.reject(user, str(proposal.id))
+    context = await load_context(test_db, user, deferral)
+    block = with_line(context["context_block"], declined_line(proposal))
+    agent = build_agent(BOOKING_PROMPT, booking_tools(test_db, user), user=user)
+    out = await agent.ainvoke({"messages": [
+        HumanMessage("hủy giùm cô cái lịch đó đi em"),
+        AIMessage(f"Dạ em sẽ hủy lịch {format_vi_datetime(appt.start_at)}, chị xác nhận giúp em nhé?"),
+        HumanMessage(deferral)], "context_block": block})
+    answer = out["answer"].lower()
+    assert "chỉ xem" not in answer and "của chị lan thôi" not in answer, answer
+    assert not any(getattr(m, "tool_calls", None) for m in out["messages"]), "không gọi tool"
+    assert await test_db["proposals"].count_documents({"status": "pending"}) == 0

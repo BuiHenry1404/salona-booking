@@ -180,6 +180,12 @@ Khách ──socket──▶ run_turn
   hoặc câu không chủ ngữ — "chị đã đặt…" (`already_yours`) không đụng. Lượt
   không có đề xuất mới thì không sửa: "em đã hủy rồi ạ" có thể đúng về lượt
   trước. Kèm luật prompt ở rule 1.
+- Nhắc tên người thân không phải ca bảo mật (lỗi live B2 #5, "để cô hỏi thằng
+  Huy đã" nhận câu "Em chỉ xem và đặt lịch của chị Lan thôi"): câu đó do
+  BOOKING_PROMPT rule 4 sinh (lượt hoãn bị lưới `deferral` chặn rồi đi vào agent
+  booking). Rule 4 thêm vế loại trừ: đặt hộ người thân bằng tài khoản mình, hay
+  nói sẽ hỏi ai đó trước khi quyết, vẫn là lịch CỦA khách — lượt hoãn thì đáp
+  một câu ngắn kiểu lễ tân, không gọi tool, không đọc giờ trống.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,
