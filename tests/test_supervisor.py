@@ -110,6 +110,7 @@ async def test_supervisor_model_does_not_stream(monkeypatch):
     await supervise(a_state())
     assert seen[0]["streaming"] is False
     assert seen[0]["tags"] == ["supervisor"]
+    assert seen[0]["reasoning_effort"] == "low"
 
 
 @pytest.mark.asyncio

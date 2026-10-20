@@ -33,6 +33,19 @@ def test_chat_model_has_a_timeout_and_no_sdk_retries(azure):
     assert model.max_retries == 0
 
 
+def test_reasoning_effort_drops_temperature():
+    """Azure trả 400 nếu gửi `temperature` khác mặc định cùng `reasoning_effort`."""
+    kw = llm.model_kwargs(temperature=0.0, streaming=False, timeout=8, max_retries=1,
+                          reasoning_effort="low")
+    assert kw["reasoning_effort"] == "low" and "temperature" not in kw
+
+
+def test_without_reasoning_temperature_is_kept():
+    kw = llm.model_kwargs(temperature=0.2, streaming=True, timeout=20, max_retries=0,
+                          reasoning_effort=None)
+    assert kw["temperature"] == 0.2 and "reasoning_effort" not in kw
+
+
 def test_other_callers_keep_the_sdk_retries(azure):
     """F11: chỉ model agent (có ModelRetryMiddleware bọc) tắt retry SDK;
     supervisor/rewrite/phrase/timeparse/classify giữ mặc định của SDK như A."""

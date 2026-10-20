@@ -349,7 +349,7 @@ async def classify_reply(proposal: Mapping[str, Any], bot_question: str,
     approve khi model không trả lời rõ). Tag `classify` + `streaming=False`:
     JSON phân loại không bao giờ được stream ra màn hình khách (bẫy #8)."""
     try:
-        model = build_chat_model(tags=["classify"], temperature=0.0, streaming=False)
+        model = build_chat_model(tags=["classify"], streaming=False, reasoning_effort="low")
         structured = model.with_structured_output(ReplyDecision)
         messages = [
             SystemMessage(content=CLASSIFY_PROMPT),

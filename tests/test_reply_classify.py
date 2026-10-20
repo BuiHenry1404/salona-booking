@@ -114,7 +114,8 @@ async def test_classifier_model_is_tagged_classify_and_not_streaming(monkeypatch
     assert built["tags"] == ["classify"]
     assert "respond" not in built["tags"]
     assert built["streaming"] is False
-    assert built["temperature"] == 0.0
+    assert built["reasoning_effort"] == "low"
+    assert "temperature" not in built
 
 
 async def test_the_model_sees_proposal_question_and_reply(monkeypatch):

@@ -64,9 +64,10 @@ async def supervise(state: GraphState) -> dict:
     try:
         # streaming=False: nhãn JSON không có gì để hiện dần — không trông vào
         # mỗi bộ lọc tag để giữ nó khỏi màn hình khách (bẫy #8).
-        model = build_chat_model(tags=["supervisor"], temperature=0.0, streaming=False,
+        model = build_chat_model(tags=["supervisor"], streaming=False,
                                  timeout=SUPERVISOR_TIMEOUT_SECONDS,
-                                 max_retries=SUPERVISOR_MAX_RETRIES)
+                                 max_retries=SUPERVISOR_MAX_RETRIES,
+                                 reasoning_effort="low")
         structured = model.with_structured_output(RouteDecision)
         result = await asyncio.wait_for(
             structured.ainvoke([SystemMessage(content=SUPERVISOR_PROMPT), *recent]),

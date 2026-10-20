@@ -245,7 +245,7 @@ async def _ask_model(text: str, now: datetime) -> ParsedTime:
     # tags KHÔNG chứa "respond": bộ phát sự kiện chỉ chuyển tiếp token mang tag
     # đó ra màn hình khách, và JSON của parser mà lọt ra thì thành rác chạy ngang.
     # streaming=False vì đây là JSON, không có gì để hiện dần.
-    model = build_chat_model(tags=["timeparse"], temperature=0.0, streaming=False)
+    model = build_chat_model(tags=["timeparse"], streaming=False, reasoning_effort="low")
     return await model.with_structured_output(ParsedTime).ainvoke(prompt)
 
 
