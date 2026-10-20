@@ -777,5 +777,21 @@ async def test_live_b3_first_proposal_announces_the_queued_booking(test_db, hung
     when9 = format_vi_datetime(in_two_days(9))
     out = await hung_first_turn(test_db, hung, models)
     assert out[-1] == ("complete", {"answer": (
-        f"Em đang giữ lịch cắt tóc cho anh Hùng vào {when9}. Em giữ 9 giờ sáng trước, xong em "
-        "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận giúp em nhé?")})
+        f"Em đang giữ lịch cắt tóc cho anh Hùng vào {when9}. Em giữ lịch này trước, xong em "
+        "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
+        "giúp em nhé?")})
+
+
+async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_queued_time(
+        test_db, hung, models):
+    """Lỗi live B4 #1: câu thật của model nhắc "2 giờ chiều" cho thằng cháu —
+    câu báo từng bị bỏ vì "đã nhắc giờ chờ", và câu hỏi đọc như chốt cả hai."""
+    when9, when2 = format_vi_datetime(in_two_days(9)), format_vi_datetime(in_two_days(14))
+    out = await hung_first_turn(test_db, hung, models, agent_reply=(
+        f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Lịch cho thằng cháu là {when2}. "
+        "Anh Hùng xác nhận giúp em nhé?"))
+    assert out[-1] == ("complete", {"answer": (
+        f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Em giữ lịch này trước, xong em "
+        "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
+        "giúp em nhé?")})
+    assert await test_db["proposals"].count_documents({"status": "pending"}) == 1

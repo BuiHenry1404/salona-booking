@@ -233,11 +233,19 @@ def drop_false_claims(text: str, facts: dict) -> str:
     return out[:1].upper() + out[1:]
 
 
-# --- báo trước "đặt từng lịch một" (lỗi live B3 #3) --------------------------
+# --- báo trước "đặt từng lịch một" (lỗi live B3 #3, B4 #1) --------------------
 # Khách xin nhiều lịch một câu: lượt đề xuất lịch đầu phải nói rõ các lịch kia
 # sẽ được giữ NGAY SAU. Prompt rule 10 có dặn, model vẫn quên — câu này do CODE
 # viết từ hàng chờ (`queued`) và giờ vừa giữ (kết quả tool), chèn trước câu hỏi
-# xác nhận. Câu trả lời đã nhắc đủ giờ chờ thì không chèn.
+# xác nhận.
+# B4 #1: model tự viết "Lịch cho thằng cháu là Thứ Tư 21/10, 2 giờ chiều." rồi
+# "xác nhận giúp em nhé?" — đọc như chốt CẢ HAI lịch; bản cũ thấy câu đã nhắc
+# giờ chờ nên bỏ luôn câu báo. Giờ: câu nào của model nhắc giờ đang chờ thì bỏ
+# (câu code thay), câu báo LUÔN có, và câu hỏi xác nhận phải gọi đúng giờ đang
+# giữ, không nhắc giờ chờ — sai thì code viết câu hỏi.
+_QUESTION_AFTER_COMMA = re.compile(r",\s+(?!\d)(?=[^,]*\?$)")
+
+
 def _held_iso(state) -> Optional[str]:
     for message in reversed(state.get("messages") or []):
         if getattr(message, "type", "") == "tool" and getattr(message, "name", "") == "propose_appointment":
@@ -248,35 +256,45 @@ def _held_iso(state) -> Optional[str]:
     return None
 
 
-def announce_queue(answer: str, state) -> str:
+def _mentions(text: str, keys: Sequence[tuple]) -> bool:
+    return any(_same_clock(s, k) for s in clock_keys(text) for k in keys)
+
+
+def announce_queue(answer: str, state, address: str = "anh chị") -> str:
     queue = live_queue(state.get("queued"))
     held = _held_iso(state)
     if not state.get("proposal_id") or not queue or not held:
         return answer
-    said = clock_keys(answer)
     held_at = to_local(datetime.fromisoformat(held))
-    items = []
+    held_clock = _clock_phrase(held_at.hour, held_at.minute)
+    held_keys = clock_keys(held_clock)
+    items, queued_keys = [], []
     for item in queue:
         at = to_local(datetime.fromisoformat(item["start_at"]))
         clock = _clock_phrase(at.hour, at.minute)
-        if any(_same_clock(s, k) for s in said for k in clock_keys(clock)):
-            continue
+        # Cùng giờ với lịch đang giữ (khác ngày) thì không phân biệt được bằng
+        # giờ — không lấy làm dấu để bỏ câu.
+        queued_keys += [k for k in clock_keys(clock) if not _mentions(clock, held_keys)]
         when = clock if at.date() == held_at.date() else format_vi_datetime(at)
         note = single_line(item.get("note"), 80) if item.get("note") else ""
         items.append(f"lịch {when} {note}".strip())
-    if not items:
-        return answer
-    line = (f"Em giữ {_clock_phrase(held_at.hour, held_at.minute)} trước, xong em giữ tiếp "
-            f"{', '.join(items)} nhé.")
-    parts = _SENTENCE_END.split(answer.strip())
-    if len(parts) > 1 and parts[-1].rstrip().endswith("?"):
-        return " ".join([*parts[:-1], line, parts[-1]])
-    sentences_ = re.split(r"(?<=[.!…])\s+|,\s+(?=[^,]*\?$)", answer.strip())
-    if len(sentences_) > 1 and sentences_[-1].endswith("?"):
-        head = answer.strip()[:len(answer.strip()) - len(sentences_[-1])].rstrip().rstrip(",")
-        tail = sentences_[-1]
-        return f"{head}. {line} {tail[:1].upper()}{tail[1:]}"
-    return f"{answer.strip()} {line}"
+
+    text = answer.strip()
+    body = [p for p in _SENTENCE_END.split(text) if p.strip()]
+    question = None
+    if body and body[-1].rstrip().endswith("?"):
+        question = body.pop().strip()
+        split = _QUESTION_AFTER_COMMA.split(question, maxsplit=1)
+        if len(split) == 2:
+            body.append(split[0].rstrip() + ".")
+            question = split[1][:1].upper() + split[1][1:]
+    body = [s.strip() for s in body if not _mentions(s, queued_keys)]
+    if question is None or _mentions(question, queued_keys) or not _mentions(question, held_keys):
+        question = f"{address[:1].upper()}{address[1:]} xác nhận lịch {held_clock} giúp em nhé?"
+    if not body:
+        body = [f"Em đang giữ lịch {format_vi_datetime(held_at)}."]
+    line = f"Em giữ lịch này trước, xong em giữ tiếp {', '.join(items)} nhé."
+    return " ".join([*body, line, question])
 
 
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
@@ -483,7 +501,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
                             customer_text=customer_text, claims=claims)
     if not codes:
-        return {"answer": announce_queue(draft, state), "answer_source": "llm", "violations": []}
+        return {"answer": announce_queue(draft, state, address), "answer_source": "llm", "violations": []}
 
     logger.info("guard_violation", extra={"codes": codes})
     new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
@@ -499,7 +517,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
         logger.warning("guard_claim_dropped")
         dropped = drop_false_claims(out["answer"], claims)
         out = {**out, "answer": dropped or f"Dạ, {address} cần em giữ chỗ giờ nào ạ?"}
-    return {**out, "answer": announce_queue(out["answer"], state)}
+    return {**out, "answer": announce_queue(out["answer"], state, address)}
 
 
 def _guard_phrase(state, draft, fact, address):

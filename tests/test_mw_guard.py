@@ -418,22 +418,48 @@ def queued_state(draft, queue_hours=(14,), **extra):
 
 
 class TestAnnounceOneAtATime:
+    LINE = "Em giữ lịch này trước, xong em giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé."
+    ASK = "Anh Hùng xác nhận lịch 9 giờ sáng giúp em nhé?"
+
     async def test_first_proposal_says_the_others_come_right_after(self, rewrites):
         from app.agents.booking_graph.context import format_vi_datetime
         calls = rewrites()
         draft = (f"Em đang giữ lịch cắt tóc cho anh Hùng vào {format_vi_datetime(future(9))}. "
                  "Anh Hùng xác nhận giúp em nhé?")
         out = await hung_guard(queued_state(draft))
-        first, question = draft.split(". ")
-        assert out["answer"] == (f"{first}. Em giữ 9 giờ sáng trước, xong em giữ tiếp lịch "
-                                 f"2 giờ chiều cắt tóc cho cháu nhé. {question}")
+        first = draft.split(". ")[0]
+        assert out["answer"] == f"{first}. {self.LINE} {self.ASK}"
         assert calls == []
 
-    async def test_a_reply_that_already_announces_it_is_left_alone(self, rewrites):
+    async def test_live_b4_model_sentence_about_the_queued_time_is_replaced(self, rewrites):
+        """Lỗi live B4 #1: model tự viết "Lịch cho thằng cháu là … 2 giờ chiều" —
+        câu đó nhắc giờ chờ nên câu báo của code từng bị bỏ qua, và câu hỏi
+        "xác nhận giúp em" đọc như chốt cả hai lịch."""
+        from app.agents.booking_graph.context import format_vi_datetime
+        rewrites()
+        when9, when2 = format_vi_datetime(future(9)), format_vi_datetime(future(14))
+        draft = (f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Lịch cho thằng cháu là "
+                 f"{when2}. Anh Hùng xác nhận giúp em nhé?")
+        out = await hung_guard(queued_state(draft))
+        assert out["answer"] == (f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. "
+                                 f"{self.LINE} {self.ASK}")
+
+    async def test_a_question_naming_the_queued_time_is_replaced(self, rewrites):
+        from app.agents.booking_graph.context import format_vi_datetime
+        rewrites()
+        when9 = format_vi_datetime(future(9))
+        draft = f"Em giữ {when9} cho anh Hùng. Anh Hùng xác nhận 9 giờ với 2 giờ chiều giúp em nhé?"
+        out = await hung_guard(queued_state(draft))
+        assert out["answer"] == f"Em giữ {when9} cho anh Hùng. {self.LINE} {self.ASK}"
+
+    async def test_a_model_written_announcement_is_replaced_by_the_code_one(self, rewrites):
+        from app.agents.booking_graph.context import format_vi_datetime
         rewrites()
         draft = ("Em giữ 9 giờ sáng cho anh Hùng trước, xong em giữ tiếp 2 giờ chiều cho cháu nhé. "
                  "Anh Hùng xác nhận 9 giờ giúp em nhé?")
-        assert (await hung_guard(queued_state(draft)))["answer"] == draft
+        out = await hung_guard(queued_state(draft))
+        assert out["answer"] == (f"Em đang giữ lịch {format_vi_datetime(future(9))}. {self.LINE} "
+                                 "Anh Hùng xác nhận 9 giờ giúp em nhé?")
 
     async def test_a_queued_item_on_another_day_carries_its_date(self, rewrites):
         from app.agents.booking_graph.context import format_vi_datetime
@@ -443,7 +469,15 @@ class TestAnnounceOneAtATime:
         state["queued"] = [{**state["queued"][0], "start_at": other.isoformat()}]
         out = await hung_guard(state)
         assert f"xong em giữ tiếp lịch {format_vi_datetime(other)} cắt tóc cho cháu nhé." in out["answer"]
-        assert out["answer"].endswith(". Anh Hùng xác nhận giúp em nhé?")    # câu hỏi vẫn ở cuối
+        assert out["answer"].startswith("Em giữ 9 giờ sáng. ")
+        assert out["answer"].endswith(f". {self.ASK}")                      # câu hỏi vẫn ở cuối
+
+    async def test_a_date_comma_is_not_split_off_as_a_question(self, rewrites):
+        from app.agents.booking_graph.context import format_vi_datetime
+        rewrites()
+        when9 = format_vi_datetime(future(9))
+        out = await hung_guard(queued_state(f"Dạ, em giữ {when9} cho anh Hùng, anh xác nhận giúp em nhé?"))
+        assert out["answer"] == f"Dạ, em giữ {when9} cho anh Hùng. {self.LINE} {self.ASK}"
 
     @pytest.mark.parametrize("extra", [{"queued": []}, {"proposal_id": None}])
     async def test_no_queue_or_no_proposal_adds_nothing(self, rewrites, extra):
