@@ -1,19 +1,29 @@
 import pytest
 
-from app.agents.booking_graph.supervisor import route_from_state, supervise
+from app.agents.booking_graph.supervisor import supervise
 
 
 class FakeModel:
-    """Trả về đúng một chuỗi, không gọi mạng."""
+    """Giả `with_structured_output`: trả `schema(route=reply)`, không gọi mạng.
+
+    Nhãn ngoài `Literal` của schema thì pydantic ném ValidationError — đúng
+    điều Azure json_schema làm với output lạ, nên nhánh rơi về booking được
+    test bằng chính đường lỗi thật."""
 
     def __init__(self, reply):
         self.reply = reply
         self.seen_messages = None
+        self.schema = None
+
+    def with_structured_output(self, schema, **kwargs):
+        self.schema = schema
+        return self
 
     async def ainvoke(self, messages, **kwargs):
-        from langchain_core.messages import AIMessage
         self.seen_messages = messages
-        return AIMessage(content=self.reply)
+        if self.schema is None:
+            raise AssertionError("supervisor phải gọi with_structured_output trước ainvoke")
+        return self.schema(route=self.reply)
 
 
 @pytest.fixture
@@ -31,7 +41,7 @@ def a_state(text="mai 3h chiều làm tóc được không con", **extra):
     from langchain_core.messages import HumanMessage
     return {"messages": [HumanMessage(content=text)], "user_id": "u1",
             "context_block": "Bạn đang nói chuyện với: Cô Lan (0912345678).",
-            "pending_confirmation": None, **extra}
+            **extra}
 
 
 @pytest.mark.asyncio
@@ -75,9 +85,31 @@ async def test_unrecognised_reply_falls_back_to_booking(patch_model):
 
 
 @pytest.mark.asyncio
-async def test_model_reply_is_case_and_space_insensitive(patch_model):
-    patch_model("  SHOP \n")
+async def test_supervisor_routes_through_structured_output(patch_model):
+    """Lệch LangChain #1: nhãn đi qua `with_structured_output(Literal[...])`,
+    không parse chữ tự do. Schema chỉ nhận đúng ba nhãn sống."""
+    import typing
+    model = patch_model("shop")
     assert (await supervise(a_state()))["route"] == "shop"
+    field = model.schema.model_fields["route"].annotation
+    assert set(typing.get_args(field)) == {"booking", "shop", "social"}
+
+
+@pytest.mark.asyncio
+async def test_supervisor_model_does_not_stream(monkeypatch):
+    """Token định tuyến không bao giờ là thứ để hiện dần: `streaming=False`
+    như mọi bộ phân loại khác, không chỉ trông vào lọc tag."""
+    import app.agents.booking_graph.supervisor as sup
+    seen = []
+
+    def build(**kw):
+        seen.append(kw)
+        return FakeModel("booking")
+
+    monkeypatch.setattr(sup, "build_chat_model", build)
+    await supervise(a_state())
+    assert seen[0]["streaming"] is False
+    assert seen[0]["tags"] == ["supervisor"]
 
 
 @pytest.mark.asyncio
@@ -88,10 +120,73 @@ async def test_supervisor_is_not_given_the_tool_schemas(patch_model):
     assert not hasattr(model, "bound_tools")
 
 
-def test_pending_confirmation_short_circuits_the_supervisor():
-    state = a_state("ừ", pending_confirmation={"start_at": "2026-08-07T08:00:00+00:00"})
-    assert route_from_state(state) == "confirm"
+
+# --- ngân sách riêng của supervisor (review M4 I-1, lỗi live 1) ---------------
+
+class HangingModel:
+    """Azure treo: không bao giờ trả lời."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def with_structured_output(self, schema, **kwargs):
+        return self
+
+    async def ainvoke(self, messages, **kwargs):
+        import asyncio
+        self.calls += 1
+        await asyncio.sleep(3600)
 
 
-def test_no_pending_confirmation_goes_to_supervisor():
-    assert route_from_state(a_state()) == "supervisor"
+class FailingModel:
+    def with_structured_output(self, schema, **kwargs):
+        return self
+
+    async def ainvoke(self, messages, **kwargs):
+        raise RuntimeError("azure 500")
+
+
+@pytest.mark.asyncio
+async def test_supervisor_stall_falls_back_to_booking(monkeypatch):
+    """Supervisor treo thì KHÔNG được ăn hết trần lượt: hết ngân sách riêng
+    (wait_for) là rơi về booking — nhãn hoà đã ghi trong prompt."""
+    import asyncio
+    import app.agents.booking_graph.supervisor as sup
+    model = HangingModel()
+    monkeypatch.setattr(sup, "build_chat_model", lambda **kw: model)
+    monkeypatch.setattr(sup, "SUPERVISOR_TIMEOUT_SECONDS", 0.1)
+    logged = []
+    monkeypatch.setattr(sup.logger, "warning", lambda msg, **kw: logged.append(msg))
+
+    started = asyncio.get_running_loop().time()
+    out = await supervise(a_state())
+
+    assert out == {"route": "booking"}
+    assert asyncio.get_running_loop().time() - started < 2
+    assert logged == ["supervisor_failed"]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_error_falls_back_to_booking(monkeypatch):
+    import app.agents.booking_graph.supervisor as sup
+    monkeypatch.setattr(sup, "build_chat_model", lambda **kw: FailingModel())
+    logged = []
+    monkeypatch.setattr(sup.logger, "warning", lambda msg, **kw: logged.append(msg))
+    assert await supervise(a_state()) == {"route": "booking"}
+    assert logged == ["supervisor_failed"]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_model_has_its_own_short_budget(monkeypatch):
+    """Tối đa 1 lần thử lại của SDK, timeout mỗi lần = ngân sách cả bước."""
+    import app.agents.booking_graph.supervisor as sup
+    seen = []
+
+    def build(**kw):
+        seen.append(kw)
+        return FakeModel("booking")
+
+    monkeypatch.setattr(sup, "build_chat_model", build)
+    await supervise(a_state())
+    assert seen[0]["max_retries"] == sup.SUPERVISOR_MAX_RETRIES == 1
+    assert seen[0]["timeout"] == sup.SUPERVISOR_TIMEOUT_SECONDS == 8

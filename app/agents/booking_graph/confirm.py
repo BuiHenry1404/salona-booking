@@ -1,67 +1,47 @@
-import re
-import unicodedata
-from datetime import datetime
-from typing import Awaitable, Callable
+"""Node `confirm`: chờ khách trả lời đề xuất bằng `interrupt()`, rồi CODE quyết.
 
+Thay node regex cũ (`is_affirmative` + cờ `pending_confirmation` trong
+`conversations`). Luồng:
+
+1. Agent booking gọi `propose_appointment` / `cancel_appointment` → đề xuất nằm
+   trong DB (`proposals`), state chỉ mang `proposal_id` (ConfirmMiddleware).
+2. Câu hỏi xác nhận của agent đi qua guard (middleware) → record như mọi câu khác (stream
+   token `respond` bình thường), rồi tới đây: `interrupt(...)`. Lượt chat kết
+   thúc với `complete` như A.
+3. Lượt sau `run_turn` resume bằng câu khách. Node đọc lại đề xuất từ DB (theo
+   chủ), rồi `decide`: lưới code phủ quyết trước, bộ phân loại sau. CHỈ approve
+   mới gọi `ProposalService.approve` — cổng ghi duy nhất, kiểm lại mọi thứ.
+
+Không có tool ghi. Code sau `interrupt()` chạy đúng một lần mỗi lần resume; nếu
+lượt resume bị huỷ giữa chừng (lượt mới thay), lần resume sau thấy đề xuất đã
+không còn pending và coi câu khách là tin mới — `approve` idempotent nên không
+bao giờ ghi hai lần.
+"""
+import asyncio
+from datetime import datetime
+from typing import Awaitable, Callable, Optional
+
+from langchain_core.messages import AIMessage
+from langgraph.types import interrupt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import address_phrase, format_vi_datetime
+from app.agents.booking_graph import reply
+from app.agents.booking_graph.context import (address_phrase, declined_line,
+                                              format_vi_datetime, live_queue,
+                                              queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
-from app.core.errors import AppError
+from app.core.clock import now_utc
 from app.core.logging import get_logger
 from app.models.user import User
-from app.services.appointment import AppointmentService
-from app.services.conversation import ConversationService
+from app.services.proposal import (PROPOSAL_MAX_AGE_MINUTES,  # noqa: F401 (re-export)
+                                   ApprovalResult, ProposalService)
 
 logger = get_logger(__name__)
 
-# Hai bộ luật, chọn theo cách khách gõ.
-#
-# Có dấu thì so khớp CHÍNH XÁC: "đúng" là đồng ý, "dùng" thì không — bỏ dấu cả
-# hai đều thành "dung" nên "cho cô dùng thử" sẽ bị hiểu nhầm là chốt lịch.
-_YES = re.compile(
-    r"\b(ừ|ừa|ờ|uh|uhm|um|ok|okay|okie|vâng|dạ|đúng|phải|được|chuẩn"
-    r"|nhất trí|đồng ý|chính xác)\b",
-    re.IGNORECASE,
-)
-_NO = re.compile(
-    r"\b(không|thôi|khỏi|đổi|khác|chưa|hủy)\b",
-    re.IGNORECASE,
-)
-# Đang chốt HỦY thì "hủy" là đồng ý, không phải phủ định: "ừ hủy đi em".
-_NO_WHEN_CANCELLING = re.compile(
-    r"\b(không|thôi|khỏi|đổi|khác|chưa)\b",
-    re.IGNORECASE,
-)
-
-# Không dấu thì nới ra. Khách lớn tuổi gõ điện thoại phần lớn không bỏ dấu;
-# bắt họ gõ lại thì lần sau vẫn không dấu.
-_YES_BARE = re.compile(
-    r"\b(u|ua|o|oa|uh|uhm|um|ok|okay|okie|vang|da|dung|phai|duoc|dc|chuan"
-    r"|nhat tri|dong y|chinh xac)\b",
-    re.IGNORECASE,
-)
-_NO_BARE = re.compile(
-    r"\b(khong|ko|thoi|khoi|doi|khac|chua|huy)\b",
-    re.IGNORECASE,
-)
-_NO_BARE_WHEN_CANCELLING = re.compile(
-    r"\b(khong|ko|thoi|khoi|doi|khac|chua)\b",
-    re.IGNORECASE,
-)
-
-
-def strip_diacritics(text: str) -> str:
-    """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
-
-    NFD tách dấu thành ký tự riêng để lọc, nhưng đ/Đ không phải d kèm dấu — nó
-    là một ký tự độc lập nên phải thay tay.
-    """
-    text = (text or "").replace("đ", "d").replace("Đ", "D")
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if unicodedata.category(c) != "Mn"
-    )
+# Lượt resume trước bị huỷ giữa lúc duyệt: việc duyệt (shield) còn đang chạy.
+# Chờ nó xong một chút rồi đọc lại, thay vì coi câu khách là tin mới.
+APPROVING_WAIT_SECONDS = 3.0
+APPROVING_POLL_SECONDS = 0.1
 
 
 def _sentence_start(phrase: str) -> str:
@@ -70,113 +50,189 @@ def _sentence_start(phrase: str) -> str:
     return phrase[:1].upper() + phrase[1:]
 
 
-def is_affirmative(text: str, cancelling: bool = False) -> bool:
-    """Phủ định thắng khẳng định: "dạ không" và "đúng rồi nhưng đổi giờ" đều phải
-    ra False. Sai hướng này chỉ mất một câu hỏi lại; sai hướng kia là đặt nhầm lịch.
+def _done(address, kind, when=None, note=None, error=None, fallback=""):
+    """`confirm_fact` (số liệu, cho phrase viết câu chốt) + `fallback` (câu cứng,
+    guard dùng khi LLM viết sai số liệu)."""
+    return {"confirm_fact": {"kind": kind, "when": when, "note": note,
+                             "address": address, "error": error},
+            "fallback": fallback}
 
-    `cancelling`: câu hỏi đang chờ là "hủy lịch này đúng không?" — khi đó "hủy"
-    trong "ừ hủy đi" là đồng ý, không phải từ chối. Một bộ từ cho cả hai ngữ
-    cảnh là "ừ hủy đi em" bị đẩy về booking mãi và khách không hủy được.
+
+def confirm_fact_for(result: ApprovalResult, address: str) -> Optional[dict]:
+    """Kết quả `approve` → câu chốt, ĐÚNG các nhánh và chuỗi của node cũ.
+    `not_approvable` → None: không có gì để chốt, câu khách là tin mới."""
+    if result.outcome == "not_approvable":
+        return None
+    kind = result.kind
+    if result.outcome == "failed":
+        message = result.error or "Có lỗi xảy ra"
+        if kind == "cancel":
+            return _done(address, "failed", error=message, fallback=f"Dạ {message} ạ.")
+        return _done(address, "failed", error=message,
+                     fallback=f"Dạ {message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé.")
+
+    if kind == "cancel":
+        when = format_vi_datetime(result.proposal.start_at)
+        return _done(address, "cancelled", when=when,
+                     fallback=f"Em hủy lịch {when} cho {address} xong rồi ạ. Cần đặt lại thì cứ nhắn em nhé.")
+
+    appointment = result.appointment
+    if appointment is None:
+        # approved mà không đọc lại được lịch — không bao giờ nên xảy ra; nói
+        # thật là nhầm thay vì báo một giờ không kiểm được.
+        logger.warning("bad_proposal_result", extra={
+            "proposal_id": str(result.proposal.id) if result.proposal else None})
+        return _done(address, "failed", error="em nhầm mất rồi",
+                     fallback=f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ.")
+    when = format_vi_datetime(appointment.start_at)
+    if kind == "move":
+        return _done(address, "moved", when=when, note=appointment.note,
+                     fallback=f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé.")
+    return _done(address, "booked", when=when, note=appointment.note,
+                 fallback=f"Xong rồi ạ. Hẹn gặp {address} {when} nhé.")
+
+
+async def execute_proposal(db: AsyncIOMotorDatabase, user: User, proposal_id: str, *,
+                           turn_at) -> Optional[dict]:
+    """Duyệt đề xuất qua cổng ghi của service rồi dựng câu chốt.
+
+    Xưng hô suy từ `full_name` bằng code, không nhận từ model: model quên
+    truyền là câu chốt mất lời gọi, mà nó quên thật.
     """
-    cleaned = (text or "").strip()
-    bare = strip_diacritics(cleaned)
-    if bare == cleaned:
-        # Khách gõ không dấu — nới luật ra.
-        target, yes = bare, _YES_BARE
-        no = _NO_BARE_WHEN_CANCELLING if cancelling else _NO_BARE
-    else:
-        # Khách có bỏ dấu — tin đúng cái họ gõ, không suy diễn thêm.
-        target, yes = cleaned, _YES
-        no = _NO_WHEN_CANCELLING if cancelling else _NO
-    if no.search(target):
-        return False
-    if cancelling and re.search(r"\b(hủy|huy)\b", target, re.IGNORECASE):
-        return True
-    return bool(yes.search(target))
+    result = await ProposalService(db).approve(user, proposal_id, turn_at=turn_at)
+    return confirm_fact_for(result, address_phrase(user.full_name))
+
+
+_CLARIFY = {
+    "book": "Dạ {address} chốt giúp em lịch {when} nha, đúng không ạ?",
+    "move": "Dạ {address} dời lịch sang {when} nha, đúng không ạ?",
+    "cancel": "Dạ {address} hủy lịch {when} nha, đúng không ạ?",
+}
+
+
+def clarify_question(kind: str, when: str, address: str) -> str:
+    """MỘT câu hỏi lại, code viết (không LLM): lần đầu khách trả lời không rõ."""
+    return _CLARIFY.get(kind, _CLARIFY["book"]).format(address=address, when=when)
+
+
+def _last_ai_text(messages) -> str:
+    for message in reversed(messages or []):
+        if isinstance(message, AIMessage):
+            return str(message.content or "")
+    return ""
 
 
 def make_confirm_node(
     db: AsyncIOMotorDatabase, user: User
 ) -> Callable[[GraphState], Awaitable[dict]]:
-    """Nhánh tắt cho câu trả lời xác nhận.
-
-    Khách nói "ừ" sau khi AI đã hỏi "3h chiều Thứ Năm đúng không cô?" thì đi thẳng
-    vào thực thi — không quay lại supervisor. Tiết kiệm một lượt LLM và loại bỏ
-    hẳn vòng lặp hỏi xác nhận đi xác nhận lại.
-    """
-    service = AppointmentService(db)
-    conversations = ConversationService(db)
+    proposals = ProposalService(db)
+    address = address_phrase(user.full_name)
 
     async def node(state: GraphState) -> dict:
-        user_id = str(user.id)
-        pending = state.get("pending_confirmation") or {}
-        last_message = state["messages"][-1].content if state["messages"] else ""
+        proposal_id = state.get("proposal_id")
+        if not proposal_id:
+            return {"gate_next": "end"}
 
-        await conversations.set_pending(user_id, None)
+        # Mọi thứ TRƯỚC interrupt() chạy lại khi resume — chỉ đọc state, không
+        # có tác dụng phụ. Câu hỏi là câu đáp cuối đã qua guard (record vừa ghi).
+        question = _last_ai_text(state.get("messages"))
+        text = interrupt({"proposal_id": proposal_id, "question": question})
 
-        # Suy từ full_name bằng code, không nhận từ model nữa: model quên
-        # truyền là câu chốt mất lời gọi, mà nó quên thật — đó là lý do
-        # hard rule 6 từng tồn tại.
-        address = address_phrase(user.full_name)
+        # --- từ đây: lượt SAU, câu khách vừa tới -----------------------------
+        proposal = await proposals.get(user, proposal_id)
+        waited = 0.0
+        while (proposal is not None and proposal.status == "approving"
+               and waited < APPROVING_WAIT_SECONDS):
+            await asyncio.sleep(APPROVING_POLL_SECONDS)
+            waited += APPROVING_POLL_SECONDS
+            proposal = await proposals.get(user, proposal_id)
+        if proposal is not None and proposal.status == "approving":
+            # Việc duyệt (shield) còn chạy quá thời gian chờ: câu khách thành tin
+            # mới; đề xuất sẽ tự thành approved (hoặc failed sau 60 giây).
+            logger.warning("approval_still_running", extra={"proposal_id": proposal_id,
+                                                            "waited": waited})
 
-        cancelling = pending.get("cancel_appointment_id")
-        if not is_affirmative(last_message, cancelling=bool(cancelling)):
-            # Khách chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại",
-            # "thôi 10 giờ đi em", "đổi sang thứ Năm" đều là chuyện của
-            # booking. Node này không có LLM nên trả lời cứng chỗ nào cũng
-            # trật; đẩy sang agent có lịch sử và đủ tool.
-            return {"route": "booking"}
+        if proposal is not None and proposal.status == "approved":
+            # Lượt resume trước đã ghi rồi bị huỷ trước khi kịp nói câu chốt
+            # (interrupt vẫn treo). Duyệt lại là idempotent — cùng một lịch —
+            # nên đi đường chốt như thường: khách nghe xác nhận cho lịch có thật.
+            logger.info("proposal_already_approved", extra={"proposal_id": proposal_id})
+            out = await execute_proposal(db, user, proposal_id,
+                                         turn_at=state.get("asked_at") or now_utc())
+            if out is not None:
+                return {**out, "proposal_id": None, "gate_next": "phrase"}
 
-        # Từ đây trở đi, mọi nhánh đều đã CHỐT (kể cả lỗi): trả `confirm_fact`
-        # (số liệu, cho phrase node) và `fallback` (câu cứng, cho guard dùng
-        # khi LLM viết sai số liệu) — không còn `answer` ở node này nữa.
-        def done(kind, when=None, note=None, error=None, fallback=""):
-            return {"confirm_fact": {"kind": kind, "when": when, "note": note,
-                                     "address": address, "error": error},
-                    "fallback": fallback}
+        if proposal is None or proposal.status != "pending":
+            # Hết hạn, đã duyệt (lượt resume trước bị huỷ sau khi ghi), bị
+            # thay, hay không phải của khách này: không ghi gì, câu khách là
+            # tin mới — đi lại từ supervisor như A khi cờ pending đã hết hạn.
+            status = proposal.status if proposal else "not_found"
+            logger.info("proposal_expired" if status == "expired" else "proposal_not_pending",
+                        extra={"proposal_id": proposal_id, "status": status})
+            out = {"proposal_id": None, "gate_next": "supervisor"}
+            if status == "expired":
+                # Agent phải biết đề xuất cũ đã hết hạn, chưa ghi gì — không
+                # thì "ừ" muộn được hiểu như một lời đặt mới mơ hồ.
+                out["context_block"] = with_line(state.get("context_block", ""),
+                                                 declined_line(proposal, expired=True))
+            return out
 
-        if cancelling:
-            # Hủy cũng đi qua đây, không hủy ngay trong tool: ràng buộc "hủy
-            # phải qua một bước xác nhận" áp cho cả chat, không riêng giao diện.
-            try:
-                await service.cancel(user, cancelling)
-            except AppError as exc:
-                return done("failed", error=exc.message, fallback=f"Dạ {exc.message} ạ.")
-            try:
-                when = format_vi_datetime(datetime.fromisoformat(pending["start_at"]))
-            except (KeyError, ValueError):
-                return done("cancelled", fallback=f"Em hủy lịch xong rồi ạ, {address} cần gì cứ nhắn em nhé.")
-            return done("cancelled", when=when,
-                        fallback=f"Em hủy lịch {when} cho {address} xong rồi ạ. Cần đặt lại thì cứ nhắn em nhé.")
+        # Lịch đang chờ (đặt lần lượt): lưới và bộ phân loại biết giờ của chúng,
+        # để "ừ 9 giờ, còn 2 giờ cho cháu thì sao" không bị chặn chỉ vì giờ chờ.
+        queue = live_queue(state.get("queued"))
+        facts = {"kind": proposal.kind, "start_at": proposal.start_at,
+                 "queued": [q["start_at"] for q in queue]}
+        decision = await reply.decide(text, facts, bot_question=question, now=now_utc())
 
-        # Có `replaces_appointment_id` là khách đang DỜI lịch: đi qua
-        # `reschedule` để lịch cũ được hủy trong cùng một bước. Đi qua `create`
-        # ở đây là ra hai lịch (BUG-1).
-        replaces = pending.get("replaces_appointment_id")
-        try:
-            start = datetime.fromisoformat(pending["start_at"])
-            if replaces:
-                appointment = await service.reschedule(user, replaces, start, pending.get("note"))
-            else:
-                appointment = await service.create(user, start, pending.get("note"))
-        except AppError as exc:
-            return done("failed", error=exc.message,
-                        fallback=f"Dạ {exc.message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé.")
-        except (KeyError, ValueError):
-            logger.warning("bad_pending_payload", extra={"payload": str(pending)[:120]})
-            return done("failed", error="em nhầm mất rồi",
-                        fallback=f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ.")
+        if decision == "approve":
+            out = await execute_proposal(db, user, proposal_id,
+                                         turn_at=state.get("asked_at") or now_utc())
+            if out is None:
+                return {"proposal_id": None, "gate_next": "supervisor"}
+            fact = out["confirm_fact"]
+            if queue and fact.get("kind") in ("booked", "moved", "cancelled"):
+                # Chốt xong một lịch: CODE mời lịch kế trong hàng chờ (guard nối
+                # câu này sau câu chốt). Chưa giữ chỗ gì — lượt sau agent đề xuất.
+                out = {**out, "confirm_fact": {
+                    **fact, "then": queue_offer(queue, address),
+                    # Phrase phải biết các giờ này CHƯA giữ (lỗi live B3 #1).
+                    "queued_when": [format_vi_datetime(datetime.fromisoformat(q["start_at"]))
+                                    for q in queue]}}
+            return {**out, "proposal_id": None, "gate_next": "phrase"}
 
-        when = format_vi_datetime(appointment.start_at)
-        if replaces:
-            return done("moved", when=when, note=appointment.note,
-                        fallback=f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé.")
-        return done("booked", when=when, note=appointment.note,
-                    fallback=f"Xong rồi ạ. Hẹn gặp {address} {when} nhé.")
+        if decision == "unclear":
+            marked = await proposals.mark_unclear(user, proposal_id)
+            if marked is not None and marked.status == "pending":
+                # Lần đầu không rõ: hỏi lại MỘT câu, giữ đề xuất. Câu này đi
+                # đường câu chốt (agent booking: PhraseMiddleware đặt nguyên
+                # văn, GuardMiddleware kiểm, fallback = chính nó) rồi record,
+                # và confirm interrupt lại trên cùng đề xuất.
+                when = format_vi_datetime(proposal.start_at)
+                ask = clarify_question(proposal.kind, when, address)
+                logger.info("confirm_unclear", extra={"proposal_id": proposal_id})
+                return {"draft": ask, "fallback": ask, "gate_next": "phrase",
+                        "confirm_fact": {"kind": "clarify", "when": when, "note": None,
+                                         "address": address, "error": None}}
+        elif decision == "change":
+            await proposals.supersede(user, proposal_id)
+        else:
+            await proposals.reject(user, proposal_id)
+
+        # Chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại", "thôi 10
+        # giờ đi em" là chuyện của booking (có lịch sử và đủ tool).
+        #
+        # Agent booking KHÔNG thấy tool message của lượt trước (record chỉ lưu
+        # câu đáp), nên phải được nói bằng code: đề xuất nào vừa bị từ chối,
+        # và chưa ghi gì (lỗi live 3/5/6). Thiếu dòng này nó đề xuất lại ngay,
+        # mở lại việc hủy, hoặc mất ngày đang bàn. Lượt sau load_context dựng
+        # lại đúng dòng này từ DB.
+        logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
+        return {"proposal_id": None, "gate_next": "booking",
+                "context_block": with_line(state.get("context_block", ""),
+                                           declined_line(proposal))}
 
     return node
 
 
 def route_after_confirm(state: GraphState) -> str:
-    """Chưa chốt → booking; đã ghi (có confirm_fact) → phrase viết câu chốt."""
-    return "booking" if state.get("route") == "booking" else "phrase"
+    return state.get("gate_next") or "end"

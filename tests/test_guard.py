@@ -1,7 +1,7 @@
 """Tầng gác là code tất định — mỗi phép kiểm có ca dương và ca âm."""
 import pytest
 
-from app.agents.booking_graph.guard import (check_clock, check_pronoun,
+from app.agents.booking_graph.guard import (REPEAT_LOOKBACK, check_clock, check_pronoun,
                                             content_kept,
                                             customer_asked_to_repeat,
                                             find_violations, normalize,
@@ -39,9 +39,18 @@ class TestRepeats:
     def test_different_content_is_not_a_repeat(self):
         assert repeats("Tiệm đóng cửa 7 giờ tối ạ.", self.PREV) is False
 
-    def test_only_the_last_three_replies_count(self):
-        old = ["Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ."] + ["khác một"] * 3
-        assert repeats("Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ.", old) is False
+    def test_replies_beyond_the_lookback_window_do_not_count(self):
+        """Cửa sổ có TRẦN — không so với cả phiên. Bám hằng số thay vì con số
+        cứng: 2026-09-19 nới 3 → 8, test cũ khoá đúng con số nên đỏ oan."""
+        xa = "Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ."
+        assert repeats(xa, [xa] + ["khác một"] * REPEAT_LOOKBACK) is False
+
+    def test_a_repeat_a_few_turns_back_is_caught(self):
+        """Mốc cũ 3 mù với câu từ chối tái xuất sau vài lượt. Chạy thật
+        2026-09-19 (LLM-32): cùng một câu từ chối ở lượt 1, 2, 6, 14, 16 —
+        lượt 6 trở đi không còn gì trong tầm để so."""
+        cau = "Dạ anh chị, em chỉ xem và đặt lịch của chính anh chị thôi ạ."
+        assert repeats(cau, [cau] + ["khác một", "khác hai", "khác ba"]) is True
 
     def test_same_template_with_a_different_time_is_not_a_repeat(self):
         prev = ["Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"]
@@ -80,15 +89,35 @@ class TestPronoun:
     def test_female_customer_called_anh_is_a_violation(self):
         assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", "chị Lan", "Lan") is True
 
-    def test_ambiguous_address_never_flags(self):
-        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is False
+    def test_guessing_a_gender_the_name_does_not_give_is_a_violation(self):
+        """Đổi 2026-09-19, lật quyết định cũ "không rõ giới thì không bao giờ cờ".
+
+        `derive_address` trả "anh chị" đúng khi tên KHÔNG cho biết giới tính.
+        Gọi "chị" lúc đó là AI tự đoán giới tính khách — thứ code cố tình không
+        làm. Chạy thật (LLM-32) còn cho thấy hệ quả thứ hai: hai lượt đầu gọi
+        "Chị ơi", từ lượt 3 đổi sang "Anh chị ơi" — cùng một khách, hai cách gọi
+        trong một cuộc, đúng thứ dòng "Gọi khách là:" sinh ra để chốt."""
+        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is True
+        assert check_pronoun("Anh muốn đặt giờ nào ạ?", "anh chị", "") is True
+
+    def test_the_ambiguous_address_itself_passes(self):
+        """"Anh chị" là chính cách gọi được chốt — không được tự cờ mình."""
+        assert check_pronoun("Anh chị muốn đặt giờ nào ạ?", "anh chị", "") is False
+        assert check_pronoun("Dạ anh chị ơi, mai 9 giờ sáng ạ.", "anh chị", "") is False
+
+    def test_talking_about_the_owner_still_passes_when_gender_is_unknown(self):
+        """"Chị chủ" là gọi CHỦ TIỆM, không phải gọi khách — vế miễn trừ sẵn có
+        phải còn hiệu lực ở nhánh mới này."""
+        assert check_pronoun("Chị chủ sẽ báo giá ạ.", "anh chị", "") is False
 
     @pytest.mark.parametrize("draft", ["Cô muốn đặt giờ nào ạ?", "Để con xem lịch giúp cô.", "Chú Ba đặt 3 giờ nhé."])
     def test_forbidden_register_is_flagged(self, draft):
         assert check_pronoun(draft, "anh chị", "") is True
 
-    def test_anh_chi_em_register_passes(self):
-        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is False
+    def test_naming_a_gender_beside_the_name_is_a_violation_when_unknown(self):
+        """Trước 2026-09-19 câu này được cho qua. Nhưng cách gọi đã chốt là
+        "anh chị", nên "anh Tám" là AI tự quyết khách là nam."""
+        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is True
 
     def test_booking_for_the_customers_child_is_not_a_violation(self):
         """"cho con chị" = đặt hộ con của khách, không phải xưng hô sai."""

@@ -460,3 +460,49 @@ class TestParseViTimeSurvivesABadAnchorHour:
         )
         result = await parse_vi_time("chuyển qua 25 giờ", NOW, anchor=ANCHOR_MORNING)
         assert result.start_at is None
+
+
+class TestAnchorDayWinsWhenTheTextNamesNoDay:
+    """Lỗi live 5: "dời qua 4 giờ chiều" (không có chữ chỉ ngày) ngay sau đề
+    xuất Thứ Ba — regex trượt (cần chữ ngày đứng trước), LLM tự điền HÔM NAY
+    và `apply_anchor` không chạy vì `start_at` đã có. Neo phải thắng khi câu
+    không nêu ngày; câu nêu ngày thì ngày của khách thắng."""
+
+    ANCHOR = datetime(2026, 8, 8, 15, 0, tzinfo=TZ)          # Thứ Bảy 8/8, 3 giờ chiều
+
+    @staticmethod
+    def install(monkeypatch, start_at):
+        async def fake_ask_model(text, now):
+            return ParsedTime(start_at=start_at)
+        monkeypatch.setattr("app.agents.booking_graph.timeparse._ask_model", fake_ask_model)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text", ["4 giờ chiều", "dời qua 4 giờ chiều giùm cô nha",
+                                      "doi qua 4 gio chieu nha em", "16h"])
+    async def test_anchor_day_wins_when_text_names_no_day(self, monkeypatch, text):
+        self.install(monkeypatch, at(7, 16))                  # LLM: hôm nay 4 giờ chiều
+        result = await parse_vi_time(text, NOW, anchor=self.ANCHOR)
+        assert result.start_at == at(8, 16)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text", ["bữa nay 4 giờ chiều nha", "4 giờ chiều nay",
+                                      "4 gio chieu nay", "thứ hai 4 giờ chiều",
+                                      "4 giờ chiều ngày 10/8", "chủ nhật 4 giờ chiều",
+                                      "tuần sau 4 giờ chiều"])
+    async def test_named_day_still_wins(self, monkeypatch, text):
+        self.install(monkeypatch, at(10, 16))
+        result = await parse_vi_time(text, NOW, anchor=self.ANCHOR)
+        assert result.start_at == at(10, 16)
+
+    @pytest.mark.asyncio
+    async def test_a_now_phrase_without_a_clock_is_not_moved(self, monkeypatch):
+        """"giờ em qua được không" = ngay bây giờ; không có giờ cụ thể nào để
+        dời sang ngày của neo."""
+        self.install(monkeypatch, at(7, 14, 45))
+        result = await parse_vi_time("giờ em qua được không", NOW, anchor=self.ANCHOR)
+        assert result.start_at == at(7, 14, 45)
+
+    @pytest.mark.asyncio
+    async def test_no_anchor_changes_nothing(self, monkeypatch):
+        self.install(monkeypatch, at(7, 16))
+        assert (await parse_vi_time("4 giờ chiều", NOW)).start_at == at(7, 16)

@@ -11,6 +11,17 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def now_ms() -> datetime:
+    """`now_utc()` cắt về mili-giây — độ phân giải Mongo lưu được.
+
+    Mốc nào vừa ghi vào Mongo vừa giữ ở chỗ khác (stamp message trong thread
+    checkpointer) phải lấy từ đây. Giữ micro-giây ở một bên là bên đó luôn lớn
+    hơn bản Mongo trả về, và so sánh `> covers_until` gửi lại tin đã nén.
+    """
+    now = now_utc()
+    return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
 def ensure_aware(dt: datetime) -> datetime:
     """Gắn múi giờ Việt Nam cho datetime thiếu tzinfo.
 

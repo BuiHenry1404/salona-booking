@@ -165,6 +165,28 @@ class TestHardWonRulesSurvive:
             for cam in ("nhắc lại", "hỏi lại đúng câu", "repeat the sentence"):
                 assert cam not in prompt.lower(), f"{name} chứa {cam!r}"
 
+    def test_prices_and_services_are_not_a_privacy_refusal(self):
+        """Lỗi gốc (chạy thật 2026-09-19, LLM-32): khách hỏi "giá làm móng bột
+        bao nhiêu" và "bên mình có nhuộm tóc không" đều bị đáp bằng câu từ chối
+        về quyền riêng tư — không liên quan gì tới câu hỏi.
+
+        Nguyên nhân: ngoại lệ cho giá/dịch vụ nằm ở CUỐI khối VIẾT HOA của luật
+        quyền riêng tư, viết thường. Cùng một loại câu hỏi mà model xử lý hai
+        kiểu khác nhau trong cùng một cuộc. Ngoại lệ phải là luật riêng, nổi
+        ngang khối kia."""
+        assert "PRICES, SERVICES" in BOOKING_PROMPT
+        # Luật mới phải đứng TÁCH khỏi khối quyền riêng tư, không nằm lọt bên trong.
+        privacy = BOOKING_PROMPT.index("NEVER ACT ON ANYONE ELSE")
+        prices = BOOKING_PROMPT.index("PRICES, SERVICES")
+        assert prices > privacy, "luật giá phải đứng sau, như một mục riêng"
+        # Và phải cấm tường minh việc mượn câu từ chối của luật quyền riêng tư.
+        assert "only view and book their own appointments" in BOOKING_PROMPT
+
+    def test_all_the_times_the_customer_ruled_out_are_listed(self):
+        """Lỗi gốc (chạy thật 2026-09-19): slots trong Mongo có ĐỦ hai giờ khách
+        đã loại (09:00 và 14:00), khách hỏi lại cả hai, model chỉ nhắc một."""
+        assert "list ALL of them" in BOOKING_PROMPT
+
     def test_one_reply_per_turn_is_stated(self):
         for name, prompt in CUSTOMER_FACING.items():
             assert "ONE reply per turn" in prompt, name
@@ -197,10 +219,66 @@ class TestHardWonRulesSurvive:
         kwarg lạ rồi báo lỗi."""
         assert "xung_ho" not in BOOKING_PROMPT
 
+    def test_the_rules_the_tools_used_to_carry_now_live_here(self):
+        """Ba mệnh lệnh này trước nằm trong chuỗi trả về của tool. Chuyển sang
+        prompt thì phải thật sự có mặt, không thì luật biến mất lặng lẽ."""
+        assert "read the booking back" in BOOKING_PROMPT.lower()
+        assert "ask them to confirm before cancelling" in BOOKING_PROMPT.lower()
+        assert "another day" in BOOKING_PROMPT.lower()
+
+    def test_the_prompt_describes_the_json_tool_contract(self):
+        """Tool giờ trả JSON. Model phải biết đọc `spoken` chứ không chép cả
+        khoá `iso` ra cho khách."""
+        assert "spoken" in BOOKING_PROMPT
+        assert "spoken" in SHOP_PROMPT
+
+    def test_every_error_code_is_explained_in_plain_language(self):
+        """I4: model gặp mã lỗi mà không luật nào nói chúng nghĩa gì — khe hở
+        để chuỗi tiếng Anh trần lọt ra câu tiếng Việt. Mỗi mã TỚI ĐƯỢC phải có
+        mặt trong prompt, kèm một câu cấm đọc mã ra cho khách.
+
+        `unavailable` CỐ Ý không nằm trong danh sách: nó là nhánh mặc định của
+        `_error_code`, và hai tool gọi hàm đó chỉ bọc `own_booked` — hàm này
+        chỉ ném `NotFoundError`/`ForbiddenError`. Dạy model một mã không bao
+        giờ xuất hiện là tốn prompt và nói sai về hệ thống."""
+        for code in ("already_yours", "slot_unavailable", "appointment_not_found",
+                     "not_your_appointment", "bad_time_format",
+                     "bad_day_format", "outside_hours", "closed_day",
+                     "time_passed", "missing_time"):
+            assert code in BOOKING_PROMPT, code
+        assert "never read the code itself" in BOOKING_PROMPT
+        assert "- unavailable:" not in BOOKING_PROMPT
+
+    def test_after_a_decline_the_agent_does_not_push_again(self):
+        """Lỗi live 3/5/6: sau "dạ ko em" agent đề xuất lại ngay, mở lại việc
+        hủy khi khách chỉ hỏi lịch còn không, và lấy nhầm HÔM NAY cho "4 giờ
+        chiều". Dòng `[declined: …]` của khối bối cảnh là chỗ dựa."""
+        flat = " ".join(BOOKING_PROMPT.split())
+        assert "[declined: ...]" in flat
+        assert "nothing was written" in flat
+        assert ("Do not call propose_appointment or cancel_appointment again unless "
+                "THIS message") in flat
+        assert "pass its iso as parse_time's anchor" in flat
+        assert "Call cancel_appointment only when THIS message asks to cancel" in flat
+        assert "still exists is answered from the context block" in flat
+
+    def test_parse_time_points_at_the_declined_line_as_an_anchor(self):
+        assert "[declined: ...]" in " ".join(_tool_descriptions()["parse_time"].split())
+
+    def test_only_the_checked_time_may_be_called_taken(self):
+        """Lỗi live 2: 3 giờ sáng ra `slot_unavailable`, model nói "3 giờ
+        chiều đã kín". Giờ ngoài lịch tiệm không phải "có người đặt", và chỉ
+        `asked` — giờ đã kiểm — mới được gọi là kín."""
+        assert "`asked`" in BOOKING_PROMPT
+        assert "NOT booked by anyone" in BOOKING_PROMPT
+
 
 class TestSupervisorStaysMachineReadable:
-    def test_it_asks_for_exactly_one_word(self):
-        assert "EXACTLY ONE word" in SUPERVISOR_PROMPT
+    def test_it_names_the_structured_route_field(self):
+        """Nhãn đi qua structured output: prompt nói về trường `route`, không
+        còn bắt model trả 'đúng một từ' rồi code parse chữ."""
+        assert "`route`" in SUPERVISOR_PROMPT
+        assert "EXACTLY ONE word" not in SUPERVISOR_PROMPT
 
     def test_supervisor_lists_exactly_the_three_live_labels(self):
         """Ba nhãn này là giá trị code so khớp, không phải chữ cho người đọc."""
@@ -312,8 +390,37 @@ class TestBookingPromptSlimmed:
         # hủy phải gọi tool trước, và giá/dịch vụ không phải ca rule 4 — đo
         # được 4780 — mốc lên 4900. Task 5 (2026-09-14) thêm câu "use the shop
         # tools" cuối rule 1 (câu kép hỏi tiệm + hỏi lịch) — đo được 4918 —
-        # mốc lên 5000.
-        assert len(BOOKING_PROMPT) < 5000
+        # mốc lên 5000. 2026-09-19: chạy thật lộ ra luật giá/dịch vụ nằm LỌT
+        # trong khối viết hoa của rule 4 nên bị nuốt — tách thành rule 5 riêng,
+        # thêm rule 6 (liệt kê đủ các giờ khách đã loại) — đo được 5291 —
+        # mốc lên 5400. Task 4 (2026-09-20): mệnh lệnh trước nằm trong chuỗi
+        # trả về của tool ("đọc lại lịch", "hỏi xác nhận trước khi hủy", "ngày
+        # đầy thì hỏi ngày khác") chuyển hẳn vào rule 2 của prompt, cộng với
+        # câu mô tả hợp đồng JSON (`spoken` chứ không phải `iso`) — đo được
+        # 5685 ký tự — mốc lên 5700. Đợt vá final-fix (2026-09-20, I3+I4):
+        # bỏ chữ "full" khỏi câu `nearest`/`slots` rỗng (trung tính hoá theo
+        # C1/I3) và thêm vào rule 2 danh sách năm mã lỗi
+        # (`appointment_not_found`, `not_your_appointment`, `bad_time_format`,
+        # `bad_day_format`, `unavailable`) kèm câu cấm đọc mã ra cho khách
+        # (I4) — đo được 6306 ký tự — mốc lên 6400. 2026-09-20 (đợt sau): gỡ
+        # mã `unavailable` khỏi danh sách vì nó KHÔNG tới được, thêm mã
+        # `already_yours` (khách đã có đúng lịch ở giờ đó — nguyên nhân duy
+        # nhất mà câu đáp ngược hẳn với "chọn giờ khác") — đo được 6417 ký tự
+        # — mốc lên 6500. Harness B M4 fix (2026-10-19, lỗi live 2): bốn mã
+        # giờ mới (`outside_hours`, `closed_day`, `time_passed`,
+        # `missing_time`) và luật `asked` — đo được 6829 — mốc lên 6900.
+        # Cùng đợt (lỗi live 3/5/6): rule 8 mới về dòng `[declined: …]` và hai
+        # câu "chỉ hủy khi CHÍNH tin này xin hủy" ở rule 1 — đo được 7495 —
+        # mốc lên 7500. Chat tay B2 (2026-10-20, lỗi #3): câu "tối đa 3 giờ
+        # trống, không đọc danh sách dài" ở rule 2 — đo được 7598 — mốc lên 7700.
+        # Lỗi #4: rule 1 cấm nói đã đặt/dời/hủy khi mới giữ — đo được 7701 —
+        # mốc lên 7800. Lỗi #5: vế loại trừ ở rule 4 (nhắc người thân khi hoãn
+        # hay đặt hộ không phải ca bảo mật) — đo được 8105 — mốc lên 8200.
+        # Lỗi #2: rule 10 đặt nhiều lịch lần lượt + hàng chờ [queued …] — đo
+        # được 8614 — mốc lên 8700. Chat tay B3 (2026-10-20, lỗi #2): người
+        # nhà rảnh không ≠ chủ tiệm (rule 1) và vế [relative]/[deferral] ở
+        # rule 4 — đo được 8869 — mốc lên 8900.
+        assert len(BOOKING_PROMPT) < 8900
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -392,12 +499,12 @@ class TestNoRepeatCoversWording:
         assert "NEVER THE SAME SENTENCE TWICE" in BOOKING_PROMPT
 
 
-class TestNoRepeatKnowsAboutTheDigest:
-    def test_digest_facts_count_as_already_said(self):
+class TestNoRepeatKnowsAboutTheState:
+    def test_state_facts_count_as_already_said(self):
         for name, prompt in (("SHOP_PROMPT", SHOP_PROMPT),
                              ("BOOKING_PROMPT", BOOKING_PROMPT),
                              ("SOCIAL_PROMPT", SOCIAL_PROMPT)):
-            assert "conversation digest count as already said" in prompt, name
+            assert "conversation state count as already said" in prompt, name
 
 
 class TestLiveChat20260914:
@@ -416,9 +523,18 @@ class TestLiveChat20260914:
         """Lượt 10: "tiệm có nhuộm tóc bạc không, giá bao nhiêu" → câu bảo mật
         rule 4. Supervisor xếp "nhuộm tóc" vào booking (dịch vụ = đặt lịch) rồi
         rule 4 bắt nhầm. Giá/dịch vụ là chuyện của chủ tiệm, không phải của
-        khách khác."""
-        assert "prices or which services" in BOOKING_PROMPT.lower() or "prices or services" in BOOKING_PROMPT.lower()
-        assert "owner will answer" in BOOKING_PROMPT.lower()
+        khách khác.
+
+        2026-09-19 — TEST NÀY TỪNG XANH SUỐT MÀ BUG VẪN TÁI DIỄN. Bản cũ chỉ
+        kiểm hai chuỗi CÓ MẶT trong prompt. Chúng có mặt thật, nhưng nằm lọt ở
+        cuối khối VIẾT HOA của rule 4 và viết thường, nên model đọc cả khối là
+        "từ chối" rồi áp luôn cho câu hỏi giá. Chạy thật LLM-32 cho thấy cùng
+        một loại câu hỏi bị xử hai kiểu trong một cuộc. Bài học: kiểm một câu
+        có mặt trong prompt KHÔNG chứng minh model theo được nó — vị trí và độ
+        nổi của luật mới là thứ quyết định. Hàng rào thật nằm ở
+        `test_prices_and_services_are_not_a_privacy_refusal`."""
+        assert "owner" in BOOKING_PROMPT.lower() and "will answer that" in BOOKING_PROMPT.lower()
+        assert "what the salon charges" in BOOKING_PROMPT.lower()
 
     def test_supervisor_routes_open_right_now_to_shop(self):
         """Lượt 1: "tiệm còn làm không" → social → bot tự khẳng định "còn làm"
@@ -454,3 +570,63 @@ class TestRewritePromptDemandsVietnamese:
 
     def test_rewrite_prompt_demands_vietnamese(self):
         assert "MUST be Vietnamese" in REWRITE_PROMPT
+
+
+class TestClassifyPrompt:
+    """M3: bộ phân loại câu trả lời xác nhận. Phân loại là loại luật mà ví dụ
+    tiếng Việt CÓ HẠI (bẫy #16): ví dụ biến ranh giới ngữ nghĩa thành so khớp
+    từ — đúng thứ `is_affirmative` đã làm sai."""
+
+    def test_classify_prompt_has_no_vietnamese_examples(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        for word in ("ừ", "dạ", "không", "đồng ý", "được"):
+            assert word not in CLASSIFY_PROMPT.lower(), word
+        import re
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(CLASSIFY_PROMPT)
+
+    def test_classify_prompt_defines_the_four_labels(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        for label in ("approve", "reject", "change", "unclear"):
+            assert f"- {label}:" in CLASSIFY_PROMPT
+
+    def test_approve_is_the_narrow_label(self):
+        from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
+        assert "approve only when the customer clearly agrees to exactly this proposal" in CLASSIFY_PROMPT
+        assert "anything else is not approve" in CLASSIFY_PROMPT
+
+
+class TestLiveChatB2:
+    """Chat tay lần 2 trên harness B (19/10)."""
+
+    def test_offer_at_most_three_slots(self):
+        """Lỗi #3: bot đọc 12 khung giờ cho một cụ già."""
+        assert "at most 3" in BOOKING_PROMPT
+        assert "never read out a long list" in BOOKING_PROMPT.lower()
+
+    def test_no_claim_of_a_write_while_only_holding(self):
+        """Lỗi #4: "em đã đặt lịch … xác nhận giúp em nhé?" khi mới giữ chỗ."""
+        assert "never say it is already booked, moved or cancelled" in BOOKING_PROMPT.lower()
+
+    def test_mentioning_a_relative_is_not_a_privacy_case(self):
+        """Lỗi #5: "để cô hỏi thằng Huy đã" → "Em chỉ xem và đặt lịch của chị…"."""
+        assert "will ask someone before deciding" in BOOKING_PROMPT
+        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
+        assert "relative" in rule4 and "message you when they are ready" in rule4
+
+    def test_several_appointments_are_booked_one_at_a_time(self):
+        """Lỗi #2: hai lịch trong một câu bị gộp, ghi chú nhầm người."""
+        assert "book them one at a time" in BOOKING_PROMPT
+        assert "propose ONLY the" in BOOKING_PROMPT and "`queued`" in BOOKING_PROMPT
+        assert "[queued" in BOOKING_PROMPT
+        assert "never give one request another's note" in BOOKING_PROMPT
+
+    def test_a_relative_being_free_is_not_the_owner(self):
+        """Lỗi live B3 #2: "nó có rảnh không" (đứa cháu) → get_shop_status."""
+        from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
+        shop = SUPERVISOR_PROMPT.split("- shop")[1].split("- social")[0]
+        assert "OWNER" in shop and "relative" in shop
+        assert "never call a shop tool" in BOOKING_PROMPT
+        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
+        assert "asking whether that person is free" in rule4
+        assert "[relative]" in rule4 and "[deferral]" in rule4

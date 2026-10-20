@@ -1,10 +1,10 @@
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import local_day_bounds, now_utc, to_local
-from app.models.conversation import ChatMessage, Conversation, DaySummary, Digest
+from app.models.conversation import ChatMessage, Conversation, DaySummary, ConversationState
 
 # Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
 # đếm token thật cần tokenizer của model và không đáng cho việc này.
@@ -19,6 +19,55 @@ CARRY_OVER_MINUTES = 30
 PREVIEW_CHARS = 80
 
 
+T = TypeVar("T")
+
+
+def session_cutoff(now: Optional[datetime] = None) -> datetime:
+    """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+
+    MỘT hàm cho mọi chỗ đọc — `history()`, `session_messages()` (đầu vào nén) và
+    lịch sử model đọc từ thread checkpointer (`model_history`). Lệch nhau là có
+    tin rơi vào khe giữa state và phần nguyên văn.
+    """
+    now = now or now_utc()
+    day_start, _ = local_day_bounds(to_local(now).date())
+    return min(day_start, now - timedelta(minutes=CARRY_OVER_MINUTES))
+
+
+def select_window(
+    items: Sequence[T], *, cutoff: datetime, after: Optional[datetime], token_budget: int,
+) -> List[T]:
+    """Thuật toán cửa sổ lịch sử, thuần — xem docstring `ConversationService.history`.
+
+    `items` có `.role` ("user" | "assistant"), `.content`, `.created_at`, xếp cũ
+    → mới. Giữ tin `created_at >= cutoff` và (nếu có `after`) `> after`, rồi cắt
+    từ cuối theo ngân sách token.
+    """
+    # `after`: mốc covers_until của state — tin đã nén không gửi nguyên văn.
+    messages = [
+        m for m in items
+        if m.created_at >= cutoff and (after is None or m.created_at > after)
+    ]
+    kept: List[T] = []
+    used = 0
+    truncated = False
+    for message in reversed(messages):
+        cost = max(1, len(message.content) // CHARS_PER_TOKEN)
+        if used + cost > token_budget and kept:
+            truncated = True
+            break
+        kept.append(message)
+        used += cost
+    kept.reverse()
+    # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
+    # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
+    # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
+    # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
+    if truncated and kept and kept[0].role == "assistant":
+        kept.pop(0)
+    return kept
+
+
 class ConversationService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["conversations"]
@@ -28,17 +77,24 @@ class ConversationService:
         if doc:
             return Conversation(**doc)
         now = now_utc()
-        payload = {"user_id": user_id, "messages": [], "pending_confirmation": None,
-                   "created_at": now, "updated_at": now}
+        payload = {"user_id": user_id, "messages": [], "created_at": now, "updated_at": now}
         result = await self.collection.insert_one(payload)
         payload["_id"] = result.inserted_id
         return Conversation(**payload)
 
-    async def append(self, user_id: str, role: str, content: str, source: str = "llm") -> None:
+    async def append(
+        self, user_id: str, role: str, content: str, source: str = "llm",
+        created_at: Optional[datetime] = None,
+    ) -> None:
+        """`created_at`: mốc dùng chung với message trong thread checkpointer
+        (`now_ms()`), để `covers_until` đọc từ đây khớp đúng tin bên thread."""
+        message = ChatMessage(role=role, content=content, source=source)
+        if created_at is not None:
+            message.created_at = created_at
         await self.collection.update_one(
             {"user_id": user_id},
             {
-                "$push": {"messages": ChatMessage(role=role, content=content, source=source).model_dump()},
+                "$push": {"messages": message.model_dump()},
                 "$set": {"updated_at": now_utc()},
                 "$setOnInsert": {"user_id": user_id, "created_at": now_utc()},
             },
@@ -51,19 +107,16 @@ class ConversationService:
             return []
         return [ChatMessage(**m) for m in doc.get("messages", [])]
 
-    def _session_cutoff(self) -> datetime:
-        """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
+    def session_cutoff(self) -> datetime:
+        """Mốc cắt phiên lúc này — xem hàm module `session_cutoff`."""
+        return session_cutoff()
 
-        Một mốc, hai chỗ đọc (`history()` và `session_messages()`) — lệch nhau
-        là có tin rơi vào khe giữa digest và phần nguyên văn.
-        """
-        day_start, _ = local_day_bounds(to_local(now_utc()).date())
-        return min(day_start, now_utc() - timedelta(minutes=CARRY_OVER_MINUTES))
+    _session_cutoff = session_cutoff
 
     async def session_messages(self, user_id: str) -> List[ChatMessage]:
         """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
-        vào cho digest."""
-        cutoff = self._session_cutoff()
+        vào cho state."""
+        cutoff = self.session_cutoff()
         return [m for m in await self._all_messages(user_id) if m.created_at >= cutoff]
 
     async def history(
@@ -98,38 +151,13 @@ class ConversationService:
         thoại: khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói, còn
         khách giữ đăng nhập nửa năm thì không bao giờ có ranh giới nào.
 
-        `after` (tuỳ chọn): chỉ giữ tin SAU mốc này — dùng cho digest: tin đã
+        `after` (tuỳ chọn): chỉ giữ tin SAU mốc này — dùng cho state: tin đã
         được nén thành dữ kiện thì không gửi nguyên văn nữa.
         """
-        all_messages = await self._all_messages(user_id)
-        if not all_messages:
-            return []
-
-        cutoff = self._session_cutoff()
-
-        # `after`: mốc covers_until của digest — tin đã nén không gửi nguyên văn.
-        messages = [
-            m for m in all_messages
-            if m.created_at >= cutoff and (after is None or m.created_at > after)
-        ]
-        kept: List[ChatMessage] = []
-        used = 0
-        truncated = False
-        for message in reversed(messages):
-            cost = max(1, len(message.content) // CHARS_PER_TOKEN)
-            if used + cost > token_budget and kept:
-                truncated = True
-                break
-            kept.append(message)
-            used += cost
-        kept.reverse()
-        # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
-        # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
-        # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
-        # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
-        if truncated and kept and kept[0].role == "assistant":
-            kept.pop(0)
-        return kept
+        return select_window(
+            await self._all_messages(user_id), cutoff=self.session_cutoff(),
+            after=after, token_budget=token_budget,
+        )
 
     async def list_days(self, user_id: str) -> List[DaySummary]:
         """Các ngày khách từng nhắn, mới nhất trước.
@@ -169,76 +197,52 @@ class ConversationService:
             if start <= m.created_at < end
         ]
 
-    async def set_pending(self, user_id: str, payload: Optional[Dict[str, Any]]) -> None:
-        value = {**payload, "asked_at": now_utc()} if payload else None
-        await self.collection.update_one(
-            {"user_id": user_id},
-            {"$set": {"pending_confirmation": value, "updated_at": now_utc()},
-             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
-            upsert=True,
-        )
-
-    async def get_pending(
-        self, user_id: str, max_age_minutes: int = 10
-    ) -> Optional[Dict[str, Any]]:
-        """Cờ hết hạn sau 10 phút: quá đó thì khách nói "ừ" cũng phải hỏi lại,
-        vì nhiều khả năng họ đang nói về chuyện khác."""
-        doc = await self.collection.find_one({"user_id": user_id})
-        pending = (doc or {}).get("pending_confirmation")
-        if not pending:
-            return None
-
-        asked_at = pending.get("asked_at")
-        if asked_at is None:
-            return None
-        if asked_at.tzinfo is None:
-            asked_at = asked_at.replace(tzinfo=now_utc().tzinfo)
-        if now_utc() - asked_at > timedelta(minutes=max_age_minutes):
-            return None
-        return pending
-
-    async def get_digest(self, user_id: str) -> Optional[Digest]:
-        """Digest của HÔM NAY (giờ VN). Ngày khác coi như không có — cắt lúc
+    async def get_state(self, user_id: str) -> Optional[ConversationState]:
+        """ConversationState của HÔM NAY (giờ VN). Ngày khác coi như không có — cắt lúc
         đọc, cùng nguyên tắc với history()."""
-        doc = await self.collection.find_one({"user_id": user_id}, {"digest": 1})
-        raw = (doc or {}).get("digest")
+        doc = await self.collection.find_one({"user_id": user_id}, {"state": 1})
+        raw = (doc or {}).get("state")
         if not raw:
             return None
-        digest = Digest(**raw)
-        if digest.day != to_local(now_utc()).date():
+        state = ConversationState(**raw)
+        if state.day != to_local(now_utc()).date():
             return None
-        if digest.covers_until.tzinfo is None:
-            digest = digest.model_copy(
-                update={"covers_until": digest.covers_until.replace(tzinfo=now_utc().tzinfo)}
+        if state.covers_until.tzinfo is None:
+            state = state.model_copy(
+                update={"covers_until": state.covers_until.replace(tzinfo=now_utc().tzinfo)}
             )
-        return digest
+        return state
 
-    async def set_digest(self, user_id: str, digest: Digest) -> None:
-        payload = digest.model_dump()
+    async def set_state(self, user_id: str, state: ConversationState) -> None:
+        payload = state.model_dump()
         # Mongo không lưu `date` — ghi dạng datetime nửa đêm UTC, đọc lên Pydantic ép về date.
-        payload["day"] = datetime(digest.day.year, digest.day.month, digest.day.day)
+        payload["day"] = datetime(state.day.year, state.day.month, state.day.day)
         await self.collection.update_one(
             {"user_id": user_id},
-            {"$set": {"digest": payload, "updated_at": now_utc()},
+            {"$set": {"state": payload, "updated_at": now_utc()},
              "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
             upsert=True,
         )
 
-    async def bump_digest_failures(self, user_id: str) -> None:
-        """Cầu chì. Chưa có digest hôm nay thì tạo digest rỗng để đếm."""
-        if await self.get_digest(user_id) is None:
-            await self.set_digest(user_id, Digest(
+    async def bump_state_failures(self, user_id: str) -> None:
+        """Cầu chì. Chưa có state hôm nay thì tạo state rỗng để đếm."""
+        if await self.get_state(user_id) is None:
+            await self.set_state(user_id, ConversationState(
                 day=to_local(now_utc()).date(),
                 covers_until=datetime(1970, 1, 1, tzinfo=now_utc().tzinfo),
-                bullets=[], failures=1,
+                summary=[], failures=1,
             ))
             return
         await self.collection.update_one(
-            {"user_id": user_id}, {"$inc": {"digest.failures": 1}}
+            {"user_id": user_id}, {"$inc": {"state.failures": 1}}
         )
 
-    async def context_window(self, user_id: str) -> tuple[List[str], List[ChatMessage]]:
-        """Thứ LLM đọc: (dữ kiện đã nén, tin nguyên văn sau mốc nén)."""
-        digest = await self.get_digest(user_id)
-        after = digest.covers_until if digest else None
-        return (digest.bullets if digest else []), await self.history(user_id, after=after)
+    async def context_window(self, user_id: str):
+        """Thứ LLM đọc: (dữ kiện đã nén, slots, tin nguyên văn sau mốc nén)."""
+        state = await self.get_state(user_id)
+        after = state.covers_until if state else None
+        return (
+            (state.summary if state else []),
+            (state.slots if state else None),
+            await self.history(user_id, after=after),
+        )

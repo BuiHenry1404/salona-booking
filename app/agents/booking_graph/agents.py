@@ -1,88 +1,223 @@
-from typing import Awaitable, Callable, List
+import asyncio
+from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+import httpx
+import openai
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
+from langchain_core.exceptions import ModelError
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.context import address_phrase, live_queue, queued_line, with_line
+from app.agents.booking_graph.relatives import aside_line, deferral_reply
+from app.agents.booking_graph.middleware.guard import GuardMiddleware
+from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
+    STATE_HEADER, MessageLayoutMiddleware)
+from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
+    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT, NoParallelToolsMiddleware,
+    ToolFailureMiddleware, ToolRoundLimitMiddleware)
+from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
+from app.models.user import User
 
 logger = get_logger(__name__)
 
-MAX_TOOL_ROUNDS = 4
-FALLBACK_ANSWER = "Dạ em chưa tra được, anh chị gọi trực tiếp cho tiệm giúp em nhé ạ."
+# Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
+RESPOND_TAG = "respond"
 
-# Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
-# bối cảnh, không phải chỉ dẫn.
-DIGEST_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+# Lỗi TẠM THỜI của model agent (Azure 5xx/429, timeout 20 giây, mất kết nối):
+# thử lại ĐÚNG một lần sau ~0,5 giây; vẫn lỗi (hay lỗi 4xx) thì ném — `run_turn` đổi thành câu "Máy đang bận..." như A.
+MODEL_RETRIES = 1
+MODEL_RETRY_DELAY_SECONDS = 0.5
 
 
-def make_subagent_node(
-    prompt: str, tools: List[BaseTool], tag: str
-) -> Callable[[GraphState], Awaitable[dict]]:
-    """Một node LangGraph chạy vòng lặp gọi tool rồi trả lời.
+def is_transient(exc: BaseException) -> bool:
+    """Lỗi TẠM THỜI — thử lại có thể ra kết quả khác: timeout, mất kết nối,
+    429, 5xx. 400 (kể cả content filter, quá context), 401/403/404 thì thử lại
+    vẫn y vậy, chỉ tốn gấp đôi thời gian của khách (review M4 M-1).
+    Lỗi lạ (lỗi lập trình) cũng không thử lại."""
+    if isinstance(exc, ModelError):
+        return exc.is_retryable
+    if isinstance(exc, (openai.APIConnectionError, httpx.TimeoutException,
+                        httpx.TransportError, asyncio.TimeoutError)):
+        return True          # APITimeoutError là con của APIConnectionError
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return False
 
-    `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ node sinh câu trả
-    lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn hình.
 
-    Node không set `answer` — chỉ `draft`; `guard` mới quyết câu cuối.
+def model_retry_middleware() -> ModelRetryMiddleware:
+    return ModelRetryMiddleware(max_retries=MODEL_RETRIES, on_failure="error",
+                                initial_delay=MODEL_RETRY_DELAY_SECONDS,
+                                retry_on=is_transient)
+
+
+class _LazyAgent:
+    """Agent dựng ở lần gọi ĐẦU TIÊN, không phải lúc `build_graph`.
+
+    `build_graph` chạy mỗi lượt và dựng 3 agent, nhưng mỗi lượt chỉ chạy một.
+    Dựng model ngay thì (a) mất ~25 ms/model đồng bộ trên event loop, (b) thiếu
+    key LLM là `build_graph` nổ — mất luôn nhánh confirm→phrase vốn chạy được
+    như A, và test dựng graph phải có key thật. A dựng model lúc node chạy;
+    giữ đúng như vậy.
+
+    Cache trong `self` là cấu hình (model + graph đã compile), không phải trạng
+    thái lượt chat — graph ngoài dựng lại mỗi lượt.
     """
-    by_name = {t.name: t for t in tools}
 
-    async def node(state: GraphState) -> dict:
-        model = build_chat_model(tags=[tag], temperature=0.2).bind_tools(tools)
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._agent = None
 
-        # Bố cục theo độ ổn định: system (tĩnh, được cache) → lịch sử →
-        # khối bối cảnh (đổi mỗi lượt) → câu hỏi mới.
-        #
-        # Lời khách phải là thứ CUỐI model đọc. Model bắt chước giọng người
-        # đối thoại; để khối trạng thái đứng cuối là nó đáp lại bằng giọng
-        # biểu mẫu ("em giữ chỗ cho dịch vụ làm tóc"). Đây cũng đúng thứ tự
-        # `CONTEXT.md` bẫy #9 đã chốt từ đầu.
-        #
-        # Cắt lát chịu được `messages` rỗng: khi đó cả hai vế cùng rỗng.
-        history, question = state["messages"][:-1], state["messages"][-1:]
-        # Digest đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn khối
-        # bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống lâu.
-        bullets = state.get("digest") or []
-        digest_messages = (
-            [HumanMessage(content=DIGEST_HEADER + "\n" + "\n".join(f"- {b}" for b in bullets))]
-            if bullets else []
+    def _get(self):
+        if self._agent is None:
+            self._agent = self._factory()
+        return self._agent
+
+    async def ainvoke(self, *args, **kwargs):
+        return await self._get().ainvoke(*args, **kwargs)
+
+    # KHÔNG có `__getattr__` uỷ quyền: LangGraph `compile()` dò subgraph bằng
+    # `hasattr` trên closure của node — uỷ quyền là dựng model ngay lúc
+    # build_graph, mất hết tác dụng của việc dựng lười.
+
+
+def build_agent(
+    prompt: str,
+    tools: List[BaseTool],
+    *,
+    tag: str = RESPOND_TAG,
+    model=None,
+    user: Optional[User] = None,
+    extra_middleware: Sequence[AgentMiddleware] = (),
+    name: Optional[str] = None,
+):
+    """Một agent `create_agent`: gọi tool rồi trả lời.
+
+    `name` là tên graph con trong trace Langfuse và sự kiện stream — ba agent
+    không tên thì cùng hiện một tên mặc định, soi lượt lỗi không biết là ai.
+
+    `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ agent sinh câu
+    trả lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn
+    hình.
+
+    Thứ tự middleware (ngoài → trong): có `user` thì Phrase rồi Guard đứng
+    ngoài cùng; rồi `extra_middleware` (M2 thêm lịch sử, M3 thêm confirm), bố
+    cục message, tắt parallel, giới hạn vòng, lỗi tool, thử lại model một
+    lần. `after_agent` chạy
+    NGƯỢC danh sách nên Guard chạy SAU CÙNG — kể cả khi Phrase hay giới hạn
+    vòng nhảy thẳng tới cuối. Không có `user` (test agent trần) thì không có
+    guard/phrase: agent chỉ trả câu thô.
+
+    `checkpointer=False`: agent con không bao giờ ghi checkpoint riêng — state
+    lượt chat thuộc graph ngoài.
+
+    Không truyền `model` thì model thật chỉ được dựng ở lần gọi đầu (`_LazyAgent`).
+    """
+    outer = [PhraseMiddleware(), GuardMiddleware(user)] if user is not None else []
+    middleware = [
+        *outer,
+        *extra_middleware,
+        MessageLayoutMiddleware(),
+        NoParallelToolsMiddleware(),
+        ToolRoundLimitMiddleware(),
+        ToolFailureMiddleware(),
+        # Trong cùng (sát model): một lần thử lại chạy lại đúng lần gọi model,
+        # các middleware ngoài không chạy lại.
+        model_retry_middleware(),
+    ]
+
+    def factory(chat_model=None):
+        return create_agent(
+            # max_retries=0: SDK không tự thử lại — ModelRetryMiddleware lo (F11).
+            chat_model or build_chat_model(tags=[tag], temperature=0.2, max_retries=0),
+            tools,
+            system_prompt=prompt,
+            middleware=middleware,
+            checkpointer=False,
+            name=name,
         )
-        messages = [
-            SystemMessage(content=prompt),
-            *digest_messages,
-            *history,
-            HumanMessage(content=state.get("context_block", "")),
-            *question,
-        ]
 
-        for _ in range(MAX_TOOL_ROUNDS):
-            # Gửi một bản chụp: `messages` còn bị nối thêm ngay sau đây, mà
-            # LangChain giữ nguyên tham chiếu — trace và test sẽ thấy một danh
-            # sách khác với thứ thật sự gửi đi ở lượt đó.
-            reply = await model.ainvoke(list(messages))
-            messages.append(reply)
+    if model is not None:
+        return factory(model)
+    return _LazyAgent(factory)
 
-            calls = getattr(reply, "tool_calls", None)
-            if not calls:
-                return {"draft": reply.content or FALLBACK_ANSWER}
 
-            for call in calls:
-                tool = by_name.get(call["name"])
-                if tool is None:
-                    output = f"Không có tool tên {call['name']}."
-                    logger.warning("unknown_tool_requested", extra={"name": call["name"]})
-                else:
-                    try:
-                        output = await tool.ainvoke(call["args"])
-                    except Exception as exc:
-                        logger.warning("tool_failed",
-                                       extra={"name": call["name"], "error": str(exc)})
-                        output = "Tra cứu không được, thử lại giúp em ạ."
-                messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
+# Câu đáp trước nhìn ngược tối đa bấy nhiêu tin để câu hoãn code viết không lặp.
+DEFERRAL_LOOKBACK = 8
 
-        logger.warning("tool_loop_exhausted", extra={"tag": tag})
-        return {"draft": FALLBACK_ANSWER}
+
+def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState], Awaitable[dict]]:
+    """Node LangGraph bọc một agent `build_agent`.
+
+    `messages` là cả thread trong ngày; `HistoryWindowMiddleware` (trong
+    `extra_middleware` của graph) cắt lại đúng cửa sổ A gửi model.
+
+    Trả `draft` (câu thô của agent) và — khi agent có GuardMiddleware —
+    `answer` / `answer_source` / `violations` do guard quyết. Tool message của
+    lượt này ở lại trong agent con, KHÔNG quay về `messages` ngoài.
+
+    `proposal_id` của lượt này (None nếu không có) — TRỪ lượt câu chốt
+    (`confirm_fact`): agent không chạy tool nên không đụng tới đề xuất; câu
+    hỏi lại (clarify) phải giữ nguyên đề xuất để confirm chờ tiếp.
+
+    Có `user` thì câu hoãn trần ("để chú hỏi nó rồi nhắn lại em sau") được CODE
+    đáp, agent không chạy (lỗi live B4 #2 — model chọn câu từ chối rule 4 dù có
+    dòng [deferral]). Lượt câu chốt (`confirm_fact`) không bao giờ đi đường này.
+    """
+    async def node(state: GraphState) -> dict:
+        # Hàng chờ (đặt lần lượt) → MỘT dòng code viết trong khối bối cảnh.
+        queue = live_queue(state.get("queued"))
+        if user is not None and not state.get("confirm_fact"):
+            said = [str(m.content) for m in (state.get("messages") or [])
+                    if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
+            code = deferral_reply(state.get("customer_text") or "", address_phrase(user.full_name),
+                                  [*said, *(state.get("previous_replies") or [])])
+            if code:
+                logger.info("deferral_code_reply")
+                result = {"draft": code, "answer": code, "answer_source": "code",
+                          "violations": [], "proposal_id": None}
+                if state.get("queued"):
+                    result["queued"] = queue
+                return result
+        out = await agent.ainvoke({
+            "messages": state["messages"],
+            # + câu khách nhắc người nhà / hẹn nhắn lại (lỗi live B3 #2).
+            "context_block": with_line(with_line(state.get("context_block", ""),
+                                                 queued_line(queue)),
+                                       aside_line(state.get("customer_text") or "")),
+            "queued": queue,
+            "summary": state.get("summary") or [],
+            "slots": state.get("slots"),
+            # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
+            # bị gửi lại nguyên văn mỗi lượt (F2).
+            "history_after": state.get("history_after"),
+            "asked_at": state.get("asked_at"),
+            # GuardMiddleware / PhraseMiddleware.
+            "previous_replies": state.get("previous_replies") or [],
+            "customer_text": state.get("customer_text") or "",
+            "confirm_fact": state.get("confirm_fact"),
+            "fallback": state.get("fallback"),
+        })
+        messages = out.get("messages") or []
+        reply = messages[-1] if messages else None
+        result = {"draft": getattr(reply, "content", "") or FALLBACK_ANSWER}
+        for key in ("answer", "answer_source", "violations"):
+            if key in out:
+                result[key] = out[key]
+        # Hàng chờ sau lượt này (ConfirmMiddleware có thể đã đổi). Không có gì
+        # trước và sau thì không ghi khoá — đường cũ giữ nguyên.
+        after = out.get("queued", queue)
+        if after or state.get("queued"):
+            result["queued"] = after
+        if not state.get("confirm_fact"):
+            # Đề xuất của lượt này (ConfirmMiddleware). Vòng tool cạn thì câu
+            # cuối là FALLBACK chứ không phải câu hỏi xác nhận — không được chờ
+            # duyệt (G-07).
+            result["proposal_id"] = (None if out.get("tool_loop_exhausted")
+                                     else out.get("proposal_id"))
+        return result
 
     return node

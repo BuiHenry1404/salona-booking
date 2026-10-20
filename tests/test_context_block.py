@@ -1,4 +1,5 @@
 from datetime import datetime
+import pytest
 
 from app.agents.booking_graph.context import (address_phrase,
                                               build_context_block,
@@ -216,8 +217,29 @@ class TestFormatVietnameseHhmm:
     def test_afternoon(self):
         assert format_vi_hhmm("14:00") == "2 giờ chiều"
 
-    def test_noon_is_afternoon(self):
-        assert format_vi_hhmm("12:00") == "12 giờ chiều"
+    def test_noon_is_trua_not_chieu(self):
+        """Sửa 2026-09-20, lật `test_noon_is_afternoon` cũ.
+
+        "12 giờ chiều" không phải tiếng Việt: "trưa" tồn tại chính xác để phân
+        biệt 12h ban ngày với 12h đêm. Không phải đánh đổi sản phẩm — chính
+        parser của dự án đã hiểu đầu vào "mai 12 giờ trưa"
+        (`tests/test_timeparse.py`), tức hệ ĐỌC VÀO "trưa" mà NÓI RA "chiều".
+
+        Ca này chạm khách thường xuyên: tiệm mở 08:00–19:00 không nghỉ trưa,
+        bước 15 phút, nên 12:00/12:15/12:30/12:45 đều là ô đặt được."""
+        assert format_vi_hhmm("12:00") == "12 giờ trưa"
+        assert format_vi_hhmm("12:30") == "12 giờ rưỡi trưa"
+        assert format_vi_hhmm("12:45") == "12 giờ 45 trưa"
+
+    def test_one_pm_is_still_chieu(self):
+        """Biên dưới của "chiều" không đổi — chỉ đúng 12 giờ mới là trưa."""
+        assert format_vi_hhmm("13:00") == "1 giờ chiều"
+
+    def test_midnight_is_dem_not_zero_oclock(self):
+        """"0 giờ sáng" không ai nói. Ngoài giờ mở cửa nên hiếm, nhưng tới
+        được qua `slots.time` khi khách nhắc nửa đêm mà chưa chốt ngày."""
+        assert format_vi_hhmm("00:00") == "12 giờ đêm"
+        assert format_vi_hhmm("00:30") == "12 giờ rưỡi đêm"
 
     def test_evening(self):
         assert format_vi_hhmm("19:00") == "7 giờ tối"
@@ -277,3 +299,79 @@ class TestLastReplyIsQuotedSoItIsNotRepeated:
         lines = block.splitlines()
         assert lines.index(next(l for l in lines if "Câu cũ." in l)) < len(lines) - 1
         assert lines[-1].startswith("Nếu có gì")
+
+
+# --- dòng "khách vừa KHÔNG chốt" ở lượt kế (lỗi live 3/5/6) -------------------
+
+class TestDeclinedLineInLoadContext:
+    @pytest.fixture
+    async def lan(self, test_db):
+        from app.services.auth import AuthService
+        return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+    @staticmethod
+    def tomorrow_at(hour):
+        from datetime import timedelta
+        from app.core.clock import TZ
+        local = datetime.now(TZ) + timedelta(days=1)
+        return local.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+    async def test_a_fresh_rejection_is_in_the_block(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        assert "KHÔNG chốt" in block and "[declined: book" in block
+
+    async def test_a_newer_proposal_hides_the_old_decline(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        await proposals.create(lan, "book", self.tomorrow_at(16), "làm tóc")
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        assert "declined" not in block
+
+    async def test_a_customer_message_after_the_decline_ends_it(self, test_db, lan):
+        from app.agents.booking_graph.context import load_context
+        from app.core.clock import now_ms
+        from app.services.conversation import ConversationService
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        await ConversationService(test_db).append(str(lan.id), "user", "vậy giờ sao em",
+                                                  created_at=now_ms())
+        block = (await load_context(test_db, lan, "à mà thôi"))["context_block"]
+        assert "declined" not in block
+
+    async def test_an_old_decline_is_not_shown(self, test_db, lan, monkeypatch):
+        from datetime import timedelta
+        from app.agents.booking_graph import context
+        from app.core.clock import now_utc
+        from app.services.proposal import ProposalService
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
+        await proposals.reject(lan, str(p.id))
+        later = now_utc() + timedelta(minutes=context.DECLINED_MAX_AGE_MINUTES + 1)
+        monkeypatch.setattr(context, "now_utc", lambda: later)
+        block = (await context.load_context(test_db, lan, "sao em"))["context_block"]
+        assert "declined" not in block
+
+    async def test_move_line_names_both_times_and_says_the_old_one_stays(self, test_db, lan):
+        from app.agents.booking_graph.context import format_vi_datetime, load_context
+        from app.services.appointment import AppointmentService
+        from app.services.proposal import ProposalService
+        appt = await AppointmentService(test_db).create(lan, self.tomorrow_at(15), note="x")
+        proposals = ProposalService(test_db)
+        p = await proposals.create(lan, "move", self.tomorrow_at(16), None, target=appt)
+        await proposals.supersede(lan, str(p.id))
+        block = (await load_context(test_db, lan, "sao em"))["context_block"]
+        line = next(x for x in block.splitlines() if "declined" in x)
+        assert format_vi_datetime(self.tomorrow_at(15)) in line
+        assert format_vi_datetime(self.tomorrow_at(16)) in line
+        assert "lịch cũ vẫn giữ nguyên" in line
+        assert f"[declined: move, iso: {self.tomorrow_at(16).isoformat()}]" in line

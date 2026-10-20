@@ -13,7 +13,8 @@ def is_enabled() -> bool:
 
 
 def _load_handler_class():
-    """v3: `langfuse.langchain`. v2 dùng `langfuse.callback` và ĐÃ BỎ."""
+    """v3 trở lên (đang pin 5.0.2): `langfuse.langchain`. v2 dùng
+    `langfuse.callback` và ĐÃ BỎ."""
     try:
         from langfuse.langchain import CallbackHandler
 
@@ -26,8 +27,8 @@ def _load_handler_class():
 def _init_client() -> bool:
     """Khởi tạo client MỘT lần. Credential nằm ở đây, không ở handler.
 
-    Đây là điểm khác lớn nhất giữa v2 và v3: v2 truyền public_key/secret_key
-    thẳng vào CallbackHandler, v3 thì handler không nhận tham số nào — truyền
+    Đây là điểm khác lớn nhất giữa v2 và v3+: v2 truyền public_key/secret_key
+    thẳng vào CallbackHandler, v3+ thì handler không nhận tham số nào — truyền
     vào sẽ ném TypeError, và vì mọi ngoại lệ đều bị nuốt nên hậu quả là trace
     tắt hẳn mà log chỉ có một dòng warning.
     """
@@ -39,10 +40,12 @@ def _init_client() -> bool:
     try:
         from langfuse import Langfuse
 
+        # `base_url`, không phải `host`: langfuse 5.x đánh dấu `host` deprecated;
+        # bản bỏ hẳn nó thì dòng này nổ và trace tắt im lặng qua nhánh nuốt lỗi.
         Langfuse(
             public_key=settings.langfuse_public_key.get_secret_value(),
             secret_key=settings.langfuse_secret_key.get_secret_value(),
-            host=settings.langfuse_host or "https://cloud.langfuse.com",
+            base_url=settings.langfuse_host or "https://cloud.langfuse.com",
         )
         _client_ready = True
         return True
@@ -75,7 +78,7 @@ def get_trace_metadata(
 ) -> Dict[str, str]:
     """Metadata gắn vào `config` của lượt chạy.
 
-    Trong v3, danh tính đi qua metadata chứ không qua handler. Tên khóa phải
+    Từ v3, danh tính đi qua metadata chứ không qua handler. Tên khóa phải
     đúng nguyên văn — Langfuse chỉ đọc tiền tố `langfuse_`, sai tên thì trace
     vẫn lên nhưng mất đường lần ngược từ một lịch sai về đúng cuộc hội thoại.
     """

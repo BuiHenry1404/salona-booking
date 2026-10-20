@@ -40,6 +40,12 @@ async def lifespan(app: FastAPI):
         from app.infrastructure.database import ensure_indexes
         await ensure_indexes(app.state.db)
 
+        # Checkpointer (lịch sử model theo thread) — cùng DB, cùng fail-hard:
+        # thiếu nó thì mọi lượt chat đều hỏng, chạy tiếp chỉ giấu lỗi.
+        from app.agents.checkpoint import make_checkpointer, set_checkpointer
+        app.state.checkpointer = make_checkpointer()
+        set_checkpointer(app.state.checkpointer)
+
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
         
     except Exception as e:
@@ -114,6 +120,12 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, 'socketio_service', None):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
+
+    if getattr(app.state, 'checkpointer', None) is not None:
+        from app.agents.checkpoint import set_checkpointer
+        set_checkpointer(None)
+        app.state.checkpointer.close()
+        app.state.checkpointer = None
 
     # Shutdown database connection
     if hasattr(app.state, 'mongo_db'):

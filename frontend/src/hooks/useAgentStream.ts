@@ -162,12 +162,18 @@ export function useAgentStream() {
     };
 
     const onError = (data: { message?: string }) => {
+      // Lượt hỏng giữa lúc đang stream (model nổ sau vài token, hoặc thử lại
+      // một lần rồi vẫn hỏng — token của CẢ HAI lần đã nối vào cùng bubble):
+      // bỏ bubble dở đó, chỉ để lại câu lỗi. Như `complete` thay bubble bằng
+      // câu chốt, `error` thay nó bằng câu lỗi — khách lớn tuổi không phải
+      // đọc nửa câu rồi tới "Máy đang bận". Capture TRƯỚC setState (xem onComplete).
+      const streamId = streamingId.current;
       streamingId.current = null;
       setSteps([]);
       setPhase("idle");
       setFailed(true);
       setMessages((prev) => [
-        ...prev,
+        ...(streamId ? prev.filter((m) => m.id !== streamId) : prev),
         {
           id: nextId(),
           role: "bot" as const,
