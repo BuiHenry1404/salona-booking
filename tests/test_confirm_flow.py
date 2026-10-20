@@ -682,3 +682,36 @@ async def test_queue_line_disappears_once_nothing_waits(test_db, user, models):
     models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
     await turn(test_db, user, "dạ ko em")
     assert "[queued" not in context_seen(models)
+
+
+# --- Lỗi live B3 (chú Hùng, history-B3) ---------------------------------------
+async def hung_first_turn(test_db, hung, models, agent_reply=None):
+    nine, two = in_two_days(9), in_two_days(14)
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {
+            "start_at": nine.isoformat(), "note": "cắt tóc cho anh Hùng",
+            "queued": [{"start_at": two.isoformat(), "note": "cắt tóc cho cháu"}]}),
+        AIMessage(agent_reply or f"Em đang giữ lịch cắt tóc cho anh Hùng vào "
+                                 f"{format_vi_datetime(nine)}. Anh Hùng xác nhận giúp em nhé?"),
+    ]
+    return await turn(test_db, hung, "chao em, thu 4 nay chu muon cat toc luc 9h sang voi 2h "
+                                     "chieu cho thang chau nua")
+
+
+async def test_live_b3_confirmation_never_claims_the_queued_booking(test_db, hung, models):
+    """Lượt 2: câu chốt LLM bịa "2 giờ chiều em cũng đã giữ cho cháu rồi" trong
+    khi 2 giờ chỉ đang chờ. Phrase được báo là CHƯA giữ, và guard đổi sang câu
+    cứng khi câu chốt vẫn nhận vơ."""
+    nine, two = in_two_days(9), in_two_days(14)
+    when9, when2 = format_vi_datetime(nine), format_vi_datetime(two)
+    await hung_first_turn(test_db, hung, models)
+    models.phrase.replies += [AIMessage(
+        f"Dạ em đã ghi cho anh Hùng lúc {when9}. Còn 2 giờ chiều em cũng đã giữ cho cháu rồi ạ.")]
+    out = await turn(test_db, hung, "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao")
+    answer = out[-1][1]["answer"]
+    assert "đã giữ cho cháu" not in answer
+    assert answer.startswith(f"Xong rồi ạ. Hẹn gặp anh Hùng {when9} nhé.")
+    assert when2 in answer                                         # câu mời lịch kế vẫn còn
+    system = models.phrase.calls[-1][0].content
+    assert when2 in system and "NOT held" in system

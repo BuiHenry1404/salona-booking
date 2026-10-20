@@ -6,7 +6,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agents.booking_graph.middleware.layout import STATE_HEADER
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS
 from app.agents.booking_graph.history import model_history
-from app.agents.booking_graph.prompts import PHRASE_KIND_SENTENCES, PHRASE_PROMPT
+from app.agents.booking_graph.prompts import (PHRASE_KIND_SENTENCES, PHRASE_PROMPT,
+                                              PHRASE_QUEUED_RULE)
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
 
@@ -27,7 +28,10 @@ async def write_phrase(state) -> str:
     # tiếng Anh vào chỗ này, nó có thể rò vào câu trả lời tiếng Việt.
     when_rule = (f"You MUST include this exact text for the date and time:\n{when}"
                  if when else "")
+    queued = fact.get("queued_when") or []
+    queued_rule = PHRASE_QUEUED_RULE.format(when="; ".join(queued)) if queued else ""
     system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
+                                  queued_rule=queued_rule,
                                   address=fact.get("address") or "anh chị")
     # Lịch sử cắt đúng như agent (tin đã nén không gửi lại) — xem history.py.
     history = model_history(state["messages"][:-1], after=state.get("history_after"),

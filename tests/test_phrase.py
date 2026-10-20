@@ -82,3 +82,18 @@ class TestWritePhrase:
         system = model.calls[0][0].content
         assert "MUST include this exact text" not in system
         assert "no time" not in system
+
+    async def test_queued_requests_are_stated_as_not_held(self, patch_model):
+        """Lỗi live B3 #1: câu chốt bịa "2 giờ em cũng đã giữ cho cháu rồi" khi
+        2 giờ chỉ đang CHỜ. Đầu vào phrase phải nói rõ: chưa giữ, chưa đặt."""
+        model = patch_model("Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em ghi xong rồi ạ.")
+        fact = {**FACT, "queued_when": ["Thứ Ba 15/9, 2 giờ chiều"]}
+        await write_phrase(a_state(confirm_fact=fact))
+        system = model.calls[0][0].content
+        assert "Thứ Ba 15/9, 2 giờ chiều" in system
+        assert "NOT held" in system and "NOT booked" in system
+
+    async def test_no_queue_no_queue_sentence(self, patch_model):
+        model = patch_model("Dạ anh Tám, em ghi xong rồi ạ.")
+        await write_phrase(a_state())
+        assert "NOT held" not in model.calls[0][0].content

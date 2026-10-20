@@ -39,6 +39,11 @@ def rewrites(monkeypatch):
     return _install
 
 
+# Lịch có thật lúc 9 giờ sáng: câu "em giữ chỗ … 9 giờ sáng rồi" là đúng sự thật
+# (lỗi live B3 #1 — lời nhận "đã giữ" phải khớp DB).
+BOOKED_9 = "  - Thứ Ba 15/9, 9 giờ sáng — cắt tóc [id: a9, iso: 2026-09-15T09:00:00+07:00]"
+
+
 def a_state(draft, previous=(), customer="giá bao nhiêu", **extra):
     return {"messages": [HumanMessage(content=customer), AIMessage(content=draft)],
             "previous_replies": list(previous), "customer_text": customer,
@@ -81,7 +86,8 @@ class TestGuard:
 
     async def test_second_pass_that_lost_a_time_falls_back(self, rewrites):
         rewrites("Dạ anh Tám, em giữ chỗ rồi ạ.")
-        out = await guard(a_state("Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."))
+        out = await guard(a_state("Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ.",
+                                  context_block=BOOKED_9))
         assert out["answer"] == "Chị Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
         assert "content" in out["violations"]
 
@@ -98,7 +104,7 @@ class TestGuard:
         original = "Dạ anh Tám, em giữ chỗ Thứ Ba 15/9, 9 giờ sáng rồi ạ."
         prev = [original]
         rewrites("Dạ anh Tám, em giữ chỗ rồi ạ.")
-        out = await guard(a_state(original, previous=prev))
+        out = await guard(a_state(original, previous=prev, context_block=BOOKED_9))
         assert "content" in out["violations"]
         assert out["answer"] == original
 
@@ -261,11 +267,130 @@ class TestNoClaimBeforeWriting:
         "Dạ em đã đặt cho anh Tám Thứ Ba 15/9, 9 giờ sáng rồi ạ.",
     ])
     async def test_no_proposal_this_turn_leaves_the_sentence_alone(self, rewrites, draft):
+        """Không có đề xuất mới thì `unclaim` không sửa. Lời "đã đặt" vẫn phải
+        khớp DB (TestClaimsMatchFacts) — ở đây lịch 9 giờ có thật."""
         rewrites()
-        assert (await guard(a_state(draft)))["answer"] == draft
+        assert (await guard(a_state(draft, context_block=BOOKED_9)))["answer"] == draft
 
     async def test_customer_already_booked_is_not_touched(self, rewrites):
         """`already_yours`: "anh đã đặt" là sự thật về khách, không phải em nhận vơ."""
         rewrites()
         draft = "Dạ anh Tám đã đặt lịch Thứ Ba 20/10, 3 giờ chiều rồi ạ, anh muốn đặt thêm không?"
         assert (await guard(a_state(draft, proposal_id="p1")))["answer"] == draft
+
+
+# --- Lỗi live B3 #1: nhận vơ "đã giữ/đã đặt" một giờ KHÔNG có trong DB ---------
+import json  # noqa: E402
+
+from langchain_core.messages import ToolMessage  # noqa: E402
+
+HUNG = User(phone="0987654321", hashed_password="x", full_name="Chú Hùng")
+HUNG_FACT = {"kind": "booked", "when": "Thứ Tư 21/10, 9 giờ sáng", "note": "cắt tóc cho chú",
+             "address": "anh Hùng", "error": None,
+             "queued_when": ["Thứ Tư 21/10, 2 giờ chiều"]}
+HUNG_FALLBACK = "Xong rồi ạ. Hẹn gặp anh Hùng Thứ Tư 21/10, 9 giờ sáng nhé."
+# Câu chốt thật ở lượt 2 (history-B3), trước câu mời lịch kế do code nối.
+B3_TURN2 = ("Dạ em đã ghi cho anh Hùng lúc Thứ Tư 21/10, 9 giờ sáng. "
+            "Còn 2 giờ chiều em cũng đã giữ cho cháu rồi ạ.")
+APPT_LINE = ("Lịch sắp tới của khách:\n  - Thứ Tư 21/10, 9 giờ sáng — cắt tóc cho chú "
+             "[id: a1, iso: 2026-10-21T09:00:00+07:00]")
+
+
+def held(iso, spoken, **extra):
+    return ToolMessage(content=json.dumps({"held": {"iso": iso, "spoken": spoken}, **extra},
+                                          ensure_ascii=False),
+                       name="propose_appointment", tool_call_id="t1")
+
+
+async def hung_guard(state):
+    return await GuardMiddleware(HUNG).aafter_agent(state, None)
+
+
+class TestClaimsMatchFacts:
+    async def test_b3_turn2_confirmation_claiming_the_queued_time_falls_back(self, rewrites):
+        calls = rewrites()
+        state = {"messages": [HumanMessage(content="dc em"), AIMessage(content=B3_TURN2)],
+                 "context_block": "Gọi khách là: anh Hùng.", "confirm_fact": HUNG_FACT,
+                 "fallback": HUNG_FALLBACK, "previous_replies": [], "customer_text":
+                 "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao"}
+        out = await hung_guard(state)
+        assert out["answer"] == HUNG_FALLBACK and "claim" in out["violations"]
+        assert calls == []
+
+    async def test_true_claim_about_the_booked_time_is_kept_in_the_phrase(self, rewrites):
+        rewrites()
+        draft = "Dạ em đã ghi cho anh Hùng lúc Thứ Tư 21/10, 9 giờ sáng rồi ạ."
+        state = {"messages": [HumanMessage(content="dc em"), AIMessage(content=draft)],
+                 "context_block": "", "confirm_fact": HUNG_FACT, "fallback": HUNG_FALLBACK,
+                 "previous_replies": [], "customer_text": "dc em"}
+        assert (await hung_guard(state))["answer"] == draft
+
+    @pytest.mark.parametrize("claim", [
+        "Còn 2 giờ chiều em cũng đã giữ cho cháu rồi ạ.",
+        "Em đã đặt luôn 2 giờ chiều cho cháu rồi ạ.",
+        "Lịch 2 giờ chiều em đang giữ cho cháu ạ.",
+        "Dạ em đã đặt lịch cho anh Hùng rồi ạ.",           # không giờ, không có gì trong DB
+    ])
+    async def test_made_up_claim_on_a_turn_without_tools_is_rewritten(self, rewrites, claim):
+        """Lượt không gọi tool nào (không proposal_id): câu nhận vơ vẫn bị bắt."""
+        calls = rewrites("Dạ, lịch 2 giờ chiều em chưa giữ chỗ ạ.")
+        state = {"messages": [HumanMessage(content="2h thi sao em"), AIMessage(content=claim)],
+                 "context_block": "Khách chưa có lịch nào sắp tới.", "previous_replies": [],
+                 "customer_text": "2h thi sao em"}
+        out = await hung_guard(state)
+        assert calls and "claim" in calls[0]["codes"]
+        assert out["answer"] == "Dạ, lịch 2 giờ chiều em chưa giữ chỗ ạ."
+
+    async def test_claim_that_survives_the_rewrite_is_dropped(self, rewrites):
+        rewrites("Dạ 2 giờ chiều em đã giữ cho cháu rồi ạ.")
+        draft = "Dạ 2 giờ chiều em đã giữ cho cháu rồi ạ. Anh Hùng cần gì thêm không ạ?"
+        state = {"messages": [HumanMessage(content="2h?"), AIMessage(content=draft)],
+                 "context_block": "", "previous_replies": [], "customer_text": "2h?"}
+        out = await hung_guard(state)
+        assert "đã giữ" not in out["answer"]
+        assert out["answer"] == "Anh Hùng cần gì thêm không ạ?"
+
+    async def test_claim_about_an_upcoming_appointment_is_true(self, rewrites):
+        calls = rewrites()
+        draft = "Dạ 9 giờ sáng Thứ Tư em đã đặt cho anh Hùng rồi ạ."
+        state = {"messages": [HumanMessage(content="lich chu con khong"), AIMessage(content=draft)],
+                 "context_block": APPT_LINE, "previous_replies": [], "customer_text": "x"}
+        assert (await hung_guard(state))["answer"] == draft and calls == []
+
+    async def test_claim_about_this_turns_hold_is_true_and_others_are_not(self, rewrites):
+        calls = rewrites()
+        ok = "Dạ em đang giữ 2 giờ chiều Thứ Tư 21/10 cho cháu, anh Hùng xác nhận giúp em nhé?"
+        state = {"messages": [HumanMessage(content="u giu luon em"),
+                              held("2026-10-21T14:00:00+07:00", "Thứ Tư 21/10, 2 giờ chiều"),
+                              AIMessage(content=ok)],
+                 "context_block": APPT_LINE, "previous_replies": [], "customer_text": "u",
+                 "proposal_id": "p2"}
+        assert (await hung_guard(state))["answer"] == ok and calls == []
+
+        bad = "Dạ em đang giữ 2 giờ chiều cho cháu, còn 4 giờ chiều em cũng đã giữ rồi ạ."
+        calls = rewrites("Dạ em đang giữ 2 giờ chiều cho cháu ạ.")
+        out = await hung_guard({**state, "messages": [*state["messages"][:2], AIMessage(content=bad)]})
+        assert calls and "claim" in calls[0]["codes"]
+
+    @pytest.mark.parametrize("draft", [
+        "Dạ em ghi nhận rồi ạ. Anh Hùng muốn giữ giờ khác không ạ?",
+        "Dạ lịch đó em đã hủy rồi ạ.",
+        "Dạ em chưa giữ 2 giờ chiều đâu ạ, anh Hùng muốn em giữ luôn không ạ?",
+        "Còn lịch 2 giờ chiều, anh Hùng muốn em giữ chỗ tiếp luôn không ạ?",
+    ])
+    async def test_sentences_that_claim_nothing_are_left_alone(self, rewrites, draft):
+        calls = rewrites()
+        state = {"messages": [HumanMessage(content="x"), AIMessage(content=draft)],
+                 "context_block": "", "previous_replies": [], "customer_text": "x"}
+        assert (await hung_guard(state))["answer"] == draft and calls == []
+
+    async def test_ghi_nhan_is_not_a_booking_claim_on_a_proposal_turn(self, rewrites):
+        """"em đã ghi nhận" là "em đã nghe", không phải "em đã ghi lịch" —
+        `unclaim` không được biến nó thành "em giữ chỗ nhận"."""
+        calls = rewrites()
+        draft = ("Dạ em đã ghi nhận yêu cầu hủy lịch Thứ Tư 21/10, 9 giờ sáng, "
+                 "anh Hùng xác nhận giúp em nhé?")
+        state = {"messages": [HumanMessage(content="huy di em"), AIMessage(content=draft)],
+                 "context_block": APPT_LINE, "previous_replies": [], "customer_text": "x",
+                 "proposal_id": "p3"}
+        assert (await hung_guard(state))["answer"] == draft and calls == []

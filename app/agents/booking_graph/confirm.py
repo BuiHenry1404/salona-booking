@@ -18,6 +18,7 @@ không còn pending và coi câu khách là tin mới — `approve` idempotent n
 bao giờ ghi hai lần.
 """
 import asyncio
+from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 from langchain_core.messages import AIMessage
@@ -192,7 +193,11 @@ def make_confirm_node(
             if queue and fact.get("kind") in ("booked", "moved", "cancelled"):
                 # Chốt xong một lịch: CODE mời lịch kế trong hàng chờ (guard nối
                 # câu này sau câu chốt). Chưa giữ chỗ gì — lượt sau agent đề xuất.
-                out = {**out, "confirm_fact": {**fact, "then": queue_offer(queue, address)}}
+                out = {**out, "confirm_fact": {
+                    **fact, "then": queue_offer(queue, address),
+                    # Phrase phải biết các giờ này CHƯA giữ (lỗi live B3 #1).
+                    "queued_when": [format_vi_datetime(datetime.fromisoformat(q["start_at"]))
+                                    for q in queue]}}
             return {**out, "proposal_id": None, "gate_next": "phrase"}
 
         if decision == "unclear":

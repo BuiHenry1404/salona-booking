@@ -8,6 +8,7 @@ bối cảnh. Ở đây phát hiện tất định; LLM chỉ dùng để viết
 `language` bỏ 2026-09-14 — chưa quan sát thấy với model này, prompt đã ghim
 sẵn ngôn ngữ đầu ra.
 """
+import json
 import re
 from difflib import SequenceMatcher
 from typing import Awaitable, Callable, List, Optional, Sequence
@@ -109,7 +110,7 @@ def strip_tool_names(text: str) -> str:
 # thì không sửa: "em đã hủy rồi ạ" có thể đúng về một lượt trước.
 _CLAIM = re.compile(
     r"(?P<lead>(?:^|(?<=[.!?…]\s)|(?<=\bDạ,\s)|(?<=\bDạ\s)|(?<=\bdạ,\s))(?:[Ee]m\s+)?|\b[Ee]m\s+)"
-    r"(?:đã|vừa)\s+(?P<verb>đặt|chốt|ghi|dời|đổi|hủy|huỷ)"
+    r"(?:đã|vừa)\s+(?P<verb>đặt|chốt|ghi(?!\s+(?:nhận|lại))|dời|đổi|hủy|huỷ)"
     r"(?P<obj>\s+(?:lịch|chỗ|hẹn))?(?:\s+xong)?")
 _RỒI_AFTER = re.compile(r"\s+rồi(?=\s*(?:ạ\b|[,.!?…]|$))")
 
@@ -137,6 +138,94 @@ def unclaim(draft: str) -> str:
         pos = stop
     out.append(draft[pos:])
     return "".join(out)
+
+
+# --- lời nhận "đã giữ/đã đặt" phải khớp DB của lượt này (lỗi live B3 #1) ------
+# Câu chốt bịa "Còn 2 giờ chiều em cũng đã giữ cho cháu rồi ạ" khi 2 giờ chỉ
+# đang CHỜ (hàng chờ), và lượt không gọi tool vẫn có thể bịa "em đã đặt". Mọi
+# lượt: mệnh đề nhận ĐÃ giữ/đặt/ghi/chốt (hoặc "đang giữ", "giữ … rồi") chỉ
+# được nói về giờ có thật — lịch sắp tới trong khối bối cảnh (dòng `[id: …]`),
+# đề xuất lượt này (kết quả tool), giờ code vừa ghi (`confirm_fact.when`).
+# Dời/hủy không nằm ở đây: giờ đã hủy không còn trong lịch sắp tới mà câu vẫn
+# đúng — phần đó là `unclaim` ở lượt đề xuất. "ghi nhận"/"ghi lại" không phải
+# ghi lịch.
+_CLAIM_VERB = r"(?:giữ|đặt|ghi(?!\s+(?:nhận|lại))|chốt)"
+_CLAIMED = re.compile(rf"\b(?:đã|vừa|đang)\s+(?:được\s+)?{_CLAIM_VERB}\b"
+                      rf"|\b{_CLAIM_VERB}\b[^.!?…]*?\brồi\b", re.I)
+_CLAIM_NEGATED = re.compile(r"\b(?:chưa|không|ko)\b", re.I)
+# Mệnh đề: tách ở ";", ở "còn" mở vế mới, và ở dấu phẩy KHÔNG đứng trước số
+# ("Thứ Tư 21/10, 9 giờ sáng" là một mốc, không phải hai vế).
+_CLAUSE_SPLIT = re.compile(r";|,(?!\s*\d)|\s+(?=[Cc]òn\s)")
+_SPOKEN_CLOCK = re.compile(r"\b(\d{1,2})\s+giờ(?:\s+(rưỡi|\d{2}))?"
+                           r"(?:\s+(sáng|trưa|chiều|tối|đêm))?", re.I)
+
+
+def clock_keys(text: str) -> List[tuple]:
+    """(giờ đọc, phút, buổi|None) cho mọi giờ đọc kiểu "9 giờ sáng" trong câu."""
+    out = []
+    for m in _SPOKEN_CLOCK.finditer(text or ""):
+        minute = 30 if (m.group(2) or "").lower() == "rưỡi" else int(m.group(2) or 0)
+        out.append((int(m.group(1)), minute, (m.group(3) or "").lower() or None))
+    return out
+
+
+def _same_clock(said: tuple, known: tuple) -> bool:
+    return said[:2] == known[:2] and (said[2] is None or said[2] == known[2])
+
+
+def claim_facts(state) -> dict:
+    """Những giờ được phép nói "đã giữ/đã đặt" ở lượt này — đọc từ chuỗi CODE
+    viết (khối bối cảnh, kết quả tool, confirm_fact), không từ lời model."""
+    spoken = [line for line in (state.get("context_block") or "").splitlines() if "[id:" in line]
+    for message in state.get("messages") or []:
+        if getattr(message, "type", "") != "tool" or getattr(message, "name", "") not in (
+                "propose_appointment", "cancel_appointment"):
+            continue
+        try:
+            data = json.loads(message.content)
+        except (TypeError, ValueError):
+            continue
+        for key in ("held", "will_cancel"):
+            at = (data.get(key) or {}) if isinstance(data, dict) else {}
+            at = at.get("at", at) if key == "will_cancel" else at
+            if isinstance(at, dict) and at.get("spoken"):
+                spoken.append(at["spoken"])
+    fact = state.get("phrase_fact") or state.get("confirm_fact") or {}
+    if fact.get("when"):
+        spoken.append(fact["when"])
+    held_unknown = bool(state.get("proposal_id")) and not any(
+        getattr(m, "type", "") == "tool" for m in state.get("messages") or [])
+    return {"clocks": [k for s in spoken for k in clock_keys(s)], "any": bool(spoken),
+            "unknown": held_unknown}
+
+
+def _clauses(sentence: str) -> List[str]:
+    return [c for c in _CLAUSE_SPLIT.split(sentence) if c and c.strip()]
+
+
+def false_claim(clause: str, facts: dict) -> bool:
+    if facts.get("unknown") or not _CLAIMED.search(clause) or _CLAIM_NEGATED.search(clause):
+        return False
+    said = clock_keys(clause)
+    if not said:
+        return not facts["any"]
+    return any(not any(_same_clock(s, k) for k in facts["clocks"]) for s in said)
+
+
+def has_false_claim(text: str, facts: Optional[dict]) -> bool:
+    if not facts:
+        return False
+    return any(false_claim(c, facts) for s in _SENTENCE_END.split(text or "") for c in _clauses(s))
+
+
+def drop_false_claims(text: str, facts: dict) -> str:
+    """Bỏ nguyên câu có mệnh đề nhận vơ — lưới cuối khi rewrite không sửa được."""
+    kept = [s for s in _SENTENCE_END.split((text or "").strip())
+            if not any(false_claim(c, facts) for c in _clauses(s))]
+    out = " ".join(s for s in kept if s.strip()).strip()
+    if out.startswith(("Dạ ", "Dạ, ")) or not out:
+        return out
+    return out[:1].upper() + out[1:]
 
 
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
@@ -266,8 +355,10 @@ def content_kept(original: str, rewritten: str) -> bool:
 
 
 def find_violations(draft: str, *, previous_replies: Sequence[str], address: str, name: str,
-                    customer_text: str) -> List[str]:
+                    customer_text: str, claims: Optional[dict] = None) -> List[str]:
     codes: List[str] = []
+    if has_false_claim(draft, claims):
+        codes.append("claim")
     if not customer_asked_to_repeat(customer_text) and repeats(draft, previous_replies):
         codes.append("repeat")
     if check_pronoun(draft, address, name):
@@ -337,8 +428,9 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
 
     previous = state.get("previous_replies") or []
     customer_text = state.get("customer_text") or ""
+    claims = claim_facts(state)
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
-                            customer_text=customer_text)
+                            customer_text=customer_text, claims=claims)
     if not codes:
         return {"answer": draft, "answer_source": "llm", "violations": []}
 
@@ -346,10 +438,17 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
     rewritten = strip_tool_names(new) if new else draft
     second = find_violations(rewritten, previous_replies=previous, address=address, name=name,
-                             customer_text=customer_text)
-    if not content_kept(draft, rewritten):
+                             customer_text=customer_text, claims=claims)
+    if not content_kept(draft, rewritten) and "claim" not in codes:
         second.append("content")
-    return _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)
+    out = _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)
+    if has_false_claim(out["answer"], claims):
+        # Rewrite không gỡ được lời nhận vơ: bỏ hẳn câu đó (tất định). Câu
+        # sai sự thật tệ hơn mọi lỗi giọng.
+        logger.warning("guard_claim_dropped")
+        dropped = drop_false_claims(out["answer"], claims)
+        out = {**out, "answer": dropped or f"Dạ, {address} cần em giữ chỗ giờ nào ạ?"}
+    return out
 
 
 def _guard_phrase(state, draft, fact, address):
@@ -365,7 +464,8 @@ def _guard_phrase(state, draft, fact, address):
         bad.append("error")
     bad += find_violations(draft, previous_replies=[], address=address,
                            name=(address.split()[1] if address != "anh chị" and len(address.split()) > 1 else ""),
-                           customer_text=state.get("customer_text") or "")
+                           customer_text=state.get("customer_text") or "",
+                           claims=claim_facts(state))
     if bad:
         logger.info("phrase_fallback", extra={"codes": bad})
         return {"answer": fallback, "answer_source": "code", "violations": bad}

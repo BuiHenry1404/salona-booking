@@ -278,6 +278,7 @@ VIOLATION_HINTS = {
     "pronoun": "It addresses the customer with the wrong pronoun or the wrong register (a word for elders, or a child speaker); use exactly the form given below, in the em — anh/chị register.",
     "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do. Never change a customer's name — only clock times and dates.",
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
+    "claim": "It says a time is already held or booked although it is not; only the customer's appointments listed in the context block and the one you are holding this turn are held or booked. Say any other time is not held yet.",
 }
 
 # Câu chốt lịch: code đã ghi xong, LLM chỉ viết lời. `{when_rule}` (rỗng khi
@@ -290,7 +291,7 @@ PHRASE_PROMPT = f"""You are the receptionist at a Vietnamese nail and hair salon
 {{kind_sentence}}
 
 Tell the customer in one or two natural Vietnamese sentences that fit the
-conversation so far. {{when_rule}}
+conversation so far. {{when_rule}}{{queued_rule}}
 You MUST address the customer as: {{address}}
 Do not add any other fact. Do not ask a new question unless the booking
 failed, in which case ask them to pick another time.
@@ -298,6 +299,12 @@ failed, in which case ask them to pick another time.
 VOICE: call yourself "em"; short sentences; no technical terms; no bullet
 points. Never call yourself "con" and never say "cô", "chú" or "bác" — that is
 a different register and does not go with "anh"/"chị"."""
+
+# Lịch còn CHỜ (đặt lần lượt) — lỗi live B3 #1: câu chốt bịa "2 giờ em cũng đã
+# giữ rồi". Chỉ giờ (chuỗi code viết), không ghi chú khách.
+PHRASE_QUEUED_RULE = ("\nThe customer also asked for {when}. That request is NOT held and NOT "
+                      "booked yet; never say or suggest it is. Do not mention it at all — a "
+                      "separate sentence after yours offers it.")
 
 PHRASE_KIND_SENTENCES = {
     "booked": "The salon has just BOOKED the appointment below for this customer.",
