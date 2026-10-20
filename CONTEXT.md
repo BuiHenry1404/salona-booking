@@ -161,6 +161,24 @@ Khách ──socket──▶ run_turn
   không nêu ngày thì dùng iso của dòng đó làm neo. `parse_vi_time`: có neo mà
   câu nêu giờ cụ thể và KHÔNG nêu ngày thì ngày của neo thắng ngày LLM tự điền
   (`put_on_anchor_day`; regex parser không đổi — bẫy #11).
+- Nhiều lịch trong một tin → đặt LẦN LƯỢT (quyết định của chủ dự án, lỗi live
+  B2 #2: "9h cho chú, 2h cho thằng cháu" bị gộp, ghi chú nhầm người, rồi hai
+  đề xuất huỷ qua lại). Agent đề xuất lịch ĐẦU; các lịch sau đi vào tham số
+  `queued` của `propose_appointment` (mỗi mục giờ + ghi chú riêng; tool kiểm
+  giờ, bỏ mục hỏng/đã qua). `ConfirmMiddleware.next_queue` ghi hàng chờ vào
+  state graph (`queued`, sống trong thread): tool trả `queued` thì THAY, không
+  trả thì giữ; mục trùng giờ vừa giữ rời hàng. Mỗi lượt `make_agent_node` chèn
+  MỘT dòng code viết `[queued, iso: …]` vào khối bối cảnh (`context.queued_line`);
+  hết hiệu lực khi giờ đã qua hoặc sau `QUEUE_MAX_AGE_MINUTES` = 30. Chốt xong
+  một lịch mà còn hàng chờ → câu chốt + câu mời lịch kế do CODE viết
+  (`confirm_fact.then`, guard nối sau câu chốt) — chưa giữ chỗ gì, lượt sau agent
+  đề xuất. Còn hàng chờ thì supervisor đưa thẳng vào booking (không gọi model).
+  Lưới phủ quyết: với hàng chờ, mệnh đề CHỈ nói về một lịch đang chờ (có giờ,
+  khớp trọn lịch chờ, khác giờ đề xuất) được bỏ khỏi phép kiểm `question` /
+  `other_time`; phủ định/hoãn vẫn xét cả câu; còn lại rỗng → xét cả câu
+  (fail-closed). Bộ phân loại được báo giờ các lịch đang chờ (không kèm ghi chú
+  khách — tiêm lệnh). Ghi chú KHÔNG tự chép từ hàng chờ sang đề xuất: model chép
+  từ dòng `[queued …]` (rule 10).
 - Giục dời/hủy bằng chính động từ (lỗi live B2 #1, "u doi di em" vẫn bị model
   thật đọc là `change`): với đề xuất `move`/`cancel`, câu CHỈ gồm tiểu từ đồng ý +
   đúng động từ của việc đó (dời/đổi/doi; hủy/huỷ/huy) + tiểu từ đệm (đi, nha,

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from app.agents.booking_graph.context import format_vi_datetime
 from app.agents.booking_graph.prompts import (CLASSIFY_GO_AHEAD, CLASSIFY_KIND,
-                                              CLASSIFY_PROMPT)
+                                              CLASSIFY_PROMPT, CLASSIFY_QUEUE)
 from app.agents.booking_graph.timeparse import (_DAY_OFFSETS, _TIME_PATTERN,
                                                 _to_24h)
 from app.agents.llm import build_chat_model
@@ -267,11 +267,50 @@ def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Option
         return "negation"
     if _DEFERRAL.search(lowered) or _DEFERRAL_BARE.search(bare):
         return "deferral"
+    start = _as_datetime(proposal["start_at"])
+    # Hàng chờ (đặt lần lượt): mệnh đề CHỈ nói về một lịch đang chờ không được
+    # tính vào phép kiểm hỏi/giờ khác của đề xuất hiện tại. Phủ định/hoãn ở
+    # trên vẫn xét cả câu.
+    lowered = _without_queued_clauses(lowered, start, proposal.get("queued"), now)
+    unaccented = _unaccented_only(lowered)
     if _is_question(lowered, unaccented):
         return "question"
-    if mentions_other_time(lowered, _as_datetime(proposal["start_at"]), now):
+    if mentions_other_time(lowered, start, now):
         return "other_time"
     return None
+
+
+# Ranh giới mệnh đề: dấu câu, và "còn"/"con" nối sang ý khác ("…, còn 2 giờ
+# chiều cho thằng cháu thì sao"). Tách sai chỉ làm một mệnh đề ngắn đi — mệnh
+# đề bị BỎ vẫn phải nói đúng giờ đang chờ và không nói giờ đề xuất.
+_CLAUSE_SPLIT = re.compile(r"[.,;!?\n]+|\b(?:còn|con)\b", re.IGNORECASE)
+
+
+def _has_time(text: str) -> bool:
+    bare = strip_diacritics(text)
+    return any(True for _ in _times(text, _TIME)) or any(
+        True for _ in _times(bare, _TIME_BARE, _PERIOD_FROM_BARE))
+
+
+def _without_queued_clauses(lowered: str, start: datetime, queued, now: datetime) -> str:
+    """Bỏ những mệnh đề chỉ nói về một lịch ĐANG CHỜ (lỗi live B2 #2).
+
+    Mệnh đề bị bỏ khi: có nêu giờ, KHỚP trọn một lịch đang chờ (giờ, ngày,
+    thứ) và KHÁC giờ đề xuất. Phần còn lại rỗng (cả câu chỉ nói về lịch đang
+    chờ, vd. "2h chiều đi em") → giữ nguyên câu: fail-closed như cũ.
+    """
+    if not queued:
+        return lowered
+    waiting = [_as_datetime(q) for q in queued]
+    kept = []
+    for clause in _CLAUSE_SPLIT.split(lowered):
+        if (clause.strip() and _has_time(clause)
+                and mentions_other_time(clause, start, now)
+                and any(not mentions_other_time(clause, q, now) for q in waiting)):
+            continue
+        kept.append(clause)
+    remainder = " , ".join(c.strip() for c in kept if c.strip())
+    return remainder if remainder else lowered
 
 
 # --- bộ phân loại -------------------------------------------------------------
@@ -292,7 +331,16 @@ def _describe(proposal: Mapping[str, Any]) -> str:
             f"{format_vi_datetime(start)} ({to_local(start).isoformat()}).")
     # Dời/hủy có động từ riêng mà khách hay dùng để giục ("dời đi", "hủy đi");
     # đặt mới thì không — giữ nguyên mô tả cũ.
-    return f"{text} {CLASSIFY_GO_AHEAD}" if kind in ("move", "cancel") else text
+    if kind in ("move", "cancel"):
+        text = f"{text} {CLASSIFY_GO_AHEAD}"
+    queued = proposal.get("queued") or []
+    if queued:
+        # Chỉ GIỜ, không ghi chú: ghi chú là chữ khách gõ (tiếng Việt, có thể
+        # tiêm lệnh) — không đưa vào prompt phân loại.
+        when = "; ".join(f"{format_vi_datetime(_as_datetime(q))} "
+                         f"({to_local(_as_datetime(q)).isoformat()})" for q in queued)
+        text = f"{text} {CLASSIFY_QUEUE.format(when=when)}"
+    return text
 
 
 async def classify_reply(proposal: Mapping[str, Any], bot_question: str,

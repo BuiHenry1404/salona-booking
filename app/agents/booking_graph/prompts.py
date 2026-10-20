@@ -216,6 +216,14 @@ HARD RULES:
    Day, month and hour stay DIGITS, never number words.
    Never write digits separated by a colon.
 
+10. SEVERAL APPOINTMENTS IN ONE MESSAGE: book them one at a time. Tell the
+   customer plainly that you will book them one by one, propose ONLY the
+   first, and pass the others in propose_appointment's `queued`, each with
+   its own time and its own note — never give one request another's note.
+   A context block line tagged [queued ...] lists requests still waiting:
+   once the current proposal is approved or declined, offer the next one,
+   and when they agree, propose it with the note on that line.
+
 {_NO_REPEAT}
 
 VOICE: call yourself "em"; address the customer exactly as the "Gọi khách là"
@@ -338,6 +346,14 @@ CLASSIFY_KIND = {
 CLASSIFY_GO_AHEAD = ("A reply that only tells the receptionist to go ahead with this "
                      "action — using the action's own verb, with or without "
                      "diacritics, and no other time, day or condition — means approve.")
+
+# Đặt lần lượt (lỗi live B2 #2): khách xin nhiều lịch một lúc, các lịch sau nằm
+# trong hàng chờ. Câu đồng ý đề xuất này mà nhắc luôn lịch đang chờ không phải
+# đổi ý. Tiếng Anh, không ví dụ (bẫy #16); chỉ có giờ, không có ghi chú khách.
+CLASSIFY_QUEUE = ("The customer also has other requests waiting to be booked one at a time "
+                  "after this one: {when}. A reply may agree to this proposal and ask about "
+                  "a waiting request in the same message; mentioning a waiting request "
+                  "does not change this proposal.")
 
 REWRITE_PROMPT = f"""You are fixing ONE reply written by a salon receptionist to a customer.
 Rewrite it in Vietnamese so that it says the same thing with the same dates,

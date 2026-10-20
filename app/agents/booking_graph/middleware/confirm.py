@@ -14,7 +14,8 @@ trên id đó và chỉ `ProposalService.approve` mới ghi lịch. Đứng NGO�
 (F8) — khi đó không có đề xuất.
 """
 import json
-from typing import Any, Awaitable, Callable, Optional
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ToolCallRequest
@@ -22,12 +23,15 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 from typing_extensions import NotRequired
 
+from app.core.clock import now_utc
+
 # Tool tạo đề xuất và khoá dữ kiện chứng tỏ đề xuất thành công.
 PROPOSAL_TOOLS = {"propose_appointment": "held", "cancel_appointment": "will_cancel"}
 
 
 class ProposalState(AgentState):
     proposal_id: NotRequired[Optional[str]]
+    queued: NotRequired[List[Dict[str, Any]]]
 
 
 def _payload(name: str, content: Any) -> Optional[dict]:
@@ -73,4 +77,31 @@ class ConfirmMiddleware(AgentMiddleware):
         if pid is None:
             return result
         message = result.model_copy(update={"content": _without_proposal_id(result.content)})
-        return Command(update={"messages": [message], "proposal_id": pid})
+        update = {"messages": [message], "proposal_id": pid}
+        if name == "propose_appointment":
+            update["queued"] = next_queue(_payload(name, result.content),
+                                          (request.state or {}).get("queued") or [])
+        return Command(update=update)
+
+
+def _same_moment(a: str, b: str) -> bool:
+    try:
+        return datetime.fromisoformat(a) == datetime.fromisoformat(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def next_queue(data: dict, current: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Hàng chờ sau một lần giữ chỗ thành công (lỗi live B2 #2).
+
+    Tool trả `queued` (kể cả rỗng) → THAY hàng chờ bằng đúng danh sách đó (code
+    đã kiểm giờ). Không trả → giữ hàng chờ cũ. Rồi bỏ mục trùng giờ vừa giữ:
+    nó đang là đề xuất hiện tại, không còn chờ nữa."""
+    if "queued" in data:
+        stamp = now_utc().isoformat()
+        queue = [{"start_at": q["at"]["iso"], "note": q.get("note"), "queued_at": stamp}
+                 for q in data["queued"]]
+    else:
+        queue = list(current)
+    held = data["held"]["iso"]
+    return [q for q in queue if not _same_moment(q["start_at"], held)]

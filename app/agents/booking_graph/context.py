@@ -203,6 +203,56 @@ def declined_line(proposal, *, expired: bool = False) -> str:
             f"[declined: {kind}, iso: {to_local(proposal.start_at).isoformat()}]")
 
 
+# --- hàng chờ: nhiều lịch trong một câu, đặt LẦN LƯỢT (lỗi live B2 #2) ---------
+# Khách xin 2+ lịch một lúc: agent đề xuất lịch ĐẦU, các lịch sau đi vào
+# `queued` của `propose_appointment` — code ghi vào state graph (thread), mỗi
+# mục {start_at, note, queued_at}. Mỗi lượt agent đọc MỘT dòng code viết từ
+# đó, nên lịch sau không bị quên dù tool message lượt trước đã mất. Mục rời
+# hàng chờ khi được đề xuất (cùng giờ), khi giờ đã qua, hoặc sau
+# QUEUE_MAX_AGE_MINUTES. Tag `[queued …]` là tên BOOKING_PROMPT trỏ tới.
+QUEUE_MAX_AGE_MINUTES = 30
+
+
+def live_queue(queue, now: Optional[datetime] = None) -> List[dict]:
+    """Các mục còn hiệu lực: giờ chưa qua, chưa quá QUEUE_MAX_AGE_MINUTES."""
+    now = now or now_utc()
+    out = []
+    for item in queue or []:
+        try:
+            start = datetime.fromisoformat(item["start_at"])
+            queued_at = datetime.fromisoformat(item.get("queued_at") or now.isoformat())
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start > now and now - _aware(queued_at) <= timedelta(minutes=QUEUE_MAX_AGE_MINUTES):
+            out.append(item)
+    return out
+
+
+def _queued_when(item: dict) -> str:
+    when = format_vi_datetime(datetime.fromisoformat(item["start_at"]))
+    note = single_line(item.get("note"), 80) if item.get("note") else ""
+    return f"{when} — {note}" if note else when
+
+
+def queued_line(queue) -> str:
+    """Dòng code viết: các lịch khách đã xin mà CHƯA đề xuất. Rỗng → ""."""
+    if not queue:
+        return ""
+    items = "; ".join(f"{_queued_when(q)} [queued, iso: "
+                      f"{to_local(datetime.fromisoformat(q['start_at'])).isoformat()}]"
+                      for q in queue)
+    return ("Khách còn xin thêm lịch, CHƯA đề xuất, đặt lần lượt sau đề xuất hiện tại: "
+            f"{items}.")
+
+
+def queue_offer(queue, address: str) -> str:
+    """Câu code viết sau khi chốt xong một lịch: mời lịch kế trong hàng chờ."""
+    if not queue:
+        return ""
+    return (f"Còn lịch {_queued_when(queue[0])}, {address} muốn em giữ chỗ tiếp "
+            "luôn không ạ?")
+
+
 def with_line(block: str, line: str) -> str:
     """Chèn `line` vào khối bối cảnh, TRƯỚC dòng chốt (dòng chốt luôn cuối)."""
     if not line:

@@ -6,7 +6,8 @@ LUÔN approve — để chứng minh lưới code tự chặn được các câu
 DB `chatbot_test_db`; checkpointer `InMemorySaver` (conftest), trừ một test chạy
 trên `MongoDBSaver` thật.
 """
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -589,3 +590,95 @@ async def test_deferral_naming_a_relative_gets_no_privacy_refusal_llm(test_db, u
     assert "chỉ xem" not in answer and "của chị lan thôi" not in answer, answer
     assert not any(getattr(m, "tool_calls", None) for m in out["messages"]), "không gọi tool"
     assert await test_db["proposals"].count_documents({"status": "pending"}) == 0
+
+
+# --- Lỗi live B2 #2: chú Hùng, hai lịch trong một câu → đặt LẦN LƯỢT ----------
+def in_two_days(hour):
+    local = datetime.now(TZ) + timedelta(days=2)
+    return local.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+@pytest.fixture
+async def hung(test_db):
+    return await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Hùng")
+
+
+async def graph_values(test_db, user):
+    from app.agents.booking_graph.graph import build_graph
+    config = {"configurable": {"thread_id": events.thread_id_for(str(user.id), now_utc())}}
+    return (await build_graph(test_db, user).aget_state(config)).values
+
+
+async def test_live_b2_two_bookings_in_one_message_are_booked_one_at_a_time(test_db, hung, models,
+                                                                             monkeypatch):
+    nine, two = in_two_days(9), in_two_days(14)
+    when9, when2 = format_vi_datetime(nine), format_vi_datetime(two)
+
+    # Lượt 1: đề xuất CHỈ lịch đầu, lịch sau vào hàng chờ với ghi chú riêng.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {
+            "start_at": nine.isoformat(), "note": "cắt tóc cho chú",
+            "queued": [{"start_at": two.isoformat(), "note": "cắt tóc cho thằng cháu"}]}),
+        AIMessage(f"Dạ em đặt lần lượt từng lịch nhé. Em giữ chỗ {when9} cắt tóc cho anh Hùng, "
+                  "anh xác nhận giúp em nhé?"),
+    ]
+    await turn(test_db, hung, "chao em, thu 4 nay chu muon cat toc luc 9h sang voi 2h chieu "
+                              "cho thang chau nua")
+    seen = json.loads(models.agent.calls[-1][-1].content)       # kết quả tool model đọc
+    assert seen["held"]["iso"] == nine.isoformat()
+    assert [q["at"]["iso"] for q in seen["queued"]] == [two.isoformat()]
+    first = await pending(test_db, hung)
+    assert first["note"] == "cắt tóc cho chú"
+    assert [q["note"] for q in (await graph_values(test_db, hung))["queued"]] == ["cắt tóc cho thằng cháu"]
+
+    # Lượt 2: đồng ý 9 giờ, hỏi luôn lịch 2 giờ → KHÔNG bị phủ quyết; ghi 9 giờ,
+    # rồi code mời lịch đang chờ.
+    seen_by_classifier = []
+
+    async def classify(proposal, bot_question, customer_text):
+        seen_by_classifier.append(proposal)
+        return "approve"
+    monkeypatch.setattr(reply, "classify_reply", classify)
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")]
+    out = await turn(test_db, hung, "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao")
+    assert seen_by_classifier and seen_by_classifier[0]["queued"] == [two.isoformat()]
+    booked = await AppointmentService(test_db).upcoming_for(hung)
+    assert [(b.start_at.astimezone(TZ), b.note) for b in booked] == [(nine, "cắt tóc cho chú")]
+    answer = out[-1][1]["answer"]
+    assert answer.startswith(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")
+    assert when2 in answer and "cắt tóc cho thằng cháu" in answer          # mời lịch kế
+
+    # Lượt 3: tin mới — agent thấy dòng hàng chờ, giữ chỗ 2 giờ với ghi chú cháu.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": two.isoformat(),
+                                          "note": "cắt tóc cho thằng cháu"}),
+        AIMessage(f"Dạ 9 giờ của anh xong rồi ạ. Em giữ tiếp {when2} cắt tóc cho thằng cháu, "
+                  "anh xác nhận giúp em nhé?"),
+    ]
+    await turn(test_db, hung, "u, roi 9h sang cua chu dau em?")
+    ctx = context_seen(models, call=-2)
+    assert "[queued" in ctx and when2 in ctx and "cắt tóc cho thằng cháu" in ctx
+    second = await pending(test_db, hung)
+    assert second["note"] == "cắt tóc cho thằng cháu"
+    assert second["start_at"].replace(tzinfo=timezone.utc).astimezone(TZ) == two
+    assert (await graph_values(test_db, hung)).get("queued") == []
+
+    statuses = [(p["start_at"].replace(tzinfo=timezone.utc).astimezone(TZ).hour, p["status"])
+                async for p in test_db["proposals"].find({"user_id": str(hung.id)}).sort("created_at", 1)]
+    assert statuses == [(9, "approved"), (14, "pending")]       # không huỷ qua lại
+
+
+async def pending(db, user):
+    docs = await db["proposals"].find({"user_id": str(user.id), "status": "pending"}).to_list(10)
+    assert len(docs) == 1, docs
+    return docs[0]
+
+
+async def test_queue_line_disappears_once_nothing_waits(test_db, user, models):
+    """Không có hàng chờ thì không có dòng [queued …] — đường cũ không đổi."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+    await turn(test_db, user, "dạ ko em")
+    assert "[queued" not in context_seen(models)

@@ -323,7 +323,11 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     fact = state.get("phrase_fact") or state.get("confirm_fact")
     if fact:
         out = _guard_phrase(state, draft, fact, address)
-        return {**out, "answer": strip_tool_names(out["answer"])}
+        answer = strip_tool_names(out["answer"])
+        if fact.get("then"):
+            # Câu code viết (mời lịch kế trong hàng chờ) — nối SAU câu chốt đã kiểm.
+            answer = f"{answer} {fact['then']}"
+        return {**out, "answer": answer}
 
     if state.get("proposal_id"):
         fixed = unclaim(draft)

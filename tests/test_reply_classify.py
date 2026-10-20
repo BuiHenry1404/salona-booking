@@ -239,3 +239,13 @@ async def test_negative_go_ahead_lookalikes_are_still_vetoed(monkeypatch, propos
     built = install(monkeypatch, ReplyDecision(decision="approve"))
     assert await decide(text, proposal, QUESTION, NOW) == "reject", text
     assert "model" not in built
+
+
+def test_describe_tells_the_classifier_about_the_queue():
+    nine = datetime(2026, 10, 21, 9, 0, tzinfo=TZ)
+    two = datetime(2026, 10, 21, 14, 0, tzinfo=TZ)
+    text = reply._describe({"kind": "book", "start_at": nine.isoformat(),
+                            "queued": [two.isoformat()]})
+    assert "waiting" in text and two.isoformat() in text
+    assert "does not change this proposal" in text
+    assert "waiting" not in reply._describe(PROPOSAL)

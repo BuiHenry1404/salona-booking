@@ -8,6 +8,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain_core.exceptions import ModelError
 from langchain_core.tools import BaseTool
 
+from app.agents.booking_graph.context import live_queue, queued_line, with_line
 from app.agents.booking_graph.middleware.guard import GuardMiddleware
 from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
     STATE_HEADER, MessageLayoutMiddleware)
@@ -150,9 +151,12 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
     hỏi lại (clarify) phải giữ nguyên đề xuất để confirm chờ tiếp.
     """
     async def node(state: GraphState) -> dict:
+        # Hàng chờ (đặt lần lượt) → MỘT dòng code viết trong khối bối cảnh.
+        queue = live_queue(state.get("queued"))
         out = await agent.ainvoke({
             "messages": state["messages"],
-            "context_block": state.get("context_block", ""),
+            "context_block": with_line(state.get("context_block", ""), queued_line(queue)),
+            "queued": queue,
             "summary": state.get("summary") or [],
             "slots": state.get("slots"),
             # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
@@ -171,6 +175,11 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
         for key in ("answer", "answer_source", "violations"):
             if key in out:
                 result[key] = out[key]
+        # Hàng chờ sau lượt này (ConfirmMiddleware có thể đã đổi). Không có gì
+        # trước và sau thì không ghi khoá — đường cũ giữ nguyên.
+        after = out.get("queued", queue)
+        if after or state.get("queued"):
+            result["queued"] = after
         if not state.get("confirm_fact"):
             # Đề xuất của lượt này (ConfirmMiddleware). Vòng tool cạn thì câu
             # cuối là FALLBACK chứ không phải câu hỏi xác nhận — không được chờ

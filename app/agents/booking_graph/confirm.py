@@ -26,7 +26,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph import reply
 from app.agents.booking_graph.context import (address_phrase, declined_line,
-                                              format_vi_datetime, with_line)
+                                              format_vi_datetime, live_queue,
+                                              queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
 from app.core.clock import now_utc
 from app.core.logging import get_logger
@@ -175,7 +176,11 @@ def make_confirm_node(
                                                  declined_line(proposal, expired=True))
             return out
 
-        facts = {"kind": proposal.kind, "start_at": proposal.start_at}
+        # Lịch đang chờ (đặt lần lượt): lưới và bộ phân loại biết giờ của chúng,
+        # để "ừ 9 giờ, còn 2 giờ cho cháu thì sao" không bị chặn chỉ vì giờ chờ.
+        queue = live_queue(state.get("queued"))
+        facts = {"kind": proposal.kind, "start_at": proposal.start_at,
+                 "queued": [q["start_at"] for q in queue]}
         decision = await reply.decide(text, facts, bot_question=question, now=now_utc())
 
         if decision == "approve":
@@ -183,6 +188,11 @@ def make_confirm_node(
                                          turn_at=state.get("asked_at") or now_utc())
             if out is None:
                 return {"proposal_id": None, "gate_next": "supervisor"}
+            fact = out["confirm_fact"]
+            if queue and fact.get("kind") in ("booked", "moved", "cancelled"):
+                # Chốt xong một lịch: CODE mời lịch kế trong hàng chờ (guard nối
+                # câu này sau câu chốt). Chưa giữ chỗ gì — lượt sau agent đề xuất.
+                out = {**out, "confirm_fact": {**fact, "then": queue_offer(queue, address)}}
             return {**out, "proposal_id": None, "gate_next": "phrase"}
 
         if decision == "unclear":

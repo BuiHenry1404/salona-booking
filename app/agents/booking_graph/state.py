@@ -15,6 +15,7 @@ class GraphState(TypedDict, total=False):
     summary: List[str]
     slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
     proposal_id: Optional[str]       # đề xuất chờ khách đồng ý (DB `proposals`)
+    queued: List[Dict[str, Any]]     # lịch khách xin thêm, chờ đề xuất lần lượt (context.queued_line)
     gate_next: str                   # confirm → "end" | "phrase" (agent booking + confirm_fact) | "booking" | "supervisor"
     asked_at: datetime                 # mốc câu khách (now_ms) — "bây giờ" của cửa sổ lịch sử
     history_after: Optional[datetime]  # covers_until của state nén; tin ≤ mốc này không gửi model

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
@@ -112,6 +113,14 @@ def _around(value: str, day: date) -> Optional[datetime]:
         return None
 
 
+
+class QueuedRequest(BaseModel):
+    """Một lịch khách xin THÊM trong cùng tin nhắn — đề xuất sau, lần lượt."""
+
+    start_at: str
+    note: Optional[str] = None
+
+
 # Ánh xạ theo LỚP exception, không theo chuỗi `message`: `AppError.message`
 # viết cho tầng REST và frontend, đổi lúc nào không ai báo cho tầng này.
 _ERROR_CODES = {
@@ -175,6 +184,22 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         }, ensure_ascii=False)
 
     return [get_shop_status, get_shop_hours]
+
+
+
+def _queued_item(request) -> Optional[dict]:
+    """Một mục hàng chờ đã kiểm: giờ đọc được, có giờ cụ thể, chưa qua."""
+    if isinstance(request, dict):
+        request = QueuedRequest(**request)
+    if _DATE_ONLY.match(request.start_at or ""):
+        return None
+    try:
+        start = _parse_local(request.start_at)
+    except ValueError:
+        return None
+    if start <= now_utc():
+        return None
+    return {"at": _moment(start), "note": single_line(request.note, NOTE_MAX)}
 
 
 def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
@@ -258,6 +283,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         start_at: str,
         note: Optional[str] = None,
         replaces_appointment_id: Optional[str] = None,
+        queued: Optional[List[QueuedRequest]] = None,
     ) -> str:
         """Hold the slot temporarily, as JSON. `start_at` is ISO 8601, copied
         UNCHANGED from parse_time's result.
@@ -273,8 +299,14 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         `closed_day` and `time_passed` mean the salon cannot take `asked` at
         all — it is NOT taken by anyone. `missing_time` means you sent a date
         with no clock time — ask the customer what time.
-        `note` is the service only (what they want done) — never the time or
-        the day; those live in `start_at`.
+        `note` is the service only (what they want done, and who it is for)
+        — never the time or the day; those live in `start_at`. It describes
+        ONLY the request at `start_at`, never another request.
+        `queued`: when the customer asks for two or more appointments in one
+        message, propose ONLY the first here and pass the others in `queued`,
+        each with its own `start_at` (from parse_time) and its own `note`.
+        They are kept for later turns and come back as `queued`. Pass an empty
+        list to drop requests the customer no longer wants.
         `replaces_appointment_id`: pass it ONLY when the customer wants to MOVE
         (reschedule) an appointment they already have. Copy the id from the
         context block. Leave it out for a brand-new booking."""
@@ -358,6 +390,10 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         result = {"held": _moment(start), "note": note}
         if old:
             result["replaces"] = {"id": str(old.id), "was": _moment(old.start_at)}
+        if queued is not None:
+            # Hàng chờ đi qua ConfirmMiddleware vào state graph. Giờ hỏng/đã qua
+            # thì bỏ — không giữ một yêu cầu không thể đề xuất.
+            result["queued"] = [item for item in (_queued_item(q) for q in queued) if item]
         result["proposal_id"] = str(proposal.id)
         return json.dumps(result, ensure_ascii=False)
 

@@ -201,3 +201,51 @@ def test_live_bug4_bare_doi_on_a_move_reaches_the_classifier():
     assert veto_reason("u doi di em", P_MOVE, NOW) is None
     assert veto_reason("u doi di em", P_BOOK, NOW) == "negation"
     assert veto_reason("không phải hôm nay, mai đó em, 4 giờ chiều mai", P_MOVE, NOW) == "negation"
+
+
+# --- Lỗi live B2 #2: nhiều lịch trong một câu, đặt LẦN LƯỢT --------------------
+# Đề xuất hiện tại 9 giờ sáng thứ Tư 21/10; còn chờ 2 giờ chiều cùng ngày (cho
+# thằng cháu). Câu vừa ĐỒNG Ý 9 giờ vừa nhắc giờ đang chờ không bị phủ quyết chỉ
+# vì giờ đang chờ — mệnh đề nói về giờ đang chờ được bỏ khỏi phép kiểm hỏi/giờ
+# khác. Phủ định/hoãn vẫn xét CẢ câu; mọi thứ khác vẫn fail-closed.
+NINE = datetime(2026, 10, 21, 9, 0, tzinfo=TZ)
+TWO_PM = datetime(2026, 10, 21, 14, 0, tzinfo=TZ)
+P_QUEUE = {"kind": "book", "start_at": NINE.isoformat(), "queued": [TWO_PM.isoformat()]}
+P_NO_QUEUE = {"kind": "book", "start_at": NINE.isoformat()}
+HUNG_T2 = "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao"
+
+
+@pytest.mark.parametrize("text", [
+    HUNG_T2,
+    "dc em 9h la cua chu con 2h chieu cho thang chau thi sao",     # không dấu câu
+    "ừ được em, còn 2 giờ chiều cho thằng cháu thì sao?",
+    "ok em. 2h chieu cho thang chau nua nha",
+])
+def test_agreeing_while_naming_a_queued_time_is_not_vetoed(text):
+    assert veto_reason(text, P_QUEUE, NOW) is None, text
+
+
+def test_the_same_reply_without_a_queue_is_still_vetoed():
+    assert veto_reason(HUNG_T2, P_NO_QUEUE, NOW) is not None
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("2h chieu di em", "other_time"),                          # chỉ nói giờ đang chờ
+    ("2 giờ chiều trước đi em", "other_time"),
+    ("dc em, con 3h chieu cho thang chau thi sao", "question"),  # 3 giờ không có trong hàng chờ
+    ("ko em, con 2h chieu cho thang chau", "negation"),
+    ("de chu hoi lai, con 2h chieu cho thang chau", "deferral"),
+    ("dc em, 10h nha. con 2h chieu cho thang chau", "other_time"),  # giờ đề xuất bị cãi
+    ("dc em, con 2h chieu thu 5 cho thang chau", "other_time"),    # ngày khác giờ đang chờ
+    ("9h hả em? con 2h chieu cho thang chau", "question"),
+])
+def test_everything_else_stays_fail_closed_with_a_queue(text, reason):
+    assert veto_reason(text, P_QUEUE, NOW) == reason, text
+
+
+@pytest.mark.parametrize("text", MUST_VETO_BOOK)
+def test_the_g_table_is_unchanged_with_an_unrelated_queue(text):
+    """Hàng chờ ở ngày khác hẳn không được nới bất kỳ câu nào của bảng G."""
+    far = {"kind": "book", "start_at": START.isoformat(),
+           "queued": [datetime(2026, 10, 30, 11, 0, tzinfo=TZ).isoformat()]}
+    assert veto_reason(text, far, NOW) is not None, text

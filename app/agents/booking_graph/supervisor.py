@@ -2,6 +2,7 @@ import asyncio
 
 from langchain_core.messages import SystemMessage
 
+from app.agents.booking_graph.context import live_queue
 from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
 from app.agents.booking_graph.state import GraphState
@@ -28,6 +29,12 @@ async def supervise(state: GraphState) -> dict:
     Supervisor KHÔNG nhận memory, KHÔNG nhận schema tool, KHÔNG nhận lịch sắp tới —
     chỉ vài lượt chat cuối. Nó chỉ cần biết khách đang muốn gì.
     """
+    if live_queue(state.get("queued")):
+        # Đang đặt lần lượt (lỗi live B2 #2): còn lịch chờ đề xuất thì mọi tin
+        # vào booking — "ừ" sau câu mời lịch kế không được rơi vào social.
+        logger.info("supervisor_queue_route")
+        return {"route": "booking"}
+
     # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:
     # tin đã nén hay của hôm qua không được kéo định tuyến.
     *earlier, question = state["messages"]

@@ -864,3 +864,28 @@ async def test_free_slots_docstring_says_at_most_three(test_db):
     doc = by_name(make_booking_tools(test_db, await a_user(test_db)), "find_free_slots").description
     assert "at most 3" in doc
     assert "around" in doc and "part_of_day" in doc
+
+
+# --- Lỗi live B2 #2: hàng chờ khi khách xin nhiều lịch một lúc ----------------
+async def test_propose_returns_the_checked_queue(test_db):
+    user = await a_user(test_db)
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": tomorrow_at(9).isoformat(), "note": "cắt tóc cho chú",
+                               "queued": [
+                                   {"start_at": tomorrow_at(14).isoformat(), "note": "cắt tóc cho cháu"},
+                                   {"start_at": "2026-10-21"},                      # không giờ
+                                   {"start_at": "2020-01-01T09:00:00+07:00"},       # đã qua
+                                   {"start_at": "mai"},                             # hỏng
+                               ]}))
+    assert out["held"]["iso"] == tomorrow_at(9).isoformat()
+    assert out["queued"] == [{"at": {"iso": tomorrow_at(14).isoformat(),
+                                     "spoken": format_vi_datetime(tomorrow_at(14))},
+                              "note": "cắt tóc cho cháu"}]
+    assert (await pending_proposal(test_db, user))["note"] == "cắt tóc cho chú"
+
+
+async def test_propose_without_queue_has_no_queue_key(test_db):
+    user = await a_user(test_db)
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
+                     .ainvoke({"start_at": tomorrow_at(9).isoformat()}))
+    assert "queued" not in out

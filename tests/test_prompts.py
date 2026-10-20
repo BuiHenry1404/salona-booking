@@ -413,7 +413,9 @@ class TestBookingPromptSlimmed:
         # Lỗi #4: rule 1 cấm nói đã đặt/dời/hủy khi mới giữ — đo được 7701 —
         # mốc lên 7800. Lỗi #5: vế loại trừ ở rule 4 (nhắc người thân khi hoãn
         # hay đặt hộ không phải ca bảo mật) — đo được 8105 — mốc lên 8200.
-        assert len(BOOKING_PROMPT) < 8200
+        # Lỗi #2: rule 10 đặt nhiều lịch lần lượt + hàng chờ [queued …] — đo
+        # được 8614 — mốc lên 8700.
+        assert len(BOOKING_PROMPT) < 8700
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -606,3 +608,10 @@ class TestLiveChatB2:
         assert "will ask someone before deciding" in BOOKING_PROMPT
         rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
         assert "relative" in rule4 and "message you when they are ready" in rule4
+
+    def test_several_appointments_are_booked_one_at_a_time(self):
+        """Lỗi #2: hai lịch trong một câu bị gộp, ghi chú nhầm người."""
+        assert "book them one at a time" in BOOKING_PROMPT
+        assert "propose ONLY the" in BOOKING_PROMPT and "`queued`" in BOOKING_PROMPT
+        assert "[queued" in BOOKING_PROMPT
+        assert "never give one request another's note" in BOOKING_PROMPT
