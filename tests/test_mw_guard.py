@@ -394,3 +394,59 @@ class TestClaimsMatchFacts:
                  "context_block": APPT_LINE, "previous_replies": [], "customer_text": "x",
                  "proposal_id": "p3"}
         assert (await hung_guard(state))["answer"] == draft and calls == []
+
+
+# --- Lỗi live B3 #3: báo trước "đặt từng lịch một" ----------------------------
+def future(hour, days=2):
+    from datetime import datetime, timedelta
+    from app.core.clock import TZ
+    local = datetime.now(TZ) + timedelta(days=days)
+    return local.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def queued_state(draft, queue_hours=(14,), **extra):
+    from app.agents.booking_graph.context import format_vi_datetime
+    from app.core.clock import now_utc
+    nine = future(9)
+    queue = [{"start_at": future(h).isoformat(), "note": "cắt tóc cho cháu",
+              "queued_at": now_utc().isoformat()} for h in queue_hours]
+    return {"messages": [HumanMessage(content="9h sang voi 2h chieu cho thang chau"),
+                         held(nine.isoformat(), format_vi_datetime(nine), queued=[]),
+                         AIMessage(content=draft)],
+            "context_block": "", "previous_replies": [], "customer_text": "x",
+            "proposal_id": "p1", "queued": queue, **extra}
+
+
+class TestAnnounceOneAtATime:
+    async def test_first_proposal_says_the_others_come_right_after(self, rewrites):
+        from app.agents.booking_graph.context import format_vi_datetime
+        calls = rewrites()
+        draft = (f"Em đang giữ lịch cắt tóc cho anh Hùng vào {format_vi_datetime(future(9))}. "
+                 "Anh Hùng xác nhận giúp em nhé?")
+        out = await hung_guard(queued_state(draft))
+        first, question = draft.split(". ")
+        assert out["answer"] == (f"{first}. Em giữ 9 giờ sáng trước, xong em giữ tiếp lịch "
+                                 f"2 giờ chiều cắt tóc cho cháu nhé. {question}")
+        assert calls == []
+
+    async def test_a_reply_that_already_announces_it_is_left_alone(self, rewrites):
+        rewrites()
+        draft = ("Em giữ 9 giờ sáng cho anh Hùng trước, xong em giữ tiếp 2 giờ chiều cho cháu nhé. "
+                 "Anh Hùng xác nhận 9 giờ giúp em nhé?")
+        assert (await hung_guard(queued_state(draft)))["answer"] == draft
+
+    async def test_a_queued_item_on_another_day_carries_its_date(self, rewrites):
+        from app.agents.booking_graph.context import format_vi_datetime
+        rewrites()
+        state = queued_state("Em giữ 9 giờ sáng, anh Hùng xác nhận giúp em nhé?")
+        other = future(10, days=3)
+        state["queued"] = [{**state["queued"][0], "start_at": other.isoformat()}]
+        out = await hung_guard(state)
+        assert f"xong em giữ tiếp lịch {format_vi_datetime(other)} cắt tóc cho cháu nhé." in out["answer"]
+        assert out["answer"].endswith(". Anh Hùng xác nhận giúp em nhé?")    # câu hỏi vẫn ở cuối
+
+    @pytest.mark.parametrize("extra", [{"queued": []}, {"proposal_id": None}])
+    async def test_no_queue_or_no_proposal_adds_nothing(self, rewrites, extra):
+        rewrites()
+        draft = "Em giữ 9 giờ sáng, anh Hùng xác nhận giúp em nhé?"
+        assert (await hung_guard(queued_state(draft, **extra)))["answer"] == draft

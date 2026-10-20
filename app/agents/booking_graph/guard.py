@@ -13,7 +13,12 @@ import re
 from difflib import SequenceMatcher
 from typing import Awaitable, Callable, List, Optional, Sequence
 
-from app.agents.booking_graph.context import address_phrase, derive_address
+from datetime import datetime
+
+from app.agents.booking_graph.context import (_clock_phrase, address_phrase, derive_address,
+                                              format_vi_datetime, live_queue)
+from app.core.clock import to_local
+from app.core.text import single_line
 from app.core.logging import get_logger
 from app.models.user import User
 
@@ -228,6 +233,52 @@ def drop_false_claims(text: str, facts: dict) -> str:
     return out[:1].upper() + out[1:]
 
 
+# --- báo trước "đặt từng lịch một" (lỗi live B3 #3) --------------------------
+# Khách xin nhiều lịch một câu: lượt đề xuất lịch đầu phải nói rõ các lịch kia
+# sẽ được giữ NGAY SAU. Prompt rule 10 có dặn, model vẫn quên — câu này do CODE
+# viết từ hàng chờ (`queued`) và giờ vừa giữ (kết quả tool), chèn trước câu hỏi
+# xác nhận. Câu trả lời đã nhắc đủ giờ chờ thì không chèn.
+def _held_iso(state) -> Optional[str]:
+    for message in reversed(state.get("messages") or []):
+        if getattr(message, "type", "") == "tool" and getattr(message, "name", "") == "propose_appointment":
+            try:
+                return json.loads(message.content)["held"]["iso"]
+            except (TypeError, ValueError, KeyError):
+                return None
+    return None
+
+
+def announce_queue(answer: str, state) -> str:
+    queue = live_queue(state.get("queued"))
+    held = _held_iso(state)
+    if not state.get("proposal_id") or not queue or not held:
+        return answer
+    said = clock_keys(answer)
+    held_at = to_local(datetime.fromisoformat(held))
+    items = []
+    for item in queue:
+        at = to_local(datetime.fromisoformat(item["start_at"]))
+        clock = _clock_phrase(at.hour, at.minute)
+        if any(_same_clock(s, k) for s in said for k in clock_keys(clock)):
+            continue
+        when = clock if at.date() == held_at.date() else format_vi_datetime(at)
+        note = single_line(item.get("note"), 80) if item.get("note") else ""
+        items.append(f"lịch {when} {note}".strip())
+    if not items:
+        return answer
+    line = (f"Em giữ {_clock_phrase(held_at.hour, held_at.minute)} trước, xong em giữ tiếp "
+            f"{', '.join(items)} nhé.")
+    parts = _SENTENCE_END.split(answer.strip())
+    if len(parts) > 1 and parts[-1].rstrip().endswith("?"):
+        return " ".join([*parts[:-1], line, parts[-1]])
+    sentences_ = re.split(r"(?<=[.!…])\s+|,\s+(?=[^,]*\?$)", answer.strip())
+    if len(sentences_) > 1 and sentences_[-1].endswith("?"):
+        head = answer.strip()[:len(answer.strip()) - len(sentences_[-1])].rstrip().rstrip(",")
+        tail = sentences_[-1]
+        return f"{head}. {line} {tail[:1].upper()}{tail[1:]}"
+    return f"{answer.strip()} {line}"
+
+
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
 _NUMBER = re.compile(r"\d+")
 
@@ -432,7 +483,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
                             customer_text=customer_text, claims=claims)
     if not codes:
-        return {"answer": draft, "answer_source": "llm", "violations": []}
+        return {"answer": announce_queue(draft, state), "answer_source": "llm", "violations": []}
 
     logger.info("guard_violation", extra={"codes": codes})
     new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
@@ -448,7 +499,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
         logger.warning("guard_claim_dropped")
         dropped = drop_false_claims(out["answer"], claims)
         out = {**out, "answer": dropped or f"Dạ, {address} cần em giữ chỗ giờ nào ạ?"}
-    return out
+    return {**out, "answer": announce_queue(out["answer"], state)}
 
 
 def _guard_phrase(state, draft, fact, address):

@@ -769,3 +769,13 @@ async def test_relative_free_question_gets_a_receptionist_reply_llm(test_db, hun
     assert "chỉ xem" not in answer and "chủ tiệm" not in answer, answer
     called = [c["name"] for m in out["messages"] for c in (getattr(m, "tool_calls", None) or [])]
     assert "get_shop_status" not in called and "get_shop_hours" not in called, called
+
+
+async def test_live_b3_first_proposal_announces_the_queued_booking(test_db, hung, models):
+    """Lượt 1: câu đề xuất phải nói rõ lịch 2 giờ được giữ NGAY SAU (code viết
+    từ hàng chờ, chèn trước câu hỏi xác nhận)."""
+    when9 = format_vi_datetime(in_two_days(9))
+    out = await hung_first_turn(test_db, hung, models)
+    assert out[-1] == ("complete", {"answer": (
+        f"Em đang giữ lịch cắt tóc cho anh Hùng vào {when9}. Em giữ 9 giờ sáng trước, xong em "
+        "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận giúp em nhé?")})
