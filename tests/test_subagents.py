@@ -125,6 +125,14 @@ def test_build_agent_tags_the_real_model_respond(monkeypatch):
     assert seen == [{"tags": ["respond"], "temperature": 0.2, "max_retries": 0}]
 
 
+def test_build_agent_names_the_compiled_graph():
+    """Lệch LangChain #5: ba agent không `name=` thì trace Langfuse và sự kiện
+    stream đều mang cùng tên graph mặc định — không phân biệt được booking
+    với social khi soi một lượt lỗi."""
+    agent = build_agent("p", [], model=scripted([AIMessage("Dạ.")]), name="booking")
+    assert agent.name == "booking"
+
+
 async def test_lazy_agent_builds_its_model_once(monkeypatch):
     seen = []
 

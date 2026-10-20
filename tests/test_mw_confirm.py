@@ -98,7 +98,7 @@ async def test_error_result_makes_no_proposal(test_db):
 
 
 def test_non_json_tool_text_makes_no_proposal():
-    """F8: ConfirmMiddleware đứng NGOÀI ToolErrorMiddleware — lỗi tool tới đây
+    """F8: ConfirmMiddleware đứng NGOÀI ToolFailureMiddleware — lỗi tool tới đây
     dưới dạng câu tiếng Việt, không phải JSON."""
     assert proposal_id_from_tool("propose_appointment", TOOL_ERROR_TEXT) is None
     assert proposal_id_from_tool("propose_appointment", "[1, 2]") is None

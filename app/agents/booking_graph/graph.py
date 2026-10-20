@@ -47,24 +47,27 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
     định: tham số mặc định chạy lúc import và mở MongoClient vào DB dev ngay cả
     trong test). Agent con vẫn `checkpointer=False` — thread thuộc graph ngoài.
     """
-    def agent(prompt, tools, *extra):
+    def agent(name, prompt, tools, *extra):
         # `user` → mỗi agent có PhraseMiddleware + GuardMiddleware: câu nào ra
         # khỏi agent cũng đã qua guard đúng một lần (rewrite tối đa một lần).
+        # `name` trùng tên node để trace Langfuse đọc được agent nào đã chạy.
         return make_agent_node(build_agent(
-            prompt, tools, user=user, extra_middleware=[HistoryWindowMiddleware(), *extra]),
+            prompt, tools, user=user, name=name,
+            extra_middleware=[HistoryWindowMiddleware(), *extra]),
             user=user)
 
     graph = StateGraph(GraphState)
 
     graph.add_node("supervisor", supervise)
     graph.add_node("confirm", make_confirm_node(db, user))
-    graph.add_node("shop", agent(SHOP_PROMPT, make_shop_tools(db, user)))
+    graph.add_node("shop", agent("shop", SHOP_PROMPT, make_shop_tools(db, user)))
     # Không tool: xã giao và từ chối không cần dữ liệu gì. Vẫn dựng qua
     # build_agent để token stream ra màn hình như các node khác — trả thẳng
     # chuỗi chính là cái bẫy mà node refuse cũ mắc phải.
-    graph.add_node("social", agent(SOCIAL_PROMPT, []))
+    graph.add_node("social", agent("social", SOCIAL_PROMPT, []))
     # Chỉ booking có tool đề xuất, nên chỉ booking bắt `proposal_id`.
-    graph.add_node("booking", agent(BOOKING_PROMPT, booking_tools(db, user), ConfirmMiddleware()))
+    graph.add_node("booking", agent("booking", BOOKING_PROMPT, booking_tools(db, user),
+                                    ConfirmMiddleware()))
     graph.add_node("record", record)
 
     # Không còn nhánh tắt START → confirm: câu trả lời xác nhận tới bằng

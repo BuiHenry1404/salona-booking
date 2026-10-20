@@ -54,7 +54,7 @@ Facts listed under the conversation state count as already said."""
 SUPERVISOR_PROMPT = """Classify the customer's intent at a Vietnamese nail and
 hair salon.
 
-Reply with EXACTLY ONE word. No punctuation, no explanation, no quotes:
+Set `route` to exactly one of these labels:
 - booking : book, change, or cancel an appointment; ask for free slots; look up
             their own appointments; just name the service they want — wanting a
             service IS wanting an appointment; or a message that mixes a shop question

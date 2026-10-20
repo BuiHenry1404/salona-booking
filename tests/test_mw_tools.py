@@ -10,9 +10,18 @@ from langchain_core.tools import tool
 from app.agents.booking_graph.agents import FALLBACK_ANSWER
 from app.agents.booking_graph.middleware.tools import (TOOL_ERROR_TEXT,
                                                        NoParallelToolsMiddleware,
-                                                       ToolErrorMiddleware,
+                                                       ToolFailureMiddleware,
                                                        ToolRoundLimitMiddleware)
 from tests.fakes import scripted, tool_call
+
+
+def test_tool_failure_middleware_does_not_shadow_the_library_class():
+    """Lệch LangChain #2: tên cũ `ToolErrorMiddleware` trùng hệt class của
+    `langchain.agents.middleware` nhưng hành vi khác (mọi lỗi → câu tiếng Việt
+    cố định). Trùng tên là đọc code đoán nhầm là bản thư viện."""
+    from langchain.agents.middleware import ToolErrorMiddleware as LibraryClass
+    assert ToolFailureMiddleware is not LibraryClass
+    assert ToolFailureMiddleware.__name__ != LibraryClass.__name__
 
 
 @tool
@@ -28,7 +37,7 @@ async def broken_lookup(day: str) -> str:
 
 
 def all_mw():
-    return [NoParallelToolsMiddleware(), ToolRoundLimitMiddleware(), ToolErrorMiddleware()]
+    return [NoParallelToolsMiddleware(), ToolRoundLimitMiddleware(), ToolFailureMiddleware()]
 
 
 def agent(model, tools=(fake_lookup,), middleware=None):

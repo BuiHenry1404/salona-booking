@@ -274,8 +274,11 @@ class TestHardWonRulesSurvive:
 
 
 class TestSupervisorStaysMachineReadable:
-    def test_it_asks_for_exactly_one_word(self):
-        assert "EXACTLY ONE word" in SUPERVISOR_PROMPT
+    def test_it_names_the_structured_route_field(self):
+        """Nhãn đi qua structured output: prompt nói về trường `route`, không
+        còn bắt model trả 'đúng một từ' rồi code parse chữ."""
+        assert "`route`" in SUPERVISOR_PROMPT
+        assert "EXACTLY ONE word" not in SUPERVISOR_PROMPT
 
     def test_supervisor_lists_exactly_the_three_live_labels(self):
         """Ba nhãn này là giá trị code so khớp, không phải chữ cho người đọc."""

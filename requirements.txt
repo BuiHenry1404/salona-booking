@@ -52,7 +52,7 @@ langchain-core==1.6.12
 # langfuse.langchain import chính gói `langchain`, không chỉ langchain-core.
 # Thiếu nó thì trace tắt im lặng, chỉ còn một dòng warning.
 langchain==1.4.6
-langfuse>=3.0
+langfuse==5.0.2
 
 # Logging
 structlog==23.2.0

@@ -3,7 +3,7 @@
 
 - `ToolRoundLimitMiddleware`: tối đa `MAX_TOOL_ROUNDS` lần gọi model mỗi lượt;
   model hỏng gọi tool mãi không được treo cuộc chat của khách.
-- `ToolErrorMiddleware`: tool ném lỗi (hoặc model gọi tool không tồn tại) không
+- `ToolFailureMiddleware`: tool ném lỗi (hoặc model gọi tool không tồn tại) không
   được làm sập lượt; model nhận câu lỗi tiếng Việt cố định như A.
 - `NoParallelToolsMiddleware`: tắt parallel tool calls, nhưng CHỈ khi request
   có tool — agent `social` (0 tool) mà gửi cờ này thì Azure trả 400 và mọi câu
@@ -46,6 +46,11 @@ def _rounds_this_turn(messages) -> int:
 
 
 class ToolRoundLimitMiddleware(AgentMiddleware):
+    """Vì sao không dùng `ModelCallLimitMiddleware(run_limit=4, exit_behavior="end")`
+    của thư viện: bản đó chèn một AIMessage tiếng Anh ("Model call limits
+    exceeded…") làm câu cuối, và không đặt cờ nào — mà `make_agent_node` cần
+    `tool_loop_exhausted` để bỏ đề xuất đang giữ (G-07) và trả `FALLBACK_ANSWER`
+    nguyên chữ. Cách đếm thì giống nhau: số lần gọi model kể từ câu khách."""
     state_schema = LimitState
 
     def __init__(self, max_rounds: int = MAX_TOOL_ROUNDS):
@@ -64,11 +69,12 @@ class ToolRoundLimitMiddleware(AgentMiddleware):
         }
 
 
-class ToolErrorMiddleware(AgentMiddleware):
-    """Trùng tên với `langchain.agents.middleware.ToolErrorMiddleware` của thư
-    viện nhưng không phải nó: bản thư viện để lỗi tham số cho ToolNode tự đổi
-    thành chữ tiếng Anh. Ở đây MỌI lỗi tool đều thành `TOOL_ERROR_TEXT`, đúng
-    như vòng lặp cũ (`except Exception` quanh `tool.ainvoke`)."""
+class ToolFailureMiddleware(AgentMiddleware):
+    """KHÔNG phải `langchain.agents.middleware.ToolErrorMiddleware` (tên cũ
+    từng trùng hệt, đổi để khỏi đọc nhầm): bản thư viện để lỗi tham số cho
+    ToolNode tự đổi thành chữ tiếng Anh và `on_error` là tuỳ chọn. Ở đây MỌI
+    lỗi tool đều thành `TOOL_ERROR_TEXT`, đúng như vòng lặp cũ
+    (`except Exception` quanh `tool.ainvoke`)."""
 
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[Any]]

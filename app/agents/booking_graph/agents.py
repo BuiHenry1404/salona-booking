@@ -15,7 +15,7 @@ from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-expor
     STATE_HEADER, MessageLayoutMiddleware)
 from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
     FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT, NoParallelToolsMiddleware,
-    ToolErrorMiddleware, ToolRoundLimitMiddleware)
+    ToolFailureMiddleware, ToolRoundLimitMiddleware)
 from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
@@ -92,8 +92,12 @@ def build_agent(
     model=None,
     user: Optional[User] = None,
     extra_middleware: Sequence[AgentMiddleware] = (),
+    name: Optional[str] = None,
 ):
     """Một agent `create_agent`: gọi tool rồi trả lời.
+
+    `name` là tên graph con trong trace Langfuse và sự kiện stream — ba agent
+    không tên thì cùng hiện một tên mặc định, soi lượt lỗi không biết là ai.
 
     `tag` gắn vào model để bộ phát sự kiện lọc được token: chỉ agent sinh câu
     trả lời cuối mới mang tag "respond", nên token định tuyến không lọt ra màn
@@ -119,7 +123,7 @@ def build_agent(
         MessageLayoutMiddleware(),
         NoParallelToolsMiddleware(),
         ToolRoundLimitMiddleware(),
-        ToolErrorMiddleware(),
+        ToolFailureMiddleware(),
         # Trong cùng (sát model): một lần thử lại chạy lại đúng lần gọi model,
         # các middleware ngoài không chạy lại.
         model_retry_middleware(),
@@ -133,6 +137,7 @@ def build_agent(
             system_prompt=prompt,
             middleware=middleware,
             checkpointer=False,
+            name=name,
         )
 
     if model is not None:

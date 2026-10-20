@@ -10,7 +10,7 @@
 
 `make_agent_node` chuyển `proposal_id` ra graph ngoài; node `confirm` interrupt
 trên id đó và chỉ `ProposalService.approve` mới ghi lịch. Đứng NGOÀI
-`ToolErrorMiddleware` nên lỗi tool tới đây là câu tiếng Việt, không phải JSON
+`ToolFailureMiddleware` nên lỗi tool tới đây là câu tiếng Việt, không phải JSON
 (F8) — khi đó không có đề xuất.
 """
 import json

@@ -4,16 +4,26 @@ from app.agents.booking_graph.supervisor import supervise
 
 
 class FakeModel:
-    """Trả về đúng một chuỗi, không gọi mạng."""
+    """Giả `with_structured_output`: trả `schema(route=reply)`, không gọi mạng.
+
+    Nhãn ngoài `Literal` của schema thì pydantic ném ValidationError — đúng
+    điều Azure json_schema làm với output lạ, nên nhánh rơi về booking được
+    test bằng chính đường lỗi thật."""
 
     def __init__(self, reply):
         self.reply = reply
         self.seen_messages = None
+        self.schema = None
+
+    def with_structured_output(self, schema, **kwargs):
+        self.schema = schema
+        return self
 
     async def ainvoke(self, messages, **kwargs):
-        from langchain_core.messages import AIMessage
         self.seen_messages = messages
-        return AIMessage(content=self.reply)
+        if self.schema is None:
+            raise AssertionError("supervisor phải gọi with_structured_output trước ainvoke")
+        return self.schema(route=self.reply)
 
 
 @pytest.fixture
@@ -75,9 +85,31 @@ async def test_unrecognised_reply_falls_back_to_booking(patch_model):
 
 
 @pytest.mark.asyncio
-async def test_model_reply_is_case_and_space_insensitive(patch_model):
-    patch_model("  SHOP \n")
+async def test_supervisor_routes_through_structured_output(patch_model):
+    """Lệch LangChain #1: nhãn đi qua `with_structured_output(Literal[...])`,
+    không parse chữ tự do. Schema chỉ nhận đúng ba nhãn sống."""
+    import typing
+    model = patch_model("shop")
     assert (await supervise(a_state()))["route"] == "shop"
+    field = model.schema.model_fields["route"].annotation
+    assert set(typing.get_args(field)) == {"booking", "shop", "social"}
+
+
+@pytest.mark.asyncio
+async def test_supervisor_model_does_not_stream(monkeypatch):
+    """Token định tuyến không bao giờ là thứ để hiện dần: `streaming=False`
+    như mọi bộ phân loại khác, không chỉ trông vào lọc tag."""
+    import app.agents.booking_graph.supervisor as sup
+    seen = []
+
+    def build(**kw):
+        seen.append(kw)
+        return FakeModel("booking")
+
+    monkeypatch.setattr(sup, "build_chat_model", build)
+    await supervise(a_state())
+    assert seen[0]["streaming"] is False
+    assert seen[0]["tags"] == ["supervisor"]
 
 
 @pytest.mark.asyncio
@@ -97,6 +129,9 @@ class HangingModel:
     def __init__(self):
         self.calls = 0
 
+    def with_structured_output(self, schema, **kwargs):
+        return self
+
     async def ainvoke(self, messages, **kwargs):
         import asyncio
         self.calls += 1
@@ -104,6 +139,9 @@ class HangingModel:
 
 
 class FailingModel:
+    def with_structured_output(self, schema, **kwargs):
+        return self
+
     async def ainvoke(self, messages, **kwargs):
         raise RuntimeError("azure 500")
 

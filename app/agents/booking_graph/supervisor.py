@@ -1,6 +1,8 @@
 import asyncio
+from typing import Literal
 
 from langchain_core.messages import SystemMessage
+from pydantic import BaseModel
 
 from app.agents.booking_graph.context import live_queue
 from app.agents.booking_graph.history import model_history
@@ -12,8 +14,16 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-VALID_ROUTES = {"booking", "shop", "social"}
+Route = Literal["booking", "shop", "social"]
+VALID_ROUTES = set(Route.__args__)
 SUPERVISOR_HISTORY_TURNS = 4
+
+
+class RouteDecision(BaseModel):
+    """Nhãn định tuyến qua structured output (json_schema), như các bộ phân
+    loại khác (`ReplyDecision`, `ParsedTime`): model không thể trả chữ ngoài
+    ba nhãn sống, nên không còn bước parse chữ tự do rồi đoán."""
+    route: Route
 
 # Ngân sách RIÊNG của bước định tuyến (review M4 I-1, lỗi live 1): như các bộ
 # phân loại khác (bẫy #10), `wait_for` 8 giây bọc CẢ bước, kể cả 1 lần thử lại
@@ -52,23 +62,25 @@ async def supervise(state: GraphState) -> dict:
     recent = [*window, question][-SUPERVISOR_HISTORY_TURNS:]
 
     try:
-        model = build_chat_model(tags=["supervisor"], temperature=0.0,
+        # streaming=False: nhãn JSON không có gì để hiện dần — không trông vào
+        # mỗi bộ lọc tag để giữ nó khỏi màn hình khách (bẫy #8).
+        model = build_chat_model(tags=["supervisor"], temperature=0.0, streaming=False,
                                  timeout=SUPERVISOR_TIMEOUT_SECONDS,
                                  max_retries=SUPERVISOR_MAX_RETRIES)
-        reply = await asyncio.wait_for(
-            model.ainvoke([SystemMessage(content=SUPERVISOR_PROMPT), *recent]),
+        structured = model.with_structured_output(RouteDecision)
+        result = await asyncio.wait_for(
+            structured.ainvoke([SystemMessage(content=SUPERVISOR_PROMPT), *recent]),
             timeout=SUPERVISOR_TIMEOUT_SECONDS)
+        if not isinstance(result, RouteDecision):
+            raise TypeError(f"unexpected supervisor result {type(result).__name__}")
     except Exception as exc:
+        # Nhãn ngoài schema là ValidationError, rơi vào đây cùng timeout/lỗi
+        # mạng: mọi đường đều về "booking" (nhãn hoà của prompt).
         # asyncio.TimeoutError là Exception (3.11+). CancelledError (lượt mới
         # thay) KHÔNG bị nuốt: nó là BaseException.
         logger.warning("supervisor_failed", extra={"error": str(exc)[:200],
                                                    "error_type": type(exc).__name__})
         return {"route": "booking"}
-    route = (reply.content or "").strip().lower()
 
-    if route not in VALID_ROUTES:
-        logger.info("supervisor_fallback", extra={"raw": route[:80]})
-        route = "booking"
-
-    return {"route": route}
+    return {"route": result.route}
 
