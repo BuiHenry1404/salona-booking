@@ -390,6 +390,10 @@ async def _recent_decline(conversations: ConversationService, user_id: str,
     mới hơn là chuyện cũ đã qua), trong vòng `DECLINED_MAX_AGE_MINUTES`, và
     khách CHƯA nhắn câu nào sau lúc đó — tức đúng một lượt sau lượt từ chối
     (câu của lượt từ chối mang mốc TRƯỚC lúc đề xuất đổi trạng thái).
+
+    So `>=`, không phải `>`: Mongo lưu cả hai mốc ở mili-giây, câu khách ghi
+    cùng mili-giây với lúc đóng đề xuất là câu SAU (câu của lượt từ chối cách
+    lúc đóng cả một lượt LLM phân loại, không bao giờ trùng mili-giây).
     """
     if latest is None or latest.status not in DECLINED_STATUSES:
         return None
@@ -399,6 +403,6 @@ async def _recent_decline(conversations: ConversationService, user_id: str,
     # Đọc cả nhật ký, không chỉ cửa sổ `history`: nén có thể đã cắt câu khách
     # của lượt kế khỏi cửa sổ, khi đó dòng này sống lâu hơn một lượt.
     messages = await conversations._all_messages(user_id)
-    if any(m.role == "user" and _aware(m.created_at) > closed for m in messages):
+    if any(m.role == "user" and _aware(m.created_at) >= closed for m in messages):
         return None
     return declined_line(latest, expired=latest.status == "expired")
