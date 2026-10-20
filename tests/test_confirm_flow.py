@@ -893,3 +893,58 @@ async def test_button_on_foreign_or_expired_proposal_writes_nothing(test_db, use
 
     assert await appointments(test_db) == 0
     assert values["answer"] == BUTTON_STALE_REPLY.replace("anh chị", address)
+
+
+async def test_confirm_source_resets_to_text_after_a_button_approval(test_db, user, models):
+    """`fresh_turn_fields` phải đặt lại `confirm_source` mỗi lượt gõ chữ — thiếu
+    thì một lượt bấm nút để lại "button" cho mọi lượt gõ chữ sau đó trên cùng
+    thread (Task 3 đọc khoá này để quyết cách viết câu chốt)."""
+    await propose_turn(test_db, user, models)
+    when15 = format_vi_datetime(tomorrow_at(15))
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when15} nhé.")]
+    proposal = await pending(test_db, user)
+
+    await button(test_db, user, "yes", str(proposal["_id"]))
+    assert (await graph_values(test_db, user))["confirm_source"] == "button"
+
+    # Lượt mới, gõ chữ: đề xuất khác, chốt bằng "ừ" như mọi khi.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    await turn(test_db, user, "mai 4 giờ chiều chị làm tóc")
+    when16 = format_vi_datetime(tomorrow_at(16))
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when16} nhé.")]
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 2
+    assert (await graph_values(test_db, user))["confirm_source"] == "text"
+
+
+async def test_button_yes_also_offers_the_queued_booking(test_db, hung, models):
+    """Controller M3-task2: nút "có" phải mời lịch kế trong hàng chờ y hệt câu
+    gõ chữ "ừ" (xem `test_live_b2_two_bookings_in_one_message_are_booked_one_at_a_time`)."""
+    nine, two = in_two_days(9), in_two_days(14)
+    when9, when2 = format_vi_datetime(nine), format_vi_datetime(two)
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {
+            "start_at": nine.isoformat(), "note": "cắt tóc cho chú",
+            "queued": [{"start_at": two.isoformat(), "note": "cắt tóc cho thằng cháu"}]}),
+        AIMessage(f"Dạ em đặt lần lượt từng lịch nhé. Em giữ chỗ {when9} cắt tóc cho anh Hùng, "
+                  "anh xác nhận giúp em nhé?"),
+    ]
+    await turn(test_db, hung, "thu 4 nay chu muon cat toc luc 9h sang voi 2h chieu cho thang chau nua")
+    proposal = await pending(test_db, hung)
+
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")]
+    values = await button(test_db, hung, "yes", str(proposal["_id"]))
+
+    booked = await AppointmentService(test_db).upcoming_for(hung)
+    assert [(b.start_at.astimezone(TZ), b.note) for b in booked] == [(nine, "cắt tóc cho chú")]
+    assert values["confirm_fact"]["then"]                 # mời lịch kế, không bỏ qua
+    answer = values["answer"]
+    assert when2 in answer and "cắt tóc cho thằng cháu" in answer
+    assert models.classifier["calls"] == 0

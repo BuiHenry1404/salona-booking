@@ -129,6 +129,10 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         "gate_next": "",
         "fallback": None,
         "confirm_fact": None,
+        # Mặc định gõ chữ; chỉ nút bấm (UI) tự đặt lại "button" trên chính
+        # lượt nó duyệt — không reset ở đây thì một lượt gõ chữ SAU một lượt
+        # bấm nút sẽ mang nhầm "button" sang (khoá cũ không có trong input này).
+        "confirm_source": "text",
         "context_block": context["context_block"],
         "summary": context.get("summary") or [],
         "slots": context.get("slots"),

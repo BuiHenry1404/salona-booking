@@ -108,6 +108,21 @@ async def execute_proposal(db: AsyncIOMotorDatabase, user: User, proposal_id: st
     return confirm_fact_for(result, address_phrase(user.full_name))
 
 
+def with_queue_offer(out: dict, queue: list, address: str) -> dict:
+    """Chốt xong một lịch (booked/moved/cancelled) mà còn hàng chờ: CODE mời
+    lịch kế (guard nối câu này sau câu chốt). Chưa giữ chỗ gì — lượt sau agent
+    mới đề xuất. Dùng chung cho cả đường gõ chữ và đường nút bấm — khách bấm
+    "có" cũng phải được mời lịch kế như gõ "ừ" (review controller M3-task2)."""
+    fact = out["confirm_fact"]
+    if not queue or fact.get("kind") not in ("booked", "moved", "cancelled"):
+        return out
+    return {**out, "confirm_fact": {
+        **fact, "then": queue_offer(queue, address),
+        # Phrase phải biết các giờ này CHƯA giữ (lỗi live B3 #1).
+        "queued_when": [format_vi_datetime(datetime.fromisoformat(q["start_at"]))
+                        for q in queue]}}
+
+
 _CLARIFY = {
     "book": "Dạ {address} chốt giúp em lịch {when} nha, đúng không ạ?",
     "move": "Dạ {address} dời lịch sang {when} nha, đúng không ạ?",
@@ -165,6 +180,8 @@ async def _handle_button(db: AsyncIOMotorDatabase, user: User, state: GraphState
         if out is None:
             # `approve` không duyệt được (hết hạn/đổi ý/đã bị đóng) — chưa ghi gì.
             return _stale_button_reply(address)
+        queue = live_queue(state.get("queued"))
+        out = with_queue_offer(out, queue, address)
         return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "button"}
 
     if button == "no":
@@ -228,7 +245,7 @@ def make_confirm_node(
             out = await execute_proposal(db, user, proposal_id,
                                          turn_at=state.get("asked_at") or now_utc())
             if out is not None:
-                return {**out, "proposal_id": None, "gate_next": "phrase"}
+                return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "text"}
 
         if proposal is None or proposal.status != "pending":
             # Hết hạn, đã duyệt (lượt resume trước bị huỷ sau khi ghi), bị
@@ -257,16 +274,8 @@ def make_confirm_node(
                                          turn_at=state.get("asked_at") or now_utc())
             if out is None:
                 return {"proposal_id": None, "gate_next": "supervisor"}
-            fact = out["confirm_fact"]
-            if queue and fact.get("kind") in ("booked", "moved", "cancelled"):
-                # Chốt xong một lịch: CODE mời lịch kế trong hàng chờ (guard nối
-                # câu này sau câu chốt). Chưa giữ chỗ gì — lượt sau agent đề xuất.
-                out = {**out, "confirm_fact": {
-                    **fact, "then": queue_offer(queue, address),
-                    # Phrase phải biết các giờ này CHƯA giữ (lỗi live B3 #1).
-                    "queued_when": [format_vi_datetime(datetime.fromisoformat(q["start_at"]))
-                                    for q in queue]}}
-            return {**out, "proposal_id": None, "gate_next": "phrase"}
+            out = with_queue_offer(out, queue, address)
+            return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "text"}
 
         if decision == "unclear":
             marked = await proposals.mark_unclear(user, proposal_id)
