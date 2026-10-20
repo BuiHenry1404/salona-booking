@@ -143,7 +143,9 @@ class SocketIOService:
         payload = data or {}
         proposal_id = payload.get("proposal_id")
         decision = payload.get("decision")
-        label = BUTTON_LABELS.get(decision)
+        # `decision` sai kiểu (list/dict) không băm được — tra bằng `isinstance`
+        # trước để không nổ ở `.get()` thay vì trả `error` gọn gàng.
+        label = BUTTON_LABELS.get(decision) if isinstance(decision, str) else None
         if not isinstance(proposal_id, str) or not proposal_id or label is None:
             await self.sio.emit("error", {"message": TURN_ERROR_MESSAGE}, room=sid)
             return

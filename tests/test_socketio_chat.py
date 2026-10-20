@@ -304,3 +304,25 @@ class TestConfirmProposalEvent:
 
         assert called == []
         assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
+
+    async def test_confirm_proposal_rejects_an_unhashable_decision(
+        self, service, test_db, monkeypatch
+    ):
+        """`decision` sai kiểu nặng (dict/list, không chỉ chuỗi lạ) không được
+        làm nổ `.get()` trước khi kịp trả `error`."""
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": ["yes"]})
+
+        assert called == []
+        assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
