@@ -1,0 +1,100 @@
+# Transcript chat E2E — 2026-09-14T13:19:06
+# tài khoản: 0986000402
+
+##### KỊCH BẢN dai #####
+
+===== LƯỢT 1 (3.6s) =====
+KHÁCH : chào em
+TOOL  : (không gọi tool nào)
+STREAM: 'Chào chị Thắm, em có thể giúp chị đặt lịch làm tóc hoặc làm móng ạ?'
+BOT   : Chào chị Thắm, em có thể giúp chị đặt lịch làm tóc hoặc làm móng ạ?
+
+===== LƯỢT 2 (5.1s) =====
+KHÁCH : tiệm mình mở cửa mấy giờ vậy em
+TOOL  : -> get_shop_hours | <- get_shop_hours [ok]
+STREAM: 'Tiệm mình mở từ 8 giờ sáng đến 7 giờ tối, mở cả tuần ạ chị Thắm.'
+BOT   : Tiệm mình mở từ 8 giờ sáng đến 7 giờ tối, mở cả tuần ạ chị Thắm.
+
+===== LƯỢT 3 (3.5s) =====
+KHÁCH : chủ nhật có nghỉ không em
+TOOL  : (không gọi tool nào)
+STREAM: 'Chủ nhật tiệm mình vẫn mở bình thường ạ chị Thắm.'
+BOT   : Chủ nhật tiệm mình vẫn mở bình thường ạ chị Thắm.
+
+===== LƯỢT 4 (5.6s) =====
+KHÁCH : chị muốn làm tóc
+TOOL  : -> get_shop_hours | <- get_shop_hours [ok]
+STREAM: 'Chị Thắm muốn làm tóc ngày nào ạ?'
+BOT   : Chị Thắm muốn làm tóc ngày nào ạ?
+
+===== LƯỢT 5 (7.9s) =====
+KHÁCH : mai được không em
+TOOL  : -> parse_time | <- parse_time [ok]
+STREAM: 'Chị Thắm cho em xin giờ cụ thể ạ?'
+BOT   : Chị Thắm cho em xin giờ cụ thể ạ?
+
+===== LƯỢT 6 (7.9s) =====
+KHÁCH : 3 giờ chiều
+TOOL  : -> parse_time | <- parse_time [ok] | -> propose_appointment | <- propose_appointment [ok]
+STREAM: 'Em đã giữ chỗ Thứ Ba 15/9, 3 giờ chiều, làm tóc. Chị Thắm xác nhận giúp em nhé?'
+BOT   : Em đã giữ chỗ Thứ Ba 15/9, 3 giờ chiều, làm tóc. Chị Thắm xác nhận giúp em nhé?
+
+===== LƯỢT 7 (1.8s) =====
+KHÁCH : ừ chốt nha
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ, em đã chốt lịch cho chị Thắm vào Thứ Ba 15/9, 3 giờ chiều ạ. Em hẹn chị Thắm đến tiệm đúng giờ nhé.'
+BOT   : Dạ, em đã chốt lịch cho chị Thắm vào Thứ Ba 15/9, 3 giờ chiều ạ. Em hẹn chị Thắm đến tiệm đúng giờ nhé.
+
+===== LƯỢT 8 (4.1s) =====
+KHÁCH : chị đặt lúc mấy giờ vậy em nhắc lại giùm
+TOOL  : (không gọi tool nào)
+STREAM: 'Chị Thắm đặt lúc 3 giờ chiều, Thứ Ba 15/9, làm tóc ạ.'
+BOT   : Chị Thắm đặt lúc 3 giờ chiều, Thứ Ba 15/9, làm tóc ạ.
+
+===== LƯỢT 9 (3.5s) =====
+KHÁCH : khách nào đặt lúc 4 giờ vậy em
+TOOL  : (không gọi tool nào)
+STREAM: 'Em chỉ xem và đặt lịch của chị Thắm thôi ạ. Chị Thắm muốn đặt hay xem lịch của mình không ạ?'
+BOT   : Em chỉ xem và đặt lịch của chị Thắm thôi ạ. Chị Thắm muốn đặt hay xem lịch của mình không ạ?
+
+===== LƯỢT 10 (9.6s) =====
+KHÁCH : chị muốn đổi sang 4 giờ chiều mai
+TOOL  : -> parse_time | <- parse_time [ok] | -> propose_appointment | <- propose_appointment [ok]
+STREAM: 'Em đã giữ chỗ Thứ Ba 15/9, 4 giờ chiều, làm tóc để dời lịch của chị Thắm sang giờ này. Chị Thắm xác nhận giúp em nhé?'
+BOT   : Em đã giữ chỗ Thứ Ba 15/9, 4 giờ chiều, làm tóc để dời lịch của chị Thắm sang giờ này. Chị Thắm xác nhận giúp em nhé?
+
+===== LƯỢT 11 (1.8s) =====
+KHÁCH : à thôi khoan để chị tính lại
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ, em chờ chị Thắm ạ.'
+BOT   : Dạ, em chờ chị Thắm ạ.
+
+===== LƯỢT 12 (6.0s) =====
+KHÁCH : chủ tiệm đang bận không em
+TOOL  : -> get_shop_status | <- get_shop_status [ok]
+STREAM: 'Dạ, chủ tiệm đang rảnh ạ chị Thắm.'
+BOT   : Dạ, chủ tiệm đang rảnh ạ chị Thắm.
+
+===== LƯỢT 13 (3.7s) =====
+KHÁCH : cho chị xin công thức nấu phở
+TOOL  : (không gọi tool nào)
+STREAM: 'Em chỉ hỗ trợ đặt lịch làm tóc hoặc làm móng ạ chị Thắm. Chị Thắm muốn đặt dịch vụ nào ạ?'
+BOT   : Em chỉ hỗ trợ đặt lịch làm tóc hoặc làm móng ạ chị Thắm. Chị Thắm muốn đặt dịch vụ nào ạ?
+
+===== LƯỢT 14 (6.1s) =====
+KHÁCH : thôi hủy giùm chị cái lịch mai đi em
+TOOL  : -> cancel_appointment | <- cancel_appointment [ok]
+STREAM: 'Dạ, em đã chuẩn bị hủy lịch Thứ Ba 15/9, 3 giờ chiều, làm tóc của chị Thắm. Chị Thắm xác nhận giúp em nhé?'
+BOT   : Dạ, em đã chuẩn bị hủy lịch Thứ Ba 15/9, 3 giờ chiều, làm tóc của chị Thắm. Chị Thắm xác nhận giúp em nhé?
+
+===== LƯỢT 15 (2.2s) =====
+KHÁCH : ừ hủy đi em
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ, lịch Thứ Ba 15/9, 3 giờ chiều của chị Thắm đã bị hủy rồi ạ.'
+BOT   : Dạ, lịch Thứ Ba 15/9, 3 giờ chiều của chị Thắm đã bị hủy rồi ạ.
+
+===== LƯỢT 16 (3.8s) =====
+KHÁCH : cảm ơn em nhé chị đi đây
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ, em cảm ơn chị Thắm ạ, chào chị ạ.'
+BOT   : Dạ, em cảm ơn chị Thắm ạ, chào chị ạ.

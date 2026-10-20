@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # Trần chi phí LLM cho chat. CÓ mặc định (khác booking_max_per_hour) vì thêm
     # một biến bắt buộc sẽ làm hỏng mọi .env đang chạy.
     chat_max_per_hour: int = 30
+
+    # Checkpoint của LangGraph (lịch sử model theo thread `<user>:<ngày VN>`)
+    # tự xoá sau ngần này ngày. Chỉ là dọn rác: lịch sử model chỉ đọc trong ngày,
+    # nhật ký hiển thị nằm ở `conversations`, không bị TTL này chạm tới.
+    checkpoint_ttl_days: int = 7
     timezone: str
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.

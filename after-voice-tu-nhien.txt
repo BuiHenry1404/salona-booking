@@ -1,0 +1,64 @@
+# Transcript chat E2E — 2026-09-14T13:17:19
+# tài khoản: 0986000401
+
+##### KỊCH BẢN tu_nhien #####
+
+===== LƯỢT 1 (5.4s) =====
+KHÁCH : alo em, tiệm còn làm không
+TOOL  : -> get_shop_hours | <- get_shop_hours [ok]
+STREAM: 'Dạ anh Tám, tiệm còn làm đến 7 giờ tối ạ.'
+BOT   : Dạ anh Tám, tiệm còn làm đến 7 giờ tối ạ.
+
+===== LƯỢT 2 (13.0s) =====
+KHÁCH : mấy giờ đóng cửa vậy, chiều nay anh qua cắt tóc được không
+TOOL  : -> get_shop_hours | <- get_shop_hours [ok] | -> parse_time | <- parse_time [ok] | -> find_free_slots | <- find_free_slots [ok] | -> propose_appointment | <- propose_appointment [ok]
+STREAM: 'Dạ anh Tám, tiệm đóng cửa lúc 7 giờ tối. Chiều nay em giữ chỗ Thứ Hai 14/9, 3 giờ chiều cho cắt tóc. Anh xác nhận giúp em nhé?'
+BOT   : Dạ anh Tám, tiệm đóng cửa lúc 7 giờ tối. Chiều nay em giữ chỗ Thứ Hai 14/9, 3 giờ chiều cho cắt tóc. Anh xác nhận giúp em nhé?
+
+===== LƯỢT 3 (2.2s) =====
+KHÁCH : khách nào đặt lúc 4 giờ chiều vậy em
+TOOL  : (không gọi tool nào)
+STREAM: 'Em chỉ xem và đặt lịch của anh Tám thôi ạ. Anh muốn đặt hay xem lịch của mình không?'
+BOT   : Em chỉ xem và đặt lịch của anh Tám thôi ạ. Anh muốn đặt hay xem lịch của mình không?
+
+===== LƯỢT 4 (3.6s) =====
+KHÁCH : tiệm có nhuộm tóc bạc không, giá bao nhiêu
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ anh Tám, phần giá và dịch vụ này chủ tiệm sẽ trả lời ạ. Anh muốn đặt lịch gì cho mình không?'
+BOT   : Dạ anh Tám, phần giá và dịch vụ này chủ tiệm sẽ trả lời ạ. Anh muốn đặt lịch gì cho mình không?
+
+===== LƯỢT 5 (10.4s) =====
+KHÁCH : à mà lịch mai của anh chuyển qua 10 giờ được không
+TOOL  : -> parse_time | <- parse_time [ok] | -> propose_appointment | <- propose_appointment [ok]
+STREAM: 'Dạ anh Tám, em đã giữ chỗ Thứ Ba 15/9, 10 giờ sáng cho cắt tóc để dời từ lịch cũ sang đó. Anh xác nhận giúp em nhé?'
+BOT   : Dạ anh Tám, em đã giữ chỗ Thứ Ba 15/9, 10 giờ sáng cho cắt tóc để dời từ lịch cũ sang đó. Anh xác nhận giúp em nhé?
+
+===== LƯỢT 6 (2.9s) =====
+KHÁCH : ừ
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ anh Tám, lịch của anh đã được dời sang Thứ Ba 15/9, 10 giờ sáng ạ.'
+BOT   : Dạ anh Tám, lịch của anh đã được dời sang Thứ Ba 15/9, 10 giờ sáng ạ.
+
+===== LƯỢT 7 (5.2s) =====
+KHÁCH : vậy anh còn mấy lịch
+TOOL  : -> list_my_appointments | <- list_my_appointments [ok]
+STREAM: 'Dạ anh Tám, anh còn 1 lịch là Thứ Ba 15/9, 10 giờ sáng, cắt tóc ạ.'
+BOT   : Dạ anh Tám, anh còn 1 lịch là Thứ Ba 15/9, 10 giờ sáng, cắt tóc ạ.
+
+===== LƯỢT 8 (8.1s) =====
+KHÁCH : thôi hủy giùm anh
+TOOL  : -> cancel_appointment | <- cancel_appointment [ok]
+STREAM: 'Dạ anh Tám, em sẽ hủy lịch Thứ Ba 15/9, 10 giờ sáng. Anh xác nhận giúp em nhé?'
+BOT   : Dạ anh Tám, em sẽ hủy lịch Thứ Ba 15/9, 10 giờ sáng. Anh xác nhận giúp em nhé?
+
+===== LƯỢT 9 (2.2s) =====
+KHÁCH : ừ hủy đi
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ anh Tám, lịch Thứ Ba 15/9, 10 giờ sáng đã bị hủy rồi ạ.'
+BOT   : Dạ anh Tám, lịch Thứ Ba 15/9, 10 giờ sáng đã bị hủy rồi ạ.
+
+===== LƯỢT 10 (3.8s) =====
+KHÁCH : cảm ơn em
+TOOL  : (không gọi tool nào)
+STREAM: 'Dạ anh Tám, em cảm ơn anh ạ. Chúc anh một ngày vui vẻ.'
+BOT   : Dạ anh Tám, em cảm ơn anh ạ. Chúc anh một ngày vui vẻ.

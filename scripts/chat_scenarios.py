@@ -3,8 +3,8 @@
     docker compose up -d
     PYTHONPATH=. .venv/bin/python scripts/chat_scenarios.py
 
-Mỗi kịch bản dùng MỘT tài khoản riêng: hội thoại và cờ `pending_confirmation`
-lưu theo `user_id`, dùng chung một tài khoản thì kịch bản sau thừa hưởng ngữ
+Mỗi kịch bản dùng MỘT tài khoản riêng: hội thoại và đề xuất chờ xác nhận
+(`proposals`) lưu theo `user_id`, dùng chung một tài khoản thì kịch bản sau thừa hưởng ngữ
 cảnh của kịch bản trước và không còn đọc được nữa. Tài khoản và lịch do script
 tạo đều được dọn ở cuối.
 """

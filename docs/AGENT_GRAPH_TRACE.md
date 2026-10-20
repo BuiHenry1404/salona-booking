@@ -157,7 +157,7 @@ Mã nguồn tại [`app/agents/booking_graph/tools.py`](file:///home/henryb1/Des
 
 | Tên Tool | Subagent sử dụng | Tham số đầu vào | Mô tả chức năng & Hành vi kỹ thuật |
 |---|---|---|---|
-| `get_shop_status` | `StatusAgent` | Không có | Đọc trạng thái từ `ShopService`. Trả về *"Chủ tiệm đang rảnh"* hoặc *"Chủ tiệm đang bận, xong lúc [Giờ:Phút]"*. |
+| `get_shop_status` | `StatusAgent` | Không có | Đọc trạng thái từ `ShopService`. Trả JSON (không còn câu tiếng Việt viết sẵn): `{"busy": false}` hoặc `{"busy": true, "until": {"iso", "spoken"}}` — model tự viết câu, đọc giờ ở `until.spoken`. |
 | `parse_time` | `BookingAgent` | `text: str` | Quy đổi câu nói thời gian ra ngày giờ chuẩn ISO bằng bộ parser 3 tầng (`timeparse.py`). Trả về JSON `{start_at, partial_date, missing}`. |
 | `find_free_slots` | `BookingAgent` | `day: str` (YYYY-MM-DD) | Gọi `AppointmentService.find_free_slots` để lấy danh sách các mốc 15 phút còn trống trong khung giờ mở cửa. |
 | `propose_appointment` | `BookingAgent` | `start_at: str`<br>`note: str = None`<br>`xung_ho: str = None` | 1. Kiểm tra slot còn trống không.<br>2. Nếu kín, tự động gợi ý 3 mốc trống gần nhất.<br>3. Nếu trống, lưu cờ `pending_confirmation` vào Mongo và yêu cầu AI nhắc lại cho khách xác nhận. **Không tạo lịch.** |

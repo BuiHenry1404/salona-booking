@@ -117,8 +117,10 @@ say("cháu bán bảo hiểm không")                // bị từ chối lịch 
 
 Đúng thì lượt 1 hiện `tool_started parse_time` → `propose_appointment` → nhiều
 `token` → `complete`, mà `GET /api/v1/appointments/mine` vẫn rỗng. Lượt 2 không có
-tool nào, trả lời gần như tức thì (đi nhánh `confirm`, không gọi LLM), và lịch xuất
-hiện.
+tool nào: run_turn resume node `confirm` đang chờ (interrupt), lưới code + bộ phân
+loại (tag `classify`, không stream) quyết đồng ý, `ProposalService.approve` ghi lịch,
+`phrase` viết câu chốt — và lịch xuất hiện. Đề xuất nằm ở collection `proposals`
+(`status` pending → approved/rejected/expired/superseded/failed).
 
 ## 7. Test
 
@@ -169,6 +171,142 @@ docker compose -f docker-compose.langfuse.yml up -d
 
 Tắt: `docker compose -f docker-compose.langfuse.yml down` (stack này nặng: Postgres
 + ClickHouse + Redis + MinIO + web + worker).
+
+## 8b. Kiểm state (nén hội thoại trong phiên)
+
+Xem `ConversationState` (`summary` + `slots`) hiện có của một khách:
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); printjson(db.conversations.findOne({user_id:String(u._id)},{state:1}))'
+```
+
+Log cần theo dõi (cả năm đều log qua `structlog`, không ném lỗi ra khách):
+
+- `state_compacted` — nén thành công, kèm số bullet, số tin đã nén, và có
+  sinh được slots hay không.
+- `state_skipped` — cầu chì đã bật (3 lần hỏng liên tiếp), bỏ qua tới hết ngày.
+- `state_empty` — model trả về 0 bullet hợp lệ; coi như hỏng, `covers_until`
+  KHÔNG advance, state cũ (nếu có) giữ nguyên, `failures` tăng.
+- `state_llm_failed` — lời gọi LLM lỗi hoặc timeout; `failures` tăng (bump cầu
+  chì), state cũ giữ nguyên.
+- `state_failed` — lỗi ngoài dự kiến, NGOÀI lời gọi LLM (vd. Mongo down);
+  không bump cầu chì.
+- `state_schedule_failed` — lên lịch nén nền thất bại sau khi lượt chat đã
+  trả lời khách xong; kèm `error_type`.
+- `state_slot_dropped` — **KHÔNG phải lỗi.** `sanitize_slots` bỏ đúng một
+  field slots do LLM gõ sai (vd. ngày không hợp lệ, ngày/giờ đã qua, id lịch
+  không có thật) — kèm tên field bị bỏ. Thấy log này là code đang lọc đúng
+  việc, không phải hệ thống hỏng.
+
+Trace Langfuse của lượt nén mang tag `state` (khác tag `respond` của lượt
+chat chính) — lọc theo tag đó để tách chi phí nén khỏi chi phí trả lời.
+
+Ngưỡng nén mặc định `COMPACT_THRESHOLD_TOKENS = 800`
+(`app/services/conversation_state.py`) — kịch bản `dai` (16 lượt, câu ngắn)
+không luôn đủ để kích nén; muốn xác nhận luồng đầu-cuối nhanh thì hạ tạm
+ngưỡng (vd. 300), chạy lại, rồi **khôi phục về 800** trước khi commit bất cứ
+gì.
+
+## 8b'. Checkpointer (lịch sử model theo thread)
+
+Lịch sử model nằm trong hai collection của chính DB `MONGO_DB_NAME`
+(không phải DB `checkpointing_db` mặc định của thư viện):
+
+- `checkpoints` — state graph sau mỗi bước, theo `thread_id = <user_id>:<ngày VN>`.
+- `checkpoint_writes` — ghi tạm giữa các bước.
+
+Cả hai có index TTL trên `created_at`: tự xoá sau `CHECKPOINT_TTL_DAYS` ngày
+(mặc định 7, đặt trong `.env`). Đổi TTL rồi khởi động lại là đủ: lúc khởi động
+`make_checkpointer` sửa index TTL đang có bằng `collMod` (không xoá, không tạo
+lại index; thư viện tự làm thì Mongo ném "equivalent index already exists with
+different options" và app không lên). Xoá
+checkpoint chỉ mất lịch sử model của ngày đó — nhật ký chat hiển thị nằm ở
+`conversations`, không bị chạm.
+
+Xem thread hôm nay của một khách:
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.checkpoints.find({thread_id:{$regex:"^"+String(u._id)+":"}},{thread_id:1,checkpoint_id:1,created_at:1}).sort({checkpoint_id:-1}).limit(5).forEach(printjson)'
+```
+
+Dọn tay (vd. sau khi đổi cấu trúc state, hoặc reset dev):
+
+```bash
+# Một khách
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var p="^"+"<user_id>"+":"; db.checkpoints.deleteMany({thread_id:{$regex:p}}); db.checkpoint_writes.deleteMany({thread_id:{$regex:p}})'
+# Toàn bộ
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'db.checkpoints.deleteMany({}); db.checkpoint_writes.deleteMany({})'
+```
+
+Log `turn_superseded`: khách nhắn lượt mới khi lượt cũ còn chạy (thường do
+Azure treo) — lượt cũ bị huỷ êm, không phát `error`, không ghi `conversations`.
+
+## 8c. Kiểm tầng gác (guard/rewrite/phrase)
+
+Mọi câu LLM đi qua guard đúng một lần trước khi ra khách — từ M4 là
+`GuardMiddleware` (`after_agent`) trong mỗi agent, luật ở `guard.apply_guard` (spec
+`docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`; xem bẫy #21
+ở `CONTEXT.md`). Log qua `structlog`, không ném lỗi ra khách:
+
+- `guard_violation{codes}` — draft đầu tiên phạm một hay nhiều trong ba phép
+  kiểm tất định: `repeat` (giống câu đáp gần đây, xem `REPEAT_RATIO`/
+  `REPEAT_LOOKBACK` ở `guard.py`), `pronoun` (giọng "cô/chú/bác" hoặc đại từ
+  sai giới với `address` suy từ tên khách), `clock` (giờ viết bằng chữ hoặc
+  `HH:MM` thay vì "3 giờ chiều"). Gọi `rewrite_once` đúng một lần.
+- `guard_rewritten` — bản viết lại (LLM, tag `rewrite`, một lần, không stream)
+  qua hết mọi phép kiểm lại (cộng `content` — còn đủ mốc ngày-giờ/số của bản
+  gốc). Đây là câu được phát.
+- `guard_gave_up{codes}` — bản viết lại VẪN phạm (kể cả mất số liệu qua
+  `content_kept`). Guard trả **draft GỐC** (`answer_source="llm"`), không phát
+  bản rewrite hỏng — không có lần rewrite thứ hai.
+- `rewrite_failed{error,codes}` (ở `rewrite.py`) — lời gọi LLM viết lại lỗi
+  hoặc quá `REWRITE_TIMEOUT_SECONDS` (8s); `rewrite_once` trả None, guard thấy
+  lại đúng các `codes` cũ và thành `guard_gave_up`.
+- `phrase_fallback{codes}` — nhánh riêng cho câu chốt lịch sau `confirm`
+  (`_guard_phrase` trong `guard.py`): câu do `PhraseMiddleware` viết thiếu `when`
+  (mốc ngày-giờ từ DB), thiếu cách gọi khách (`address`), thiếu câu báo lỗi khi
+  đặt hỏng, hoặc phạm ba phép kiểm thường — dùng ngay câu cứng
+  `state["fallback"]`, không rewrite (đây là khoảnh khắc chốt lịch, sai số liệu
+  không được phép).
+- `guard_tool_name_stripped` — câu của agent có tên tool (`parse_time`, …) hay
+  nhóm ngoặc chứa định danh snake_case; guard xoá bằng code trước khi kiểm.
+  Phòng ngừa — A chưa lộ lần nào; thấy log này là prompt/model đổi, nên soi.
+- `agent_turn_timeout{seconds}` (ở `events.py`) — lượt quá `TURN_TIMEOUT_SECONDS`
+  (60s); khách nhận `error` "Máy đang bận…". Model agent lỗi sau 1 lần thử lại
+  (`ModelRetryMiddleware`) thì là `agent_turn_failed` với cùng câu.
+- `supervisor_failed{error, error_type}` (ở `supervisor.py`) — bước định tuyến
+  lỗi hoặc quá `SUPERVISOR_TIMEOUT_SECONDS` (8s, kể cả 1 lần thử lại SDK); lượt
+  đi tiếp vào `booking`. Thấy nhiều là Azure chậm — lượt vẫn trả lời.
+- `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của `write_phrase` lỗi
+  hoặc quá `PHRASE_TIMEOUT_SECONDS` (8s); dùng thẳng `fallback`.
+- `anchor_ignored{anchor}` (ở `tools.py`) — tool gọi `apply_anchor` với neo
+  không hợp lệ (không parse được thành `datetime`), bỏ qua neo, hỏi lại khách
+  như trước khi có Task 3.
+- `anchor_bad_hour{partial_hour,partial_minute}` (ở `timeparse.py`) — LLM trả
+  `partial_hour`/`partial_minute` ngoài khoảng hợp lệ (không bị Pydantic chặn
+  vì chỉ là `int`); bỏ qua neo, trả nguyên candidate để khách vẫn được hỏi lại
+  thay vì tool ném `ValueError`.
+
+Đo thật 2026-09-14 (Task 6, 26 lượt LLM qua hai kịch bản `tu_nhien`+`dai`):
+đúng **1** `guard_violation` (`repeat`) → **1** `guard_gave_up` — rewrite chạy
+nhưng bản viết lại vẫn lặp nên bị guard trả về draft gốc; không log nào khác
+trong danh sách trên xuất hiện. Xem chi tiết ở Checkpoint Task 6 cuối
+`CONTEXT.md`.
+
+Kiểm bằng tay xem draft nào bị cờ `repeat` oan hay đúng (không gọi LLM, đọc
+transcript có sẵn):
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/probe_repeats.py [--ratio 0.85] [--min-words 6] FILE...
+```
+
+Mỗi file truyền vào phải đúng định dạng dòng `BOT   : ...` của
+`scripts/chat_e2e_transcript.py`; không truyền file nào thì nó tự nhặt hết
+`*.txt` ở gốc repo.
 
 ## 9. Trục trặc hay gặp
 

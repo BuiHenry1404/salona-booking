@@ -5,6 +5,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.core.config import settings
 from app.core.errors import SlotTakenError
 from app.core.slots import slot_keys_for
 from app.models.appointment import Appointment, CreatedVia
@@ -78,3 +79,41 @@ class AppointmentRepository(BaseRepository[Appointment]):
             "status": "booked", "start_at": {"$gte": start, "$lt": end},
         }).sort("start_at", 1).to_list(length=500)
         return [Appointment(**d) for d in docs]
+
+    async def distinct_customers_by_month(
+        self, start: datetime, end: datetime
+    ) -> dict[str, int]:
+        """Số khách PHÂN BIỆT có lịch booked mỗi tháng, trong khoảng [start, end).
+
+        Group hai nhịp: nhịp một gộp (tháng, user_id) để một khách đặt mười
+        lịch trong tháng chỉ còn một dòng, nhịp hai đếm số dòng ấy. Không dùng
+        $addToSet vì mảng user_id của tháng đông khách có thể vượt giới hạn
+        16MB mỗi document của Mongo.
+
+        Nhãn tháng cắt theo `timezone` cấu hình (Asia/Ho_Chi_Minh) ngay trong
+        Mongo — start_at lưu UTC, cắt theo UTC sẽ đẩy lịch tối cuối tháng sang
+        tháng sau.
+
+        Chỉ trả về những tháng THỰC SỰ có lịch. Điền tháng rỗng là việc của
+        lớp service.
+        """
+        pipeline = [
+            {"$match": {"status": "booked", "start_at": {"$gte": start, "$lt": end}}},
+            {
+                "$group": {
+                    "_id": {
+                        "month": {
+                            "$dateToString": {
+                                "format": "%Y-%m",
+                                "date": "$start_at",
+                                "timezone": settings.timezone,
+                            }
+                        },
+                        "user_id": "$user_id",
+                    }
+                }
+            },
+            {"$group": {"_id": "$_id.month", "customer_count": {"$sum": 1}}},
+        ]
+        rows = await self.collection.aggregate(pipeline).to_list(length=None)
+        return {row["_id"]: row["customer_count"] for row in rows}

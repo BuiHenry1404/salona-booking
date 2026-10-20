@@ -79,9 +79,9 @@ class SocketIOService:
     def _too_fast_message(retry_after_seconds: int) -> str:
         minutes = max(round(retry_after_seconds / 60), 1)
         # "khoảng 60 phút" nghe lủng củng; người ta nói "một tiếng".
-        khi_nao = "1 tiếng" if minutes >= 60 else f"{minutes} phút"
+        when = "1 tiếng" if minutes >= 60 else f"{minutes} phút"
         return (
-            f"Anh chị nhắn hơi nhanh, khoảng {khi_nao} nữa nhắn lại giúp em nhé. "
+            f"Anh chị nhắn hơi nhanh, khoảng {when} nữa nhắn lại giúp em nhé. "
             "Gấp thì anh chị gọi thẳng cho tiệm ạ."
         )
 

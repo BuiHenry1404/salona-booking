@@ -60,6 +60,18 @@ export interface AppointmentCreateRequest {
   for_user_id?: string;
 }
 
+/** Contract của GET /api/v1/admin/stats/customers-by-month
+ * (backend: MonthlyCustomerStatsResponse trong app/api/v1/schemas.py).
+ * `month` là "YYYY-MM" theo giờ Việt Nam; luôn đủ 12 phần tử, cũ -> mới. */
+export interface MonthlyCustomerStat {
+  month: string;
+  customer_count: number;
+}
+
+export interface MonthlyCustomerStatsResponse {
+  months: MonthlyCustomerStat[];
+}
+
 /** UserResponse của /auth/users và /auth/me (backend: schemas.py). */
 export interface UserResponse {
   id: string;

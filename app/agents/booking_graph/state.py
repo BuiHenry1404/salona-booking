@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -11,6 +12,19 @@ class GraphState(TypedDict, total=False):
     messages: Annotated[List[AnyMessage], add_messages]
     user_id: str
     context_block: str
-    pending_confirmation: Optional[Dict[str, Any]]
+    summary: List[str]
+    slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
+    proposal_id: Optional[str]       # đề xuất chờ khách đồng ý (DB `proposals`)
+    queued: List[Dict[str, Any]]     # lịch khách xin thêm, chờ đề xuất lần lượt (context.queued_line)
+    gate_next: str                   # confirm → "end" | "phrase" (agent booking + confirm_fact) | "booking" | "supervisor"
+    asked_at: datetime                 # mốc câu khách (now_ms) — "bây giờ" của cửa sổ lịch sử
+    history_after: Optional[datetime]  # covers_until của state nén; tin ≤ mốc này không gửi model
     route: str
     answer: str
+    draft: str                       # câu thô của agent, trước guard (chỉ để soi)
+    violations: List[str]            # GuardMiddleware ghi
+    previous_replies: List[str]      # câu đáp LLM gần nhất (source == "llm")
+    customer_text: str
+    answer_source: str               # "llm" | "code" — ghi vào ChatMessage.source
+    fallback: Optional[str]          # câu cứng của confirm
+    confirm_fact: Optional[Dict[str, Any]]   # số liệu confirm vừa ghi → PhraseMiddleware

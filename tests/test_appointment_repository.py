@@ -109,3 +109,57 @@ async def test_upcoming_excludes_past_and_cancelled(test_db):
 
     upcoming = await repo.upcoming_for_user("u1", now=utc(12, day=7))
     assert [a.id for a in upcoming] == [future.id]
+
+
+async def test_distinct_customers_counts_each_user_once_per_month(test_db):
+    repo = AppointmentRepository(test_db)
+    await _book(repo, utc(8, day=7), user_id="u1")
+    await _book(repo, utc(9, day=8), user_id="u1")
+    await _book(repo, utc(10, day=9), user_id="u1")
+
+    counts = await repo.distinct_customers_by_month(
+        datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc)
+    )
+    assert counts["2026-08"] == 1
+
+
+async def test_distinct_customers_counts_two_different_users(test_db):
+    repo = AppointmentRepository(test_db)
+    await _book(repo, utc(8, day=7), user_id="u1")
+    await _book(repo, utc(9, day=7), user_id="u2")
+
+    counts = await repo.distinct_customers_by_month(
+        datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc)
+    )
+    assert counts["2026-08"] == 2
+
+
+async def test_distinct_customers_ignores_cancelled(test_db):
+    repo = AppointmentRepository(test_db)
+    appt = await _book(repo, utc(8, day=7), user_id="u1")
+    await _book(repo, utc(9, day=7), user_id="u2")
+    await repo.cancel(str(appt.id))
+
+    counts = await repo.distinct_customers_by_month(
+        datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc)
+    )
+    assert counts["2026-08"] == 1
+
+
+async def test_distinct_customers_returns_no_key_for_month_without_bookings(test_db):
+    repo = AppointmentRepository(test_db)
+    counts = await repo.distinct_customers_by_month(
+        datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 9, 1, tzinfo=timezone.utc)
+    )
+    assert counts == {}
+
+
+async def test_distinct_customers_groups_by_vietnam_month_boundary(test_db):
+    # 2026-08-31T18:00Z = 2026-09-01 01:00 giờ VN -> phải thuộc tháng 9.
+    repo = AppointmentRepository(test_db)
+    await _book(repo, datetime(2026, 8, 31, 18, 0, tzinfo=timezone.utc), user_id="u1")
+
+    counts = await repo.distinct_customers_by_month(
+        datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 10, 1, tzinfo=timezone.utc)
+    )
+    assert counts == {"2026-09": 1}

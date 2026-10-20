@@ -63,6 +63,32 @@ def test_handler_is_constructed_without_credentials(monkeypatch):
     assert seen["kwargs"] == {}
 
 
+def test_client_is_built_with_base_url_not_the_deprecated_host(monkeypatch):
+    """Lệch LangChain #4: langfuse 5.x đánh dấu `host=` là deprecated, thay
+    bằng `base_url=`. Bản sau bỏ hẳn `host` thì init nổ → nhánh nuốt lỗi tắt
+    trace im lặng."""
+    import langfuse
+    import app.core.langfuse as mod
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setattr(langfuse, "Langfuse", FakeClient)
+    monkeypatch.setattr(mod, "is_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_client_ready", False)
+    from pydantic import SecretStr
+    monkeypatch.setattr(mod.settings, "langfuse_public_key", SecretStr("pk"))
+    monkeypatch.setattr(mod.settings, "langfuse_secret_key", SecretStr("sk"))
+    monkeypatch.setattr(mod.settings, "langfuse_host", "http://lf.local")
+
+    assert mod._init_client() is True
+    assert seen["base_url"] == "http://lf.local"
+    assert "host" not in seen
+
+
 def test_the_handler_class_can_actually_be_imported():
     """Nạp được CallbackHandler thật, không chỉ nhánh nuốt lỗi.
 

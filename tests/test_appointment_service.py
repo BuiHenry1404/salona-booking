@@ -234,3 +234,126 @@ async def test_a_repeated_identical_booking_does_not_consume_the_quota(test_db):
 
     appt = await svc.create(user, _nth_free_slot(1), note=None)
     assert appt.status == "booked"
+
+
+class TestReschedule:
+    """BUG-1 (CONTEXT.md, checkpoint 2026-09-14): "dời lịch" từng thành ĐẶT THÊM
+    lịch — `create` chỉ chống trùng cùng một mốc giờ, hai mốc khác nhau là hai
+    lịch. Hệ thống không có luồng đổi lịch; giờ có, và nó phải để lại ĐÚNG MỘT
+    lịch dù thành hay bại.
+    """
+
+    async def _booked(self, db, user, start):
+        return await AppointmentService(db).create(user, start, "làm tóc")
+
+    async def test_moving_leaves_exactly_one_appointment(self, test_db):
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+
+        moved = await svc.reschedule(user, str(old.id), future_local(10), None)
+
+        upcoming = await svc.upcoming_for(user)
+        assert [a.start_at for a in upcoming] == [future_local(10)]
+        assert moved.id != old.id
+        assert (await svc.repo.get_by_id(str(old.id))).status == "cancelled"
+
+    async def test_the_note_carries_over_when_the_customer_gives_none(self, test_db):
+        """Khách nói "chuyển qua 10 giờ" không nhắc lại dịch vụ — dịch vụ vẫn là
+        cái đã đặt, không được rơi mất."""
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+
+        moved = await svc.reschedule(user, str(old.id), future_local(10), None)
+        assert moved.note == "làm tóc"
+
+    async def test_a_new_note_replaces_the_old_one(self, test_db):
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+
+        moved = await svc.reschedule(user, str(old.id), future_local(10), "làm nail")
+        assert moved.note == "làm nail"
+
+    async def test_moving_by_fifteen_minutes_over_its_own_slot_works(self, test_db):
+        """Lịch 60 phút lúc 9:00 dời sang 9:15 chồng lên chính nó. Với `create`
+        thuần thì index báo trùng — reschedule phải nhả lịch cũ trước."""
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+
+        await svc.reschedule(user, str(old.id), future_local(9, 15), None)
+
+        upcoming = await svc.upcoming_for(user)
+        assert [a.start_at for a in upcoming] == [future_local(9, 15)]
+
+    async def test_when_the_new_time_is_taken_the_old_appointment_survives(self, test_db):
+        """Thất bại thì khách vẫn còn lịch cũ — mất lịch tệ hơn không dời được."""
+        svc = AppointmentService(test_db)
+        user, other = make_user(), make_user(phone="0938111222", name="Cô Hoa")
+        old = await self._booked(test_db, user, future_local(9))
+        await self._booked(test_db, other, future_local(10))
+
+        with pytest.raises(SlotTakenError):
+            await svc.reschedule(user, str(old.id), future_local(10), None)
+
+        upcoming = await svc.upcoming_for(user)
+        assert [a.start_at for a in upcoming] == [future_local(9)]
+        assert (await svc.repo.get_by_id(str(old.id))).status == "booked"
+
+    async def test_moving_to_the_same_time_changes_nothing(self, test_db):
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+
+        same = await svc.reschedule(user, str(old.id), future_local(9), None)
+
+        assert same.id == old.id
+        assert len(await svc.upcoming_for(user)) == 1
+
+    async def test_cannot_move_someone_elses_appointment(self, test_db):
+        svc = AppointmentService(test_db)
+        owner, intruder = make_user(), make_user(phone="0938111222", name="Người lạ")
+        old = await self._booked(test_db, owner, future_local(9))
+
+        with pytest.raises(ForbiddenError):
+            await svc.reschedule(intruder, str(old.id), future_local(10), None)
+        assert (await svc.repo.get_by_id(str(old.id))).status == "booked"
+
+    async def test_unknown_or_cancelled_id_is_not_found(self, test_db):
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+        await svc.cancel(user, str(old.id))
+
+        with pytest.raises(NotFoundError):
+            await svc.reschedule(user, str(old.id), future_local(10), None)
+        with pytest.raises(NotFoundError):
+            await svc.reschedule(user, "không phải id", future_local(10), None)
+
+    async def test_owner_sees_both_a_cancellation_and_a_new_booking(self, test_db):
+        """Chủ tiệm nhận tin qua Telegram/Socket. Dời lịch phải báo cả hai vế,
+        không thì trên điện thoại chủ tiệm lịch 9 giờ vẫn còn đó."""
+        from app.services.notifications import notifications
+
+        class Spy:
+            created: list = []
+            cancelled: list = []
+
+            async def appointment_created(self, a): self.created.append(a.start_at)
+            async def appointment_cancelled(self, a): self.cancelled.append(a.start_at)
+            async def shop_status_changed(self, s): ...
+
+        svc = AppointmentService(test_db)
+        user = make_user()
+        old = await self._booked(test_db, user, future_local(9))
+        spy = Spy()
+        notifications.register(spy)
+        try:
+            await svc.reschedule(user, str(old.id), future_local(10), None)
+        finally:
+            notifications.clear()
+
+        assert spy.created == [future_local(10)]
+        assert spy.cancelled == [future_local(9)]

@@ -7,8 +7,8 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1  # passlib 1.7.4 incompatibility: bcrypt 5.x breaks backend detection
 
 # Database
-motor==3.3.2
-pymongo==4.6.0
+motor==3.7.1
+pymongo==4.19.0
 
 # Validation and serialization
 pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
@@ -41,13 +41,18 @@ pip-audit==2.6.1
 python-socketio[asyncio]>=5.13.0
 
 # Agent
-langgraph>=0.2.60
-langchain-openai>=0.2.14
-langchain-core>=0.3.28
+# Pinned to match bench ref A's resolved versions (docs/arch-security-review,
+# sha 9f7fb44), not the harness-b plan's original numbers: A's requirements
+# use >= and its bench venv resolved newer than the plan assumed.
+langgraph==1.2.16
+langgraph-checkpoint==4.3.0
+langgraph-checkpoint-mongodb==0.5.1
+langchain-openai==1.7.2
+langchain-core==1.6.12
 # langfuse.langchain import chính gói `langchain`, không chỉ langchain-core.
 # Thiếu nó thì trace tắt im lặng, chỉ còn một dòng warning.
-langchain>=0.3
-langfuse>=3.0
+langchain==1.4.6
+langfuse==5.0.2
 
 # Logging
 structlog==23.2.0

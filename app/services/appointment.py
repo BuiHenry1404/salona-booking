@@ -33,13 +33,8 @@ class AppointmentService:
         created_via: CreatedVia = "chat",
     ) -> Appointment:
         start = quantize(start_at)
-        now = now_utc()
-
         duration = settings.booking_slot_minutes
-        if start < now:
-            raise PastTimeError()
-        if not fits_before_closing(await self.shop.get_hours(), start, duration):
-            raise OutsideShopHoursError()
+        await self._validate_time(start, duration)
 
         user_id = str(user.id)
 
@@ -76,6 +71,68 @@ class AppointmentService:
         await notifications.appointment_created(appointment)
         return appointment
 
+    async def _validate_time(self, start: datetime, duration: int) -> None:
+        if start < now_utc():
+            raise PastTimeError()
+        if not fits_before_closing(await self.shop.get_hours(), start, duration):
+            raise OutsideShopHoursError()
+
+    async def own_booked(self, user: User, appointment_id: str) -> Appointment:
+        """Lịch còn hiệu lực của chính khách (admin thì của ai cũng được)."""
+        appt = await self.repo.get_by_id(appointment_id)
+        if not appt or appt.status != "booked":
+            raise NotFoundError("Không tìm thấy lịch này")
+        if appt.user_id != str(user.id) and user.role != "admin":
+            raise ForbiddenError("Chỉ hủy hay dời được lịch của chính mình")
+        return appt
+
+    async def reschedule(
+        self,
+        user: User,
+        appointment_id: str,
+        new_start_at: datetime,
+        note: Optional[str],
+        created_via: CreatedVia = "chat",
+    ) -> Appointment:
+        """Dời một lịch sang giờ khác. Kết quả LUÔN là đúng một lịch.
+
+        Trước đây không có luồng này: "chuyển giùm anh qua 10 giờ" thành
+        `create` ở 10 giờ, lịch 9 giờ vẫn nằm đó — hai lịch, bot vẫn "Xong rồi
+        ạ" (CONTEXT.md, BUG-1). `create` chỉ chống trùng CÙNG một mốc giờ, nên
+        không có gì chặn được.
+
+        Thứ tự cố ý: ĐẶT MỚI TRƯỚC, HỦY CŨ SAU. Đặt mới có thể hỏng vì nhiều
+        lẽ (giờ vừa bị người khác lấy, quá hạn mức), hủy cũ thì gần như không.
+        Hủy trước rồi đặt hụt là khách mất lịch — tệ hơn không dời được.
+
+        Ngoại lệ duy nhất: giờ mới chồng lên chính lịch cũ (9:00 → 9:15 với
+        lịch 60 phút). Index sẽ báo trùng với chính nó, nên phải nhả lịch cũ
+        trước. Kiểm hết mọi thứ có thể kiểm (quá khứ, giờ mở cửa, hạn mức)
+        TRƯỚC khi nhả — sau đó chỉ còn race thuần, và không ai khác giữ được
+        các mốc đó vì chúng vừa mới thuộc về chính khách.
+        """
+        old = await self.own_booked(user, appointment_id)
+        start = quantize(new_start_at)
+        if start == old.start_at:
+            return old
+        note = note or old.note   # khách không nhắc lại dịch vụ thì giữ dịch vụ cũ
+
+        duration = settings.booking_slot_minutes
+        overlaps_itself = set(slot_keys_for(start, duration)) & set(old.slot_keys)
+        if overlaps_itself:
+            await self._validate_time(start, duration)
+            await self.rate_limit.check(
+                f"booking:user:{old.user_id}", settings.booking_max_per_hour, 3600
+            )
+            await self.repo.cancel(appointment_id)
+            appointment = await self.create(user, start, note, created_via)
+        else:
+            appointment = await self.create(user, start, note, created_via)
+            await self.repo.cancel(appointment_id)
+
+        await notifications.appointment_cancelled(old)
+        return appointment
+
     async def cancel(self, user: User, appointment_id: str) -> None:
         appt = await self.repo.get_by_id(appointment_id)
         if not appt or appt.status != "booked":
@@ -97,12 +154,20 @@ class AppointmentService:
         start, end = local_day_bounds(day)
         return await self.repo.booked_between(start, end)
 
-    async def find_free_slots(self, day: date, limit: int = 12) -> List[datetime]:
+    async def find_free_slots(
+        self, day: date, limit: int = 12, ignore_appointment_id: Optional[str] = None
+    ) -> List[datetime]:
         """Các mốc còn trống trong ngày: nằm trong giờ mở cửa, không trùng lịch
-        đã có, và không ở quá khứ."""
+        đã có, và không ở quá khứ.
+
+        `ignore_appointment_id`: coi lịch đó như không có — dùng khi khách đang
+        DỜI chính lịch ấy, các mốc nó chiếm sẽ được nhả ra nên phải tính là trống.
+        """
         start, end = local_day_bounds(day)
         taken: set = set()
         for appt in await self.repo.booked_between(start, end):
+            if ignore_appointment_id and str(appt.id) == ignore_appointment_id:
+                continue
             steps = appt.duration_minutes // SLOT_MINUTES
             for i in range(steps):
                 taken.add(appt.start_at + timedelta(minutes=SLOT_MINUTES * i))

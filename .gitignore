@@ -143,3 +143,9 @@ frontend/node_modules/
 frontend/dist/
 # AgentBox project credentials — never commit.
 .agentbox/.project-auth
+
+# Kết quả chạy tay của scripts/probe_supervisor.py và chat_e2e_transcript.py —
+# là bằng chứng của một lần chạy, không phải mã nguồn.
+baseline-*.txt
+after-*.txt
+chat_transcript.txt
