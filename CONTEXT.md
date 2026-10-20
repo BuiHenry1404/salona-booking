@@ -221,7 +221,16 @@ Khách ──socket──▶ run_turn
   vế loại trừ.
 - Báo trước "đặt từng lịch một" (lỗi live B3 #3): lượt đề xuất mà còn hàng chờ,
   guard chèn câu CODE viết "Em giữ <giờ> trước, xong em giữ tiếp lịch <giờ chờ>
-  <ghi chú> nhé." trước câu hỏi xác nhận — trừ khi câu đã nhắc đủ giờ chờ.
+  <ghi chú> nhé." trước câu hỏi xác nhận. Live B4 #1: vế "trừ khi câu đã nhắc đủ
+  giờ chờ" làm câu báo biến mất khi model tự viết "Lịch cho thằng cháu là … 2 giờ
+  chiều", rồi "xác nhận giúp em nhé?" đọc như chốt cả hai. Giờ câu báo LUÔN có;
+  câu model nào nhắc giờ chờ bị bỏ; câu hỏi phải gọi đúng giờ đang giữ và không
+  nhắc giờ chờ, không thì code viết "<Khách> xác nhận lịch <giờ giữ> giúp em nhé?".
+- Câu hoãn trần do CODE đáp (lỗi live B4 #2): dù có dòng [relative]/[deferral],
+  model vẫn chọn câu từ chối rule 4 cho "thoi de chu hoi no roi nhan lai em sau
+  nha". `relatives.deferral_reply`: câu hoãn KHÔNG kèm yêu cầu (giờ, đặt/giữ/dời/
+  hủy, hỏi tiệm) → node agent trả một trong ba câu mời nhắn lại, không gọi model,
+  không lặp câu vừa nói. Kèm yêu cầu thì vẫn qua model.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,
