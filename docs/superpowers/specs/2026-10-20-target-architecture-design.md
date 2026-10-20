@@ -77,8 +77,8 @@ Mọi đường ghi (`create`/`cancel`/`reschedule`) đều đi qua `ProposalSer
 
 | Lối vào | Đi đâu | Gọi LLM? |
 |---|---|---|
-| Nút **Đồng ý** (`proposal_id`) | `approve` thẳng → `AppointmentService` → `phrase` | chỉ `phrase` |
-| Nút **Không** (`proposal_id`) | `proposal → rejected`; booking agent hỏi khách muốn đổi gì | booking |
+| Nút **Đồng ý** (`proposal_id`) | `approve` thẳng → `AppointmentService` → câu chốt **bằng code** (mẫu theo `context`, mục 5) | không |
+| Nút **Không** (`proposal_id`) | `proposal → rejected`; **code** viết câu hỏi tiếp ("Dạ, anh chị muốn đổi giờ khác hay đổi dịch vụ ạ?"), không chạy agent vì không có câu khách | không |
 | Gõ chữ | nhãn `approve/reject/change/unclear` → `approve` chỉ khi nhãn `approve` **và** qua Intent & State Guard | phân loại + phrase |
 
 **Intent & State Guard** (code): đúng một proposal pending của user, chưa hết hạn, và
@@ -104,6 +104,17 @@ nút). Các event cũ giữ nguyên tên và payload. Resume vào node `confirm`
 `Command(resume={"button": decision, "proposal_id": ...})`; `confirm` nhận cả chuỗi
 (gõ chữ) lẫn dict (nút).
 
+**Nút cũng là một tin nhắn**: server ghi `user: "Đồng ý"` / `user: "Không"` vào
+`conversations` và thread checkpointer (để màn lịch sử, cửa sổ model, nén và transcript
+judge đều thấy), nhưng **không** tính vào `chat_max_per_hour` (đường nút không gọi LLM).
+Nút hết hạn (`approve` trả `None`) → câu code "Đề xuất lúc nãy hết hạn rồi, anh chị
+nhắn lại giờ giúp em nhé", không ghi gì.
+
+**Tin gửi lại khi lượt còn chạy**: cùng `message_id` → bỏ qua (giữ khóa
+`turn:{user_id}:{message_id}` tới khi `complete`, rồi trả lại `complete` đã cache cho
+mọi lần gửi lại trong 24 h). `message_id` **khác** → vẫn huỷ lượt cũ như hiện nay
+(`_ACTIVE_TURNS`, events.py). Hai cơ chế không thay nhau.
+
 ### 2. Sửa lỗi LLM-02
 
 Hai lớp, cả hai đều phải có:
@@ -123,7 +134,12 @@ bot hỏi giờ; không được chào tạm biệt.
 ### 3. Trí nhớ trong phiên: `ConversationState.slots` mở rộng
 
 Thêm 4 trường, LLM điền lúc nén (`ConversationStateService._compact`, nền, sau
-`complete`), code lọc, không thêm lượt LLM:
+`complete`), code lọc. **Lịch nén đổi**: hiện chỉ nén khi phần ngoài 8 tin gần nhất
+≥ 800 token (`COMPACT_THRESHOLD_TOKENS`), nên hội thoại 3–8 lượt không bao giờ có
+slots. Từ nay nén **nền sau mỗi lượt kể từ lượt thứ 2** (tách hai việc: trích slots
+mỗi lượt; cắt lịch sử/summary vẫn theo ngưỡng 800 token). Chi phí: +1 lượt LLM
+nền/lượt chat, không nằm trên đường trễ; người dùng đã chấp nhận không giới hạn chi
+phí Azure (spec Harness B):
 
 | Trường | Lưu gì | Giới hạn |
 |---|---|---|
@@ -147,7 +163,11 @@ Optional[str]` (admin nhập qua REST admin, ≤200 ký tự). Khối bối cả
 - "Khách đã đến: 12/10 làm móng gel; 28/9 làm tóc" — 3 lịch `status=done|booked` đã
   qua, truy vấn `appointments`, không lưu thêm.
 - "Lần trước (hôm qua): …" — `summary` của phiên gần nhất trong 7 ngày nếu phiên đó
-  còn ý định chưa xong (`slots.intent` có mà không có lịch mới sau đó).
+  còn ý định chưa xong (`slots.intent` có mà không có lịch mới sau đó). `conversations.
+  state` hiện chỉ giữ MỘT bản của ngày hôm nay (ghi đè), nên thêm collection
+  `conversation_sessions` {user_id, day, summary, slots, closed_at}, 1 doc/user/ngày,
+  ghi lúc nén cuối cùng của ngày hoặc khi thread sang ngày mới, TTL 30 ngày. Không có
+  doc → bỏ dòng.
 
 `self_address` do **code** đặt: regex tất định trên câu khách bắt "chị/em/anh +
 động từ" ở ngôi thứ nhất ("chị làm móng", "cho anh 3 giờ", "em muốn…" → khách xưng
@@ -155,29 +175,45 @@ Optional[str]` (admin nhập qua REST admin, ≤200 ký tự). Khối bối cả
 chị là cô") → admin sửa tay, bot không tự đổi. Bỏ số điện thoại khỏi khối bối cảnh
 (không tool nào cần).
 
+**Tên có tiền tố** ("Cô Lan", "Bác Bảy" — 13/13 user seed hiện nay): tiền tố do
+admin gõ là thông tin đã biết, không phải bot đoán → `derive_address` giữ nguyên và
+dùng để **seed** `self_address` một lần (migration lúc khởi động: `cô/chị/bà → chị`,
+`chú/anh/ông → anh`, `bác` → để trống). Tên thật nhập dạng đầy đủ ("Nguyễn Thị Lan")
+không có tiền tố → "anh chị" cho tới khi khách tự xưng. Guard `_pronouns` đọc
+`self_address`, không đọc tên nữa.
+
 ### 5. Tự nhiên hơn
 
 - **`phrase`** (giữ là middleware): fact thêm `context ∈ {first_time, returning,
-  changed_time, after_decline, cancel, move}`; prompt phrase chọn khung câu theo
-  context và đọc `last_reply` để không lặp khung. Fallback code giữ nguyên chữ.
+  changed_time, after_decline, cancel, move}`. Đường **gõ chữ**: LLM viết câu theo
+  context, đọc `last_reply` để không lặp khung. Đường **nút**: câu chốt **bằng code**
+  — mỗi context 3–4 mẫu câu, chọn mẫu chưa dùng trong phiên (đọc `previous_replies`);
+  đây là cách duy nhất đạt cổng ≤ 1,5 s vì `write_phrase` mất 2–3 s. Fallback khi
+  số liệu sai giữ nguyên chữ hiện có.
 - **Guard**: giữ `claim`, `tool_name`; `repeat/pronoun/clock` để sau cờ
   `GUARD_VOICE_RULES=on|off` (mặc định `on`), đo benchmark; `pronoun` sửa theo mục 4
   (cho phép "chị Lan" khi `self_address="chị"`).
-- **Rubric judge** (`bench/judge.py`): "anh chị" khi khách chưa tự xưng là **đúng**;
-  trừ điểm khi khách đã tự xưng mà bot vẫn "anh chị", hoặc bot đoán. Bỏ tiêu chí
-  "phải hỏi tên" (khách đã đăng nhập).
+- **Rubric judge** (`bench/judge.py:38-40`): hiện bắt "anh/chị + tên" nên trừ điểm
+  mọi câu "anh chị". Sửa: "anh chị" khi khách chưa tự xưng là **đúng**; trừ điểm khi
+  khách đã tự xưng mà bot vẫn "anh chị", hoặc bot đoán giới. Judge nhận thêm
+  `self_address` trong input để chấm được.
 - **Model**: một lần chạy benchmark `llm` k=2 với deployment lớn hơn `gpt-5.4-mini`
   nếu có (xem "Để người dùng quyết"). Kết quả ghi vào CONTEXT.md; không đổi model
   mặc định trong spec này.
 - `reasoning_effort="low"` cho supervisor (route + label) và timeparse. **Không** bật
-  cho agent trả lời.
+  cho agent trả lời. Đã kiểm 19/10 trên deployment thật `gpt-5.4-mini`
+  (`.env`, không phải `gpt-4.1-nano` trong `.env.example`): `low` trả 17 token
+  reasoning, 1,7 s; Azure trả 400 nếu kèm `temperature=0.0` → các lượt bật reasoning
+  không truyền temperature. `build_chat_model` thêm tham số `reasoning_effort`
+  (mặc định `None` = không gửi).
 
 ### 6. Redis
 
 | Dùng | Khóa | TTL | Fallback khi Redis lỗi |
 |---|---|---|---|
-| Dedupe tin | `msg:{user_id}:{message_id}` → kết quả `complete` | 24 h | `message_inbox` Mongo (unique `(user_id, message_id)`) |
-| Khóa 1 lượt/user | `turn:{user_id}` | 90 s | `_ACTIVE_TURNS` trong tiến trình (hiện có) |
+| Dedupe tin đã xong | `msg:{user_id}:{message_id}` → payload `complete` | 24 h | `message_inbox` Mongo (unique `(user_id, message_id)`) |
+| Tin đang xử lý | `turn:{user_id}:{message_id}` (SET NX) — gửi lại cùng id khi chưa `complete` → bỏ qua | 90 s | set trong tiến trình |
+| (không đổi) | Tin **khác** id tới khi lượt cũ còn chạy → huỷ lượt cũ (`_ACTIVE_TURNS`, hiện có) | — | — |
 | Cache | `shop:status`, `shop:hours` | 30 s / 10 phút | đọc Mongo |
 
 Config: `REDIS_URL` (comment = tắt, như Langfuse). Khởi động: Redis không kết nối
@@ -212,8 +248,10 @@ Nút:       Command(resume={"button","proposal_id"}) → confirm
 ## Benchmark
 
 - Kịch bản mới: `edge/ok-khong-de-xuat` (mục 2), `edge/nut-dong-y` và `edge/nut-khong`
-  (adapter gửi `confirm_proposal`), `edge/tin-gui-lai` (gửi cùng `message_id` hai lần,
-  kỳ vọng một đề xuất), `llm/khach-tu-xung-chi` (judge kiểm "chị Lan").
+  (adapter gửi `confirm_proposal`), `edge/tin-gui-lai` (gửi cùng `message_id` hai lần:
+  một lần sau `complete` → nhận lại cùng `complete`, một lần khi lượt còn chạy → lần
+  hai bị bỏ qua; kỳ vọng đúng một đề xuất), `llm/khach-tu-xung-chi` (judge kiểm "chị
+  Lan").
 - Thứ tự đo: (1) baseline B `harness-b/align` k=4 đầy đủ; (2) sau mục 1+2; (3) sau mục
   3+4+5; (4) `CONFIRM_VETO_MODE` và `GUARD_VOICE_RULES` mỗi cờ một lần `edge` k=4.
 - Rubric judge đổi ở mục 5 → chấm lại baseline bằng `rescore --rejudge` để so cùng thước.
@@ -231,6 +269,17 @@ Tên trường/collection chính xác; vị trí regex tự xưng (`context.py` 
 cách frontend giữ `proposal_id` khi reload trang (gợi ý: đọc lại từ `GET
 /conversations/me` nếu có, không thì chỉ gõ chữ); thứ tự thực hiện trong mỗi mục; kịch
 bản scripted cho các ca mới; giá trị TTL cụ thể trong khoảng đã nêu.
+
+## Quyết định của người viết sau vòng kiểm tra builder (20/10)
+
+Bảy câu builder hỏi, người viết tự chốt (người dùng kiểm lại khi đọc):
+1. Tin gửi lại khi lượt còn chạy: cùng `message_id` → bỏ qua; khác id → huỷ lượt cũ như cũ.
+2. Nén nền mỗi lượt từ lượt 2 để slots mở rộng có dữ liệu (tốn thêm 1 lượt LLM nền/lượt).
+3. Summary 7 ngày cần kho mới → `conversation_sessions`, TTL 30 ngày.
+4. Tiền tố admin gõ ("Cô Lan") là đã biết → seed `self_address`; tên đầy đủ → "anh chị".
+5. Nút là một tin nhắn: ghi nhật ký + thread, không tính rate limit chat.
+6. Đường nút viết câu chốt bằng code (mẫu theo context) để đạt ≤ 1,5 s; LLM phrase chỉ cho đường gõ chữ.
+7. Reasoning đã kiểm chạy được trên `gpt-5.4-mini`; thêm tham số vào `build_chat_model`.
 
 ## Để người dùng quyết (chưa có câu trả lời)
 
