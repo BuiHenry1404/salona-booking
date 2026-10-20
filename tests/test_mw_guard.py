@@ -226,3 +226,46 @@ class TestGuardForPhrase:
         out = await guard(phrase_state(
             "Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em giữ rồi (propose_appointment) ạ."))
         assert out["answer"] == "Dạ anh Tám, Thứ Ba 15/9, 9 giờ sáng em giữ rồi ạ."
+
+
+class TestNoClaimBeforeWriting:
+    """Lỗi live B2 #4: chỉ mới giữ chỗ (đề xuất lượt này, chưa ghi) mà câu nói
+    "em đã đặt lịch … rồi ạ, chị xác nhận giúp em nhé?". Guard sửa tất định."""
+
+    @pytest.mark.parametrize("draft,expected", [
+        ("Dạ, em đã đặt lịch cho anh Tám vào Thứ Ba 20/10, 3 giờ chiều rồi ạ, anh xác nhận giúp em nhé?",
+         "Dạ, em giữ chỗ cho anh Tám vào Thứ Ba 20/10, 3 giờ chiều rồi ạ, anh xác nhận giúp em nhé?"),
+        ("Em đã đặt cho anh Tám Thứ Tư 21/10, 9 giờ sáng, anh chốt giúp em nhé?",
+         "Em giữ chỗ cho anh Tám Thứ Tư 21/10, 9 giờ sáng, anh chốt giúp em nhé?"),
+        ("Dạ anh Tám, em đã dời lịch sang Thứ Ba 20/10, 5 giờ chiều rồi ạ. Anh xác nhận giúp em nhé?",
+         "Dạ anh Tám, em sẽ dời lịch sang Thứ Ba 20/10, 5 giờ chiều ạ. Anh xác nhận giúp em nhé?"),
+        ("Dạ, em vừa hủy lịch Thứ Ba 20/10, 4 giờ chiều rồi ạ, anh Tám đồng ý giúp em nhé?",
+         "Dạ, em sẽ hủy lịch Thứ Ba 20/10, 4 giờ chiều ạ, anh Tám đồng ý giúp em nhé?"),
+        ("Dạ, đã đặt lịch Thứ Ba 20/10, 3 giờ chiều cho anh Tám rồi ạ, anh chốt nhé?",
+         "Dạ, em giữ chỗ Thứ Ba 20/10, 3 giờ chiều cho anh Tám rồi ạ, anh chốt nhé?"),
+    ])
+    async def test_claim_is_rewritten_when_only_proposing(self, rewrites, draft, expected):
+        calls = rewrites()
+        out = await guard(a_state(draft, customer="ok em", proposal_id="p1"))
+        assert out["answer"] == expected
+        assert calls == []                       # tất định, không gọi LLM
+
+    async def test_true_claim_on_the_approve_turn_is_kept(self, rewrites):
+        rewrites()
+        draft = "Dạ em đã đặt cho anh Tám Thứ Ba 15/9, 9 giờ sáng rồi ạ."
+        out = await guard(a_state(draft, confirm_fact=FACT, fallback=FALLBACK, proposal_id=None))
+        assert out["answer"] == draft
+
+    @pytest.mark.parametrize("draft", [
+        "Dạ lịch đó em đã hủy rồi ạ.",                      # chuyện của lượt trước — có thể đúng
+        "Dạ em đã đặt cho anh Tám Thứ Ba 15/9, 9 giờ sáng rồi ạ.",
+    ])
+    async def test_no_proposal_this_turn_leaves_the_sentence_alone(self, rewrites, draft):
+        rewrites()
+        assert (await guard(a_state(draft)))["answer"] == draft
+
+    async def test_customer_already_booked_is_not_touched(self, rewrites):
+        """`already_yours`: "anh đã đặt" là sự thật về khách, không phải em nhận vơ."""
+        rewrites()
+        draft = "Dạ anh Tám đã đặt lịch Thứ Ba 20/10, 3 giờ chiều rồi ạ, anh muốn đặt thêm không?"
+        assert (await guard(a_state(draft, proposal_id="p1")))["answer"] == draft

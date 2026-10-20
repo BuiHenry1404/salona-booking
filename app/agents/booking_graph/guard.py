@@ -100,6 +100,45 @@ def strip_tool_names(text: str) -> str:
     return "\n".join(line.strip() for line in cleaned.split("\n")).strip()
 
 
+# --- nhận vơ "đã đặt/dời/hủy" khi chưa ghi gì (lỗi live B2 #4) -----------------
+# Lượt có đề xuất MỚI (proposal_id do tool vừa tạo) là lượt chỉ GIỮ chỗ; ghi chỉ
+# xảy ra ở lượt sau qua confirm. Model vẫn có lúc viết "em đã đặt lịch … rồi ạ,
+# chị xác nhận giúp em nhé?". Sửa TẤT ĐỊNH (không gọi LLM): chỉ khi chủ ngữ là
+# "em" hoặc câu không chủ ngữ ngay sau "Dạ," / đầu câu — "chị đã đặt lịch…"
+# (`already_yours`) là sự thật về khách, không đụng. Lượt KHÔNG có đề xuất mới
+# thì không sửa: "em đã hủy rồi ạ" có thể đúng về một lượt trước.
+_CLAIM = re.compile(
+    r"(?P<lead>(?:^|(?<=[.!?…]\s)|(?<=\bDạ,\s)|(?<=\bDạ\s)|(?<=\bdạ,\s))(?:[Ee]m\s+)?|\b[Ee]m\s+)"
+    r"(?:đã|vừa)\s+(?P<verb>đặt|chốt|ghi|dời|đổi|hủy|huỷ)"
+    r"(?P<obj>\s+(?:lịch|chỗ|hẹn))?(?:\s+xong)?")
+_RỒI_AFTER = re.compile(r"\s+rồi(?=\s*(?:ạ\b|[,.!?…]|$))")
+
+
+def unclaim(draft: str) -> str:
+    """"em đã đặt" → "em giữ chỗ"; "em đã dời/hủy … rồi" → "em sẽ dời/hủy …"."""
+    out, pos = [], 0
+    for m in _CLAIM.finditer(draft):
+        lead = m.group("lead")
+        subject = "Em" if lead.strip().startswith("E") or (not lead.strip() and m.start() == 0) else "em"
+        verb = m.group("verb")
+        out.append(draft[pos:m.start()])
+        prefix = lead[:len(lead) - len(lead.lstrip())] if lead.strip() else lead
+        if verb in ("đặt", "chốt", "ghi"):
+            out.append(f"{prefix}{subject} giữ chỗ")
+            pos = m.end()
+            continue
+        action = "dời" if verb in ("dời", "đổi") else "hủy"
+        out.append(f"{prefix}{subject} sẽ {action}{m.group('obj') or ''}")
+        # "rồi" cuối mệnh đề đi với "sẽ" là sai ngữ pháp: bỏ cái đầu tiên trong câu.
+        end = re.search(r"[.!?…]", draft[m.end():])
+        stop = m.end() + (end.start() if end else len(draft) - m.end())
+        sentence = _RỒI_AFTER.sub("", draft[m.end():stop], count=1)
+        out.append(sentence)
+        pos = stop
+    out.append(draft[pos:])
+    return "".join(out)
+
+
 _DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
 _NUMBER = re.compile(r"\d+")
 
@@ -285,6 +324,12 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     if fact:
         out = _guard_phrase(state, draft, fact, address)
         return {**out, "answer": strip_tool_names(out["answer"])}
+
+    if state.get("proposal_id"):
+        fixed = unclaim(draft)
+        if fixed != draft:
+            logger.warning("guard_claim_rewritten")
+            draft = fixed
 
     previous = state.get("previous_replies") or []
     customer_text = state.get("customer_text") or ""

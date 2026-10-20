@@ -173,6 +173,13 @@ Khách ──socket──▶ run_turn
   (sáng/trưa/chiều/tối), hoặc rải đều cả ngày; ưu tiên mốc chẵn giờ khi đủ 3;
   `more` báo còn mốc khác. `nearest` của `propose_appointment` dùng chung
   `nearest_slots`. Luật prompt (rule 2) chỉ là lớp thứ hai: model đọc hết cái nó có.
+- Không nhận vơ "đã đặt/dời/hủy" khi mới giữ (lỗi live B2 #4): lượt có đề xuất
+  MỚI (`proposal_id` trong state agent) mà không có câu chốt thì
+  `guard.unclaim` sửa TẤT ĐỊNH "em đã/vừa đặt|chốt|ghi (lịch)" → "em giữ chỗ",
+  "em đã dời/hủy … rồi" → "em sẽ dời/hủy …" (không gọi LLM). Chỉ chủ ngữ "em"
+  hoặc câu không chủ ngữ — "chị đã đặt…" (`already_yours`) không đụng. Lượt
+  không có đề xuất mới thì không sửa: "em đã hủy rồi ạ" có thể đúng về lượt
+  trước. Kèm luật prompt ở rule 1.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,

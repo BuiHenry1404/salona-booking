@@ -527,3 +527,17 @@ async def test_expired_proposal_is_handed_over_as_expired(test_db, user, models,
     ctx = context_seen(models)
     assert "HẾT HẠN" in ctx and "[declined: book" in ctx
     assert await appointments(test_db) == 0
+
+
+async def test_live_b2_claim_while_only_holding_is_rewritten_end_to_end(test_db, user, models):
+    """Lỗi live B2 #4 qua graph thật: GuardMiddleware thấy `proposal_id` của lượt."""
+    when = format_vi_datetime(tomorrow_at(15))
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}),
+        AIMessage(f"Dạ, em đã đặt lịch cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"),
+    ]
+    out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+    assert out[-1] == ("complete", {"answer":
+                       f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"})
+    assert await appointments(test_db) == 0

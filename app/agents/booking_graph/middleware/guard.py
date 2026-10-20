@@ -36,6 +36,8 @@ class GuardState(AgentState):
     phrase_fact: NotRequired[Optional[Dict[str, Any]]]
     fallback: NotRequired[Optional[str]]
     context_block: NotRequired[str]
+    # Đề xuất lượt này (ConfirmMiddleware): có = chỉ mới giữ chỗ, chưa ghi gì.
+    proposal_id: NotRequired[Optional[str]]
 
 
 def _last_ai_text(messages) -> str:
