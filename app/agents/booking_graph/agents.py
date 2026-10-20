@@ -9,6 +9,7 @@ from langchain_core.exceptions import ModelError
 from langchain_core.tools import BaseTool
 
 from app.agents.booking_graph.context import live_queue, queued_line, with_line
+from app.agents.booking_graph.relatives import aside_line
 from app.agents.booking_graph.middleware.guard import GuardMiddleware
 from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
     STATE_HEADER, MessageLayoutMiddleware)
@@ -155,7 +156,10 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
         queue = live_queue(state.get("queued"))
         out = await agent.ainvoke({
             "messages": state["messages"],
-            "context_block": with_line(state.get("context_block", ""), queued_line(queue)),
+            # + câu khách nhắc người nhà / hẹn nhắn lại (lỗi live B3 #2).
+            "context_block": with_line(with_line(state.get("context_block", ""),
+                                                 queued_line(queue)),
+                                       aside_line(state.get("customer_text") or "")),
             "queued": queue,
             "summary": state.get("summary") or [],
             "slots": state.get("slots"),

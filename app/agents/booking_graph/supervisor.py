@@ -5,6 +5,7 @@ from langchain_core.messages import SystemMessage
 from app.agents.booking_graph.context import live_queue
 from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
+from app.agents.booking_graph.relatives import asks_if_relative_free, defers
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -33,6 +34,14 @@ async def supervise(state: GraphState) -> dict:
         # Đang đặt lần lượt (lỗi live B2 #2): còn lịch chờ đề xuất thì mọi tin
         # vào booking — "ừ" sau câu mời lịch kế không được rơi vào social.
         logger.info("supervisor_queue_route")
+        return {"route": "booking"}
+
+    text = str(getattr(state["messages"][-1], "content", "") or "")
+    if asks_if_relative_free(text) or defers(text):
+        # Lỗi live B3 #2: "nó có rảnh không" (đứa cháu) từng thành câu hỏi
+        # chủ tiệm. Hỏi người nhà rảnh không / hẹn hỏi rồi nhắn lại là chuyện
+        # lịch của khách: booking (có dòng [relative]/[deferral]).
+        logger.info("supervisor_relative_route")
         return {"route": "booking"}
 
     # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:

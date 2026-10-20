@@ -140,7 +140,10 @@ async def test_g07_after_tool_loop_da_vang_de_chi_goi_never_books(test_db, user,
     await turn(test_db, user, "dạ vâng để chị gọi")
 
     assert await appointments(test_db) == 0
-    assert len(models.sup.calls) == 2                      # lượt 2 đi lại từ START
+    # Lượt 2 đi lại từ START (không qua confirm: bộ phân loại không chạy). Câu
+    # hoãn được code định tuyến vào booking (lỗi live B3 #2) — model supervisor
+    # chỉ chạy ở lượt 1.
+    assert len(models.sup.calls) == 1
     assert models.classifier["calls"] == 0
 
 
@@ -715,3 +718,54 @@ async def test_live_b3_confirmation_never_claims_the_queued_booking(test_db, hun
     assert when2 in answer                                         # câu mời lịch kế vẫn còn
     system = models.phrase.calls[-1][0].content
     assert when2 in system and "NOT held" in system
+
+
+async def test_live_b3_asking_if_a_relative_is_free_reaches_booking_with_the_aside(
+        test_db, hung, models):
+    """Lượt 4–5: "nó có rảnh không" là hỏi đứa cháu, không phải chủ tiệm; và câu
+    hoãn nhắc người nhà không phải chuyện quyền riêng tư. Agent đọc dòng code
+    viết [relative]/[deferral]; lượt 5 không gọi supervisor model."""
+    await hung_first_turn(test_db, hung, models)
+    models.agent.replies += [AIMessage("Dạ, chú hỏi cháu rồi nhắn em nhé.")]
+    await turn(test_db, hung, "khoan da, de chu hoi lai no co ranh khong")
+    ctx = context_seen(models)
+    assert "[relative]" in ctx and "[deferral]" in ctx
+    assert await test_db["proposals"].count_documents({"status": "pending"}) == 0
+
+    sup_calls = len(models.sup.calls)
+    models.agent.replies += [AIMessage("Dạ vâng, anh Hùng hỏi xong nhắn em nhé.")]
+    await turn(test_db, hung, "ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi "
+                              "nhan lai em sau nha")
+    assert len(models.sup.calls) == sup_calls
+    assert "[relative]" in context_seen(models)
+    assert await appointments(test_db) == 0
+
+
+# Gọi Azure THẬT — chạy tay: `pytest tests/test_confirm_flow.py -m llm -v`.
+@pytest.mark.llm
+@pytest.mark.parametrize("text", [
+    "khoan da, de chu hoi lai no co ranh khong",
+    "khoan đã, để chú hỏi lại nó có rảnh không",
+    "ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi nhan lai em sau nha",
+    "không, chú hỏi thằng cháu có rảnh không ạ. thôi để chú hỏi nó rồi nhắn lại em sau nha",
+])
+async def test_relative_free_question_gets_a_receptionist_reply_llm(test_db, hung, text):
+    from langchain_core.messages import HumanMessage
+    from app.agents.booking_graph.agents import build_agent
+    from app.agents.booking_graph.context import load_context, with_line
+    from app.agents.booking_graph.graph import booking_tools
+    from app.agents.booking_graph.prompts import BOOKING_PROMPT
+    from app.agents.booking_graph.relatives import aside_line
+
+    context = await load_context(test_db, hung, text)
+    agent = build_agent(BOOKING_PROMPT, booking_tools(test_db, hung), user=hung)
+    out = await agent.ainvoke({"messages": [
+        HumanMessage("thu 4 nay chu muon cat toc luc 2h chieu cho thang chau"),
+        AIMessage("Dạ em giữ 2 giờ chiều Thứ Tư cho cháu, anh Hùng xác nhận giúp em nhé?"),
+        HumanMessage(text)],
+        "context_block": with_line(context["context_block"], aside_line(text)),
+        "customer_text": text})
+    answer = out["answer"].lower()
+    assert "chỉ xem" not in answer and "chủ tiệm" not in answer, answer
+    called = [c["name"] for m in out["messages"] for c in (getattr(m, "tool_calls", None) or [])]
+    assert "get_shop_status" not in called and "get_shop_hours" not in called, called

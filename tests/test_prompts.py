@@ -414,8 +414,10 @@ class TestBookingPromptSlimmed:
         # mốc lên 7800. Lỗi #5: vế loại trừ ở rule 4 (nhắc người thân khi hoãn
         # hay đặt hộ không phải ca bảo mật) — đo được 8105 — mốc lên 8200.
         # Lỗi #2: rule 10 đặt nhiều lịch lần lượt + hàng chờ [queued …] — đo
-        # được 8614 — mốc lên 8700.
-        assert len(BOOKING_PROMPT) < 8700
+        # được 8614 — mốc lên 8700. Chat tay B3 (2026-10-20, lỗi #2): người
+        # nhà rảnh không ≠ chủ tiệm (rule 1) và vế [relative]/[deferral] ở
+        # rule 4 — đo được 8869 — mốc lên 8900.
+        assert len(BOOKING_PROMPT) < 8900
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -615,3 +617,13 @@ class TestLiveChatB2:
         assert "propose ONLY the" in BOOKING_PROMPT and "`queued`" in BOOKING_PROMPT
         assert "[queued" in BOOKING_PROMPT
         assert "never give one request another's note" in BOOKING_PROMPT
+
+    def test_a_relative_being_free_is_not_the_owner(self):
+        """Lỗi live B3 #2: "nó có rảnh không" (đứa cháu) → get_shop_status."""
+        from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
+        shop = SUPERVISOR_PROMPT.split("- shop")[1].split("- social")[0]
+        assert "OWNER" in shop and "relative" in shop
+        assert "never call a shop tool" in BOOKING_PROMPT
+        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
+        assert "asking whether that person is free" in rule4
+        assert "[relative]" in rule4 and "[deferral]" in rule4
