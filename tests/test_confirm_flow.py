@@ -12,10 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
+from langgraph.types import Command
 
 from app.agents import checkpoint
 from app.agents.booking_graph import agents, events, phrase, reply, rewrite, supervisor
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.core.clock import TZ, now_utc
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
@@ -800,3 +802,94 @@ async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_qu
         "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
         "giúp em nhé?")})
     assert await test_db["proposals"].count_documents({"status": "pending"}) == 1
+
+
+# --- Task 2: resume dạng nút bấm (UI, Task 5/6 nối Socket.IO) -----------------
+# Resume không còn là câu gõ chữ mà là dict {"button": "yes"|"no", "proposal_id"}:
+# CODE quyết thẳng trên `ProposalService.approve`/`reject`, bộ phân loại
+# KHÔNG chạy. Gọi thẳng graph đã dựng (như `graph_values`) thay vì `run_turn`,
+# vì `run_turn` chỉ biết gửi resume bằng câu gõ chữ (Task 5 mới nối nút bấm).
+
+
+async def button(test_db, user, decision, proposal_id):
+    """Resume đúng node `confirm` đang `interrupt()` bằng dict nút bấm."""
+    from app.agents.booking_graph.graph import build_graph
+    graph = build_graph(test_db, user)
+    config = {"configurable": {"thread_id": events.thread_id_for(str(user.id), now_utc())}}
+    await graph.ainvoke(Command(resume={"button": decision, "proposal_id": proposal_id}), config)
+    return (await graph.aget_state(config)).values
+
+
+async def test_button_yes_books_without_classifier(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    when = format_vi_datetime(tomorrow_at(15))
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.")]
+    proposal = await pending(test_db, user)
+
+    values = await button(test_db, user, "yes", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 1
+    assert values["answer"] == f"Dạ xong rồi chị Lan, hẹn chị {when} nhé."
+    assert values["confirm_source"] == "button"
+    assert models.classifier["calls"] == 0
+
+
+async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+    address = address_phrase(user.full_name)
+
+    values = await button(test_db, user, "no", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_NO_REPLY.replace("anh chị", address)
+    updated = await test_db["proposals"].find_one({"_id": proposal["_id"]})
+    assert updated["status"] == "rejected"
+    assert models.classifier["calls"] == 0
+
+
+async def test_second_button_press_is_idempotent(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    when = format_vi_datetime(tomorrow_at(15))
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.")]
+    proposal = await pending(test_db, user)
+    pid = str(proposal["_id"])
+
+    await button(test_db, user, "yes", pid)
+    assert await appointments(test_db) == 1
+
+    # Nút thứ hai (vd. khách bấm lại, hay lượt resume cũ hồi sinh): graph đã
+    # xong lượt đầu (không còn interrupt nào để resume), nên "bấm lại" ở đây
+    # chính là cổng ghi được gọi lại trực tiếp — vẫn phải idempotent.
+    result = await ProposalService(test_db).approve(user, pid, turn_at=now_utc())
+    assert result.outcome == "approved"
+    assert await appointments(test_db) == 1
+
+
+async def test_button_on_foreign_or_expired_proposal_writes_nothing(test_db, user, models, hung):
+    address = address_phrase(user.full_name)
+
+    # pid của hung gửi bởi lan: không khớp đề xuất đang chờ của chính lượt này.
+    await propose_turn(test_db, user, models)
+    hung_proposal = await ProposalService(test_db).create(hung, "book", tomorrow_at(17), None)
+
+    values = await button(test_db, user, "yes", str(hung_proposal.id))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_STALE_REPLY.replace("anh chị", address)
+
+    # Một đề xuất khác của CHÍNH khách, nhưng đã hết hạn trước khi bấm nút.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    await turn(test_db, user, "mai 4 giờ chiều chị làm tóc")
+    own = await pending(test_db, user)
+    await test_db["proposals"].update_one(
+        {"_id": own["_id"]}, {"$set": {"expires_at": now_utc() - timedelta(minutes=1)}})
+
+    values = await button(test_db, user, "yes", str(own["_id"]))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_STALE_REPLY.replace("anh chị", address)

@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
+from typing_extensions import NotRequired
 
 
 class GraphState(TypedDict, total=False):
@@ -28,3 +29,6 @@ class GraphState(TypedDict, total=False):
     answer_source: str               # "llm" | "code" — ghi vào ChatMessage.source
     fallback: Optional[str]          # câu cứng của confirm
     confirm_fact: Optional[Dict[str, Any]]   # số liệu confirm vừa ghi → PhraseMiddleware
+    # resume gõ chữ (mặc định) hay nút bấm UI (Task 5/6) — Task 3 đọc để viết
+    # câu chốt bằng code thay vì qua agent.
+    confirm_source: NotRequired[Literal["text", "button"]]

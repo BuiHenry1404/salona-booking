@@ -43,6 +43,11 @@ logger = get_logger(__name__)
 APPROVING_WAIT_SECONDS = 3.0
 APPROVING_POLL_SECONDS = 0.1
 
+# Resume dạng nút bấm (UI, Task 5/6): CODE quyết thẳng, không qua `reply.decide`.
+# "anh chị" trong hai câu này được thay bằng `address` thật khi dùng (_button_text).
+BUTTON_NO_REPLY = "Dạ, anh chị muốn đổi giờ khác hay đổi dịch vụ ạ?"
+BUTTON_STALE_REPLY = "Đề xuất lúc nãy hết hạn rồi, anh chị nhắn lại giờ giúp em nhé."
+
 
 def _sentence_start(phrase: str) -> str:
     """Viết hoa chữ đầu mà KHÔNG hạ chữ tên: str.capitalize() biến "anh Hùng"
@@ -122,6 +127,64 @@ def _last_ai_text(messages) -> str:
     return ""
 
 
+def _button_text(template: str, address: str) -> str:
+    """"anh chị" cứng trong hằng số → xưng hô thật của khách."""
+    return template.replace("anh chị", address)
+
+
+def _stale_button_reply(address: str) -> dict:
+    """`proposal_id` không khớp, hoặc `approve` không còn duyệt được (hết hạn,
+    đã bị đổi ý, ai đó đã bấm trước...): không ghi gì, nói thẳng là đã hết hạn."""
+    text = _button_text(BUTTON_STALE_REPLY, address)
+    return {"draft": text, "fallback": text, "answer_source": "code",
+            "gate_next": "phrase", "proposal_id": None,
+            "confirm_fact": {"kind": "clarify", "when": None, "note": None,
+                             "address": address, "error": None}}
+
+
+async def _handle_button(db: AsyncIOMotorDatabase, user: User, state: GraphState,
+                         payload: dict, address: str, now: datetime) -> dict:
+    """Resume dạng nút bấm: CODE quyết thẳng trên cùng cổng ghi của câu gõ chữ
+    (`ProposalService.approve`/`reject`) — không gọi `reply.decide`, không bộ
+    phân loại nào chạy. `proposal_id` của nút phải khớp đề xuất đang chờ của
+    CHÍNH lượt này; sai thì coi như đề xuất cũ đã hết hạn (bẫy nút bấm từ một
+    câu trả lời cũ, hay gửi nhầm đề xuất của người khác).
+    """
+    proposal_id = state.get("proposal_id")
+    if payload.get("proposal_id") != proposal_id:
+        return _stale_button_reply(address)
+
+    proposals = ProposalService(db)
+    button = payload.get("button")
+
+    if button == "yes":
+        # `now`, không `state["asked_at"]`: nút bấm không đi qua `record` (không
+        # có lượt mới ghi lại mốc "bây giờ"), nên mốc của CHÍNH cú bấm này mới
+        # đúng là lượt sau đề xuất — dùng `asked_at` cũ sẽ luôn là "same_turn".
+        out = await execute_proposal(db, user, proposal_id, turn_at=now)
+        if out is None:
+            # `approve` không duyệt được (hết hạn/đổi ý/đã bị đóng) — chưa ghi gì.
+            return _stale_button_reply(address)
+        return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "button"}
+
+    if button == "no":
+        proposal = await proposals.get(user, proposal_id)
+        if proposal is None or proposal.status != "pending" or not await proposals.reject(user, proposal_id):
+            return _stale_button_reply(address)
+        text = _button_text(BUTTON_NO_REPLY, address)
+        when = format_vi_datetime(proposal.start_at)
+        return {"draft": text, "fallback": text, "answer_source": "code",
+                "gate_next": "phrase", "proposal_id": None,
+                "confirm_fact": {"kind": "clarify", "when": when, "note": None,
+                                 "address": address, "error": None},
+                "context_block": with_line(state.get("context_block", ""),
+                                           declined_line(proposal))}
+
+    # Giá trị `button` lạ (không phải "yes"/"no"): coi như đề xuất đã hết hạn,
+    # không đoán ý — chưa ghi gì.
+    return _stale_button_reply(address)
+
+
 def make_confirm_node(
     db: AsyncIOMotorDatabase, user: User
 ) -> Callable[[GraphState], Awaitable[dict]]:
@@ -139,6 +202,11 @@ def make_confirm_node(
         text = interrupt({"proposal_id": proposal_id, "question": question})
 
         # --- từ đây: lượt SAU, câu khách vừa tới -----------------------------
+        if isinstance(text, dict):
+            # Resume từ nút bấm (UI, Task 5/6): CODE quyết thẳng, không đụng
+            # `reply.decide` — đường chữ bên dưới giữ nguyên như cũ.
+            return await _handle_button(db, user, state, text, address, now_utc())
+
         proposal = await proposals.get(user, proposal_id)
         waited = 0.0
         while (proposal is not None and proposal.status == "approving"
