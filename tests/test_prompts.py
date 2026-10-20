@@ -408,8 +408,9 @@ class TestBookingPromptSlimmed:
         # `missing_time`) và luật `asked` — đo được 6829 — mốc lên 6900.
         # Cùng đợt (lỗi live 3/5/6): rule 8 mới về dòng `[declined: …]` và hai
         # câu "chỉ hủy khi CHÍNH tin này xin hủy" ở rule 1 — đo được 7495 —
-        # mốc lên 7500.
-        assert len(BOOKING_PROMPT) < 7500
+        # mốc lên 7500. Chat tay B2 (2026-10-20, lỗi #3): câu "tối đa 3 giờ
+        # trống, không đọc danh sách dài" ở rule 2 — đo được 7598 — mốc lên 7700.
+        assert len(BOOKING_PROMPT) < 7700
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -583,3 +584,12 @@ class TestClassifyPrompt:
         from app.agents.booking_graph.prompts import CLASSIFY_PROMPT
         assert "approve only when the customer clearly agrees to exactly this proposal" in CLASSIFY_PROMPT
         assert "anything else is not approve" in CLASSIFY_PROMPT
+
+
+class TestLiveChatB2:
+    """Chat tay lần 2 trên harness B (19/10)."""
+
+    def test_offer_at_most_three_slots(self):
+        """Lỗi #3: bot đọc 12 khung giờ cho một cụ già."""
+        assert "at most 3" in BOOKING_PROMPT
+        assert "never read out a long list" in BOOKING_PROMPT.lower()

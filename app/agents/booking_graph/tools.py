@@ -11,7 +11,7 @@ from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
 from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
-from app.core.text import single_line
+from app.core.text import single_line, strip_diacritics
 from app.models.appointment import NOTE_MAX
 from app.models.user import User
 from app.services.appointment import AppointmentService
@@ -64,6 +64,52 @@ def _moment(dt: datetime) -> dict:
     """
     local = to_local(dt)
     return {"iso": local.isoformat(), "spoken": format_vi_datetime(local)}
+
+
+# --- tối đa 3 mốc cho model (lỗi live B2 #3: bot đọc 12 khung giờ) -------------
+# Khách lớn tuổi không nhớ nổi một danh sách. Tool chỉ ĐƯA model tối đa 3 mốc —
+# luật prompt thôi thì model vẫn đọc hết những gì nó có. Ưu tiên mốc chẵn giờ
+# (dễ nghe, dễ nhớ) khi đủ 3; không đủ thì lấy cả mốc lẻ.
+MAX_SLOTS_OFFERED = 3
+# Buổi theo giờ bắt đầu, cùng cách gọi với `_clock_phrase` (12 giờ là trưa).
+_PARTS_OF_DAY = {"sang": (0, 12), "trua": (11, 14), "chieu": (12, 18), "toi": (18, 24)}
+
+
+def _pool(slots: List[datetime]) -> List[datetime]:
+    on_hour = [s for s in slots if to_local(s).minute == 0]
+    return on_hour if len(on_hour) >= MAX_SLOTS_OFFERED else slots
+
+
+def nearest_slots(slots: List[datetime], target: datetime) -> List[datetime]:
+    """3 mốc GẦN `target` nhất, xếp theo giờ."""
+    return sorted(sorted(_pool(slots), key=lambda s: abs(s - target))[:MAX_SLOTS_OFFERED])
+
+
+def spread_slots(slots: List[datetime]) -> List[datetime]:
+    """3 mốc rải đều (đầu, giữa, cuối) — không có giờ nào để bám."""
+    pool = _pool(slots)
+    if len(pool) <= MAX_SLOTS_OFFERED:
+        return list(pool)
+    last = len(pool) - 1
+    picks = sorted({round(i * last / (MAX_SLOTS_OFFERED - 1)) for i in range(MAX_SLOTS_OFFERED)})
+    return [pool[i] for i in picks]
+
+
+def _in_part(slot: datetime, part: str) -> bool:
+    lo, hi = _PARTS_OF_DAY[part]
+    return lo <= to_local(slot).hour < hi
+
+
+def _around(value: str, day: date) -> Optional[datetime]:
+    """"14:00" (giờ trong `day`) hoặc ISO đầy đủ; đọc không được → None."""
+    try:
+        if "T" in value:
+            return _parse_local(value)
+        hour, minute = (int(x) for x in value.strip().split(":")[:2])
+        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=TZ)
+    except (ValueError, TypeError):
+        logger.warning("slots_around_ignored", extra={"around": (value or "")[:40]})
+        return None
 
 
 # Ánh xạ theo LỚP exception, không theo chuỗi `message`: `AppError.message`
@@ -176,25 +222,36 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         )
 
     @tool
-    async def find_free_slots(day: str) -> str:
-        """Free slots on one day, as JSON. `day` is YYYY-MM-DD, taken from the
-        "Bây giờ là..." line in the context block — never guess the date.
+    async def find_free_slots(day: str, around: Optional[str] = None,
+                              part_of_day: Optional[str] = None) -> str:
+        """Free slots on one day, as JSON — at most 3 of them. `day` is
+        YYYY-MM-DD, taken from the "Bây giờ là..." line in the context block —
+        never guess the date.
+        `around`: the time the customer asked for (parse_time's `start_at`, or
+        HH:MM) — you get the 3 free slots nearest to it. `part_of_day`: the part
+        of the day they named (sáng / trưa / chiều / tối) — you get up to 3
+        slots spread across it. With neither, 3 slots spread across the day.
+        `more` is true when other free slots exist that day; offer those only
+        if the customer asks for other times.
         Use ONLY what this tool returns — never invent a free slot.
         Say each time using its `spoken` value exactly as written.
         An empty `slots` list means no slot is available for that request —
         ask them for another day or another time.
-        If the time they asked for is taken, offer the two slots nearest to it.
         Only when the customer says the salon may pick the time for them, call
-        this for today — or tomorrow if today is finished — then offer two or
-        three slots. If they have NOT named a day, ask which day first. Never
-        assume today."""
+        this for today — or tomorrow if today is finished. If they have NOT
+        named a day, ask which day first. Never assume today."""
         try:
             parsed_day = date.fromisoformat(day)
         except ValueError:
             return json.dumps({"error": "bad_day_format"})
-        slots = await service.find_free_slots(parsed_day)
-        return json.dumps({"day": day, "slots": [_moment(s) for s in slots]},
-                          ensure_ascii=False)
+        free = await service.find_free_slots(parsed_day, limit=WHOLE_DAY)
+        part = strip_diacritics((part_of_day or "").strip().lower())
+        if part in _PARTS_OF_DAY:
+            free = [s for s in free if _in_part(s, part)]
+        target = _around(around, parsed_day) if around else None
+        chosen = nearest_slots(free, target) if target else spread_slots(free)
+        return json.dumps({"day": day, "slots": [_moment(s) for s in chosen],
+                           "more": len(free) > len(chosen)}, ensure_ascii=False)
 
     @tool
     async def propose_appointment(
@@ -286,7 +343,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         if start not in free:
             # Ba mốc GẦN giờ khách xin nhất, không phải ba mốc đầu ngày: khách
             # xin 4 giờ chiều mà gợi ý 8 giờ sáng là gợi ý vô ích.
-            nearest = sorted(sorted(free, key=lambda s: abs(s - start))[:3])
+            nearest = nearest_slots(free, start)
             return json.dumps({"error": "slot_unavailable", "asked": asked,
                                "nearest": [_moment(s) for s in nearest]},
                               ensure_ascii=False)

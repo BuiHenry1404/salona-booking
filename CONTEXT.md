@@ -168,6 +168,11 @@ Khách ──socket──▶ run_turn
   phân loại. Chạy SAU lưới phủ quyết; thêm bất kỳ chữ nào khác (giờ, ngày, "nữa",
   "qua"…) là trả cho bộ phân loại như cũ. Chữ không dấu chỉ tính khi gõ không dấu
   ("đợi" ≠ "doi"). Đặt mới không áp.
+- Tối đa 3 giờ trống (lỗi live B2 #3, bot đọc 12 khung giờ): `find_free_slots`
+  chỉ đưa model ≤ 3 mốc — gần `around` nhất, rải đều trong `part_of_day`
+  (sáng/trưa/chiều/tối), hoặc rải đều cả ngày; ưu tiên mốc chẵn giờ khi đủ 3;
+  `more` báo còn mốc khác. `nearest` của `propose_appointment` dùng chung
+  `nearest_slots`. Luật prompt (rule 2) chỉ là lớp thứ hai: model đọc hết cái nó có.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,

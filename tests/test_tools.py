@@ -807,3 +807,60 @@ async def test_rescheduling_onto_your_own_slot_is_still_slot_unavailable(test_db
 
     assert "error" not in out
     assert out["held"]["iso"] == to_local(when).isoformat()
+
+
+# --- Lỗi live B2 #3: "có rảnh không" → bot đọc 12 khung giờ. Tool chỉ đưa model
+# TỐI ĐA 3 mốc: gần giờ khách xin nhất, hoặc rải đều trong buổi khách nói.
+async def _free(test_db, **args):
+    user = await a_user(test_db)
+    day = tomorrow_at(9).date().isoformat()
+    return json.loads(await by_name(make_booking_tools(test_db, user), "find_free_slots")
+                      .ainvoke({"day": day, **args}))
+
+
+def _hhmm(out):
+    return [s["iso"].split("T")[1][:5] for s in out["slots"]]
+
+
+async def test_free_slots_never_gives_more_than_three(test_db):
+    out = await _free(test_db)
+    assert 1 <= len(out["slots"]) <= 3, out
+    assert out["more"] is True                     # còn mốc khác — nhưng không đọc hết
+
+
+async def test_free_slots_without_a_time_are_spread_over_the_day(test_db):
+    """Không nói giờ: rải đều cả ngày (sáng / giữa ngày / chiều), mốc chẵn giờ."""
+    times = _hhmm(await _free(test_db))
+    hours = [int(h[:2]) for h in times]
+    assert len(hours) == 3 and hours == sorted(hours)
+    assert hours[0] < 11 and hours[-1] >= 16, hours
+    assert all(h.endswith(":00") for h in times)
+
+
+async def test_free_slots_near_the_asked_time(test_db):
+    user = await a_user(test_db)
+    other = await a_user(test_db, phone="0911111111", name="Chị Hoa")
+    await AppointmentService(test_db).create(other, tomorrow_at(14), note="x")
+    day = tomorrow_at(9).date().isoformat()
+    out = json.loads(await by_name(make_booking_tools(test_db, user), "find_free_slots")
+                     .ainvoke({"day": day, "around": tomorrow_at(14).isoformat()}))
+    assert _hhmm(out) == ["12:00", "13:00", "15:00"] or _hhmm(out) == ["13:00", "15:00", "16:00"], out
+    assert "14:00" not in _hhmm(out)
+
+
+async def test_free_slots_around_accepts_a_clock_time(test_db):
+    assert _hhmm(await _free(test_db, around="10:00")) == ["09:00", "10:00", "11:00"]
+
+
+@pytest.mark.parametrize("part,lo,hi", [("sáng", 8, 12), ("sang", 8, 12),
+                                        ("chiều", 12, 18), ("chieu", 12, 18), ("tối", 17, 19)])
+async def test_free_slots_spread_over_the_part_of_day(test_db, part, lo, hi):
+    out = await _free(test_db, part_of_day=part)
+    hours = [int(h[:2]) for h in _hhmm(out)]
+    assert 1 <= len(hours) <= 3 and all(lo <= h < hi for h in hours), (part, hours)
+
+
+async def test_free_slots_docstring_says_at_most_three(test_db):
+    doc = by_name(make_booking_tools(test_db, await a_user(test_db)), "find_free_slots").description
+    assert "at most 3" in doc
+    assert "around" in doc and "part_of_day" in doc

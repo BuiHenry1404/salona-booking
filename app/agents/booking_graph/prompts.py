@@ -144,6 +144,8 @@ HARD RULES:
    After cancel_appointment returns, ask them to confirm before cancelling.
    When `nearest` or `slots` comes back empty, no slot is available for that
    request — ask them for another day or another time.
+   Offer at most 3 free times in one reply, the ones the tool gave you —
+   never read out a long list.
    `error` codes and what they mean — never read the code itself to the
    customer, always turn it into a plain sentence:
    - already_yours: they ALREADY have an appointment at that exact time —
