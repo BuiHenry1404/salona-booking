@@ -17,7 +17,8 @@ mà BOOKING_PROMPT rule 1/4 trỏ tới).
 """
 import re
 
-from app.agents.booking_graph.reply import _DEFERRAL, _DEFERRAL_BARE, _unaccented_only
+from app.agents.booking_graph.guard import repeats
+from app.agents.booking_graph.reply import _DEFERRAL, _DEFERRAL_BARE, _has_time, _unaccented_only
 from app.core.text import strip_diacritics
 
 # "con" chỉ tính khi gõ CÓ dấu ở chỗ khác — bản không dấu "con ranh" là "còn
@@ -64,3 +65,45 @@ def aside_line(text: str) -> str:
     lines = [line for hit, line in ((asks_if_relative_free(text), RELATIVE_LINE),
                                     (defers(text), DEFERRAL_LINE)) if hit]
     return "\n".join(lines)
+
+
+# --- câu đáp CODE viết cho câu hoãn (lỗi live B4 #2) ---------------------------
+# Live B4 lượt 5 ("ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi
+# nhan lai em sau nha"): supervisor route bằng code, khối bối cảnh có đủ dòng
+# [relative]/[deferral], vậy mà model vẫn đáp câu từ chối của rule 4 ("em chỉ
+# xem và đặt lịch của anh Hùng thôi"). Rule 4 viết HOA, đứng trước vế loại
+# trừ — prompt thua. Câu hoãn KHÔNG kèm yêu cầu nào thì không cần model: code
+# đáp một câu ngắn mời khách nhắn lại. Kèm yêu cầu (có giờ, đặt/giữ/dời/hủy,
+# hỏi tiệm) → vẫn để model lo.
+_REQUEST = re.compile(
+    r"\b(?:đặt|giữ|dời|đổi|hủy|huỷ|book|mấy giờ|giờ nào|đóng cửa|mở cửa|giá|bao nhiêu"
+    r"|bao lâu|còn chỗ|còn trống)\b", re.IGNORECASE)
+# Không dấu: động từ phải có bổ ngữ quen ("huy lich", "dat luon") — "huy" trần
+# là tên (thằng Huy), "doi" trần còn là "đợi".
+_REQUEST_BARE = re.compile(
+    r"\b(?:(?:dat|giu|doi|huy)\s+(?:lich|cho|hen|luon|giup|gium|dum|lai|qua|sang|truoc|di|cai)"
+    r"|book|may gio|gio nao|dong cua|mo cua|bao nhieu|bao lau|con cho|con trong)\b",
+    re.IGNORECASE)
+
+_DEFERRAL_REPLIES = (
+    "Dạ vâng, {address} cứ thong thả, xong thì nhắn em nhé.",
+    "Dạ, khi nào {address} sẵn sàng thì nhắn lại em là được ạ.",
+    "Dạ không sao ạ, có gì {address} cứ nhắn em nhé.",
+)
+
+
+def has_request(text: str) -> bool:
+    """Câu khách có kèm một yêu cầu cần model (giờ, đặt/giữ/dời/hủy, hỏi tiệm)."""
+    lowered = (text or "").lower()
+    return bool(_REQUEST.search(lowered) or _REQUEST_BARE.search(_unaccented_only(lowered))
+                or _has_time(text or ""))
+
+
+def deferral_reply(text: str, address: str, previous_replies) -> "str | None":
+    """Câu đáp code viết khi khách chỉ hoãn ("để chú hỏi nó rồi nhắn lại em sau");
+    None khi không phải câu hoãn hoặc câu có kèm yêu cầu. Không lặp câu vừa nói."""
+    if not defers(text) or has_request(text):
+        return None
+    options = [r.format(address=address) for r in _DEFERRAL_REPLIES]
+    previous = [p for p in previous_replies or [] if p]
+    return next((o for o in options if o not in previous and not repeats(o, previous)), options[-1])

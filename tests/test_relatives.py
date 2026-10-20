@@ -68,3 +68,37 @@ async def test_supervisor_sends_them_to_booking_without_the_model(monkeypatch, t
     monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
     assert await supervisor.supervise({"messages": [HumanMessage(text)]}) == {"route": "booking"}
     assert sup.calls == []
+
+
+# --- Lỗi live B4 #2: câu hoãn → câu đáp CODE viết, không qua model ------------
+# Lượt 5 live B4 (a28dfb5): dòng [relative]/[deferral] có trong khối bối cảnh,
+# supervisor đã route bằng code, vậy mà model vẫn chọn câu từ chối của rule 4.
+from app.agents.booking_graph.relatives import deferral_reply  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [TURN4, TURN5, TURN4_VI, TURN5_VI, "để cô hỏi thằng Huy đã",
+                                  "dạ vâng để chị gọi", "de chi xem lai roi nhan em sau nha"])
+def test_a_plain_deferral_gets_a_code_reply(text):
+    answer = deferral_reply(text, "anh Hùng", [])
+    assert answer and answer.startswith("Dạ") and "anh Hùng" in answer and "nhắn" in answer
+    assert "chỉ xem" not in answer and "rảnh" not in answer
+
+
+@pytest.mark.parametrize("text", [
+    "để chú hỏi nó, mà giữ giùm chú 2h chiều nha",       # có giờ + giữ
+    "de chu hoi no roi dat luon nha em",                 # đặt
+    "để chị xem lại, mà tiệm mấy giờ đóng cửa em",       # hỏi tiệm
+    "de chi hoi lai, huy lich mai giup chi",             # hủy
+    "để chị tính, dời qua thứ 6 được không",             # dời
+    "thằng cháu có rảnh không em",                       # không hoãn
+    "mai 3 giờ chiều nha em",
+])
+def test_a_deferral_with_a_request_still_goes_to_the_model(text):
+    assert deferral_reply(text, "anh Hùng", []) is None
+
+
+def test_two_deferrals_in_a_row_get_different_words():
+    first = deferral_reply(TURN4, "anh Hùng", [])
+    second = deferral_reply(TURN5, "anh Hùng", [first])
+    third = deferral_reply(TURN5, "anh Hùng", [first, second])
+    assert len({first, second, third}) == 3

@@ -51,7 +51,8 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         # `user` → mỗi agent có PhraseMiddleware + GuardMiddleware: câu nào ra
         # khỏi agent cũng đã qua guard đúng một lần (rewrite tối đa một lần).
         return make_agent_node(build_agent(
-            prompt, tools, user=user, extra_middleware=[HistoryWindowMiddleware(), *extra]))
+            prompt, tools, user=user, extra_middleware=[HistoryWindowMiddleware(), *extra]),
+            user=user)
 
     graph = StateGraph(GraphState)
 

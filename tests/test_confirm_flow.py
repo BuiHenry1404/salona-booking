@@ -136,8 +136,9 @@ async def test_g07_after_tool_loop_da_vang_de_chi_goi_never_books(test_db, user,
     first = await turn(test_db, user, "à mà giờ đó còn chỗ không em")
     assert first[-1][0] == "complete"
 
-    models.agent.replies += [AIMessage("Dạ chị gọi xong nhắn em nhé.")]
-    await turn(test_db, user, "dạ vâng để chị gọi")
+    agent_calls = len(models.agent.calls)
+    out = await turn(test_db, user, "dạ vâng để chị gọi")
+    assert "nhắn" in out[-1][1]["answer"] and len(models.agent.calls) == agent_calls  # câu code
 
     assert await appointments(test_db) == 0
     # Lượt 2 đi lại từ START (không qua confirm: bộ phân loại không chạy). Câu
@@ -506,9 +507,8 @@ async def test_cancel_deferral_then_status_question_knows_the_cancel_is_off(test
                              AIMessage("Dạ chị muốn hủy lịch mai 3 giờ chiều đúng không ạ?")]
     await turn(test_db, user, "hủy giùm cô cái lịch đó đi em")
 
-    models.agent.replies += [AIMessage("Dạ vâng ạ.")]
-    await turn(test_db, user, "để cô hỏi thằng Huy đã")
-    assert "chưa hủy, lịch vẫn còn" in context_seen(models)
+    out = await turn(test_db, user, "để cô hỏi thằng Huy đã")
+    assert out[-1][1]["answer"].startswith("Dạ") and "chị Lan" in out[-1][1]["answer"]
 
     models.sup.replies += [AIMessage("booking")]
     models.agent.replies += [AIMessage("Dạ lịch vẫn còn ạ.")]
@@ -559,12 +559,14 @@ async def test_live_b2_deferral_naming_a_relative_goes_to_booking_with_the_carve
                              AIMessage("Dạ chị muốn hủy lịch mai 3 giờ chiều đúng không ạ?")]
     await turn(test_db, user, "hủy giùm cô cái lịch đó đi em")
 
-    models.agent.replies += [AIMessage("Dạ, chị hỏi rồi nhắn em nhé.")]
-    await turn(test_db, user, "để cô hỏi thằng Huy đã")
+    agent_calls = len(models.agent.calls)
+    out = await turn(test_db, user, "để cô hỏi thằng Huy đã")
 
     assert len(models.sup.calls) == 1 and models.classifier["calls"] == 0
-    system = models.agent.calls[-1][0].content
-    assert "will ask someone before deciding" in system
+    answer = out[-1][1]["answer"]
+    assert "chị Lan" in answer and "nhắn" in answer and "chỉ xem" not in answer
+    assert len(models.agent.calls) == agent_calls          # câu code, không qua model (B4 #2)
+    assert await test_db["proposals"].count_documents({"status": "pending"}) == 0
     assert await appointments(test_db) == 1
 
 
@@ -720,24 +722,27 @@ async def test_live_b3_confirmation_never_claims_the_queued_booking(test_db, hun
     assert when2 in system and "NOT held" in system
 
 
-async def test_live_b3_asking_if_a_relative_is_free_reaches_booking_with_the_aside(
+async def test_live_b4_relative_deferral_gets_a_code_reply_not_the_privacy_refusal(
         test_db, hung, models):
-    """Lượt 4–5: "nó có rảnh không" là hỏi đứa cháu, không phải chủ tiệm; và câu
-    hoãn nhắc người nhà không phải chuyện quyền riêng tư. Agent đọc dòng code
-    viết [relative]/[deferral]; lượt 5 không gọi supervisor model."""
+    """Lượt 4–5 (live B3/B4): "nó có rảnh không" là hỏi đứa cháu, và "để chú
+    hỏi nó rồi nhắn lại em sau" là hoãn. Live B4: dù có dòng [relative]/
+    [deferral], model vẫn đáp câu từ chối quyền riêng tư (rule 4). Giờ câu đáp
+    do CODE viết — model agent không chạy, supervisor model cũng không; hai
+    lượt hoãn liền nhau không trùng chữ."""
     await hung_first_turn(test_db, hung, models)
-    models.agent.replies += [AIMessage("Dạ, chú hỏi cháu rồi nhắn em nhé.")]
-    await turn(test_db, hung, "khoan da, de chu hoi lai no co ranh khong")
-    ctx = context_seen(models)
-    assert "[relative]" in ctx and "[deferral]" in ctx
+    agent_calls = len(models.agent.calls)
+    out4 = await turn(test_db, hung, "khoan da, de chu hoi lai no co ranh khong")
     assert await test_db["proposals"].count_documents({"status": "pending"}) == 0
 
     sup_calls = len(models.sup.calls)
-    models.agent.replies += [AIMessage("Dạ vâng, anh Hùng hỏi xong nhắn em nhé.")]
-    await turn(test_db, hung, "ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi "
-                              "nhan lai em sau nha")
-    assert len(models.sup.calls) == sup_calls
-    assert "[relative]" in context_seen(models)
+    out5 = await turn(test_db, hung, "ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no "
+                                     "roi nhan lai em sau nha")
+    a4, a5 = out4[-1][1]["answer"], out5[-1][1]["answer"]
+    for answer in (a4, a5):
+        assert answer.startswith("Dạ") and "anh Hùng" in answer and "nhắn" in answer
+        assert "chỉ xem" not in answer and "chủ tiệm" not in answer
+    assert a4 != a5
+    assert len(models.agent.calls) == agent_calls and len(models.sup.calls) == sup_calls
     assert await appointments(test_db) == 0
 
 

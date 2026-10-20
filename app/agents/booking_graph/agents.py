@@ -8,8 +8,8 @@ from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain_core.exceptions import ModelError
 from langchain_core.tools import BaseTool
 
-from app.agents.booking_graph.context import live_queue, queued_line, with_line
-from app.agents.booking_graph.relatives import aside_line
+from app.agents.booking_graph.context import address_phrase, live_queue, queued_line, with_line
+from app.agents.booking_graph.relatives import aside_line, deferral_reply
 from app.agents.booking_graph.middleware.guard import GuardMiddleware
 from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
     STATE_HEADER, MessageLayoutMiddleware)
@@ -19,7 +19,10 @@ from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export
 from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
+from app.core.logging import get_logger
 from app.models.user import User
+
+logger = get_logger(__name__)
 
 # Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
 RESPOND_TAG = "respond"
@@ -137,7 +140,11 @@ def build_agent(
     return _LazyAgent(factory)
 
 
-def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
+# Câu đáp trước nhìn ngược tối đa bấy nhiêu tin để câu hoãn code viết không lặp.
+DEFERRAL_LOOKBACK = 8
+
+
+def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState], Awaitable[dict]]:
     """Node LangGraph bọc một agent `build_agent`.
 
     `messages` là cả thread trong ngày; `HistoryWindowMiddleware` (trong
@@ -150,10 +157,26 @@ def make_agent_node(agent) -> Callable[[GraphState], Awaitable[dict]]:
     `proposal_id` của lượt này (None nếu không có) — TRỪ lượt câu chốt
     (`confirm_fact`): agent không chạy tool nên không đụng tới đề xuất; câu
     hỏi lại (clarify) phải giữ nguyên đề xuất để confirm chờ tiếp.
+
+    Có `user` thì câu hoãn trần ("để chú hỏi nó rồi nhắn lại em sau") được CODE
+    đáp, agent không chạy (lỗi live B4 #2 — model chọn câu từ chối rule 4 dù có
+    dòng [deferral]). Lượt câu chốt (`confirm_fact`) không bao giờ đi đường này.
     """
     async def node(state: GraphState) -> dict:
         # Hàng chờ (đặt lần lượt) → MỘT dòng code viết trong khối bối cảnh.
         queue = live_queue(state.get("queued"))
+        if user is not None and not state.get("confirm_fact"):
+            said = [str(m.content) for m in (state.get("messages") or [])
+                    if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
+            code = deferral_reply(state.get("customer_text") or "", address_phrase(user.full_name),
+                                  [*said, *(state.get("previous_replies") or [])])
+            if code:
+                logger.info("deferral_code_reply")
+                result = {"draft": code, "answer": code, "answer_source": "code",
+                          "violations": [], "proposal_id": None}
+                if state.get("queued"):
+                    result["queued"] = queue
+                return result
         out = await agent.ainvoke({
             "messages": state["messages"],
             # + câu khách nhắc người nhà / hẹn nhắn lại (lỗi live B3 #2).
