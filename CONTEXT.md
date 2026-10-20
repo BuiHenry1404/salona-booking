@@ -204,6 +204,24 @@ Khách ──socket──▶ run_turn
   booking). Rule 4 thêm vế loại trừ: đặt hộ người thân bằng tài khoản mình, hay
   nói sẽ hỏi ai đó trước khi quyết, vẫn là lịch CỦA khách — lượt hoãn thì đáp
   một câu ngắn kiểu lễ tân, không gọi tool, không đọc giờ trống.
+- Lời "đã giữ/đã đặt" phải khớp DB của lượt (lỗi live B3 #1, câu chốt bịa "Còn
+  2 giờ chiều em cũng đã giữ cho cháu rồi ạ" khi 2 giờ chỉ đang chờ). MỌI lượt,
+  `guard.claim_facts` lấy các giờ có thật từ chuỗi CODE viết: dòng `[id: …]`
+  (lịch sắp tới), `held`/`will_cancel` của tool lượt này, `confirm_fact.when`.
+  Mệnh đề "đã/vừa/đang giữ|đặt|ghi|chốt" hay "giữ … rồi" nói về giờ khác (hoặc
+  không giờ khi chẳng có gì) → câu chốt: câu cứng; câu thường: rewrite một lần,
+  vẫn sai thì bỏ hẳn câu đó. Dời/hủy không xét ở đây ("đã hủy" đúng mà giờ không
+  còn trong lịch); "ghi nhận/ghi lại" không phải ghi lịch. Phrase được báo các
+  giờ đang chờ là NOT held (`confirm_fact.queued_when`).
+- Người nhà rảnh không ≠ chủ tiệm (lỗi live B3 #2): "nó có rảnh không" từng ra
+  get_shop_status, "thằng cháu có rảnh không … để chú hỏi rồi nhắn lại" ra câu từ
+  chối quyền riêng tư. `relatives.py` nhận ra bằng code (người nhà + "rảnh";
+  câu hoãn/nhắn lại sau) → supervisor vào booking không gọi model, agent đọc dòng
+  `[relative]`/`[deferral]`; rule 1 cấm tool tiệm cho câu đó, rule 4 coi nó là
+  vế loại trừ.
+- Báo trước "đặt từng lịch một" (lỗi live B3 #3): lượt đề xuất mà còn hàng chờ,
+  guard chèn câu CODE viết "Em giữ <giờ> trước, xong em giữ tiếp lịch <giờ chờ>
+  <ghi chú> nhé." trước câu hỏi xác nhận — trừ khi câu đã nhắc đủ giờ chờ.
 - Hợp đồng stream (review M4 M-2, KHÔNG đổi giao thức Socket.IO): `token` chỉ
   là bản nháp hiện dần; `complete.answer` THAY bubble đang stream bằng câu đã
   qua guard, `error` THAY nó bằng câu lỗi (`frontend/src/hooks/useAgentStream.ts`,
