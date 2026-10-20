@@ -18,7 +18,7 @@ from app.agents import checkpoint
 from app.agents.booking_graph import agents, events, phrase, reply, rewrite, supervisor
 from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
-from app.core.clock import TZ, now_utc
+from app.core.clock import TZ, now_utc, to_local
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -64,6 +64,15 @@ async def turn(test_db, user, text):
     return [(e.type, e.data) async for e in events.run_turn(test_db, user, text)]
 
 
+async def expected_proposal(test_db, user):
+    """Payload `proposal` mong đợi trong `complete`, dựng từ ĐÚNG đề xuất đang
+    pending của khách trong DB — tránh lặp lại logic của `pending_proposal_payload`."""
+    doc = await pending(test_db, user)
+    return {"id": str(doc["_id"]), "kind": doc["kind"],
+           "expires_at": to_local(doc["expires_at"]).isoformat(),
+           "when_spoken": format_vi_datetime(doc["start_at"])}
+
+
 async def propose_turn(test_db, user, models, hour=15):
     """Lượt 1: booking giữ chỗ rồi hỏi xác nhận → interrupt."""
     models.sup.replies += [AIMessage("booking")]
@@ -72,13 +81,33 @@ async def propose_turn(test_db, user, models, hour=15):
         AIMessage(QUESTION),
     ]
     out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
-    assert out[-1] == ("complete", {"answer": QUESTION})
+    proposal = await expected_proposal(test_db, user)
+    assert out[-1] == ("complete", {"answer": QUESTION, "proposal": proposal})
     assert ("token", {"text": QUESTION}) in out          # câu hỏi xác nhận stream như thường
     return out
 
 
 async def appointments(db):
     return await db["appointments"].count_documents({"status": "booked"})
+
+
+async def test_complete_carries_the_pending_proposal(test_db, user, models):
+    """Task 4: `complete` mang theo đề xuất đang chờ, để Task 6 (frontend) vẽ
+    nút Đồng ý/Không — lượt không đề xuất gì thì `proposal` phải là `None`."""
+    models.sup.replies += [AIMessage("social")]
+    models.agent.replies += [AIMessage("Dạ chào chị ạ")]
+    chit_chat = await turn(test_db, user, "chào em")
+    assert chit_chat[-1] == ("complete", {"answer": "Dạ chào chị ạ", "proposal": None})
+
+    out = await propose_turn(test_db, user, models)
+    latest = await ProposalService(test_db).latest(user)
+    proposal = out[-1][1]["proposal"]
+    assert proposal == {
+        "id": str(latest.id),
+        "kind": "book",
+        "expires_at": to_local(latest.expires_at).isoformat(),
+        "when_spoken": format_vi_datetime(latest.start_at),
+    }
 
 
 async def test_proposal_turn_ends_waiting_on_an_interrupt(test_db, user, models):
@@ -101,7 +130,8 @@ async def test_g01_ko_em_never_books(test_db, user, models):
     assert len(models.agent.calls) == agent_calls + 1     # lượt 2 đi vào booking
     assert len(models.sup.calls) == 1                     # không qua supervisor
     assert models.classifier["calls"] == 0                # lưới chặn trước model
-    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?",
+                                    "proposal": None})
 
 
 async def test_tan_gau_with_phai_never_books(test_db, user, models):
@@ -125,7 +155,8 @@ async def test_approve_books_and_phrase_streams(test_db, user, models):
     booked = await AppointmentService(test_db).upcoming_for(user)
     assert len(booked) == 1 and booked[0].start_at.astimezone(TZ) == tomorrow_at(15)
     assert any(t == "token" for t, _ in out)
-    assert out[-1] == ("complete", {"answer": f"Dạ xong rồi chị Lan, hẹn chị {when} nhé."})
+    assert out[-1] == ("complete", {"answer": f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.",
+                                    "proposal": None})
 
 
 async def test_g07_after_tool_loop_da_vang_de_chi_goi_never_books(test_db, user, models):
@@ -195,7 +226,9 @@ async def test_unclear_asks_once_then_approve_books(test_db, user, models):
     second = await turn(test_db, user, "cho cô dùng thử")
 
     when = format_vi_datetime(tomorrow_at(15))
-    assert second[-1] == ("complete", {"answer": f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?"})
+    proposal = await expected_proposal(test_db, user)        # vẫn pending, hỏi lại một câu
+    assert second[-1] == ("complete", {"answer": f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?",
+                                       "proposal": proposal})
     assert await appointments(test_db) == 0
 
     models.classifier["label"] = "approve"
@@ -214,7 +247,7 @@ async def test_unclear_twice_drops_the_proposal_and_goes_to_booking(test_db, use
 
     out = await turn(test_db, user, "ờ thì để coi")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị cần em giúp gì thêm ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ chị cần em giúp gì thêm ạ?", "proposal": None})
     assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
     assert await appointments(test_db) == 0
 
@@ -229,7 +262,7 @@ async def test_approved_proposal_does_not_carry_over(test_db, user, models):
 
     out = await turn(test_db, user, "ừ cảm ơn em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert out[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     assert len(models.sup.calls) == 2                       # về supervisor
     assert await appointments(test_db) == 1
 
@@ -243,7 +276,7 @@ async def test_expired_proposal_is_a_new_message(test_db, user, models, monkeypa
 
     out = await turn(test_db, user, "ừ")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt lại giờ nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt lại giờ nào ạ?", "proposal": None})
     assert len(models.sup.calls) == 2
     assert await appointments(test_db) == 0
 
@@ -411,7 +444,7 @@ async def test_new_message_after_cut_before_confirm_without_proposal(test_db, us
     models.agent.replies += [AIMessage("Dạ sơn gel 150 nghìn ạ")]
     out = await turn(test_db, user, "sơn gel bao nhiêu em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ sơn gel 150 nghìn ạ"})
+    assert out[-1] == ("complete", {"answer": "Dạ sơn gel 150 nghìn ạ", "proposal": None})
     assert len(models.sup.calls) == 2
     doc = await test_db["conversations"].find_one({"user_id": str(user.id)})
     assert doc["messages"][-1]["content"] == "Dạ sơn gel 150 nghìn ạ"
@@ -435,7 +468,7 @@ async def test_proposal_set_but_not_yet_interrupted_treats_next_message_as_the_r
     models.agent.replies += [AIMessage("Dạ vâng, chị muốn giờ nào ạ?")]
     out = await turn(test_db, user, "dạ ko em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?", "proposal": None})
     assert await appointments(test_db) == 0
     assert len(models.sup.calls) == 1                   # trả lời đề xuất, không về START
 
@@ -544,8 +577,10 @@ async def test_live_b2_claim_while_only_holding_is_rewritten_end_to_end(test_db,
         AIMessage(f"Dạ, em đã đặt lịch cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"),
     ]
     out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+    proposal = await expected_proposal(test_db, user)
     assert out[-1] == ("complete", {"answer":
-                       f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"})
+                       f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?",
+                       "proposal": proposal})
     assert await appointments(test_db) == 0
 
 
@@ -783,10 +818,11 @@ async def test_live_b3_first_proposal_announces_the_queued_booking(test_db, hung
     từ hàng chờ, chèn trước câu hỏi xác nhận)."""
     when9 = format_vi_datetime(in_two_days(9))
     out = await hung_first_turn(test_db, hung, models)
+    proposal = await expected_proposal(test_db, hung)
     assert out[-1] == ("complete", {"answer": (
         f"Em đang giữ lịch cắt tóc cho anh Hùng vào {when9}. Em giữ lịch này trước, xong em "
         "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
-        "giúp em nhé?")})
+        "giúp em nhé?"), "proposal": proposal})
 
 
 async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_queued_time(
@@ -797,10 +833,11 @@ async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_qu
     out = await hung_first_turn(test_db, hung, models, agent_reply=(
         f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Lịch cho thằng cháu là {when2}. "
         "Anh Hùng xác nhận giúp em nhé?"))
+    proposal = await expected_proposal(test_db, hung)
     assert out[-1] == ("complete", {"answer": (
         f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Em giữ lịch này trước, xong em "
         "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
-        "giúp em nhé?")})
+        "giúp em nhé?"), "proposal": proposal})
     assert await test_db["proposals"].count_documents({"status": "pending"}) == 1
 
 

@@ -164,7 +164,7 @@ async def test_one_failure_is_retried_transparently(test_db, user, models):
     models.sup.replies += [AIMessage("social")]
     models.agent.replies += [api_error("timeout"), AIMessage("Dạ em chào chị Lan ạ.")]
     out = await turn(test_db, user, "chào em")
-    assert out[-1] == ("complete", {"answer": "Dạ em chào chị Lan ạ."})
+    assert out[-1] == ("complete", {"answer": "Dạ em chào chị Lan ạ.", "proposal": None})
     assert ("error", {"message": BUSY}) not in out
 
 
@@ -198,7 +198,7 @@ async def test_slow_consumer_never_trips_the_turn_timeout(test_db, user, models,
         if event.type == "token":
             await asyncio.sleep(0.5)                       # người nhận chậm hơn trần
     assert ("token", {"text": "Dạ em chào chị Lan ạ."}) in out
-    assert out[-1] == ("complete", {"answer": "Dạ em chào chị Lan ạ."})
+    assert out[-1] == ("complete", {"answer": "Dạ em chào chị Lan ạ.", "proposal": None})
 
 
 async def test_next_turn_after_a_timeout_runs_normally(test_db, user, models, monkeypatch):
@@ -211,7 +211,7 @@ async def test_next_turn_after_a_timeout_runs_normally(test_db, user, models, mo
     models.sup.replies += [AIMessage("social")]
     models.agent.replies += [AIMessage("Dạ em chào chị Lan ạ.")]
     assert (await turn(test_db, user, "chào em"))[-1] == (
-        "complete", {"answer": "Dạ em chào chị Lan ạ."})
+        "complete", {"answer": "Dạ em chào chị Lan ạ.", "proposal": None})
 
 
 # --- ngân sách cả lượt (review M4 I-1) ----------------------------------------
@@ -241,7 +241,7 @@ async def test_supervisor_stall_degrades_to_booking_not_to_an_error(test_db, use
     out = await turn(test_db, user, "em ơi mai cô muốn làm móng")
 
     assert asyncio.get_running_loop().time() - started < 5
-    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt ngày nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt ngày nào ạ?", "proposal": None})
     assert not any(kind == "error" for kind, _ in out)
 
 
@@ -283,7 +283,7 @@ async def test_stalled_azure_on_the_real_sdk_degrades_instead_of_timing_out(
         out = await turn(test_db, user, "em ơi mai cô muốn làm móng")
 
         assert asyncio.get_running_loop().time() - started < 3
-        assert out[-1] == ("complete", {"answer": "Dạ chị muốn làm móng ngày nào ạ?"})
+        assert out[-1] == ("complete", {"answer": "Dạ chị muốn làm móng ngày nào ạ?", "proposal": None})
         assert logged == []
         assert len(conns) >= 1                       # SDK thật đã gọi tới "Azure"
     finally:

@@ -67,7 +67,7 @@ async def test_second_turn_sees_the_first_turn_from_the_thread(test_db, user, mo
     await test_db["conversations"].update_one({}, {"$set": {"messages": []}})
 
     assert (await turn(test_db, user, "cảm ơn em"))[-1] == (
-        "complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+        "complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     batch = contents(models.agent.calls[-1])
     assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
     assert batch[-1] == "cảm ơn em"
@@ -103,7 +103,7 @@ async def test_answer_of_previous_turn_never_leaks_into_this_turn(test_db, user,
 
     models.agent.replies[:] = [AIMessage("Dạ chị Lan nhắn lại giúp em nhé.")]
     third = await turn(test_db, user, "alo")
-    assert third[-1] == ("complete", {"answer": "Dạ chị Lan nhắn lại giúp em nhé."})
+    assert third[-1] == ("complete", {"answer": "Dạ chị Lan nhắn lại giúp em nhé.", "proposal": None})
     batch = contents(models.agent.calls[-1])
     assert "đặt lịch" not in batch
     assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
@@ -292,7 +292,7 @@ async def test_a_new_turn_supersedes_a_hung_turn(test_db, user, models):
     await _wait_until(lambda: len(models.agent.calls) == 1)          # lượt 1 đang treo
 
     second = await asyncio.wait_for(turn(test_db, user, "em ơi"), timeout=5)
-    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     await asyncio.wait({first}, timeout=1)
     assert first.cancelled()
 
@@ -341,7 +341,7 @@ async def test_three_quick_turns_only_the_newest_runs_and_the_old_ones_log(
 
     done = await asyncio.wait_for(t3, timeout=5)
     await asyncio.wait({t1, t2}, timeout=1)
-    assert done[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert done[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     assert t1.cancelled() and t2.cancelled()
     assert logged.count("turn_superseded") == 2
     stored = await ConversationService(test_db)._all_messages(str(user.id))

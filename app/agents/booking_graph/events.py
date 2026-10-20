@@ -8,6 +8,7 @@ from langgraph.types import Command
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import RESPOND_TAG
+from app.agents.booking_graph.context import format_vi_datetime
 from app.agents.booking_graph.graph import build_graph
 from app.agents.booking_graph.history import stamp, stamped_at
 from app.core.clock import now_ms, to_local
@@ -16,6 +17,7 @@ from app.core.logging import get_logger
 from app.models.user import User
 from app.services.conversation import ConversationService, session_cutoff
 from app.services.conversation_state import ConversationStateService
+from app.services.proposal import ProposalService
 
 logger = get_logger(__name__)
 
@@ -164,6 +166,33 @@ async def _supersede(user_id: str, me: asyncio.Task,
         await asyncio.wait({previous}, timeout=SUPERSEDE_WAIT_SECONDS)
 
 
+async def pending_proposal_payload(
+    db: AsyncIOMotorDatabase, user: User, snapshot
+) -> Optional[dict]:
+    """Khối "đề xuất đang chờ" đính kèm `complete` cho nút Đồng ý/Không (Task 6).
+
+    Khác `None` CHỈ khi lượt vừa xong dừng ở `interrupt()` của node `confirm`
+    (snapshot.interrupts khác rỗng) VÀ `proposal_id` còn trong state — đúng
+    điều kiện khiến lượt SAU bị coi là đang chờ (xem `waiting` trong
+    `_run_turn`). Đọc lại từ `ProposalService` (không tin thẳng state đồ hoạ)
+    vì nó tự chuẩn hoá đề xuất đã hết hạn/treo quá lâu lúc đọc — hết hạn thì
+    không còn gì để hỏi khách nữa.
+    """
+    values = getattr(snapshot, "values", None) or {}
+    proposal_id = values.get("proposal_id")
+    if not getattr(snapshot, "interrupts", ()) or not proposal_id:
+        return None
+    proposal = await ProposalService(db).get(user, proposal_id)
+    if proposal is None or proposal.status != "pending":
+        return None
+    return {
+        "id": str(proposal.id),
+        "kind": proposal.kind,
+        "expires_at": to_local(proposal.expires_at).isoformat(),
+        "when_spoken": format_vi_datetime(proposal.start_at),
+    }
+
+
 async def run_turn(
     db: AsyncIOMotorDatabase, user: User, question: str
 ) -> AsyncIterator[AgentEvent]:
@@ -283,7 +312,8 @@ async def _run_turn(
             for event in translate_langchain_event(raw):
                 yield event
 
-        values = (await bounded(graph.aget_state(config))).values or {}
+        snapshot = await bounded(graph.aget_state(config))
+        values = snapshot.values or {}
         answer = values.get("answer", "")
         if answer:
             last = (values.get("messages") or [None])[-1]
@@ -300,7 +330,8 @@ async def _run_turn(
             # khách lẻ — shield để cặp ghi xong dù lượt này đã bị huỷ.
             await asyncio.shield(asyncio.ensure_future(persist()))
 
-        yield AgentEvent("complete", {"answer": answer})
+        proposal = await pending_proposal_payload(db, user, snapshot)
+        yield AgentEvent("complete", {"answer": answer, "proposal": proposal})
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không
