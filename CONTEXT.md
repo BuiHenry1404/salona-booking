@@ -52,7 +52,7 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 |---|---|---|
 | M1 nút xác nhận | 1 reasoning_effort · 2 confirm nhận nút · 3 câu chốt bằng code · 4 `complete.proposal` · 5 event `confirm_proposal` · 6 frontend nút · 7 bench nút | **xong**, tag `target/m1` = `a5af160` |
 | M2 LLM-02 + tin trùng | 8 "ok" ngắn sau booking → booking · 9 guard `ask_without_proposal` | **xong** (`739cd2b`, `85f3753`) |
-| | 10 dedupe `message_id` (Redis, dự phòng Mongo) | **đã commit** `42a28a2` (bench `a149ab7`), **đang review** — xem dòng Task 10 cuối sổ tiến độ |
+| | 10 dedupe `message_id` (Redis, dự phòng Mongo) | **đã commit** `42a28a2` (bench `a149ab7`); review ra 5 lỗi (race Redis→Mongo, "running" không hết hạn, ping/timeout, kịch bản bench) → **đang sửa vòng 1** — xem dòng Task 10 + Ruling cuối sổ tiến độ |
 | | 11 cache trạng thái tiệm qua Redis | chưa |
 | M3 trí nhớ | 12 bộ phân tích câu khách · 12b nối vào supervisor/confirm · 12c nén theo mục, cuốn chiếu, kèm câu gốc · 13 `self_address`/`staff_note` · 14 `conversation_sessions` | chưa |
 | M4 tự nhiên | 15 phrase theo ngữ cảnh + cờ `CONFIRM_VETO_MODE`/`GUARD_VOICE_RULES` · 16 rubric judge + đo ma trận cờ | chưa |
