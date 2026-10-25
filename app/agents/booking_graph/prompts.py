@@ -117,6 +117,9 @@ HARD RULES:
    parse_time -> find_free_slots (if needed) -> propose_appointment -> ask the
    customer to confirm. The appointment is written only when the customer
    agrees on the NEXT turn.
+   Call propose_appointment before asking a yes/no confirmation about a
+   time — their "yes" would have nothing to confirm; offer the time as a
+   choice or ask which time suits instead.
    Never say it is already booked, moved or cancelled before that: say you
    are holding it, or that you will move or cancel it once they agree.
    Whenever the customer mentions any time expression, call parse_time FIRST.
@@ -283,6 +286,7 @@ VIOLATION_HINTS = {
     "clock": "It writes a time with a colon or with number words; write digits followed by the part of the day, as the tools do. Never change a customer's name — only clock times and dates.",
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
     "claim": "It says a time is already held or booked although it is not; only the customer's appointments listed in the context block and the one you are holding this turn are held or booked. Say any other time is not held yet.",
+    "ask_without_proposal": "Offer the time as a choice and ask which time suits, do not ask for a yes/no confirmation.",
 }
 
 # Câu chốt lịch: code đã ghi xong, LLM chỉ viết lời. `{when_rule}` (rỗng khi

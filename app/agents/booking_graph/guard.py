@@ -405,6 +405,21 @@ def check_pronoun(draft: str, address: str, name: str) -> bool:
     return False
 
 
+_YES_NO_PARTICLE = re.compile(r"\b(?:được không|nhé|nha)\b", re.I)
+
+
+def asks_yes_no_about_a_clock(draft: str) -> bool:
+    """Câu cuối là câu hỏi có/không ("được không"/"nhé"/"nha") VÀ nhắc một giờ
+    đọc — đúng dạng câu LLM-02 hỏi "giữ chỗ 2 giờ chiều mai được không?" khi
+    chưa hề gọi `propose_appointment`. Câu hỏi để KHÁCH chọn giờ ("2 giờ hay 3
+    giờ chiều ạ?") không phải có/không nên không khớp."""
+    parts = [p for p in _SENTENCE_END.split((draft or "").strip()) if p.strip()]
+    last = parts[-1] if parts else ""
+    if not last.rstrip().endswith("?"):
+        return False
+    return bool(_YES_NO_PARTICLE.search(last)) and bool(clock_keys(last))
+
+
 def check_clock(draft: str) -> bool:
     if _CLOCK_COLON.search(draft):
         return True
@@ -424,7 +439,8 @@ def content_kept(original: str, rewritten: str) -> bool:
 
 
 def find_violations(draft: str, *, previous_replies: Sequence[str], address: str, name: str,
-                    customer_text: str, claims: Optional[dict] = None) -> List[str]:
+                    customer_text: str, claims: Optional[dict] = None,
+                    has_proposal: bool = True) -> List[str]:
     codes: List[str] = []
     if has_false_claim(draft, claims):
         codes.append("claim")
@@ -434,6 +450,8 @@ def find_violations(draft: str, *, previous_replies: Sequence[str], address: str
         codes.append("pronoun")
     if check_clock(draft):
         codes.append("clock")
+    if not has_proposal and asks_yes_no_about_a_clock(draft):
+        codes.append("ask_without_proposal")
     return codes
 
 
@@ -498,8 +516,10 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     previous = state.get("previous_replies") or []
     customer_text = state.get("customer_text") or ""
     claims = claim_facts(state)
+    has_proposal = bool(state.get("proposal_id"))
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
-                            customer_text=customer_text, claims=claims)
+                            customer_text=customer_text, claims=claims,
+                            has_proposal=has_proposal)
     if not codes:
         return {"answer": announce_queue(draft, state, address), "answer_source": "llm", "violations": []}
 
@@ -507,7 +527,8 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
     rewritten = strip_tool_names(new) if new else draft
     second = find_violations(rewritten, previous_replies=previous, address=address, name=name,
-                             customer_text=customer_text, claims=claims)
+                             customer_text=customer_text, claims=claims,
+                             has_proposal=has_proposal)
     if not content_kept(draft, rewritten) and "claim" not in codes:
         second.append("content")
     out = _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)

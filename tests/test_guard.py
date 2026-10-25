@@ -210,3 +210,27 @@ class TestFindViolations:
     def test_clean_draft_has_no_violations(self):
         assert find_violations("Dạ anh Tám, mai 9 giờ sáng ạ.", previous_replies=[],
                                address="anh Tám", name="Tám", customer_text="mai mấy giờ") == []
+
+    def test_yes_no_question_about_a_time_without_proposal_is_flagged(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=False)
+        assert "ask_without_proposal" in codes
+
+    def test_same_question_with_a_proposal_is_fine(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=True)
+        assert "ask_without_proposal" not in codes
+
+    def test_yes_no_question_without_a_clock_is_not_flagged(self):
+        codes = find_violations("Anh chị còn cần gì nữa không ạ?", previous_replies=[],
+                                address="anh chị", name="", customer_text="ok",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes
+
+    def test_a_non_yes_no_question_naming_a_time_is_not_flagged(self):
+        codes = find_violations("Anh chị muốn 2 giờ hay 3 giờ chiều ạ?", previous_replies=[],
+                                address="anh chị", name="", customer_text="2 hay 3 giờ chiều",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes

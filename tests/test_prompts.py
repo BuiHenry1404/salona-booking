@@ -419,8 +419,10 @@ class TestBookingPromptSlimmed:
         # Lỗi #2: rule 10 đặt nhiều lịch lần lượt + hàng chờ [queued …] — đo
         # được 8614 — mốc lên 8700. Chat tay B3 (2026-10-20, lỗi #2): người
         # nhà rảnh không ≠ chủ tiệm (rule 1) và vế [relative]/[deferral] ở
-        # rule 4 — đo được 8869 — mốc lên 8900.
-        assert len(BOOKING_PROMPT) < 8900
+        # rule 4 — đo được 8869 — mốc lên 8900. LLM-02 (2026-10-20): rule 1
+        # cấm hỏi có/không về giờ chưa propose_appointment — đo được 9057 —
+        # mốc lên 9100.
+        assert len(BOOKING_PROMPT) < 9100
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -626,6 +628,14 @@ class TestLiveChatB2:
         from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
         shop = SUPERVISOR_PROMPT.split("- shop")[1].split("- social")[0]
         assert "OWNER" in shop and "relative" in shop
+
+
+class TestNoYesNoQuestionWithoutAProposal:
+    """LLM-02: bot hỏi "được không?" về một giờ chưa hề gọi propose_appointment —
+    khách "ok" thì không có gì để confirm (guard chặn ở `ask_without_proposal`)."""
+
+    def test_the_rule_is_stated(self):
+        assert "propose_appointment" in BOOKING_PROMPT and "before asking" in BOOKING_PROMPT
         assert "never call a shop tool" in BOOKING_PROMPT
         rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
         assert "asking whether that person is free" in rule4
