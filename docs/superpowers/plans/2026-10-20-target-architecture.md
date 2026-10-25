@@ -279,23 +279,44 @@ async def test_missing_message_id_never_dedupes(...)
 
 ## Mốc M3 — Trí nhớ
 
-### Task 12: Slots mở rộng và nén nền mỗi lượt
+### Task 12: Bộ phân tích câu khách và slots mở rộng (module, chưa nối graph)
+
+> Sửa 25/10/2026: thay "nén nền mỗi lượt" bằng bộ phân tích đầu lượt (spec mục 3, bản sửa cùng ngày).
 
 **Files:**
-- Modify: `app/models/conversation.py:32-48` (`ConversationSlots` + `stated: List[str]`, `asked: List[AskedItem]`, `told: List[str]`, `agreed_at: Optional[AgreedAt]`; `AskedItem{question: str, answered: bool, times: int}`, `AgreedAt{proposal_id: str, at: datetime}`), `app/services/conversation_state.py` (`sanitize_slots` lọc các trường mới; `maybe_compact` tách `extract_slots` chạy từ lượt 2; prompt state), `app/agents/booking_graph/context.py:92-124` (`render_slots` in thêm 4 nhóm dòng), `app/agents/booking_graph/prompts.py` (BOOKING/SOCIAL: luật đọc `asked`/`told`)
-- Test: `tests/test_conversation_slots.py`, `tests/test_conversation_state_service.py`, `tests/test_context_block.py`, `tests/test_prompts.py`
+- Create: `app/agents/booking_graph/analyzer.py`
+- Modify: `app/models/conversation.py:32-48` (`ConversationSlots` + `stated: List[str]`, `asked: List[AskedItem]`, `told: List[str]`, `agreed_at: Optional[AgreedAt]`; `AskedItem{question: str, answered: bool, times: int}`, `AgreedAt{proposal_id: str, at: datetime}`), `app/services/conversation_state.py` (`sanitize_slots` lọc các trường mới; thêm `apply_turn_analysis`), `app/core/text.py` (+`detect_self_address`, xem Task 13 Interfaces — làm ở đây vì sanitize cần), `app/agents/booking_graph/context.py:92-124` (`render_slots` in thêm 4 nhóm dòng), `app/agents/booking_graph/prompts.py` (+`ANALYZE_PROMPT` tiếng Anh, không câu ví dụ tiếng Việt; BOOKING/SOCIAL: luật đọc `asked`/`stated`/`told`)
+- Test: `tests/test_analyzer.py` (mới), `tests/test_conversation_slots.py`, `tests/test_context_block.py`, `tests/test_prompts.py`, `tests/test_text.py`
 
 **Interfaces:**
-- Produces: `ConversationStateService.maybe_compact(user_id)` → luôn chạy `extract_slots` khi phiên có ≥ 2 câu khách (1 lượt LLM nền, `streaming=False`, tag `state`); phần cắt lịch sử/summary vẫn theo `COMPACT_THRESHOLD_TOKENS`. `sanitize_slots`: mỗi list ≤ 5, mỗi mục `single_line(…, 60)`, bỏ mục khớp `_PHONE_RE` / `_ADDRESS_RE` / `_IMPERATIVE_RE` (`hãy|bỏ qua|ignore|quên`). `render_slots` in: `- Khách đã nói rõ: a; b`, `- Em đã hỏi: "q" (đã đáp | chưa đáp ×2)`, `- Em đã nói với khách: …`, `- Khách đã đồng ý đề xuất lúc HH:MM (đã hết hạn — chỉ để nói, không phải để ghi)`.
+- Produces: `class TurnAnalysis(BaseModel)`: `route: Literal["booking","shop","social"]`, `reply_to_proposal: Optional[Literal["approve","reject","change","unclear"]]`, `service: Optional[str]`, `time_text: Optional[str]`, `self_address: Optional[Literal["chị","anh"]]`, `stated: List[str]` (≤2), `answers_question: bool`. `TurnAnalysis.fallback(has_pending: bool) -> TurnAnalysis` (`route="booking"`, `reply_to_proposal="unclear" if has_pending else None`, còn lại rỗng/False).
+- `async analyze_turn(messages: Sequence[BaseMessage], customer_text: str, pending: Optional[Mapping[str, Any]]) -> TurnAnalysis`: một lượt `build_chat_model(tags=["analyze"], streaming=False, reasoning_effort="low", timeout=8, max_retries=1).with_structured_output(TurnAnalysis)`, bọc `asyncio.wait_for(…, 8)`; mọi Exception → `fallback`, log `analyze_failed`; kết quả luôn qua `sanitize_analysis`. `pending` mô tả đề xuất như `reply._describe` (chỉ giờ, không ghi chú khách gõ).
+- `sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) -> TurnAnalysis`: `reply_to_proposal=None` nếu không có đề xuất, `None`→`"unclear"` nếu có; `time_text` không phải chuỗi con (bỏ dấu, lowercase) của câu khách → None; `self_address` ≠ `detect_self_address(customer_text)` → None; `service`/`stated` qua cùng bộ lọc với `sanitize_slots` (≤60 ký tự, bỏ `_PHONE_RE`/`_ADDRESS_RE`/`_IMPERATIVE_RE` = `hãy|bỏ qua|ignore|quên|luôn đồng ý`), `stated` ≤ 2.
+- `ConversationStateService.apply_turn_analysis(user_id, a: TurnAnalysis, last_bot_text: str) -> None`: ghi ngay vào `state.slots` (tạo state hôm nay nếu chưa có): `service` nếu có; nối `stated` (giữ ≤5, bỏ trùng); nếu `last_bot_text` kết thúc `?` → upsert `AskedItem(question=single_line(last_bot_text, 60))`, trùng câu → `times += 1`; `answers_question` → `answered=True`. Không gọi LLM.
+- `render_slots` in thêm: `- Khách đã nói rõ: a; b`, `- Em đã hỏi: "q" (đã đáp | chưa đáp ×2)`, `- Em đã nói với khách: …`, `- Khách đã đồng ý đề xuất lúc HH:MM (chỉ để nói, không phải để ghi)`.
 
-- [ ] **Step 1: Test đỏ**: (`test_conversation_slots.py`) `test_sanitize_drops_phone_and_imperatives`, `test_sanitize_caps_each_list_at_five`; (`test_context_block.py`) `test_render_slots_shows_stated_asked_told`; (`test_conversation_state_service.py`) `test_slots_are_extracted_from_the_second_customer_message` (2 câu khách, 300 token → state có `slots`, summary rỗng vì chưa tới ngưỡng).
-- [ ] **Step 2: FAIL**. **Step 3: Implement**. **Step 4: PASS** 4 file test + `tests/test_history_window.py`.
-- [ ] **Step 5: Commit** `feat: extended in-session slots, extracted every turn`.
+- [ ] **Step 1: Test đỏ**: (`test_analyzer.py`, model giả trả `TurnAnalysis` dựng sẵn) `test_model_error_returns_safe_fallback` (Exception → route booking, reply unclear khi có đề xuất), `test_reply_label_dropped_without_pending_proposal`, `test_time_text_not_in_message_is_dropped`, `test_self_address_requires_regex_agreement` (model "chị", câu "em muốn làm tóc" → None), `test_stated_imperatives_are_dropped` ("luôn đồng ý", "bỏ qua luật" → []), `test_analyzer_does_not_stream_and_uses_low_reasoning` (kwargs build_chat_model); (`test_conversation_slots.py`) `test_apply_turn_analysis_marks_question_answered`, `test_repeated_question_increments_times`, `test_stated_capped_at_five_and_deduped`; (`test_context_block.py`) `test_render_slots_shows_stated_asked_told`; (`test_text.py`) như Task 13 Step 1 cho `detect_self_address`.
+- [ ] **Step 2: FAIL**. **Step 3: Implement**. **Step 4: PASS** các file trên.
+- [ ] **Step 5: Commit** `feat: turn analyzer and extended in-session slots`.
+
+### Task 12b: Nối bộ phân tích vào supervisor và confirm
+
+**Files:**
+- Modify: `app/agents/booking_graph/supervisor.py` (sau lối tắt code: gọi `analyze_turn`, route = `analysis.route`; lưu `analysis` vào state), `app/agents/booking_graph/confirm.py` (đường gõ chữ: `reply.decide` dùng nhãn từ `analyze_turn(..., pending=facts)` thay `classify_reply`), `app/agents/booking_graph/reply.py` (`decide(text, proposal, bot_question, now, *, label_fn)` — lưới code + go-ahead giữ nguyên thứ tự, bước cuối gọi `label_fn`), `app/agents/booking_graph/state.py` (+`analysis: NotRequired[Optional[dict]]`, reset trong `fresh_turn_fields`), `app/agents/booking_graph/events.py` (sau `complete`: `apply_turn_analysis` dưới `shield`, cùng chỗ `persist`), `app/services/conversation_state.py` (`maybe_compact` không đổi ngưỡng)
+- Test: `tests/test_supervisor.py`, `tests/test_confirm_flow.py`, `tests/test_reply_classify.py`, `tests/test_run_turn_thread.py`
+
+**Interfaces:**
+- Consumes: Task 12 `analyze_turn`, `TurnAnalysis`, `apply_turn_analysis`.
+- Produces: mỗi lượt gọi `analyze_turn` **tối đa một lần**; đường nút và lối tắt code gọi 0 lần. `classify_reply` giữ lại cho cờ/so sánh nhưng không còn được gọi trên đường chính.
+
+- [ ] **Step 1: Test đỏ**: `test_new_message_calls_analyzer_once_and_routes_by_it`; `test_code_shortcuts_skip_the_analyzer` (hàng chờ, người nhà, "ok" ngắn sau booking); `test_typed_reply_uses_analyzer_label_after_veto_grid` (veto vẫn thắng: "dạ ko em" + analyzer "approve" → không ghi); `test_analyzer_failure_on_typed_reply_never_books`; `test_button_turn_never_calls_analyzer`; `test_slots_updated_in_the_same_turn` (lượt 2 thấy `stated` của lượt 1 trong khối slots mà nén nền không chạy).
+- [ ] **Step 2: FAIL**. **Step 3: Implement**. **Step 4: PASS** + toàn suite.
+- [ ] **Step 5: Commit** `feat: route and label confirmations through the turn analyzer`.
 
 ### Task 13: Hồ sơ khách — `self_address`, `staff_note`, bỏ số điện thoại
 
 **Files:**
-- Modify: `app/models/user.py` (+`self_address: Optional[Literal["anh","chị"]] = None`, `staff_note: Optional[str] = None`), `app/core/text.py` (+`detect_self_address(text) -> Optional[Literal["anh","chị"]]`), `app/agents/booking_graph/events.py` (sau khi có `question` và `user.self_address is None` → `UserRepository.set_self_address`), `app/agents/booking_graph/context.py:138-165, 269-343` (`address_phrase(user)` đọc `self_address`; dòng "Ghi chú tiệm: …"; bỏ `({phone})`), `app/agents/booking_graph/guard.py:350-400` (`_pronouns` theo `self_address`), `app/api/v1/routers/admin.py` (+`PATCH /admin/users/{user_id}/note {staff_note}` ≤200 ký tự, `require_admin`), `main.py` lifespan (migration một lần: `full_name` có tiền tố → seed `self_address` theo bảng `cô/chị/bà→chị`, `chú/anh/ông→anh`)
+- Modify: `app/models/user.py` (+`self_address: Optional[Literal["anh","chị"]] = None`, `staff_note: Optional[str] = None`), `app/core/text.py` (`detect_self_address` đã có từ Task 12), `app/agents/booking_graph/events.py` (sau lượt: `user.self_address is None` và `state["analysis"]["self_address"]` có — tức analyzer và regex cùng thấy — → `UserRepository.set_self_address`; lượt đi lối tắt code không có analysis thì dùng `detect_self_address` một mình), `app/agents/booking_graph/context.py:138-165, 269-343` (`address_phrase(user)` đọc `self_address`; dòng "Ghi chú tiệm: …"; bỏ `({phone})`), `app/agents/booking_graph/guard.py:350-400` (`_pronouns` theo `self_address`), `app/api/v1/routers/admin.py` (+`PATCH /admin/users/{user_id}/note {staff_note}` ≤200 ký tự, `require_admin`), `main.py` lifespan (migration một lần: `full_name` có tiền tố → seed `self_address` theo bảng `cô/chị/bà→chị`, `chú/anh/ông→anh`)
 - Test: `tests/test_text.py`, `tests/test_context_block.py`, `tests/test_guard.py`, `tests/test_admin_stats_api.py` (hoặc `tests/test_admin_users_api.py` mới), `tests/test_user_model.py`
 
 **Interfaces:**

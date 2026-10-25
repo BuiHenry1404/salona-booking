@@ -131,15 +131,35 @@ Kịch bản benchmark mới `edge/ok-khong-de-xuat`: bot (scripted) hỏi có/k
 đề xuất, khách "Ok em" → kỳ vọng: lịch được ghi **sau** một câu hỏi xác nhận thật, hoặc
 bot hỏi giờ; không được chào tạm biệt.
 
-### 3. Trí nhớ trong phiên: `ConversationState.slots` mở rộng
+### 3. Trí nhớ trong phiên: bộ phân tích câu khách + `ConversationState.slots` mở rộng
 
-Thêm 4 trường, LLM điền lúc nén (`ConversationStateService._compact`, nền, sau
-`complete`), code lọc. **Lịch nén đổi**: hiện chỉ nén khi phần ngoài 8 tin gần nhất
-≥ 800 token (`COMPACT_THRESHOLD_TOKENS`), nên hội thoại 3–8 lượt không bao giờ có
-slots. Từ nay nén **nền sau mỗi lượt kể từ lượt thứ 2** (tách hai việc: trích slots
-mỗi lượt; cắt lịch sử/summary vẫn theo ngưỡng 800 token). Chi phí: +1 lượt LLM
-nền/lượt chat, không nằm trên đường trễ; người dùng đã chấp nhận không giới hạn chi
-phí Azure (spec Harness B):
+**Sửa 25/10/2026 (người dùng duyệt mockup "Bộ phân tích câu khách").** Thay cho việc
+nén nền mỗi lượt, một **bộ phân tích** (`analyze_turn`) đọc câu khách ở đầu lượt và
+trả bản phân tích có cấu trúc. Nó **thay** lượt LLM của supervisor (tin mới) và của
+bộ phân loại câu xác nhận (lượt resume vào `confirm`) — mỗi lượt vẫn tối đa một lượt
+LLM trước agent, không thêm lượt nào.
+
+| Trường | Giá trị | Dùng vào | Code kiểm |
+|---|---|---|---|
+| `route` | booking · shop · social | chọn agent (thay supervisor) | ngoài 3 nhãn / lỗi → booking |
+| `reply_to_proposal` | approve · reject · change · unclear · null | chỉ khi có đề xuất chờ (thay `classify_reply`) | lưới phủ quyết + `is_go_ahead` vẫn chạy TRƯỚC; null/lỗi → unclear; không bao giờ tự ghi |
+| `service` | chuỗi ≤ 60 ký tự · null | slot "dịch vụ" ngay trong lượt | lọc như dưới |
+| `time_text` | cụm giờ khách nói · null | gợi ý cho agent gọi `parse_time` | phải là chuỗi con của câu khách, không thì bỏ |
+| `self_address` | chị · anh · null | mục 4 | chỉ nhận khi `detect_self_address` (regex) cũng ra cùng giá trị |
+| `stated` | ≤ 2 mục | thêm vào slots `stated` ngay | lọc như dưới |
+| `answers_question` | bool | đánh dấu câu bot vừa hỏi là đã đáp | chỉ có nghĩa khi câu bot trước kết thúc bằng `?` |
+
+Gọi: structured output, `reasoning_effort="low"`, `streaming=False`, tag `analyze`,
+trần 8 s; lỗi/quá giờ/sai schema → bản phân tích lùi an toàn (`route="booking"`,
+`reply_to_proposal="unclear"` nếu có đề xuất, các trường khác rỗng). Lối tắt code
+của supervisor (hàng chờ, người nhà/hoãn, "ok" ngắn sau lượt booking) vẫn chạy trước
+và bỏ qua bộ phân tích. Đường nút bấm không gọi bộ phân tích.
+
+`asked` do **code** dựng: câu bot cuối kết thúc bằng `?` → thêm/cập nhật mục
+(`times += 1` nếu trùng câu hỏi trước); `answers_question=true` → `answered=true`.
+`told` và `agreed_at` cũng do code ghi (`told` từ câu bot có khẳng định "hết chỗ/còn
+chỗ"; `agreed_at` khi `approve` thành công). Nén nền giữ nguyên ngưỡng 800 token, chỉ
+còn làm summary; không chạy mỗi lượt nữa. Mỗi trường slots mới:
 
 | Trường | Lưu gì | Giới hạn |
 |---|---|---|
