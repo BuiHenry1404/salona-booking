@@ -356,6 +356,73 @@ async def test_per_turn_state_resets(fake_server):
 
 
 @pytest.mark.asyncio
+async def test_resend_after_complete_replays_with_same_message_id(fake_server):
+    """Task 10: `Turn.resend="after_complete"` gửi lại CÙNG message_id sau khi
+    lượt đầu đã xong — chỉ kiểm adapter thực hiện đúng cơ chế (hai emit, cùng
+    message_id); server thật phát lại payload đã lưu được kiểm ở repo backend."""
+    received: list[dict] = []
+
+    async def on_send_message(sio, sid, data):
+        received.append(data)
+        await sio.emit("complete", {"answer": "ok", "proposal": None}, to=sid)
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        record = await adapter.send(
+            Turn(say="mai 3 giờ chiều", resend="after_complete"), index=0, timeout_s=2.0
+        )
+    finally:
+        await adapter.close()
+
+    assert len(received) == 2
+    assert received[0]["message_id"] == received[1]["message_id"]
+    assert record.answer == "ok"
+    assert record.error is None
+
+
+@pytest.mark.asyncio
+async def test_resend_while_running_sends_duplicate_before_first_completes(fake_server):
+    """`resend="while_running"`: bản gửi lại đi NGAY, không chờ lượt đầu —
+    mô phỏng server bỏ qua nó (dedupe "running", không trả sự kiện nào)."""
+    received: list[dict] = []
+    count = {"n": 0}
+    gate = asyncio.Event()
+
+    async def on_send_message(sio, sid, data):
+        count["n"] += 1
+        received.append(data)
+        if count["n"] == 1:
+            await gate.wait()
+            await sio.emit("complete", {"answer": "ok"}, to=sid)
+        # Bản gửi lại (n == 2): server thật không trả gì — fake server mô
+        # phỏng đúng bằng cách cũng không trả gì ở đây.
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        send_task = asyncio.create_task(
+            adapter.send(
+                Turn(say="mai 3 giờ chiều", resend="while_running"),
+                index=0,
+                timeout_s=2.0,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert len(received) == 2
+        assert received[0]["message_id"] == received[1]["message_id"]
+        gate.set()
+        record = await send_task
+    finally:
+        await adapter.close()
+
+    assert record.answer == "ok"
+    assert record.error is None
+
+
+@pytest.mark.asyncio
 async def test_reconnect_failure_after_timeout_is_recorded_not_raised():
     """Review Focus #2 fix, item 2: nếu reconnect-vì-timeout cũng thất bại
     (server sập, token bị từ chối, ...), `send()` phải trả về TurnRecord có

@@ -21,6 +21,13 @@ Giao thức (đã xác minh với server thật):
   (`invalid_reason="unsupported_button"`, loại khỏi mẫu số pass_rate) thay
   vì tính là trượt, để không lệch tỉ lệ đạt khi so ref cũ/mới.
 - Sự kiện lạ được ghi lại vào `TurnRecord.events`, không làm vỡ adapter.
+- `Turn.resend` (Task 10, dedupe): gửi lại CÙNG payload/`message_id` một lần
+  nữa, mô phỏng Socket.IO redeliver tin đã gửi (client retry/reconnect).
+  "while_running": gửi lại NGAY sau emit đầu, không chờ lượt đầu xong — server
+  phải bỏ qua bản gửi lại (không chạy thêm lượt, không trả sự kiện nào cho
+  nó). "after_complete": chờ lượt đầu xong rồi mới gửi lại — server phải phát
+  lại ĐÚNG `complete` đã lưu mà không chạy agent lần hai. Cả hai trường hợp
+  không coi là một lượt riêng (không ảnh hưởng `max_turns`/`turns_used`).
 """
 
 from __future__ import annotations
@@ -120,20 +127,24 @@ class AdapterA(ChatAdapter):
         self._done = asyncio.Event()
         self._start_perf = time.monotonic()
 
+        message_id = str(uuid.uuid4())
         if turn.button is not None:
-            await self._sio.emit(
-                "confirm_proposal",
-                {
-                    "proposal_id": self._last_proposal_id,
-                    "decision": turn.button,
-                    "message_id": str(uuid.uuid4()),
-                },
-            )
+            emit_name = "confirm_proposal"
+            payload = {
+                "proposal_id": self._last_proposal_id,
+                "decision": turn.button,
+                "message_id": message_id,
+            }
         else:
-            await self._sio.emit(
-                "send_message",
-                {"message": text, "message_id": str(uuid.uuid4())},
-            )
+            emit_name = "send_message"
+            payload = {"message": text, "message_id": message_id}
+
+        await self._sio.emit(emit_name, payload)
+
+        if turn.resend == "while_running":
+            # Gửi lại NGAY, không chờ lượt đầu xong — server phải bỏ qua bản
+            # này (dedupe "running"), không có sự kiện nào trả về cho nó.
+            await self._sio.emit(emit_name, payload)
 
         try:
             await asyncio.wait_for(self._done.wait(), timeout=timeout_s)
@@ -151,6 +162,19 @@ class AdapterA(ChatAdapter):
                 self._needs_reconnect = True
         finally:
             self._record = None
+
+        if turn.resend == "after_complete" and record.error is None:
+            # Gửi lại CÙNG message_id sau khi lượt đầu đã có complete — server
+            # phải phát lại ĐÚNG payload đã lưu, không chạy thêm lượt agent.
+            self._record = record
+            self._done = asyncio.Event()
+            await self._sio.emit(emit_name, payload)
+            try:
+                await asyncio.wait_for(self._done.wait(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                record.error = "resend timeout"
+            finally:
+                self._record = None
 
         return record
 

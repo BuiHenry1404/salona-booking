@@ -173,6 +173,37 @@ def test_turn_button_and_say_together_is_rejected():
         Turn(say="hi", button="yes")
 
 
+RESEND_TURN_YAML = """
+id: s05_gui_lai
+title: Lượt gửi lại cùng message_id
+kind: scripted
+tags: []
+setup: {}
+turns:
+  - say: "mai 3 giờ chiều chị làm tóc"
+    resend: after_complete
+sim: null
+expect: {}
+"""
+
+
+def test_turn_accepts_resend(tmp_path: Path):
+    path = _write(tmp_path, "s05.yaml", RESEND_TURN_YAML)
+
+    [scenario] = load_scenarios([path])
+
+    assert scenario.turns[0].resend == "after_complete"
+
+
+def test_turn_resend_rejects_invalid_value():
+    with pytest.raises(ValueError):
+        Turn(say="hi", resend="maybe")
+
+
+def test_turn_resend_defaults_to_none():
+    assert Turn(say="hi").resend is None
+
+
 def test_sim_goal_and_scenario_kind_validation():
     sim = SimGoal(goal="đặt lịch", persona="khách lớn tuổi, nói chậm")
     assert sim.max_turns == 8

@@ -24,6 +24,7 @@ VN_TZ = timezone(timedelta(hours=7))
 _VALID_INTENTS = {"agree", "decline"}
 _VALID_KINDS = {"scripted", "simulated"}
 _VALID_BUTTONS = {"yes", "no"}
+_VALID_RESEND = {"after_complete", "while_running"}
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,13 @@ class Turn:
     requires_asked: ApptSpec | None = None
     wait_s: float = 0
     fault: str | None = None
+    # Task 10 (dedupe): gửi lại CÙNG message_id sau khi lượt chính đã gửi —
+    # mô phỏng Socket.IO redeliver (client retry/reconnect). Không phải một
+    # lượt riêng: không tăng `turns_used`/`max_turns`, kiểm bằng DB (xem
+    # scenarios/edge/tin-gui-lai.yaml) chứ không phải answer_must_*.
+    # "after_complete": gửi lại SAU khi lượt đầu đã có complete/error.
+    # "while_running": gửi lại NGAY, không chờ lượt đầu xong.
+    resend: str | None = None
 
     def __post_init__(self) -> None:
         provided = sum(
@@ -63,6 +71,8 @@ class Turn:
             raise ValueError(f"Turn.intent không hợp lệ: {self.intent!r}")
         if self.button is not None and self.button not in _VALID_BUTTONS:
             raise ValueError(f"Turn.button không hợp lệ: {self.button!r}")
+        if self.resend is not None and self.resend not in _VALID_RESEND:
+            raise ValueError(f"Turn.resend không hợp lệ: {self.resend!r}")
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,7 @@ def _turn(data: dict[str, Any]) -> Turn:
         requires_asked=_appt_spec(requires_asked) if requires_asked else None,
         wait_s=data.get("wait_s", 0),
         fault=data.get("fault"),
+        resend=data.get("resend"),
     )
 
 

@@ -18,10 +18,11 @@ SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 
 # Mã lỗi hợp lệ cho một kịch bản `edge`: G-xx (review AGENT_GRAPH_REVIEW.md),
 # LLM-xx (chuyển thể từ 02-llm-chat-scenarios.md, vd LLM-33 -> pending hết hạn),
-# `is_affirmative` (bug cũ ghi trong CONTEXT.md, không có mã G-xx riêng), hoặc
-# `BTN` (kịch bản nghiệm thu lượt bấm nút/confirm_proposal, Task 7 — không
-# phải một bug cụ thể nên không có số).
-_ERROR_CODE_RE = re.compile(r"^(G-\d+|LLM-\d+|is_affirmative|BTN)$")
+# `is_affirmative` (bug cũ ghi trong CONTEXT.md, không có mã G-xx riêng), `BTN`
+# (kịch bản nghiệm thu lượt bấm nút/confirm_proposal, Task 7), hoặc `DEDUPE`
+# (kịch bản nghiệm thu dedupe tin nhắn qua `message_id`, Task 10) — cả hai đều
+# không phải một bug cụ thể nên không có số.
+_ERROR_CODE_RE = re.compile(r"^(G-\d+|LLM-\d+|is_affirmative|BTN|DEDUPE)$")
 
 
 def _all_paths() -> list[Path]:

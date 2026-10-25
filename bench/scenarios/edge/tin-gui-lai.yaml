@@ -1,0 +1,21 @@
+id: tin-gui-lai
+title: 'DEDUPE: gửi lại cùng message_id không tạo lịch trùng'
+kind: scripted
+tags:
+- edge
+- DEDUPE
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm tóc
+- button: yes
+  resend: after_complete
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '15:00'
+  others_unchanged: true
+  # `answer_must_not_include` chỉ chấm lượt CUỐI — lượt cuối ở đây là bản gửi
+  # lại (adapter ghi đè `record.answer` bằng complete thứ hai, giống hệt bản
+  # đầu), nên kiểm thật sự nằm ở DB (đúng 1 lịch) qua `booked` phía trên, như
+  # brief yêu cầu.
