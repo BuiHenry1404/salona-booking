@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Optional
 
 import socketio
@@ -10,8 +11,10 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.errors import RateLimitedError
 from app.core.security import verify_token
+from app.infrastructure.redis import get_redis
 from app.models.user import User
 from app.services.auth import AuthService
+from app.services.dedupe import MessageDedupe
 from app.services.rate_limit import RateLimitService
 
 logger = get_logger(__name__)
@@ -24,6 +27,9 @@ class SocketIOService:
         self.db = db
         self.auth_service = AuthService(db)
         self.rate_limit = RateLimitService(db)
+        # Redis tuỳ chọn (get_redis() trả None nếu REDIS_URL không cấu hình
+        # hoặc ping lúc lifespan thất bại) — MessageDedupe tự rơi xuống Mongo.
+        self.dedupe = MessageDedupe(db, get_redis())
         self.sio = socketio.AsyncServer(
             async_mode="asgi",
             cors_allowed_origins=settings.allowed_origins
@@ -59,7 +65,10 @@ class SocketIOService:
                 return
             user = await self.auth_service.get_user_by_id(user_id)
             if user:
-                await self.handle_message(sid, user, (data or {}).get("message", ""))
+                payload = data or {}
+                await self.handle_message(
+                    sid, user, payload.get("message", ""), payload.get("message_id")
+                )
 
         @self.sio.event
         async def confirm_proposal(sid, data):
@@ -68,7 +77,8 @@ class SocketIOService:
                 return
             user = await self.auth_service.get_user_by_id(user_id)
             if user:
-                await self.handle_button(sid, user, data or {})
+                payload = data if isinstance(data, dict) else {}
+                await self.handle_button(sid, user, data or {}, payload.get("message_id"))
 
     async def _authenticate(self, auth) -> Optional[User]:
         if not auth or "token" not in auth:
@@ -96,10 +106,30 @@ class SocketIOService:
             "Gấp thì anh chị gọi thẳng cho tiệm ạ."
         )
 
-    async def handle_message(self, sid: str, user: User, message: str) -> None:
-        """Chạy một lượt chat, đẩy từng sự kiện về đúng socket của khách."""
+    async def handle_message(
+        self, sid: str, user: User, message: str, message_id: Optional[str] = None
+    ) -> None:
+        """Chạy một lượt chat, đẩy từng sự kiện về đúng socket của khách.
+
+        `message_id` (uuid của client, Task 6) chặn xử lý trùng khi Socket.IO
+        gửi lại cùng một tin (client retry/reconnect) — xem `app.services.dedupe`.
+        """
         question = (message or "").strip()
         if not question:
+            return
+
+        # Dedupe TRƯỚC trần chi phí: một tin gửi lại không được tiêu thêm một
+        # dấu hạn mức, nếu không khách bấm gửi lại khi mạng chập chờn sẽ tự
+        # khoá hạn mức của chính mình.
+        user_id = str(user.id)
+        state = await self.dedupe.begin(user_id, message_id)
+        if state == "running":
+            logger.info("duplicate_in_flight", extra={
+                "user_id": user_id, "message_id": message_id,
+            })
+            return
+        if isinstance(state, dict):
+            await self.sio.emit("complete", state, room=sid)
             return
 
         # Trần chi phí LLM. Đặt SAU nhánh tin rỗng: gõ hụt rồi bấm Gửi không
@@ -114,6 +144,9 @@ class SocketIOService:
             retry_after = await self.rate_limit.retry_after_seconds(
                 key, settings.chat_max_per_hour, 3600
             )
+            # Lượt không chạy — giải phóng khoá "đang chạy" để lần gửi lại
+            # SAU (cùng message_id, hết bị chặn hạn mức) không kẹt mãi.
+            await self.dedupe.abandon(user_id, message_id)
             await self.sio.emit(
                 "error",
                 {
@@ -125,20 +158,39 @@ class SocketIOService:
             return
 
         try:
+            complete_payload = None
             async for event in run_turn(self.db, user, question):
+                if event.type == "complete":
+                    complete_payload = event.data
                 await self.sio.emit(event.type, event.data, room=sid)
+            if complete_payload is not None:
+                await self.dedupe.finish(user_id, message_id, complete_payload)
+            else:
+                await self.dedupe.abandon(user_id, message_id)
+        except asyncio.CancelledError:
+            # Lượt mới của CÙNG khách đã thay thế lượt này (`_supersede`,
+            # khác `message_id`) — giải phóng khoá "đang chạy" của message_id
+            # NÀY rồi để CancelledError tiếp tục lan, không nuốt mất nó.
+            await self.dedupe.abandon(user_id, message_id)
+            raise
         except Exception as exc:
             logger.error("chat_turn_failed", extra={"error": str(exc)})
+            await self.dedupe.abandon(user_id, message_id)
             await self.sio.emit(
                 "error",
                 {"message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."},
                 room=sid,
             )
 
-    async def handle_button(self, sid: str, user: User, data: dict) -> None:
+    async def handle_button(
+        self, sid: str, user: User, data: dict, message_id: Optional[str] = None
+    ) -> None:
         """Nút Đồng ý/Không trên đề xuất — đường riêng, KHÔNG qua trần chat
         (`check_and_hit`): chi phí LLM của bước này đã tính vào lượt đã sinh ra
         đề xuất, bấm nút không gọi thêm model nào mà bị trừ hạn mức oan.
+
+        `message_id` dedupe như `handle_message` — client có thể gửi lại cùng
+        `confirm_proposal` (vd. socket rớt ngay sau khi bấm).
         """
         # `data` có thể không phải dict (list/chuỗi/số) — fallback {} để rơi
         # đúng vào nhánh `error` bên dưới thay vì nổ ở `.get()` (payload sai
@@ -153,12 +205,34 @@ class SocketIOService:
             await self.sio.emit("error", {"message": TURN_ERROR_MESSAGE}, room=sid)
             return
 
+        user_id = str(user.id)
+        state = await self.dedupe.begin(user_id, message_id)
+        if state == "running":
+            logger.info("duplicate_in_flight", extra={
+                "user_id": user_id, "message_id": message_id,
+            })
+            return
+        if isinstance(state, dict):
+            await self.sio.emit("complete", state, room=sid)
+            return
+
         reply = ButtonReply(decision=decision, proposal_id=proposal_id, label=label)
         try:
+            complete_payload = None
             async for event in run_turn(self.db, user, reply):
+                if event.type == "complete":
+                    complete_payload = event.data
                 await self.sio.emit(event.type, event.data, room=sid)
+            if complete_payload is not None:
+                await self.dedupe.finish(user_id, message_id, complete_payload)
+            else:
+                await self.dedupe.abandon(user_id, message_id)
+        except asyncio.CancelledError:
+            await self.dedupe.abandon(user_id, message_id)
+            raise
         except Exception as exc:
             logger.error("chat_turn_failed", extra={"error": str(exc)})
+            await self.dedupe.abandon(user_id, message_id)
             await self.sio.emit(
                 "error",
                 {"message": "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé."},

@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[SecretStr] = None
     telegram_admin_chat_ids: str
 
+    # Redis — dedupe tin nhắn (Task 10). Comment dòng thì tắt, dùng thẳng Mongo
+    # fallback — đường mặc định, không phải chế độ suy giảm.
+    redis_url: Optional[str] = None
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

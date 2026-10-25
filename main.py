@@ -47,11 +47,21 @@ async def lifespan(app: FastAPI):
         set_checkpointer(app.state.checkpointer)
 
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
-        
+
     except Exception as e:
         logger.error("Failed to initialize database", error=str(e))
         raise
-    
+
+    # Redis tuỳ chọn (Task 10, dedupe tin nhắn) — KHÔNG fail-hard như Mongo.
+    # Không cấu hình REDIS_URL thì bỏ qua hẳn; cấu hình mà ping lỗi thì chỉ
+    # warning, app chạy tiếp bằng Mongo fallback (MessageDedupe tự xử lý).
+    from app.infrastructure.redis import ping_redis
+    if settings.redis_url:
+        if await ping_redis():
+            logger.info("Redis connected", url=settings.redis_url)
+        else:
+            logger.warning("Redis unavailable at startup, falling back to Mongo dedupe")
+
     # Initialize Socket.IO service (cũng không fail-hard, cùng lý do)
     app.state.socketio_service = None
     try:

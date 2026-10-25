@@ -10,6 +10,9 @@ bcrypt==4.0.1  # passlib 1.7.4 incompatibility: bcrypt 5.x breaks backend detect
 motor==3.7.1
 pymongo==4.19.0
 
+# Dedupe tin nhắn (Task 10) — tuỳ chọn, chỉ dùng khi REDIS_URL được cấu hình
+redis==5.2.1
+
 # Validation and serialization
 pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
 pydantic-settings==2.1.0
