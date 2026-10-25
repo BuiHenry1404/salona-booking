@@ -1,0 +1,19 @@
+id: ok-khong-de-xuat
+title: 'LLM-02: bot hỏi "được không" về giờ chưa propose_appointment, khách "ok" vẫn phải chốt được'
+kind: scripted
+tags:
+- edge
+- LLM-02
+setup: {}
+turns:
+- say: Ngày mai 2 giờ chiều làm móng được không em
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: '14:00'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '14:00'
+  others_unchanged: true
