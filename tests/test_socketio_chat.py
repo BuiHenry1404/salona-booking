@@ -326,3 +326,32 @@ class TestConfirmProposalEvent:
 
         assert called == []
         assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
+
+    async def test_registered_confirm_proposal_event_rejects_a_non_dict_payload(
+        self, test_db, monkeypatch
+    ):
+        """Đi qua đúng handler ĐÃ ĐĂNG KÝ `confirm_proposal` (không phải
+        `handle_button` trực tiếp): payload không phải dict (vd. client gửi
+        nhầm một mảng) không được làm nổ `.get()` trước khi tới nhánh `error`
+        — review finding sau Task 5 (lấy handler từ `AsyncServer` thật TRƯỚC
+        khi thay `sio` bằng `Recorder`, vì đăng ký xảy ra trong `__init__`)."""
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        svc = SocketIOService(test_db)
+        handler = svc.sio.handlers["/"]["confirm_proposal"]
+        svc.sio = Recorder()
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        svc.sid_to_user["s1"] = str(user.id)
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await handler("s1", ["x"])
+
+        assert called == []
+        assert svc.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]

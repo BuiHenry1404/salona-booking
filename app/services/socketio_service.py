@@ -140,7 +140,10 @@ class SocketIOService:
         (`check_and_hit`): chi phí LLM của bước này đã tính vào lượt đã sinh ra
         đề xuất, bấm nút không gọi thêm model nào mà bị trừ hạn mức oan.
         """
-        payload = data or {}
+        # `data` có thể không phải dict (list/chuỗi/số) — fallback {} để rơi
+        # đúng vào nhánh `error` bên dưới thay vì nổ ở `.get()` (payload sai
+        # kiểu cũng là "sai kiểu", không riêng gì `decision` sai).
+        payload = data if isinstance(data, dict) else {}
         proposal_id = payload.get("proposal_id")
         decision = payload.get("decision")
         # `decision` sai kiểu (list/dict) không băm được — tra bằng `isinstance`
