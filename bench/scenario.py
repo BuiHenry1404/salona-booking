@@ -23,6 +23,7 @@ VN_TZ = timezone(timedelta(hours=7))
 
 _VALID_INTENTS = {"agree", "decline"}
 _VALID_KINDS = {"scripted", "simulated"}
+_VALID_BUTTONS = {"yes", "no"}
 
 
 @dataclass(frozen=True)
@@ -44,18 +45,24 @@ class Setup:
 class Turn:
     say: str | None = None
     intent: str | None = None  # "agree" | "decline"
+    button: str | None = None  # "yes" | "no" — lượt bấm nút xác nhận đề xuất
     requires_asked: ApptSpec | None = None
     wait_s: float = 0
     fault: str | None = None
 
     def __post_init__(self) -> None:
-        if (self.say is None) == (self.intent is None):
+        provided = sum(
+            x is not None for x in (self.say, self.intent, self.button)
+        )
+        if provided != 1:
             raise ValueError(
-                "Turn phải có đúng một trong 'say' hoặc 'intent', không cả hai và "
-                "không thiếu cả hai"
+                "Turn phải có đúng một trong 'say', 'intent' hoặc 'button', "
+                "không nhiều hơn một và không thiếu cả ba"
             )
         if self.intent is not None and self.intent not in _VALID_INTENTS:
             raise ValueError(f"Turn.intent không hợp lệ: {self.intent!r}")
+        if self.button is not None and self.button not in _VALID_BUTTONS:
+            raise ValueError(f"Turn.button không hợp lệ: {self.button!r}")
 
 
 @dataclass(frozen=True)
@@ -113,11 +120,20 @@ def _setup(data: dict[str, Any] | None) -> Setup:
     return Setup(**kwargs)
 
 
+def _turn_button(raw: Any) -> str | None:
+    """PyYAML (1.1) đọc `yes`/`no` không trích dẫn thành bool, không phải
+    chuỗi — chuẩn hoá lại về "yes"/"no" để khớp cú pháp kịch bản mong muốn."""
+    if isinstance(raw, bool):
+        return "yes" if raw else "no"
+    return raw
+
+
 def _turn(data: dict[str, Any]) -> Turn:
     requires_asked = data.get("requires_asked")
     return Turn(
         say=data.get("say"),
         intent=data.get("intent"),
+        button=_turn_button(data.get("button")),
         requires_asked=_appt_spec(requires_asked) if requires_asked else None,
         wait_s=data.get("wait_s", 0),
         fault=data.get("fault"),

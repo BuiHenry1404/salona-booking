@@ -139,6 +139,40 @@ def test_turn_requires_exactly_one_of_say_or_intent():
         Turn(say="hi", intent="agree")
 
 
+BUTTON_TURN_YAML = """
+id: s04_nut
+title: Lượt bấm nút
+kind: scripted
+tags: []
+setup: {}
+turns:
+  - say: "mai 3 giờ chiều chị làm tóc"
+  - button: yes
+sim: null
+expect: {}
+"""
+
+
+def test_turn_accepts_button(tmp_path: Path):
+    path = _write(tmp_path, "s04.yaml", BUTTON_TURN_YAML)
+
+    [scenario] = load_scenarios([path])
+
+    assert scenario.turns[1] == Turn(button="yes")
+    assert scenario.turns[1].say is None
+    assert scenario.turns[1].intent is None
+
+
+def test_turn_button_rejects_invalid_value():
+    with pytest.raises(ValueError):
+        Turn(button="maybe")
+
+
+def test_turn_button_and_say_together_is_rejected():
+    with pytest.raises(ValueError):
+        Turn(say="hi", button="yes")
+
+
 def test_sim_goal_and_scenario_kind_validation():
     sim = SimGoal(goal="đặt lịch", persona="khách lớn tuổi, nói chậm")
     assert sim.max_turns == 8

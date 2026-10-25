@@ -113,6 +113,97 @@ async def test_records_tokens_tools_and_answer(fake_server):
 
 
 @pytest.mark.asyncio
+async def test_send_message_includes_message_id(fake_server):
+    received: list[dict] = []
+
+    async def on_send_message(sio, sid, data):
+        received.append(data)
+        await sio.emit("complete", {"answer": "ok"}, to=sid)
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        await adapter.send(Turn(say="xin chào"), index=0, timeout_s=2.0)
+    finally:
+        await adapter.close()
+
+    assert received[0]["message"] == "xin chào"
+    assert "message_id" in received[0]
+    assert received[0]["message_id"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_emits_confirm_proposal_with_last_proposal_id(fake_server):
+    received: list[dict] = []
+
+    async def on_send_message(sio, sid, data):
+        received.append({"event": "send_message", "data": data})
+        await sio.emit(
+            "complete",
+            {
+                "answer": "Dạ mai 3 giờ chiều được không ạ?",
+                "proposal": {
+                    "id": "prop-123",
+                    "kind": "booking",
+                    "expires_at": "2026-10-26T00:00:00+07:00",
+                    "when_spoken": "mai 3 giờ chiều",
+                },
+            },
+            to=sid,
+        )
+
+    server = FakeServer(on_send_message)
+
+    @server.sio.event
+    async def confirm_proposal(sid, data):
+        received.append({"event": "confirm_proposal", "data": data})
+        await server.sio.emit("complete", {"answer": "Dạ đã đặt lịch.", "proposal": None}, to=sid)
+
+    base_url = await server.start()
+    try:
+        adapter = AdapterA()
+        await adapter.open(base_url, _customer())
+        try:
+            await adapter.send(Turn(say="mai 3 giờ chiều chị làm tóc"), index=0, timeout_s=2.0)
+            record = await adapter.send(Turn(button="yes"), index=1, timeout_s=2.0)
+        finally:
+            await adapter.close()
+    finally:
+        await server.stop()
+
+    confirm_events = [e for e in received if e["event"] == "confirm_proposal"]
+    assert len(confirm_events) == 1
+    sent = confirm_events[0]["data"]
+    assert sent["proposal_id"] == "prop-123"
+    assert sent["decision"] == "yes"
+    assert "message_id" in sent and sent["message_id"]
+    assert record.customer_text == "[nút Đồng ý]"
+    assert record.answer == "Dạ đã đặt lịch."
+
+
+@pytest.mark.asyncio
+async def test_button_turn_without_pending_proposal_is_recorded_not_raised(fake_server):
+    received: list[dict] = []
+
+    async def on_send_message(sio, sid, data):
+        received.append(data)
+
+    base_url = await fake_server(on_send_message)
+    adapter = AdapterA()
+    await adapter.open(base_url, _customer())
+    try:
+        record = await adapter.send(Turn(button="no"), index=0, timeout_s=0.5)
+    finally:
+        await adapter.close()
+
+    assert received == []
+    assert record.customer_text == "[nút Không]"
+    assert record.error is not None
+    assert "proposal" in record.error
+
+
+@pytest.mark.asyncio
 async def test_intent_agree_sends_u(fake_server):
     received: list[dict] = []
 
