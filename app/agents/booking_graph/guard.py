@@ -409,15 +409,22 @@ _YES_NO_PARTICLE = re.compile(r"\b(?:được không|nhé|nha)\b", re.I)
 
 
 def asks_yes_no_about_a_clock(draft: str) -> bool:
-    """Câu cuối là câu hỏi có/không ("được không"/"nhé"/"nha") VÀ nhắc một giờ
-    đọc — đúng dạng câu LLM-02 hỏi "giữ chỗ 2 giờ chiều mai được không?" khi
-    chưa hề gọi `propose_appointment`. Câu hỏi để KHÁCH chọn giờ ("2 giờ hay 3
-    giờ chiều ạ?") không phải có/không nên không khớp."""
+    """Câu cuối là câu hỏi có/không ("được không"/"nhé"/"nha") VÀ cả câu CÓ
+    nhắc một giờ đọc — đúng dạng câu LLM-02 hỏi "giữ chỗ 2 giờ chiều mai được
+    không?" khi chưa hề gọi `propose_appointment`. Câu hỏi để KHÁCH chọn giờ
+    ("2 giờ hay 3 giờ chiều ạ?") không phải có/không nên không khớp.
+
+    Giờ được tìm trên CẢ DRAFT, không chỉ câu cuối: "Dạ 3 giờ chiều mai còn
+    trống. Giữ chỗ nhé?" nêu giờ ở câu trước rồi mới hỏi có/không ở câu cuối —
+    vẫn đúng hình dạng lỗi LLM-02 (khách "ừ" không biết đang đồng ý giờ nào).
+    Hệ quả chấp nhận được: một câu hỏi có/không không-về-giờ đứng sau một câu
+    có nhắc giờ (vd hỏi thêm dịch vụ) cũng khớp — đó vẫn là hỏi có/không trong
+    khi chưa có đề xuất, rewrite chuyển nó thành câu mời chọn là an toàn hơn."""
     parts = [p for p in _SENTENCE_END.split((draft or "").strip()) if p.strip()]
     last = parts[-1] if parts else ""
     if not last.rstrip().endswith("?"):
         return False
-    return bool(_YES_NO_PARTICLE.search(last)) and bool(clock_keys(last))
+    return bool(_YES_NO_PARTICLE.search(last)) and bool(clock_keys(draft))
 
 
 def check_clock(draft: str) -> bool:

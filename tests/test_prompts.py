@@ -628,6 +628,10 @@ class TestLiveChatB2:
         from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
         shop = SUPERVISOR_PROMPT.split("- shop")[1].split("- social")[0]
         assert "OWNER" in shop and "relative" in shop
+        assert "never call a shop tool" in BOOKING_PROMPT
+        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
+        assert "asking whether that person is free" in rule4
+        assert "[relative]" in rule4 and "[deferral]" in rule4
 
 
 class TestNoYesNoQuestionWithoutAProposal:
@@ -636,7 +640,3 @@ class TestNoYesNoQuestionWithoutAProposal:
 
     def test_the_rule_is_stated(self):
         assert "propose_appointment" in BOOKING_PROMPT and "before asking" in BOOKING_PROMPT
-        assert "never call a shop tool" in BOOKING_PROMPT
-        rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
-        assert "asking whether that person is free" in rule4
-        assert "[relative]" in rule4 and "[deferral]" in rule4

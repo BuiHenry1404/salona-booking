@@ -234,3 +234,28 @@ class TestFindViolations:
                                 address="anh chị", name="", customer_text="2 hay 3 giờ chiều",
                                 has_proposal=False)
         assert "ask_without_proposal" not in codes
+
+    def test_clock_in_an_earlier_sentence_than_the_yes_no_question_is_flagged(self):
+        """Hình dạng LLM-02 thật: giờ nêu ở câu trước, câu cuối mới hỏi có/không
+        — "ừ" của khách không rõ đang đồng ý giờ nào. `clock_keys` phải quét cả
+        draft, không chỉ câu cuối."""
+        codes = find_violations("Dạ 3 giờ chiều mai còn trống. Giữ chỗ nhé?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="3 giờ chiều mai còn trống không em",
+                                has_proposal=False)
+        assert "ask_without_proposal" in codes
+
+    def test_a_plain_co_khong_question_after_a_clock_sentence_is_not_flagged(self):
+        """Câu cuối "...không ạ?" là câu hỏi có/không về MỘT CHUYỆN KHÁC (mời
+        thêm dịch vụ), không chứa đúng cụm "được không"/"nhé"/"nha" mà luật
+        quét ("có muốn ... không" không khớp "được không" — thiếu chữ "được"
+        ngay trước). Mở rộng `clock_keys` ra cả draft (thay vì chỉ câu cuối)
+        chỉ đổi nơi TÌM GIỜ, không đổi tập cụm có/không được công nhận — nên
+        câu này vẫn không bị gắn `ask_without_proposal`, đúng với luật đã cài:
+        nó không phải dạng LLM-02 (hỏi có/không về CHÍNH giờ vừa nêu)."""
+        codes = find_violations("Dạ 3 giờ chiều mai còn trống ạ. Anh chị có muốn làm "
+                                "thêm sơn gel không ạ?", previous_replies=[],
+                                address="anh chị", name="",
+                                customer_text="3 giờ chiều mai còn trống không em",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes
