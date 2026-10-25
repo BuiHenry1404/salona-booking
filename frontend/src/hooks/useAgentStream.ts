@@ -265,10 +265,18 @@ export function useAgentStream() {
 
   // Bấm Đồng ý/Không cho đề xuất GẦN NHẤT. Xoá `proposal` NGAY (trước khi
   // socket trả lời) để lỡ bấm đúp không gửi lại hai lần.
+  //
+  // KHÔNG xếp hàng đợi như `send()` khi mất mạng: xác nhận đặt/huỷ lịch mà
+  // gửi trễ, khách sẽ tưởng đã xong trong khi máy chưa nhận được gì — màn
+  // hình phải để khách tự bấm lại lúc có mạng, không âm thầm "giữ hộ".
+  // UI (ChatScreen) đã disable nút khi mất mạng; đây là phòng vệ ở tầng dưới.
   const confirm = useCallback(
     (decision: "yes" | "no") => {
       if (!proposal) return;
       const socket = socketRef.current;
+      const live = socket?.connected ?? false;
+      if (!live) return; // không emit, không thêm bong bóng, proposal giữ nguyên
+
       const id = nextId();
       const text = decision === "yes" ? "Đồng ý" : "Không";
 
@@ -277,7 +285,7 @@ export function useAgentStream() {
       completed.current = false;
       setFailed(false);
       setPhase("thinking");
-      socket?.emit("confirm_proposal", {
+      socket!.emit("confirm_proposal", {
         proposal_id: proposal.id,
         decision,
         message_id: newMessageId(),

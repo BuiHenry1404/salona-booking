@@ -461,4 +461,17 @@ describe("ChatScreen", () => {
     expect(screen.getByRole("button", { name: "Đồng ý" })).toBeDisabled();
     vi.useRealTimers();
   });
+
+  it("41. mất mạng + có proposal: nút Đồng ý/Không bị disable", () => {
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    stream.offline = true;
+    renderChat();
+    expect(screen.getByRole("button", { name: "Đồng ý" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Không" })).toBeDisabled();
+  });
 });

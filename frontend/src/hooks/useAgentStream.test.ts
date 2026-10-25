@@ -513,4 +513,36 @@ describe("useAgentStream", () => {
     act(() => result.current.send("thôi để con nhắn lại"));
     expect(result.current.proposal).toBeNull();
   });
+
+  it("EE. confirm() lúc MẤT MẠNG: không emit, không bong bóng, proposal GIỮ NGUYÊN", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "Dạ đặt lịch 3 giờ chiều mai giúp cô nhé ạ?",
+        proposal: {
+          id: "p1",
+          kind: "book",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Đặt lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+
+    socket.connected = false;
+    act(() => result.current.confirm("yes"));
+
+    expect(socket.emitted).toEqual([]);
+    expect(result.current.messages.some((m) => m.text === "Đồng ý")).toBe(false);
+    expect(result.current.proposal?.id).toBe("p1");
+    // Khách có mạng lại rồi bấm lại thì vẫn đi đúng đường bình thường.
+    socket.connected = true;
+    act(() => result.current.confirm("yes"));
+    expect(socket.emitted).toEqual([
+      {
+        event: "confirm_proposal",
+        data: { proposal_id: "p1", decision: "yes", message_id: expect.any(String) },
+      },
+    ]);
+    expect(result.current.proposal).toBeNull();
+  });
 });

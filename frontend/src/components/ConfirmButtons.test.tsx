@@ -38,4 +38,27 @@ describe("ConfirmButtons", () => {
     expect(screen.getByRole("button", { name: "Không" })).toBeDisabled();
     expect(screen.getByText("Đề xuất đã hết hạn, anh chị nhắn lại giúp em")).toBeInTheDocument();
   });
+
+  it("5. CONTEXT.md: cả hai nút rộng HẾT CHIỀU NGANG, không chia đôi hàng ngang", () => {
+    render(<ConfirmButtons proposal={proposal} onConfirm={vi.fn()} expired={false} />);
+    const yes = screen.getByRole("button", { name: "Đồng ý" });
+    const no = screen.getByRole("button", { name: "Không" });
+    // Button.tsx gắn "btn--full" khi fullWidth (mặc định) — "btn--full" vắng
+    // mặt nghĩa là ai đó lại truyền fullWidth={false}, phá quy tắc 56px cao /
+    // rộng hết chiều ngang của CONTEXT.md.
+    expect(yes.className).toMatch(/\bbtn--full\b/);
+    expect(no.className).toMatch(/\bbtn--full\b/);
+  });
+
+  it("6. disabled (mất mạng): cả hai nút disabled, hiện chữ chờ mạng, KHÔNG phải chữ hết hạn", () => {
+    render(
+      <ConfirmButtons proposal={proposal} onConfirm={vi.fn()} expired={false} disabled={true} />,
+    );
+    expect(screen.getByRole("button", { name: "Đồng ý" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Không" })).toBeDisabled();
+    expect(
+      screen.getByText("Đang mất mạng, anh chị chờ chút rồi bấm lại nhé"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/hết hạn/)).not.toBeInTheDocument();
+  });
 });

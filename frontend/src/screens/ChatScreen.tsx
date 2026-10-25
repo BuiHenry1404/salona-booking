@@ -131,7 +131,12 @@ export function ChatScreen() {
             đang chạy — bấm xong `confirm()` xoá proposal ngay nên không có
             chuyện bấm đúp gửi hai lần. */}
         {proposal && phase === "idle" && (
-          <ConfirmButtons proposal={proposal} onConfirm={confirm} expired={proposalExpired} />
+          <ConfirmButtons
+            proposal={proposal}
+            onConfirm={confirm}
+            expired={proposalExpired}
+            disabled={offline}
+          />
         )}
 
         {phase === "thinking" && (
