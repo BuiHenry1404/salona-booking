@@ -1,0 +1,22 @@
+.confirm {
+  margin: var(--s3) 0;
+  padding: var(--s3);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--r);
+}
+.confirm__msg {
+  font-size: 19px;
+  margin-bottom: var(--s2);
+  color: var(--color-fg);
+}
+.confirm__msg--expired {
+  color: var(--color-fg-muted);
+}
+.confirm__row {
+  display: flex;
+  gap: var(--s2);
+}
+.confirm__row .btn {
+  flex: 1;
+}

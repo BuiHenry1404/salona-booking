@@ -57,7 +57,10 @@ describe("useAgentStream", () => {
       text: "mai 3h được không con",
     });
     expect(socket.emitted).toEqual([
-      { event: "send_message", data: { message: "mai 3h được không con" } },
+      {
+        event: "send_message",
+        data: { message: "mai 3h được không con", message_id: expect.any(String) },
+      },
     ]);
     expect(result.current.phase).toBe("thinking");
   });
@@ -92,8 +95,8 @@ describe("useAgentStream", () => {
     act(() => socket.fire("connect"));
 
     expect(socket.emitted).toEqual([
-      { event: "send_message", data: { message: "câu một" } },
-      { event: "send_message", data: { message: "câu hai" } },
+      { event: "send_message", data: { message: "câu một", message_id: expect.any(String) } },
+      { event: "send_message", data: { message: "câu hai", message_id: expect.any(String) } },
     ]);
     expect(result.current.messages.every((m) => !m.pending)).toBe(true);
     expect(result.current.messages.filter((m) => m.role === "user")).toHaveLength(2);
@@ -397,5 +400,117 @@ describe("useAgentStream", () => {
     const bot = result.current.messages.filter((m) => m.role === "bot");
     expect(bot).toHaveLength(1);
     expect(bot[0].text).toBe("Dạ");
+  });
+
+  it("Y. complete kèm proposal: proposal được điền từ data (snake_case → camelCase)", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "Dạ đặt lịch 3 giờ chiều mai giúp cô nhé ạ?",
+        proposal: {
+          id: "p1",
+          kind: "book",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Đặt lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+
+    expect(result.current.proposal).toEqual({
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    });
+  });
+
+  it("Z. complete không proposal: proposal là null", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() => socket.fire("complete", { answer: "Dạ vâng ạ" }));
+    expect(result.current.proposal).toBeNull();
+  });
+
+  it("AA. complete mới THAY proposal cũ bằng giá trị mới (hoặc null)", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "câu 1",
+        proposal: {
+          id: "p1",
+          kind: "book",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Đặt lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+    expect(result.current.proposal?.id).toBe("p1");
+
+    act(() => socket.fire("turn_started"));
+    act(() => socket.fire("complete", { answer: "câu 2" }));
+    expect(result.current.proposal).toBeNull();
+  });
+
+  it("BB. confirm('yes'): emit confirm_proposal đúng payload, thêm bong bóng 'Đồng ý', xoá proposal, phase thinking", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "Dạ đặt lịch 3 giờ chiều mai giúp cô nhé ạ?",
+        proposal: {
+          id: "p1",
+          kind: "book",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Đặt lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+
+    act(() => result.current.confirm("yes"));
+
+    expect(socket.emitted).toEqual([
+      {
+        event: "confirm_proposal",
+        data: { proposal_id: "p1", decision: "yes", message_id: expect.any(String) },
+      },
+    ]);
+    expect(result.current.messages.at(-1)).toMatchObject({ role: "user", text: "Đồng ý" });
+    expect(result.current.proposal).toBeNull();
+    expect(result.current.phase).toBe("thinking");
+  });
+
+  it("CC. confirm('no'): bong bóng 'Không'", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "Dạ huỷ lịch 3 giờ chiều mai giúp cô nhé ạ?",
+        proposal: {
+          id: "p2",
+          kind: "cancel",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Huỷ lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+
+    act(() => result.current.confirm("no"));
+
+    expect(result.current.messages.at(-1)).toMatchObject({ role: "user", text: "Không" });
+    expect(socket.emitted[0]).toMatchObject({ data: { decision: "no" } });
+  });
+
+  it("DD. send(): câu gõ mới xoá proposal đang treo", () => {
+    const { result } = renderHook(() => useAgentStream());
+    act(() =>
+      socket.fire("complete", {
+        answer: "Dạ đặt lịch 3 giờ chiều mai giúp cô nhé ạ?",
+        proposal: {
+          id: "p1",
+          kind: "book",
+          expires_at: "2030-01-01T00:00:00+07:00",
+          when_spoken: "Đặt lịch 3 giờ chiều mai",
+        },
+      }),
+    );
+    act(() => result.current.send("thôi để con nhắn lại"));
+    expect(result.current.proposal).toBeNull();
   });
 });
