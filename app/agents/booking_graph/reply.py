@@ -237,6 +237,49 @@ def _in_set(token: str, sets) -> bool:
     return token in accented or (strip_diacritics(token) == token and token in bare)
 
 
+# --- khẳng định ngắn sau lượt booking (lỗi LLM-02) -----------------------------
+# "Ok em" sau câu agent hỏi "giữ 2 giờ chiều được không?" từng rơi vào supervisor
+# (chưa có đề xuất, không phải lượt resume), supervisor gọi model và model đọc
+# nhầm thành "social" → mất lịch. Lưới này chỉ quyết ĐỊNH TUYẾN (route về
+# "booking" khi lượt trước là booking), KHÔNG quyết đồng ý/từ chối đề xuất —
+# việc đó vẫn do `decide`/`veto_reason` ở trên đảm nhiệm khi graph vào booking.
+_AFFIRM_YES = ("ừ", "ừa", "ờ", "ừm", "ok", "oke", "okay", "okie", "vâng", "dạ",
+              "được", "đc", "dc", "đúng", "uh", "um")
+_AFFIRM_YES_BARE = frozenset(strip_diacritics(w) for w in _AFFIRM_YES)
+_AFFIRM_FILLER = ("em", "nha", "nhé", "nhe", "ạ", "đi", "rồi", "vậy", "luôn")
+_AFFIRM_FILLER_BARE = frozenset(strip_diacritics(w) for w in _AFFIRM_FILLER)
+_AFFIRM_MAX_TOKENS = 4
+
+
+def _is_affirm_yes(token: str) -> bool:
+    return token in _AFFIRM_YES or token in _AFFIRM_YES_BARE
+
+
+def _is_affirm_filler(token: str) -> bool:
+    return token in _AFFIRM_FILLER or token in _AFFIRM_FILLER_BARE
+
+
+def is_short_affirmation(text: str) -> bool:
+    """Câu NGẮN, chỉ gồm từ đồng ý + tiểu từ đệm, không nói giờ/ngày khác,
+    không có chữ phủ định — dùng để định tuyến, không dùng để duyệt lịch."""
+    lowered = (text or "").strip().lower()
+    tokens = re.findall(r"\w+", lowered)
+    if not tokens or len(tokens) > _AFFIRM_MAX_TOKENS:
+        return False
+    if not any(_is_affirm_yes(t) for t in tokens):
+        return False
+    if not all(_is_affirm_yes(t) or _is_affirm_filler(t) for t in tokens):
+        return False
+    unaccented = _unaccented_only(lowered)
+    negation, negation_bare = _NEG_BY_KIND["book"]
+    if negation.search(lowered) or negation_bare.search(unaccented):
+        return False
+    bare = strip_diacritics(lowered)
+    if _TIME.search(lowered) or _TIME_BARE.search(bare):
+        return False
+    return True
+
+
 def is_go_ahead(text: str, kind: Optional[str]) -> bool:
     """Câu chỉ giục làm đúng việc dời/hủy đang chốt (code quyết, không model).
 

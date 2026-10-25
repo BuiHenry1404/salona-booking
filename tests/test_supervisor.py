@@ -191,3 +191,25 @@ async def test_supervisor_model_has_its_own_short_budget(monkeypatch):
     await supervise(a_state())
     assert seen[0]["max_retries"] == sup.SUPERVISOR_MAX_RETRIES == 1
     assert seen[0]["timeout"] == sup.SUPERVISOR_TIMEOUT_SECONDS == 8
+
+
+@pytest.mark.asyncio
+async def test_short_ok_after_a_booking_turn_routes_to_booking_without_llm(monkeypatch):
+    """Lỗi LLM-02: agent hỏi "giữ 2 giờ chiều được không?" KHÔNG qua đề xuất
+    → lượt sau không "đang chờ", vào thẳng supervisor. "Ok em" phải về booking
+    mà không cần hỏi model (model giả không được gọi)."""
+    calls = []
+    monkeypatch.setattr(
+        "app.agents.booking_graph.supervisor.build_chat_model",
+        lambda **kw: calls.append(kw) or FakeModel("social"))
+    out = await supervise(a_state("Ok em", last_route="booking"))
+    assert out == {"route": "booking"}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_short_ok_after_social_turn_still_asks_the_model(patch_model):
+    """`last_route` khác "booking" thì "Ok em" vẫn đi qua model như trước."""
+    model = patch_model("social")
+    assert (await supervise(a_state("Ok em", last_route="social")))["route"] == "social"
+    assert model.seen_messages is not None

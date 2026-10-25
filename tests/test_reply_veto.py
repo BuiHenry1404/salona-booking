@@ -12,7 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from app.agents.booking_graph.reply import (mentions_other_time,
+from app.agents.booking_graph.reply import (is_short_affirmation,
+                                            mentions_other_time,
                                             strip_diacritics, veto_reason)
 from app.core.clock import TZ
 
@@ -249,3 +250,22 @@ def test_the_g_table_is_unchanged_with_an_unrelated_queue(text):
     far = {"kind": "book", "start_at": START.isoformat(),
            "queued": [datetime(2026, 10, 30, 11, 0, tzinfo=TZ).isoformat()]}
     assert veto_reason(text, far, NOW) is not None, text
+
+
+# --- is_short_affirmation (lỗi LLM-02: định tuyến "Ok em" sau lượt booking) ---
+
+@pytest.mark.parametrize("text", ["Ok em", "dạ được", "ừ nha", "oke", "Dc",
+                                  "um", "ok a", "duoc roi"])
+def test_short_affirmations_are_recognised(text):
+    assert is_short_affirmation(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "ok mà 4 giờ được không",       # đổi giờ, không phải đồng ý suông
+    "dạ không",                      # có từ phủ định
+    "chào em",                       # không có từ đồng ý nào
+    "ok em cảm ơn nhiều nha chị",    # quá 4 từ / có từ ngoài lưới
+    "",
+])
+def test_short_affirmations_rejects_everything_else(text):
+    assert not is_short_affirmation(text), text

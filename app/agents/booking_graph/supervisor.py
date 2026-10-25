@@ -8,6 +8,7 @@ from app.agents.booking_graph.context import live_queue
 from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import SUPERVISOR_PROMPT
 from app.agents.booking_graph.relatives import asks_if_relative_free, defers
+from app.agents.booking_graph.reply import is_short_affirmation
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -52,6 +53,15 @@ async def supervise(state: GraphState) -> dict:
         # chủ tiệm. Hỏi người nhà rảnh không / hẹn hỏi rồi nhắn lại là chuyện
         # lịch của khách: booking (có dòng [relative]/[deferral]).
         logger.info("supervisor_relative_route")
+        return {"route": "booking"}
+
+    if state.get("last_route") == "booking" and is_short_affirmation(text):
+        # Lỗi LLM-02: agent hỏi "giữ 2 giờ chiều được không?" KHÔNG qua
+        # `propose_appointment` (chưa có đề xuất) → lượt sau không "đang chờ"
+        # (`waiting` ở `events.py`), vào thẳng supervisor từ START. "Ok em"
+        # thành social thì bot chào tạm biệt, mất lịch. Lượt trước là booking
+        # + câu ngắn kiểu đồng ý → về thẳng booking, không hỏi model.
+        logger.info("supervisor_short_affirmation_route")
         return {"route": "booking"}
 
     # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:

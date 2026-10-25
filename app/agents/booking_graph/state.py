@@ -32,3 +32,7 @@ class GraphState(TypedDict, total=False):
     # resume gõ chữ (mặc định) hay nút bấm UI (Task 5/6) — Task 3 đọc để viết
     # câu chốt bằng code thay vì qua agent.
     confirm_source: NotRequired[Literal["text", "button"]]
+    # route của LƯỢT TRƯỚC (node `record` ghi). KHÔNG bị `fresh_turn_fields`
+    # xoá mỗi lượt mới — phải sống qua checkpointer để supervisor lượt sau
+    # biết "ừ" tiếp theo có phải đang nối lượt booking không (lỗi LLM-02).
+    last_route: NotRequired[str]

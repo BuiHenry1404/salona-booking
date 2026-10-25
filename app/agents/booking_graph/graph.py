@@ -34,7 +34,12 @@ async def record(state: GraphState) -> dict:
     vết lượt hỏng, `model_history` bỏ nó như A.
     """
     answer = state.get("answer") or ""
-    return {"messages": [stamp(AIMessage(content=answer), now_ms())]} if answer else {}
+    # `last_route` ghi ở MỌI lượt (kể cả không sinh câu đáp) — lượt sau cần
+    # biết lượt này đi node nào, không chỉ khi có câu đáp (lỗi LLM-02).
+    fields = {"last_route": state.get("route")}
+    if answer:
+        fields["messages"] = [stamp(AIMessage(content=answer), now_ms())]
+    return fields
 
 
 def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):

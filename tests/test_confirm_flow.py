@@ -293,13 +293,15 @@ async def test_expired_proposal_is_a_new_message(test_db, user, models, monkeypa
     await propose_turn(test_db, user, models)
     future = now_utc() + timedelta(minutes=PROPOSAL_MAX_AGE_MINUTES + 1)
     monkeypatch.setattr(proposal_module, "now_utc", lambda: future)
-    models.sup.replies += [AIMessage("booking")]
     models.agent.replies += [AIMessage("Dạ chị muốn đặt lại giờ nào ạ?")]
 
     out = await turn(test_db, user, "ừ")
 
     assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt lại giờ nào ạ?", "proposal": None})
-    assert len(models.sup.calls) == 2
+    # Lỗi LLM-02 (Task 8): "ừ" là khẳng định ngắn SAU một lượt booking
+    # (`last_route` của propose_turn) → supervisor về thẳng "booking" bằng
+    # code, không còn gọi model lần hai.
+    assert len(models.sup.calls) == 1
     assert await appointments(test_db) == 0
 
 

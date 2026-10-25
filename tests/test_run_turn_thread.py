@@ -159,6 +159,16 @@ def test_fresh_turn_fields_reset_everything_a_turn_produces():
     assert "messages" not in fields
 
 
+def test_last_route_survives_a_fresh_turn():
+    """`last_route` (lỗi LLM-02) là route của LƯỢT TRƯỚC — phải sống qua
+    checkpointer sang lượt sau, không bị `fresh_turn_fields` xoá như các khoá
+    một-lượt khác."""
+    fields = events.fresh_turn_fields(
+        {"context_block": "CTX", "summary": ["s"], "slots": None, "history_after": None,
+         "history": [], "user_id": "u1"}, "q")
+    assert "last_route" not in fields
+
+
 async def test_button_turn_when_nothing_is_waiting_replies_stale(test_db, user, models):
     """Khách bấm nút nhưng thread không đang chờ (đề xuất đã hết hạn, hay bấm
     trùng): không chạy graph, chỉ trả câu "hết hạn" — nhưng vẫn ghi cả câu
