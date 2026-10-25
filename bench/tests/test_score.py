@@ -424,3 +424,29 @@ def test_finalize_score_applies_stop_reasons():
     sim = finalize_score(ok, "simulated", 0, None)
     assert (sim.valid, sim.invalid_reason) == (False, "sim_no_turns")
     assert finalize_score(ok, "scripted", 1, None) == ok
+
+
+def test_finalize_score_unsupported_button_is_invalid_not_failure():
+    """Task 7 fix: ref cũ không gửi `proposal` → lượt bấm nút không có gì để
+    bấm vào. Đây KHÔNG phải một ref kém (đã chốt lịch đúng đến tận lượt đó),
+    nên phải là `valid=False` (loại khỏi mẫu số pass_rate), không phải một
+    lần chạy trượt thường — nếu không, so sánh ref cũ/mới sẽ lệch tỉ lệ đạt."""
+    from bench.score import finalize_score
+
+    ok = RunScore(passed=False, valid=True, invalid_reason=None, wrong_writes=[],
+                  violations=[], turns_used=2)
+    result = finalize_score(ok, "scripted", 2, "unsupported_button@1")
+    assert (result.valid, result.passed, result.invalid_reason) == (
+        False, False, "unsupported_button",
+    )
+
+
+def test_finalize_score_plain_error_stays_valid_regression():
+    """Lỗi lượt thường (không phải unsupported_button) vẫn hợp lệ, chỉ trượt
+    — không được vô tình bị gộp vào nhánh xử lý unsupported_button ở trên."""
+    from bench.score import finalize_score
+
+    failing = RunScore(passed=False, valid=True, invalid_reason=None, wrong_writes=[],
+                        violations=[], turns_used=1)
+    result = finalize_score(failing, "scripted", 1, "error@0")
+    assert (result.valid, result.passed, result.invalid_reason) == (True, False, None)

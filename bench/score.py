@@ -338,9 +338,17 @@ def finalize_score(
       thấy nó → không hợp lệ.
     - `adapter_open_failed`: không lượt nào chạy; kịch bản kiểu "từ chối"
       (booked: []) sẽ khớp giả → ép trượt (vẫn hợp lệ).
+    - `unsupported_button@<i>`: ref không gửi `proposal` nên lượt bấm nút
+      không có gì để bấm (xem `adapters/a.py`) — không phải ref kém, nên
+      không hợp lệ (loại khỏi mẫu số pass_rate) thay vì trượt, tránh lệch tỉ
+      lệ đạt khi so ref cũ/mới.
     - simulated mà không có lượt nào (lỗi model / DONE ngay) → không hợp lệ."""
     if stop_reason and stop_reason.startswith("precondition@") and score.valid:
         return dataclasses.replace(score, valid=False, passed=False, invalid_reason=stop_reason)
+    if stop_reason and stop_reason.startswith("unsupported_button@") and score.valid:
+        return dataclasses.replace(
+            score, valid=False, passed=False, invalid_reason="unsupported_button"
+        )
     if stop_reason and stop_reason.startswith("adapter_open_failed"):
         return dataclasses.replace(score, passed=False)
     if kind == "simulated" and n_records == 0:

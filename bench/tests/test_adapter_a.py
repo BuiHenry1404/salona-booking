@@ -200,6 +200,10 @@ async def test_button_turn_without_pending_proposal_is_recorded_not_raised(fake_
     assert received == []
     assert record.customer_text == "[nút Không]"
     assert record.error is not None
+    # Tiền tố riêng để `runner`/`score` phân biệt với lỗi lượt thật — xem
+    # Task 7 fix (controller ruling): lượt bấm nút không có proposal phải là
+    # một lần chạy KHÔNG HỢP LỆ, không phải một lần chạy trượt.
+    assert record.error.startswith("unsupported_button")
     assert "proposal" in record.error
 
 

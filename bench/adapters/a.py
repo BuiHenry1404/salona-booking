@@ -14,8 +14,12 @@ Giao thức (đã xác minh với server thật):
 - Lượt bấm nút (`Turn.button`): client gửi `confirm_proposal {"proposal_id",
   "decision", "message_id"}` thay vì `send_message`, dùng `proposal.id` của
   `complete` gần nhất. Ref cũ không hỗ trợ nút (không gửi `proposal`) → nếu
-  chưa từng thấy `proposal.id` nào, lượt bấm nút được ghi là lỗi thay vì gửi
-  đi, để so sánh với ref cũ vẫn chạy hết kịch bản thay vì crash.
+  chưa từng thấy `proposal.id` nào, lượt bấm nút được ghi lỗi tiền tố
+  `unsupported_button:` thay vì gửi đi — adapter không crash và `bench run`
+  vẫn tiếp tục so sánh các ref/kịch bản khác, nhưng runner dừng NGAY kịch
+  bản này tại lượt đó và `score.finalize_score` báo lần chạy KHÔNG HỢP LỆ
+  (`invalid_reason="unsupported_button"`, loại khỏi mẫu số pass_rate) thay
+  vì tính là trượt, để không lệch tỉ lệ đạt khi so ref cũ/mới.
 - Sự kiện lạ được ghi lại vào `TurnRecord.events`, không làm vỡ adapter.
 """
 
@@ -97,7 +101,7 @@ class AdapterA(ChatAdapter):
             # vào. Ghi lỗi rõ ràng, không emit, không raise, để kịch bản vẫn
             # chạy tiếp/so sánh được với ref cũ.
             record.error = (
-                "button turn without a pending proposal "
+                "unsupported_button: button turn without a pending proposal "
                 "(ref does not support buttons?)"
             )
             return record

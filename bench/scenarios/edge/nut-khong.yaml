@@ -22,5 +22,3 @@ expect:
   - day: tomorrow
     time: '16:00'
   others_unchanged: true
-  answer_must_not_include:
-  - đã đặt

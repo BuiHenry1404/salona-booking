@@ -468,6 +468,11 @@ class ScriptedAdapter:
             rec.error = "timeout"
         elif b == "ERR":
             rec.error = "Bạn gửi quá nhiều tin"
+        elif b == "UNSUPPORTED_BUTTON":
+            rec.error = (
+                "unsupported_button: button turn without a pending proposal "
+                "(ref does not support buttons?)"
+            )
         else:
             rec.answer = b
         return rec
@@ -594,6 +599,23 @@ async def test_error_turn_stops_run_as_failure_not_invalid(tmp_path, run_one_env
     assert ScriptedAdapter.sent == [0]
     assert payload["stop_reason"] == "error@0"
     assert payload["score"].valid is True and payload["score"].passed is False
+
+
+async def test_run_one_unsupported_button_turn_is_invalid_not_failure(tmp_path, run_one_env):
+    """Task 7 fix: so với ref cũ (không gửi proposal), lượt bấm nút không có
+    gì để bấm → dừng kịch bản, nhưng lần chạy phải là KHÔNG HỢP LỆ (loại
+    khỏi mẫu số pass_rate), không phải một lần chạy trượt — tránh lệch tỉ lệ
+    đạt khi so sánh ref cũ/mới."""
+    settings, rr, _ = run_one_env
+    ScriptedAdapter.behaviours = ["ok", "UNSUPPORTED_BUTTON", "ok"]
+    turns = '  - say: "một"\n  - button: yes\n  - say: "ba"'
+    [sc] = load_scenarios([_scenario_file(tmp_path, "t", turns)])
+    payload = await run_one(rr, sc, 0, settings=settings)
+    assert ScriptedAdapter.sent == [0, 1]
+    assert payload["stop_reason"] == "unsupported_button@1"
+    score = payload["score"]
+    assert score.valid is False and score.invalid_reason == "unsupported_button"
+    assert score.passed is False
 
 
 async def test_error_on_fault_turn_does_not_stop(tmp_path, run_one_env):

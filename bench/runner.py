@@ -274,7 +274,12 @@ async def _play_turn(
     # → dừng kịch bản ngay, lần chạy vẫn hợp lệ và score_run chấm trượt. Không
     # để lượt sau "biến" lỗi này thành tiền đề sai (không hợp lệ).
     if stop is None and record.error is not None and turn.fault is None:
-        kind = "timeout" if record.error.startswith("timeout") else "error"
+        if record.error.startswith("unsupported_button"):
+            kind = "unsupported_button"
+        elif record.error.startswith("timeout"):
+            kind = "timeout"
+        else:
+            kind = "error"
         stop = f"{kind}@{index}"
     return record, stop
 
