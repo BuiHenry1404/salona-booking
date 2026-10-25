@@ -445,45 +445,9 @@ cho **chính họ**.
 
 ## Việc còn dở
 
-### ĐÃ ĐÓNG ở M3 (harness B) — bug `is_affirmative`
-
-**Một câu tán gẫu từng đặt được lịch thật cho khách.** `is_affirmative()` khớp
-từ đồng ý ("phải", "được", "dạ", "đúng") ở **bất kỳ đâu** trong câu:
-
-```
-is_affirmative("Mà làm móng bột mất bao lâu hả chị, … việc gì cũng
-                phải tính trước cho chắc")  ->  True   # ghi lịch thật
-```
-
-Bug này đã hai lần làm hỏng nghiệm thu `LLM-32` mà không ai nhận ra lúc đó.
-
-**Cách đóng (M3) và vì sao không vá regex:** bỏ "phải" khỏi `_YES` thì "phải
-rồi" hết là đồng ý; vá kiểu nào thì code vẫn đang QUYẾT "đồng ý" bằng so khớp
-từ. M3 đảo hướng:
-
-- Code chỉ được quyết "chắc chắn KHÔNG đồng ý" (`reply.veto_reason`: phủ định,
-  hoãn, câu hỏi — có từ để hỏi ở bất kỳ đâu, giờ/phút/ngày/thứ khác đề xuất).
-  Từ đơn không dấu ("hong", "doi", "thoi", "chua") chỉ so trên những chữ khách
-  GÕ không dấu — bỏ dấu cả câu thì "chị Hồng", "đợi", "thời gian", "đi chùa" bị
-  phủ quyết oan (review M3); "dạ khong em" nửa dấu nửa không vẫn bị bắt. Cụm
-  nhiều chữ và mốc giờ vẫn so trên câu bỏ dấu toàn bộ. Đang chốt DỜI thì
-  "dời/đổi" là đồng ý (như "hủy" khi chốt hủy); "có gì" và "vậy nha/đi" không
-  phải câu hỏi.
-- Câu lưới cho qua mới tới bộ phân loại (model, tag `classify`, prompt tiếng
-  Anh không ví dụ tiếng Việt — bẫy #16). Chỉ ghi khi model nói approve **và**
-  lưới không phủ quyết. Lỗi/timeout model = `unclear`.
-- `unclear` lần đầu → bot hỏi lại MỘT câu (code viết), đề xuất vẫn chờ; lần hai
-  liên tiếp → bỏ đề xuất, câu khách sang booking.
-- Cờ `pending_confirmation` trong `conversations` bỏ hẳn (field model giữ để đọc
-  document cũ). Thay bằng `proposals` + `interrupt()` + `ProposalService.approve`.
-
-Hàng rào: `tests/test_reply_veto.py` (bảng câu G-01/G-02/G-03/tán gẫu/G-07, có
-và không dấu), `tests/test_confirm_flow.py` (đầu-cuối với bộ phân loại giả LUÔN
-approve — các câu đó vẫn không ghi), `tests/test_proposal_service.py`.
-
 **Trước khi mở cho khách thật**
 
-- **P1 trong `REPO_AUDIT.md`**: SEC-01 (Socket.IO chưa kiểm `token_version`), SEC-03 (tách compose prod). SEC-02 và REL-02 đã xong.
+- **P1 trong `REPO_AUDIT.md`**: SEC-01 (Socket.IO chưa kiểm `token_version`), SEC-03 (tách compose prod).
 - **Vận hành**: sao lưu Mongo, HTTPS, CI — toàn bộ ở `PROD_CHECKLIST.md`.
 
 **Quan sát để ngỏ (đã đo, chưa quyết)**
@@ -507,7 +471,6 @@ approve — các câu đó vẫn không ghi), `tests/test_proposal_service.py`.
 
 **Lặt vặt**
 
-- **Avatar chatbot** chưa sinh; mockup trỏ `ai-avatar.jpg` không có trong git (ảnh Gemini bị `.gitignore` bỏ vì ~6MB, ai clone mới sẽ thấy mockup vỡ ảnh).
 - **Test DB không chịu được hai `pytest` song song**: chạy chồng nhau sinh `OperationFailure: Index build failed` ở những test không liên quan. Chạy một lần một.
 - **Dọn 3 bản trùng** của tài liệu test (xem `NOTE.md`).
 
