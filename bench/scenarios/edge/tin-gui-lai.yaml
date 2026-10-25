@@ -6,16 +6,23 @@ tags:
 - DEDUPE
 setup: {}
 turns:
+# Review fix (controller ruling): resend gắn vào lượt ĐỀ XUẤT (say), không
+# phải lượt bấm nút. Resent confirm_proposal (sau khi proposal đã được
+# duyệt) rơi vào nhánh "nút bấm trễ" của controller dù KHÔNG có dedupe —
+# không phân biệt được hai trường hợp. Resend ở ĐÂY thì không có dedupe, bản
+# gửi lại đi tới node `confirm` như một CÂU TRẢ LỜI cho đề xuất đang chờ
+# (chữ, không phải "ừ"/"không"), nhiều khả năng làm hỏng/đổi đề xuất trước
+# khi lượt `button: yes` kế tiếp kịp bấm — có dedupe thì bản gửi lại chỉ phát
+# lại đúng `complete` đã lưu, đề xuất không đổi.
 - say: mai 3 giờ chiều chị làm tóc
-- button: yes
   resend: after_complete
+- button: yes
 sim: null
 expect:
   booked:
   - day: tomorrow
     time: '15:00'
   others_unchanged: true
-  # `answer_must_not_include` chỉ chấm lượt CUỐI — lượt cuối ở đây là bản gửi
-  # lại (adapter ghi đè `record.answer` bằng complete thứ hai, giống hệt bản
-  # đầu), nên kiểm thật sự nằm ở DB (đúng 1 lịch) qua `booked` phía trên, như
-  # brief yêu cầu.
+  # `answer_must_not_include` chỉ chấm lượt CUỐI (lượt bấm nút) — không nói
+  # lên gì về việc resend có làm hỏng đề xuất hay không. Kiểm thật sự nằm ở
+  # DB (đúng 1 lịch, đúng giờ) qua `booked` phía trên, như brief yêu cầu.
