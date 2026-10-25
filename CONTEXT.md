@@ -22,31 +22,87 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — cập nhật 2026-09-20
+## Trạng thái — checkpoint 2026-10-25 (đọc mục này trước khi làm tiếp)
 
-- **805 test backend** + 252 test frontend xanh; frontend build sạch.
-  (`PYTHONPATH=. .venv/bin/python -m pytest -q`, 14 deselected vì cần Azure thật.
-  **Chỉ chạy MỘT tiến trình pytest một lúc** — xem "Lặt vặt".)
-- Chạy thật với Azure `gpt-5.4-mini`. Langfuse tự dựng có trace và chi phí,
-  nhưng **không lên** trong hai lần đo 14/9 → vẫn chưa có số token.
+### Ở đâu
 
-### Bốn nhánh xếp chồng, CHƯA nhánh nào merge
+| Thư mục | Nhánh | Dùng cho |
+|---|---|---|
+| `salona-booking-harness-b/` | `feat/target-architecture` | **code app đang làm** (tách từ `main` @ `cdc7e35`) |
+| `salona-booking/` | `bench/harness-benchmark` | benchmark (`bench/`), chạy so sánh các ref |
 
-```
-henry/develop
-  └─ feat/conversation-state      (PR #7 mở)  tầng ConversationState + slots
-       └─ fix/live-run-findings                4 lỗi từ chạy thật 19/9
-            └─ refactor/tools-return-data      tool trả JSON thay vì câu
-                 └─ fix/clock-and-dead-data    ← ĐANG Ở ĐÂY
-```
+`main` = Harness B (LangChain `create_agent` + middleware + `interrupt` + checkpointer
+Mongo), đã push. Mọi việc mới đi `feat/... → henry/develop → main`, không commit
+thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus 5.5
+<noreply@anthropic.com>` (từ 25/10; commit trước đó dùng Fable 5.1).
 
-Mỗi nhánh rẽ từ nhánh trên nó vì đều sửa cùng vùng `prompts.py`/`tools.py`.
-PR #6 và PR #7 đã gộp trên GitHub (20/10/2026). `feat/langchain-harness` gộp
-vào `henry/develop` rồi `main` cùng ngày; `main` giờ chạy Harness B.
+### Đang thực thi plan nào
+
+- Spec: `docs/superpowers/specs/2026-10-20-target-architecture-design.md`
+- Plan: `docs/superpowers/plans/2026-10-20-target-architecture.md` (16 task + 12b, 12c)
+- Sơ đồ: `docs/research/Architech.md`
+- **Sổ tiến độ (nguồn sự thật để chạy tiếp):**
+  `.superpowers/sdd/2026-10-20-target-architecture/progress.md` — dòng
+  `Task N: complete` = xong, đừng làm lại; mọi `Ruling:` là quyết định đã chốt.
+  Brief/report/review từng task nằm cùng thư mục.
+- Thực thi bằng skill `superpowers:subagent-driven-development` (mỗi task: một
+  implementer + một reviewer; tối đa 5 vòng sửa).
+
+| Mốc | Task | Trạng thái 25/10 |
+|---|---|---|
+| M1 nút xác nhận | 1 reasoning_effort · 2 confirm nhận nút · 3 câu chốt bằng code · 4 `complete.proposal` · 5 event `confirm_proposal` · 6 frontend nút · 7 bench nút | **xong**, tag `target/m1` = `a5af160` |
+| M2 LLM-02 + tin trùng | 8 "ok" ngắn sau booking → booking · 9 guard `ask_without_proposal` | **xong** (`739cd2b`, `85f3753`) |
+| | 10 dedupe `message_id` (Redis, dự phòng Mongo) | **đang làm dở** — code chưa commit trong working tree lúc viết mục này; kiểm `git status` + `task-10-report.md` trước khi giao lại |
+| | 11 cache trạng thái tiệm qua Redis | chưa |
+| M3 trí nhớ | 12 bộ phân tích câu khách · 12b nối vào supervisor/confirm · 12c nén theo mục, cuốn chiếu, kèm câu gốc · 13 `self_address`/`staff_note` · 14 `conversation_sessions` | chưa |
+| M4 tự nhiên | 15 phrase theo ngữ cảnh + cờ `CONFIRM_VETO_MODE`/`GUARD_VOICE_RULES` · 16 rubric judge + đo ma trận cờ | chưa |
+
+- **Benchmark M1** (`harness-b/align` vs `target/m1`, tag edge+llm, k=4) chạy nền
+  từ 25/10 12:47 → `../salona-booking/bench/results/20261025-124743-5a317b/`.
+  Xem kết quả: `bench/.venv/bin/python -m bench compare <run_dir> --base harness-b/align -o out.html`
+  (chạy từ `salona-booking/`). Chưa đọc, chưa ghi số vào đây.
+- Test lúc viết: **1480 backend** (25 deselected cần Azure) + **289 frontend**, xanh.
+  **Chỉ chạy MỘT tiến trình pytest một lúc** (chung DB `chatbot_test_db`).
+
+### Quyết định đã chốt trong đợt này (đừng mở lại)
+
+- Lấy **Harness B**, không quay về A: benchmark 20/10 B ghi sai 0 so với A 8; A chỉ
+  hơn ở tốc độ lượt xác nhận (1,8 s so với 4,3 s) — nút bấm lấy lại phần này.
+- **Gọi "anh chị" là chủ ý**, không đoán giới từ tên. Tên khách nhập dạng đầy đủ
+  ("Nguyễn Thị Lan"). Chỉ đổi khi khách **tự xưng** ("chị làm móng") — Task 13.
+- **Không có Time Agent.** `parse_time` là tool của booking; thiếu buổi/ngày/giờ thì
+  hỏi lại bằng câu thường.
+- **Nút Đồng ý / Không** là đường chính để chốt; nút đi thẳng `ProposalService.approve`,
+  câu chốt bằng code (không gọi LLM). Gõ chữ vẫn được (lưới code → LLM nhãn).
+  Nút chỉ hiện cho đề xuất mới nhất, xếp dọc, rộng hết màn hình, khóa khi mất mạng.
+- **Bộ phân tích câu khách** (Task 12/12b): một lượt LLM đầu lượt thay cho cả
+  supervisor lẫn bộ phân loại câu xác nhận, trả bản phân tích có cấu trúc; code kiểm
+  từng trường. Mockup: https://claude.ai/artifact/ReTCutZGpd13CAai9cb48u
+- **Vẫn giữ nén** (Task 12c): ba tầng — slots (bộ phân tích) · tóm tắt lịch sử cũ
+  (ngưỡng 800 token, nền) · 4 lượt cuối nguyên văn. Tóm tắt theo mục cố định, cuốn
+  chiếu, kèm câu gốc của khách (học từ Agentbox). Không dùng `SummarizationMiddleware`.
+- **Redis có trong đợt này nhưng tắt mặc định**, không bao giờ fail-hard; Mongo là
+  đường dự phòng và là nguồn sự thật.
+- **Không có memory LLM tự trích qua nhiều phiên.** Qua phiên chỉ có hồ sơ do code
+  dựng: `self_address`, `staff_note`, 3 lần đến gần nhất, tóm tắt phiên gần nhất 7 ngày.
+- Guard giữ regex cho luật an toàn/sự thật (`claim`, `tool_name`,
+  `ask_without_proposal`); ba luật giọng (`repeat`, `pronoun`, `clock`) để benchmark
+  quyết qua cờ ở Task 15.
+- **Để sau, chờ benchmark M2:** khi rewrite không gỡ được câu hỏi có/không về giờ,
+  guard vẫn gửi câu gốc; chưa thay bằng câu cứng vì lưới Task 8 đã giữ được lịch.
+- Ràng buộc giao diện ở mục dưới (19px, nút 56px, rộng hết ngang) thắng mọi con số
+  khác trong plan.
+
+### Việc còn mở ngoài plan
+
+- Lỗi giờ **g06** ("15h30" bị cắt về 15:00) và **g09** (hỏi lại "sáng hay chiều"
+  thừa) chưa có task.
+- Hạ tầng prod (compose prod, HTTPS, S-01…S-07, backup, CI) — spec riêng, chưa viết.
+- Chưa có deployment Azure lớn hơn `gpt-5.4-mini` để thử.
+- Sơ đồ luồng chat hiện tại: https://claude.ai/artifact/4z1oYjFe8hJr47rFHdBx1s
 
 Ba file `hoi-thoai-dai-*.txt` ở gốc repo là transcript chạy thật, **untracked
-có chủ ý**. Bốn file `after-*.txt` đã xoá hẳn khỏi repo (20/10/2026) theo ý
-chủ dự án — một lệnh `git rebase` từng khôi phục nhầm.
+có chủ ý**.
 
 ## Chốt cứng — đừng mở lại
 
