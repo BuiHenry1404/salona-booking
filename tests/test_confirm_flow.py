@@ -156,6 +156,24 @@ async def test_g01_ko_em_never_books(test_db, user, models):
                                     "proposal": None})
 
 
+async def test_decline_resolved_by_confirm_marks_last_route_booking(test_db, user, models):
+    """Nối lỗi LLM-02: lượt resume vào `confirm` bằng câu gõ (lưới code từ
+    chối, KHÔNG qua `supervise`) để lại `route=""` (fresh_turn_fields) — nếu
+    `record` cứ chép nguyên `route` thì `last_route` thành "" và "Ok em" sau
+    lượt NÀY lại lọt supervisor như chưa hề có lượt booking nào. `record`
+    phải tự hiểu route rỗng ở đây nghĩa là "booking" (ruling task 8)."""
+    from app.agents.booking_graph.graph import build_graph
+
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+
+    await turn(test_db, user, "dạ ko em")
+
+    config = {"configurable": {"thread_id": events.thread_id_for(str(user.id), now_utc())}}
+    snap = await build_graph(test_db, user).aget_state(config)
+    assert snap.values["last_route"] == "booking"
+
+
 async def test_tan_gau_with_phai_never_books(test_db, user, models):
     await propose_turn(test_db, user, models)
     models.agent.replies += [AIMessage("Dạ làm móng bột tầm một tiếng chị ạ.")]
@@ -910,6 +928,35 @@ async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
     updated = await test_db["proposals"].find_one({"_id": proposal["_id"]})
     assert updated["status"] == "rejected"
     assert models.classifier["calls"] == 0
+
+
+async def test_button_no_also_marks_last_route_booking(test_db, user, models):
+    """Nối lỗi LLM-02: bấm "Không" cũng là resume vào `confirm`, không qua
+    `supervise` — cùng lưới với lượt gõ chữ ở trên, chỉ khác đường vào."""
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+
+    values = await button(test_db, user, "no", str(proposal["_id"]))
+
+    assert values["last_route"] == "booking"
+
+
+async def test_short_ok_after_a_resumed_decline_still_skips_the_supervisor_model(
+    test_db, user, models
+):
+    """Chốt lỗi LLM-02 (vòng 2): sau lượt resume bị từ chối (gõ chữ "dạ ko
+    em"), "Ok em" là tin MỚI (không còn gì đang chờ) và phải về thẳng booking
+    bằng code — không riêng gì lượt booking ĐẦU TIÊN mới được bảo vệ."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+    await turn(test_db, user, "dạ ko em")
+    sup_calls = len(models.sup.calls)
+
+    models.agent.replies += [AIMessage("Dạ chị chốt giờ nào ạ?")]
+    out = await turn(test_db, user, "Ok em")
+
+    assert len(models.sup.calls) == sup_calls          # supervisor model không chạy thêm
+    assert out[-1] == ("complete", {"answer": "Dạ chị chốt giờ nào ạ?", "proposal": None})
 
 
 async def test_second_button_press_is_idempotent(test_db, user, models):
