@@ -58,13 +58,33 @@ class RedisBackend:
         return f"msg:{user_id}:{message_id}"
 
     async def begin(self, user_id: str, message_id: str) -> BeginResult:
-        done = await self.client.get(self._msg_key(user_id, message_id))
+        """GIỮ KHOÁ (SET NX) TRƯỚC, mới đọc payload đã xong.
+
+        Review fix (race): thứ tự cũ là GET msg RỒI MỚI SET NX — hai bước đó
+        không nguyên tử với nhau. Bản trùng có thể GET thấy rỗng (payload
+        CHƯA lưu), rồi trong lúc nó còn đang chờ await, bản gốc kịp chạy xong
+        `finish()` (set msg + xoá turn); bản trùng SET NX sau đó thấy khoá đã
+        bị xoá nên THẮNG, chạy lượt thứ hai. Đổi thứ tự: SET NX trước loại bỏ
+        hẳn cửa sổ đó — bản trùng chỉ có thể thua (khoá còn bị giữ) hoặc thấy
+        `turn` đã được giải phóng, không bao giờ "lướt qua" giữa hai lần đọc.
+        """
+        turn_key = self._turn_key(user_id, message_id)
+        msg_key = self._msg_key(user_id, message_id)
+        acquired = await self.client.set(turn_key, "1", nx=True, ex=TURN_TTL_SECONDS)
+        if acquired:
+            # Giữ được khoá — nhưng có thể `msg` đã tồn tại từ trước (vd.
+            # `finish()` của một lần chạy trước đã lưu payload mà vì lý do gì
+            # đó `turn` chưa kịp xoá/đã hết hạn rồi bị tạo lại) — trả lại kết
+            # quả đã có thay vì chạy một lượt thừa, và nhả khoá vừa giữ.
+            done = await self.client.get(msg_key)
+            if done is not None:
+                await self.client.delete(turn_key)
+                return json.loads(done)
+            return "new"
+        done = await self.client.get(msg_key)
         if done is not None:
             return json.loads(done)
-        acquired = await self.client.set(
-            self._turn_key(user_id, message_id), "1", nx=True, ex=TURN_TTL_SECONDS
-        )
-        return "new" if acquired else "running"
+        return "running"
 
     async def finish(self, user_id: str, message_id: str, complete_payload: dict) -> None:
         await self.client.set(
@@ -108,12 +128,54 @@ class MongoBackend:
                 return "new"
             if doc["status"] == "done":
                 return doc.get("complete") or {}
+            # "running" — nhưng có thể là rác: tiến trình xử lý nó đã crash,
+            # restart, hoặc `abandon()` lỡ không chạy tới (review fix). KHÔNG
+            # có TTL riêng cho "running" (TTL của document là 24h, dùng chung
+            # cho "done") nên mặc định nó kẹt tới 24h — một bản gửi lại thật
+            # sự của khách bị bỏ rơi suốt thời gian đó. Quá hạn TURN_TTL_SECONDS
+            # (90s, CÙNG hằng số với khoá Redis) thì giành lại nguyên tử bằng
+            # `find_one_and_update` có điều kiện — chỉ một lời gọi thắng nếu
+            # nhiều lượt cùng tới lúc document đã rã.
+            cutoff = now - timedelta(seconds=TURN_TTL_SECONDS)
+            created_at = doc.get("created_at")
+            if created_at is not None and created_at < cutoff:
+                taken = await self.collection.find_one_and_update(
+                    {
+                        "user_id": user_id,
+                        "message_id": message_id,
+                        "status": "running",
+                        "created_at": {"$lt": cutoff},
+                    },
+                    {"$set": {"created_at": now}},
+                )
+                if taken is not None:
+                    return "new"
             return "running"
 
     async def finish(self, user_id: str, message_id: str, complete_payload: dict) -> None:
+        """UPSERT — bắt buộc, không phải tuỳ chọn.
+
+        Review fix: `begin()` có thể đã THẮNG trên Redis (không có document
+        Mongo nào cho cặp này), rồi Redis rớt TRƯỚC `finish()` — `finish()` rơi
+        xuống Mongo nhưng không có document "running" nào để `update_one` khớp
+        vào. Không upsert thì đây là no-op IM LẶNG (`matched_count == 0`,
+        không lỗi): payload mất, và lần gửi lại kế tiếp (Redis vẫn rớt) sẽ
+        `insert_one` thành công, trả "new" — chạy lượt thứ hai. Upsert đảm bảo
+        luôn có một document "done" sau `finish()`, bất kể `begin()` trước đó
+        chạy trên backend nào.
+        """
+        now = now_utc()
         await self.collection.update_one(
             {"user_id": user_id, "message_id": message_id},
-            {"$set": {"status": "done", "complete": complete_payload}},
+            {
+                "$set": {
+                    "status": "done",
+                    "complete": complete_payload,
+                    "expires_at": now + timedelta(hours=24),
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
         )
 
     async def abandon(self, user_id: str, message_id: str) -> None:
