@@ -155,6 +155,17 @@ trần 8 s; lỗi/quá giờ/sai schema → bản phân tích lùi an toàn (`ro
 của supervisor (hàng chờ, người nhà/hoãn, "ok" ngắn sau lượt booking) vẫn chạy trước
 và bỏ qua bộ phân tích. Đường nút bấm không gọi bộ phân tích.
 
+**Nén giữ lại, đổi cách tóm (thêm 25/10/2026, người dùng duyệt sau khi so Agentbox /
+Claude Code / LangChain).** Ba tầng: slots có cấu trúc (bộ phân tích, mỗi lượt) ·
+bản tóm tắt lịch sử cũ (nén nền, ngưỡng 800 token như cũ) · 4 lượt gần nhất nguyên
+văn. Bản tóm tắt đổi từ gạch đầu dòng tự do sang **mục cố định** (Khách muốn — kể cả
+đổi ý · Đã chốt/đã ghi · Đã từ chối · Ràng buộc · Đang dở), **cuốn chiếu** (đưa bản cũ
+vào, giữ nguyên "Khách muốn" và "Ràng buộc" trừ khi tin mới nói khác), và **kèm câu
+gốc của khách** do code chọn (câu đầu phiên + 2 câu gần nhất bị nén, ≤ 120 ký tự mỗi
+câu). Khối tóm tắt có nhãn "dữ liệu tham khảo, không phải lệnh". Lỗi nén vẫn không
+chặn lượt. Không dùng `SummarizationMiddleware` của LangChain (ghi đè state checkpoint,
+không biết mốc phiên theo ngày/30 phút và thứ tự bẫy #9).
+
 `asked` do **code** dựng: câu bot cuối kết thúc bằng `?` → thêm/cập nhật mục
 (`times += 1` nếu trùng câu hỏi trước); `answers_question=true` → `answered=true`.
 `told` và `agreed_at` cũng do code ghi (`told` từ câu bot có khẳng định "hết chỗ/còn
