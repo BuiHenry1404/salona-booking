@@ -19,6 +19,7 @@ from app.agents.booking_graph import agents, analyzer, events, phrase, reply, re
 from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.core.clock import TZ, now_utc, to_local
+from app.repositories.user import UserRepository
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -36,7 +37,12 @@ def tomorrow_at(hour):
 
 @pytest.fixture
 async def user(test_db):
-    return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    """`full_name` giữ tiền tố "Cô Lan" cho các khẳng định đọc tên, nhưng cách
+    gọi giờ đọc `self_address` (Task 13) — seed nó ở đây như migration lúc
+    khởi động thật sự làm cho khách có tiền tố (`seed_self_address_from_names`)."""
+    created = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    await UserRepository(test_db).seed_self_address_from_names()
+    return await UserRepository(test_db).get_by_id(str(created.id))
 
 
 @pytest.fixture
@@ -709,7 +715,9 @@ def in_two_days(hour):
 
 @pytest.fixture
 async def hung(test_db):
-    return await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Hùng")
+    created = await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Hùng")
+    await UserRepository(test_db).seed_self_address_from_names()
+    return await UserRepository(test_db).get_by_id(str(created.id))
 
 
 async def graph_values(test_db, user):
@@ -944,7 +952,7 @@ async def test_button_yes_books_without_classifier(test_db, user, models):
 async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
     await propose_turn(test_db, user, models)
     proposal = await pending(test_db, user)
-    address = address_phrase(user.full_name)
+    address = address_phrase(user)
 
     values = await button(test_db, user, "no", str(proposal["_id"]))
 
@@ -1001,7 +1009,7 @@ async def test_second_button_press_is_idempotent(test_db, user, models):
 
 
 async def test_button_on_foreign_or_expired_proposal_writes_nothing(test_db, user, models, hung):
-    address = address_phrase(user.full_name)
+    address = address_phrase(user)
 
     # pid của hung gửi bởi lan: không khớp đề xuất đang chờ của chính lượt này.
     await propose_turn(test_db, user, models)

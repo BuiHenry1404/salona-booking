@@ -11,6 +11,12 @@ Role = Literal["user", "admin"]
 # cái tên không nuốt mất khối bối cảnh.
 FULL_NAME_MAX = 60
 
+# Ghi chú của tiệm đi vào khối bối cảnh như MỘT dòng — admin gõ bao nhiêu
+# cũng không được nuốt mất phần còn lại của khối.
+STAFF_NOTE_MAX = 200
+
+SelfAddress = Literal["anh", "chị"]
+
 
 class User(BaseDocument):
     """Khách hoặc chủ tiệm. Định danh bằng số điện thoại, không dùng email."""
@@ -34,6 +40,17 @@ class User(BaseDocument):
     role: Role = "user"
     is_active: bool = True
 
+    # Khách tự xưng "chị"/"anh" — do CODE đặt (regex `detect_self_address`
+    # trên câu khách, Task 13), không bao giờ suy từ tên. Chỉ ghi khi đang
+    # `None`; khách muốn đổi thì admin sửa tay qua REST, bot không tự đổi.
+    self_address: Optional[SelfAddress] = None
+
+    # Admin gõ qua REST admin, hiện trong khối bối cảnh dưới dạng dữ liệu
+    # ("Ghi chú tiệm: …") — vẫn phải qua `single_line` dù do admin nhập, vì
+    # khối bối cảnh mang vai HumanMessage và một dòng xuống dòng là một lối
+    # ghi thêm luật vào prompt.
+    staff_note: Optional[str] = None
+
     @field_validator("full_name")
     @classmethod
     def _clean_full_name(cls, value: Optional[str]) -> Optional[str]:
@@ -44,6 +61,11 @@ class User(BaseDocument):
         cũng được làm sạch lúc đọc lên, không cần migrate.
         """
         return single_line(value, FULL_NAME_MAX)
+
+    @field_validator("staff_note")
+    @classmethod
+    def _clean_staff_note(cls, value: Optional[str]) -> Optional[str]:
+        return single_line(value, STAFF_NOTE_MAX)
 
     # Tăng mỗi lần đổi mật khẩu. Token mang `tv` khác giá trị này bị từ chối,
     # nếu không nạn nhân đổi lại mật khẩu mà token của kẻ chiếm vẫn sống tới

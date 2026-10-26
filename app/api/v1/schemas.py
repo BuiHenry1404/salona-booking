@@ -34,6 +34,13 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=4)
 
 
+class SetStaffNoteRequest(BaseModel):
+    """`staff_note` của Task 13 — admin ghi, hiện trong khối bối cảnh dưới
+    dạng "Ghi chú tiệm: …". ≤200 ký tự khớp `STAFF_NOTE_MAX` của model."""
+
+    staff_note: str = Field(..., max_length=200)
+
+
 class UserResponse(BaseModel):
     id: str
     phone: str

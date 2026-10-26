@@ -216,13 +216,20 @@ def derive_address(full_name: Optional[str]) -> tuple[str, str]:
     return "anh chị", ""
 
 
-def address_phrase(full_name: Optional[str]) -> str:
-    """'chị Lan', 'anh Hùng', hoặc 'anh chị' khi không đoán được giới tính.
+def address_phrase(user: "User") -> str:
+    """'chị Lan', 'anh Hùng', hoặc 'anh chị' khi chưa biết cách gọi (Task 13).
 
-    Không ghép tên vào lời gọi trống: "anh chị Bảy" không ai nói.
+    Đổi chữ ký từ `full_name` sang `user`: cách gọi giờ đọc `user.self_address`
+    — khách TỰ xưng (`detect_self_address`), hoặc tiền tố admin gõ đã được
+    migration lúc khởi động seed vào đó. Không còn tự suy từ `full_name` ở
+    đây nữa (đó là việc của `derive_address`/migration, một lần); tên đầy đủ
+    không tiền tố ("Nguyễn Thị Lan") thì ở "anh chị" cho tới khi khách tự xưng
+    — không đoán giới tính từ tên. Không ghép tên vào lời gọi trống: "anh chị
+    Bảy" không ai nói.
     """
-    address, name = derive_address(full_name)
-    return f"{address} {name}" if name and address != "anh chị" else address
+    if user.self_address:
+        return f"{user.self_address} {display_name(user.full_name)}"
+    return "anh chị"
 
 
 def display_name(full_name: Optional[str]) -> str:
@@ -360,12 +367,20 @@ def build_context_block(
         # Kèm luôn dạng ISO để model khỏi phải tự cộng trừ ngày rồi tính nhầm.
         f"Bây giờ là {format_vi_datetime(local_now)} "
         f"(hôm nay là {local_now.date().isoformat()}, giờ Việt Nam).",
-        f"Bạn đang nói chuyện với: {display_name(user.full_name)} ({user.phone}).",
+        # SĐT bỏ khỏi khối bối cảnh (Task 13): không tool nào cần đọc nó từ
+        # đây — `propose_appointment`/`AppointmentService` lấy thẳng từ `user`
+        # trong state, không phải từ chữ model đọc lại.
+        f"Bạn đang nói chuyện với: {display_name(user.full_name)}.",
         # Chốt MỘT cách gọi cho cả cuộc. Không có dòng này thì model tự chọn
         # lại mỗi lượt: transcript đã thấy cùng một khách bị gọi "chú Hùng"
         # ở lượt 3 rồi "chị" ở lượt 5.
-        f"Gọi khách là: {address_phrase(user.full_name)}.",
+        f"Gọi khách là: {address_phrase(user)}.",
     ]
+
+    if user.staff_note:
+        # Admin gõ, nhưng vẫn render như DỮ LIỆU — khối này nằm trước dòng
+        # chốt "tin phần trên", không phải lệnh.
+        lines.append(f"Ghi chú tiệm: {user.staff_note}.")
 
     if status.is_busy:
         # Mốc giờ, không phải khoảng. Khối này đi vào prompt và AI sẽ nhắc lại

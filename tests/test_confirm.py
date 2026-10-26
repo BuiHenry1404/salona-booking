@@ -27,6 +27,7 @@ from app.agents.booking_graph.tools import make_booking_tools
 from app.core.clock import TZ, now_utc
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
+from app.repositories.user import UserRepository
 from app.services.auth import AuthService
 from app.services.proposal import ProposalService
 
@@ -43,7 +44,14 @@ def later():
 
 
 async def a_user(db, phone="0912345678", name="Cô Lan"):
-    return await AuthService(db).create_user(phone, "matkhau123", name)
+    """Cách gọi giờ đọc `self_address` (Task 13), không tự suy từ tiền tố
+    `full_name` nữa — seed nó ở đây như migration lúc khởi động thật làm
+    cho khách có tiền tố, để các khẳng định xưng hô hiện có không phải đổi ý
+    nghĩa."""
+    created = await AuthService(db).create_user(phone, "matkhau123", name)
+    repo = UserRepository(db)
+    await repo.seed_self_address_from_names()
+    return await repo.get_by_id(str(created.id))
 
 
 async def book_proposal(db, user, hour=15, note="làm tóc"):

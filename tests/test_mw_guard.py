@@ -14,7 +14,7 @@ from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
 from app.models.user import User
 
 
-USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám")
+USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám", self_address="anh")
 FACT = {"kind": "booked", "when": "Thứ Ba 15/9, 9 giờ sáng", "note": "cắt tóc",
         "address": "anh Tám", "error": None}
 FALLBACK = "Xong rồi ạ. Hẹn gặp anh Tám Thứ Ba 15/9, 9 giờ sáng nhé."
@@ -284,7 +284,7 @@ import json  # noqa: E402
 
 from langchain_core.messages import ToolMessage  # noqa: E402
 
-HUNG = User(phone="0987654321", hashed_password="x", full_name="Chú Hùng")
+HUNG = User(phone="0987654321", hashed_password="x", full_name="Chú Hùng", self_address="anh")
 HUNG_FACT = {"kind": "booked", "when": "Thứ Tư 21/10, 9 giờ sáng", "note": "cắt tóc cho chú",
              "address": "anh Hùng", "error": None,
              "queued_when": ["Thứ Tư 21/10, 2 giờ chiều"]}

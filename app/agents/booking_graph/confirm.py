@@ -107,7 +107,7 @@ async def execute_proposal(db: AsyncIOMotorDatabase, user: User, proposal_id: st
     truyền là câu chốt mất lời gọi, mà nó quên thật.
     """
     result = await ProposalService(db).approve(user, proposal_id, turn_at=turn_at)
-    return confirm_fact_for(result, address_phrase(user.full_name))
+    return confirm_fact_for(result, address_phrase(user))
 
 
 def with_queue_offer(out: dict, queue: list, address: str) -> dict:
@@ -208,7 +208,7 @@ def make_confirm_node(
     db: AsyncIOMotorDatabase, user: User
 ) -> Callable[[GraphState], Awaitable[dict]]:
     proposals = ProposalService(db)
-    address = address_phrase(user.full_name)
+    address = address_phrase(user)
 
     async def node(state: GraphState) -> dict:
         proposal_id = state.get("proposal_id")

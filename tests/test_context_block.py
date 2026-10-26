@@ -15,8 +15,9 @@ from app.models.shop import ShopStatusView
 from app.models.user import User
 
 
-def a_user(name="Nguyễn Thị Lan"):
-    return User(phone="0912345678", hashed_password="h", full_name=name, role="user")
+def a_user(name="Nguyễn Thị Lan", self_address=None, staff_note=None):
+    return User(phone="0912345678", hashed_password="h", full_name=name, role="user",
+               self_address=self_address, staff_note=staff_note)
 
 
 def an_appointment():
@@ -58,7 +59,27 @@ def test_the_date_line_comes_first():
 def test_block_contains_the_real_name_from_the_database():
     block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
     assert "Nguyễn Thị Lan" in block
-    assert "0912345678" in block
+
+
+def test_block_uses_self_address_and_omits_phone():
+    """Task 13: SĐT không tool nào cần đọc từ khối bối cảnh — bỏ hẳn. Có
+    `self_address` thì dòng "Gọi khách là:" phải dùng nó, không phải suy từ
+    tiền tố full_name (full_name ở đây CỐ TÌNH không có tiền tố)."""
+    block = build_context_block(
+        a_user("Nguyễn Thị Lan", self_address="chị"), ShopStatusView(is_busy=False), [])
+    assert "0912345678" not in block
+    assert "Gọi khách là: chị Nguyễn Thị Lan" in block
+
+
+def test_staff_note_line_present_when_set():
+    block = build_context_block(
+        a_user(staff_note="hay đổi giờ phút chót"), ShopStatusView(is_busy=False), [])
+    assert "Ghi chú tiệm: hay đổi giờ phút chót" in block
+
+
+def test_staff_note_line_absent_when_not_set():
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
+    assert "Ghi chú tiệm" not in block
 
 
 def test_block_says_it_outranks_anything_else_in_the_prompt():
@@ -171,14 +192,22 @@ class TestDeriveAddress:
 
 
 class TestAddressPhrase:
-    def test_gendered_prefix_keeps_the_name(self):
-        assert address_phrase("Cô Lan") == "chị Lan"
-        assert address_phrase("Chú Hùng") == "anh Hùng"
+    """Task 13: chữ ký đổi từ `full_name` sang `user` — cách gọi giờ đọc
+    `user.self_address` (khách tự xưng/tiền tố đã seed), không tự suy từ tên
+    nữa. Tên có tiền tố mà CHƯA có `self_address` (migration chưa chạy) vẫn ở
+    "anh chị" — đúng ý "không đoán giới tính từ tên"."""
 
-    def test_ambiguous_drops_the_name(self):
-        # "anh chị Bảy" không ai nói. Mơ hồ thì gọi trống.
-        assert address_phrase("Bác Bảy") == "anh chị"
-        assert address_phrase(None) == "anh chị"
+    def test_self_address_keeps_the_name(self):
+        # `display_name` chỉ cắt tiền tố xưng hô; tên không tiền tố đi nguyên
+        # văn — `self_address` không làm nó đoán thêm phần nào của tên.
+        assert address_phrase(a_user("Lan", self_address="chị")) == "chị Lan"
+        assert address_phrase(a_user("Cô Lan", self_address="chị")) == "chị Lan"
+
+    def test_no_self_address_falls_back_to_anh_chi_even_with_a_prefix(self):
+        # "anh chị Bảy" không ai nói. Chưa biết cách gọi thì gọi trống.
+        assert address_phrase(a_user("Bác Bảy")) == "anh chị"
+        assert address_phrase(a_user("Cô Lan")) == "anh chị"
+        assert address_phrase(a_user(None)) == "anh chị"
 
 
 class TestDisplayName:
@@ -194,13 +223,14 @@ class TestDisplayName:
 
 
 class TestContextBlockAddress:
-    def _block(self, full_name):
-        user = User(phone="0912345678", hashed_password="x", full_name=full_name)
+    def _block(self, full_name, self_address=None):
+        user = User(phone="0912345678", hashed_password="x", full_name=full_name,
+                   self_address=self_address)
         return build_context_block(user, ShopStatusView(is_busy=False), [])
 
     def test_block_pins_one_form_of_address(self):
         # Model chỉ việc chép dòng này, không tự chọn register mỗi lượt.
-        assert "Gọi khách là: chị Lan" in self._block("Cô Lan")
+        assert "Gọi khách là: chị Lan" in self._block("Cô Lan", self_address="chị")
 
     def test_block_never_leaks_the_forbidden_register(self):
         # BOOKING_PROMPT cấm nói "cô/chú/bác"; khối bối cảnh không được

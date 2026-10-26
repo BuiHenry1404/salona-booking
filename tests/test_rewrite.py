@@ -7,7 +7,7 @@ from app.models.shop import ShopStatusView
 from app.models.user import User
 
 
-USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám")
+USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám", self_address="anh")
 
 
 class ScriptedModel:
@@ -87,7 +87,7 @@ class TestRewriteOnce:
 class TestAddressFromBlock:
     def test_reads_the_address_from_the_real_context_block(self):
         block = build_context_block(
-            User(phone="0912345678", hashed_password="x", full_name="Chú Tám"),
+            User(phone="0912345678", hashed_password="x", full_name="Chú Tám", self_address="anh"),
             ShopStatusView(is_busy=False), [],
         )
         assert _address_from_block(block) == "anh Tám"

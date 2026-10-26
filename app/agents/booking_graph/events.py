@@ -16,7 +16,9 @@ from app.agents.booking_graph.history import stamp, stamped_at
 from app.core.clock import now_ms, to_local
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
+from app.core.text import detect_self_address
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.services.conversation import ConversationService, session_cutoff
 from app.services.conversation_state import ConversationStateService
 from app.services.proposal import ProposalService
@@ -130,20 +132,34 @@ def bot_text_before_turn(messages) -> str:
     return ""
 
 
-async def apply_analysis(db: AsyncIOMotorDatabase, user_id: str, values: dict) -> None:
-    """Ghi kết quả bộ phân tích của lượt vào slots (Task 12b). Sau `complete`,
-    dưới `shield` (lượt mới thay giữa chừng không được cắt đôi lần ghi). KHÔNG
-    BAO GIỜ ném: lỗi ở đây chỉ đáng mất dữ kiện slots của một lượt."""
+async def apply_analysis(db: AsyncIOMotorDatabase, user: User, values: dict) -> None:
+    """Ghi kết quả bộ phân tích của lượt vào slots (Task 12b), rồi — nếu khách
+    CHƯA có `self_address` — seed nó (Task 13). Sau `complete`, dưới `shield`
+    (lượt mới thay giữa chừng không được cắt đôi lần ghi). KHÔNG BAO GIỜ ném:
+    lỗi ở đây chỉ đáng mất dữ kiện slots/self_address của một lượt.
+
+    `self_address` lấy từ `analysis` (đã qua `sanitize_analysis`, tức là
+    KHỚP với `detect_self_address` trên câu khách) khi lượt có chạy bộ phân
+    tích; lượt đi lối tắt code (không có `analysis`, VD hàng chờ/"ok" ngắn)
+    thì dùng thẳng `detect_self_address(customer_text)` một mình — vẫn cùng
+    một hàm, chỉ thiếu vế analyzer đồng thuận.
+    """
     from app.agents.booking_graph.analyzer import TurnAnalysis
 
+    user_id = str(user.id)
     analysis = values.get("analysis")
-    if not analysis:
-        return
     try:
-        await asyncio.shield(asyncio.ensure_future(
-            ConversationStateService(db).apply_turn_analysis(
-                user_id, TurnAnalysis(**analysis),
-                last_bot_text=bot_text_before_turn(values.get("messages")))))
+        if analysis:
+            await asyncio.shield(asyncio.ensure_future(
+                ConversationStateService(db).apply_turn_analysis(
+                    user_id, TurnAnalysis(**analysis),
+                    last_bot_text=bot_text_before_turn(values.get("messages")))))
+        if user.self_address is None:
+            self_address = (analysis.get("self_address") if analysis
+                           else detect_self_address(values.get("customer_text") or ""))
+            if self_address:
+                await asyncio.shield(asyncio.ensure_future(
+                    UserRepository(db).set_self_address(user_id, self_address)))
     except Exception as exc:
         # CancelledError là BaseException: lượt bị thay vẫn huỷ như thường
         # (phần ghi đã shield chạy nốt).
@@ -356,7 +372,7 @@ async def _run_turn(
             # đây). Vẫn ghi cả câu khách bấm lẫn câu đáp vào `conversations` để
             # lịch sử cho khách thấy đã bấm gì, dù không có gì để chạy.
             stale_answer = BUTTON_STALE_REPLY.replace(
-                "anh chị", address_phrase(user.full_name))
+                "anh chị", address_phrase(user))
 
             async def persist_stale():
                 await conversations.append(user_id, "user", question_text, created_at=asked_at)
@@ -427,7 +443,7 @@ async def _run_turn(
         # Sau complete, cạnh `persist`: dữ kiện bộ phân tích vào slots NGAY
         # lượt này (lượt sau thấy `stated` mà không chờ nén nền). Ghi TRƯỚC khi
         # lên lịch nén để hai lần ghi không chạy chồng ngay từ đầu.
-        await apply_analysis(db, user_id, values)
+        await apply_analysis(db, user, values)
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không

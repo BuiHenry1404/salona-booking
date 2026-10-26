@@ -173,7 +173,7 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
         if user is not None and not state.get("confirm_fact"):
             said = [str(m.content) for m in (state.get("messages") or [])
                     if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
-            code = deferral_reply(state.get("customer_text") or "", address_phrase(user.full_name),
+            code = deferral_reply(state.get("customer_text") or "", address_phrase(user),
                                   [*said, *(state.get("previous_replies") or [])])
             if code:
                 logger.info("deferral_code_reply")

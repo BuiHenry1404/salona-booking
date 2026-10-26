@@ -1,11 +1,13 @@
 """Tầng gác là code tất định — mỗi phép kiểm có ca dương và ca âm."""
 import pytest
 
+from app.agents.booking_graph.context import address_phrase
 from app.agents.booking_graph.guard import (REPEAT_LOOKBACK, check_clock, check_pronoun,
                                             content_kept,
                                             customer_asked_to_repeat,
                                             find_violations, normalize,
                                             repeats, sentences)
+from app.models.user import User
 
 
 class TestNormalizeAndSentences:
@@ -155,6 +157,17 @@ class TestPronoun:
 
     def test_owner_exemption_survives_the_leading_particle(self):
         assert check_pronoun("Dạ chị chủ sẽ báo giá ạ.", "anh Tám", "Tám") is False
+
+    def test_pronoun_check_accepts_chi_lan_when_self_address_is_chi(self):
+        """Task 13: khách tên "Lan" (không tiền tố cho biết giới) nhưng đã TỰ
+        xưng "chị" — `address_phrase` phải đọc `self_address` đó (không còn
+        "anh chị" mơ hồ), và guard phải cho qua "chị Lan"."""
+        user = User(phone="0912345678", hashed_password="x",
+                   full_name="Lan", self_address="chị")
+        address = address_phrase(user)
+        assert address == "chị Lan"
+        assert check_pronoun("Dạ chị Lan, mai 9 giờ sáng ạ.", address, "Lan") is False
+        assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", address, "Lan") is True
 
 
 class TestClock:

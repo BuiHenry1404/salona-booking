@@ -40,6 +40,18 @@ async def lifespan(app: FastAPI):
         from app.infrastructure.database import ensure_indexes
         await ensure_indexes(app.state.db)
 
+        # Migration một lần, idempotent (Task 13): tiền tố admin gõ sẵn trong
+        # full_name ("Cô Lan") là thông tin ĐÃ BIẾT → seed self_address cho
+        # khách chưa có giá trị, để address_phrase không phải đợi khách tự
+        # xưng lại từ đầu. Không fail-hard: thiếu seed chỉ làm bot gọi "anh
+        # chị" một lúc, không đáng sập cả app vì nó.
+        try:
+            from app.repositories.user import UserRepository
+            seeded = await UserRepository(app.state.db).seed_self_address_from_names()
+            logger.info("self_address_seed_done", seeded=seeded)
+        except Exception as e:
+            logger.warning("self_address_seed_failed", error=str(e))
+
         # Checkpointer (lịch sử model theo thread) — cùng DB, cùng fail-hard:
         # thiếu nó thì mọi lượt chat đều hỏng, chạy tiếp chỉ giấu lỗi.
         from app.agents.checkpoint import make_checkpointer, set_checkpointer

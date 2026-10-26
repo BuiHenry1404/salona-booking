@@ -498,7 +498,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     Tên tool bị xoá (tất định, không gọi LLM) khỏi draft TRƯỚC mọi phép kiểm và
     khỏi mọi câu đi ra — kể cả bản viết lại và câu cứng.
     """
-    address = address_phrase(user.full_name)
+    address = address_phrase(user)
     _, name = derive_address(user.full_name)
     raw = state.get("draft") or ""
     draft = strip_tool_names(raw)

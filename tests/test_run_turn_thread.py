@@ -182,7 +182,7 @@ async def test_button_turn_when_nothing_is_waiting_replies_stale(test_db, user, 
     reply = ButtonReply("yes", "p1", "Đồng ý")
     result = [(e.type, e.data) async for e in events.run_turn(test_db, user, reply)]
 
-    expected = BUTTON_STALE_REPLY.replace("anh chị", address_phrase(user.full_name))
+    expected = BUTTON_STALE_REPLY.replace("anh chị", address_phrase(user))
     assert [t for t, _ in result] == ["turn_started", "complete"]
     assert result[-1] == ("complete", {"answer": expected, "proposal": None})
     assert not models.agent.calls and not models.sup.calls      # graph không chạy
