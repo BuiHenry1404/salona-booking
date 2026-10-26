@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -77,16 +77,24 @@ class ProposalRepository(BaseRepository[Proposal]):
         )
         return result.modified_count == 1
 
-    async def has_superseded_today_before(self, user_id: str, before: datetime) -> bool:
-        """Task 15: có đề xuất `superseded` của khách, tạo CÙNG NGÀY giờ VN với
-        `before` (đề xuất vừa được duyệt) và TRƯỚC nó — dấu hiệu khách đã đổi ý
-        về giờ ngay trong phiên này (`context = "changed_time"`)."""
+    async def closed_earlier_today(self, user_id: str, before: datetime) -> List[Proposal]:
+        """Task 15 review: đề xuất của khách CÙNG NGÀY giờ VN với `before` (đề
+        xuất vừa được duyệt), TẠO TRƯỚC nó, và đã ĐÓNG mà khách KHÔNG chốt
+        (`rejected`/`superseded`/`expired` — không tính `approved`/`failed`/
+        `approving`/`pending`). `confirm.py` suy `confirm_fact["context"]` từ
+        danh sách này: có cái START_AT KHÁC đề xuất vừa duyệt → khách đã đổi
+        giờ ("changed_time"); có cái nào đó dù giờ không đổi → khách từng nói
+        không/bỏ dở trước khi chốt ("after_decline").
+
+        Thay cho `has_superseded_today_before` cũ (review: chỉ nhìn
+        `superseded` thì bỏ sót trường hợp phổ biến hơn — khách bị VETO
+        "giờ khác" đóng đề xuất cũ thành `rejected`, không phải `superseded`)."""
         start, _ = local_day_bounds(to_local(before).date())
-        doc = await self.collection.find_one({
-            "user_id": user_id, "status": "superseded",
+        cursor = self.collection.find({
+            "user_id": user_id, "status": {"$in": ["rejected", "superseded", "expired"]},
             "created_at": {"$gte": start, "$lt": before},
         })
-        return doc is not None
+        return [Proposal(**doc) async for doc in cursor]
 
     async def increment_unclear(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
         oid = _oid(proposal_id)

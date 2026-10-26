@@ -4,6 +4,7 @@ from typing import Any, Dict, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.booking_graph.context import LAST_REPLY_MAX
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS, repeats
 from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import (PHRASE_CONTEXT_RULES, PHRASE_KIND_SENTENCES,
@@ -11,6 +12,7 @@ from app.agents.booking_graph.prompts import (PHRASE_CONTEXT_RULES, PHRASE_KIND_
                                               PHRASE_QUEUED_RULE)
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
+from app.core.text import single_line
 
 logger = get_logger(__name__)
 
@@ -132,7 +134,11 @@ async def write_phrase(state) -> str:
     # thêm message mới) — giữ nguyên thứ tự messages mà guard/test đang dựa vào.
     context_rule = PHRASE_CONTEXT_RULES.get(fact.get("context") or "first_time", "")
     previous_replies = state.get("previous_replies") or []
-    last_reply = previous_replies[-1] if previous_replies else ""
+    # Task 15 review: cắt một dòng + giới hạn độ dài NHƯ dòng "Câu em vừa trả
+    # lời ở lượt trước" trong khối bối cảnh (`context.py`, cùng «» và cùng
+    # `LAST_REPLY_MAX`) — câu đáp cũ có thể mang xuống dòng, không được chèn
+    # nguyên văn vào SYSTEM.
+    last_reply = single_line(previous_replies[-1], LAST_REPLY_MAX) if previous_replies else ""
     if last_reply:
         context_rule = f"{context_rule}{PHRASE_LAST_REPLY_RULE.format(last_reply=last_reply)}"
     system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, context_rule=context_rule,

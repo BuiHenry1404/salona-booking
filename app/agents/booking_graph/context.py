@@ -30,6 +30,10 @@ LAST_REPLY_MAX = 200
 LAST_SESSION_LINE_MAX = 160
 RECENT_VISITS_LIMIT = 3
 RECENT_VISIT_NOTE_MAX = 40
+# Task 15 review: hằng số CHUNG cho dòng "Khách đã đến:" — `confirm.py` đọc
+# lại đúng chuỗi này (không chép tay) để suy `confirm_fact["context"] =
+# "returning"` từ khối bối cảnh đã dựng.
+RECENT_VISITS_HEADER = "Khách đã đến:"
 
 
 def _clock_phrase(hour: int, minute: int) -> str:
@@ -359,7 +363,7 @@ def render_recent_visits(appointments: List[Appointment]) -> List[str]:
     ở đây). Rỗng thì trả `[]` — không chiếm chỗ trong khối."""
     if not appointments:
         return []
-    lines = ["Khách đã đến:"]
+    lines = [RECENT_VISITS_HEADER]
     for appt in appointments:
         local = to_local(appt.start_at)
         note = single_line(appt.note, RECENT_VISIT_NOTE_MAX)

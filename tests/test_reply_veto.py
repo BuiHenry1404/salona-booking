@@ -323,3 +323,61 @@ async def test_time_only_mode_with_an_unclear_classifier_label_never_approves():
     result = await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn,
                           veto_mode="time_only")
     assert result == "unclear"
+
+
+# --- review (finding #1): "time_only" phải bắt "giờ khác" ĐỘC LẬP, không để
+# negation/deferral/question (lý do ĐẦU TIÊN của `veto_reason`) che mất nó ----
+
+TIME_ONLY_STILL_OTHER_TIME = [
+    "4 giờ được không em?",    # veto_reason() = "negation" (từ "không") che "4 giờ"
+    "không, 4 giờ nha",        # idem
+    "thôi để 5 giờ đi",        # veto_reason() = "negation" ("thôi") che "5 giờ"
+    "ok mai 4 giờ được ko",    # veto_reason() = "negation" ("ko") che "4 giờ"
+]
+
+
+@pytest.mark.parametrize("text", TIME_ONLY_STILL_OTHER_TIME)
+async def test_time_only_mode_still_vetoes_other_time_hidden_behind_a_veto_word(text):
+    """Review finding #1: bốn câu trên đều có TỪ PHỦ ĐỊNH đứng trước giờ khác
+    — `veto_reason` chỉ trả lý do ĐẦU TIÊN ("negation"), và luật cũ coi đó là
+    "không phải other_time" nên bỏ qua ở "time_only", cho approve lọt qua.
+    Đúng phải là: "time_only" tự hỏi `other_time_veto` ĐỘC LẬP và luôn reject,
+    bất kể `label_fn` nói gì (kể cả khi nó nổ — không bao giờ được gọi)."""
+    async def approving_label_fn(proposal, bot_question, customer_text):
+        return "approve"
+
+    async def raising_label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called when other_time vetoes")
+
+    for label_fn in (approving_label_fn, raising_label_fn):
+        result = await decide(text, P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                              veto_mode="time_only")
+        assert result == "reject", (text, label_fn)
+
+
+# --- review (finding #2): "time_only" không được để `is_go_ahead` tự approve
+# một câu mà đề bài ĐẦY ĐỦ (full veto_reason) vẫn còn một lý do khác --------
+
+TIME_ONLY_GO_AHEAD_WORDS_BUT_A_QUESTION = [
+    ("cancel", "huy a?"),
+    ("cancel", "hủy đi nha?"),
+    ("move", "doi a?"),
+    ("move", "dời đi nha?"),
+]
+
+
+@pytest.mark.parametrize("kind,text", TIME_ONLY_GO_AHEAD_WORDS_BUT_A_QUESTION)
+async def test_time_only_mode_sends_a_disguised_question_to_the_classifier_not_go_ahead(kind, text):
+    """Review finding #2: những câu này toàn CHỮ GIỤC ("hủy"/"dời" + tiểu từ)
+    nên `is_go_ahead` trả True — nhưng chúng mang dấu "?" nên `veto_reason`
+    ĐẦY ĐỦ (full) báo "question". "time_only" không phủ quyết "question" nữa,
+    nhưng KHÔNG ĐƯỢC vì vậy mà chạy `is_go_ahead` (nó không biết về dấu hỏi) —
+    phải đi tới `label_fn` như một câu chưa rõ ý."""
+    proposal = {"kind": kind, "start_at": START.isoformat()}
+
+    async def unclear_label_fn(proposal, bot_question, customer_text):
+        return "unclear"
+
+    result = await decide(text, proposal, QUESTION, NOW, label_fn=unclear_label_fn,
+                          veto_mode="time_only")
+    assert result == "unclear"

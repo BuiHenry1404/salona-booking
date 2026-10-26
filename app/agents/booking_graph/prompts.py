@@ -350,8 +350,11 @@ PHRASE_CONTEXT_RULES = {
 
 # Task 15: nhắc câu đáp LLM gần nhất (`previous_replies[-1]`) để model không
 # lặp lại đúng khung câu cũ — cùng mục tiêu với `guard.repeats`, nhưng nói
-# thẳng cho model tự tránh thay vì chờ guard bắt rồi viết lại.
-PHRASE_LAST_REPLY_RULE = ("\nYour own last reply in this conversation was: \"{last_reply}\"\n"
+# thẳng cho model tự tránh thay vì chờ guard bắt rồi viết lại. «»: CÙNG cách
+# bọc với dòng "Câu em vừa trả lời ở lượt trước" trong khối bối cảnh
+# (`context.py`); `{last_reply}` đã qua `single_line` (một dòng, cắt độ dài)
+# trước khi tới đây — review controller: không chèn nguyên văn có xuống dòng.
+PHRASE_LAST_REPLY_RULE = ("\nYour own last reply in this conversation was: «{last_reply}»\n"
                           "Do not reuse its opening words or sentence structure; vary the phrasing.")
 
 

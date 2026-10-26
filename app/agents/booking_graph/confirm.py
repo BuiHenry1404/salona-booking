@@ -28,8 +28,8 @@ from langgraph.types import interrupt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph import analyzer, reply
-from app.agents.booking_graph.context import (address_phrase, declined_line,
-                                              format_vi_datetime, live_queue,
+from app.agents.booking_graph.context import (RECENT_VISITS_HEADER, address_phrase,
+                                              declined_line, format_vi_datetime, live_queue,
                                               queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
 from app.core.clock import now_utc
@@ -107,19 +107,36 @@ def confirm_fact_for(result: ApprovalResult, address: str, *, context: str = "fi
 
 
 async def _resolve_context(db: AsyncIOMotorDatabase, user: User, proposal, context_block: str) -> str:
-    """Task 15: mạch câu chốt, suy từ DB + khối bối cảnh — ưu tiên
-    `changed_time` > `after_decline` > `returning` > `first_time` (controller
-    ruling). Không truy vấn nặng thêm cho `returning`: đọc lại đúng dòng
-    "Khách đã đến:" mà `load_context` (Task 14) đã dựng sẵn trong khối bối
-    cảnh, không hỏi lại DB.
+    """Task 15 review: mạch câu chốt — ưu tiên `changed_time` > `after_decline`
+    > `returning` > `first_time` (controller ruling).
+
+    `changed_time`/`after_decline` suy từ CÁC ĐỀ XUẤT đã đóng trong ngày
+    (`ProposalService.closed_earlier_today`), KHÔNG từ chữ trong khối bối
+    cảnh: lúc duyệt, đề xuất MỚI NHẤT của khách chính là đề xuất đang duyệt,
+    nên dòng "[declined" (review v1 từng dựa vào) không bao giờ có mặt ở đây.
+    Có đề xuất cũ đóng CÙNG NGÀY mà GIỜ KHÁC đề xuất vừa duyệt → khách đã đổi
+    giờ (`changed_time`); có đề xuất cũ đóng nhưng CÙNG GIỜ → khách từng nói
+    không/bỏ dở rồi quay lại chốt y nguyên giờ đó (`after_decline`).
+
+    `returning` vẫn đọc dòng "Khách đã đến:" (hằng số dùng chung
+    `RECENT_VISITS_HEADER`, Task 14) đã có sẵn trong khối bối cảnh — không hỏi
+    lại DB.
+
+    Một lượt ĐÃ GHI LỊCH THÀNH CÔNG không được hỏng vì lỗi ở ĐÂY (Mongo chập
+    chờn...): bắt mọi exception, về "first_time" + log warning thay vì để lỗi
+    văng lên và biến một lượt đặt lịch thành công thành lượt lỗi.
     """
-    if proposal is not None and await ProposalService(db).had_superseded_today(user, proposal.created_at):
-        return "changed_time"
-    block = context_block or ""
-    if "[declined" in block:
-        return "after_decline"
-    if "Khách đã đến:" in block:
-        return "returning"
+    try:
+        if proposal is not None:
+            earlier = await ProposalService(db).closed_earlier_today(user, proposal.created_at)
+            if earlier:
+                if any(p.start_at != proposal.start_at for p in earlier):
+                    return "changed_time"
+                return "after_decline"
+        if RECENT_VISITS_HEADER in (context_block or ""):
+            return "returning"
+    except Exception as exc:
+        logger.warning("confirm_context_lookup_failed", extra={"error": str(exc)[:200]})
     return "first_time"
 
 

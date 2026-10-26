@@ -296,10 +296,30 @@ def is_go_ahead(text: str, kind: Optional[str]) -> bool:
                for t in tokens)
 
 
+def other_time_veto(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
+    """Chỉ phần "giờ/ngày/thứ khác" của lưới — TÁCH khỏi phủ định/hoãn/hỏi.
+
+    Task 15 review (controller ruling): `veto_reason` trả lý do ĐẦU TIÊN theo
+    thứ tự ưu tiên (negation > deferral > question > other_time), nên một câu
+    vừa phủ định vừa đổi giờ ("không, 4 giờ nha") chỉ báo "negation" và CHE MẤT
+    việc khách đã đổi giờ. `veto_mode="time_only"` cần hỏi RIÊNG câu hỏi "có
+    đổi giờ không" — độc lập với ba lý do kia — nên tách thành hàm riêng thay
+    vì suy từ kết quả của `veto_reason`.
+    """
+    lowered = (text or "").strip().lower()
+    start = _as_datetime(proposal["start_at"])
+    # Hàng chờ (đặt lần lượt): mệnh đề CHỈ nói về một lịch đang chờ không được
+    # tính vào phép kiểm giờ khác của đề xuất hiện tại.
+    lowered = _without_queued_clauses(lowered, start, proposal.get("queued"), now)
+    return mentions_other_time(lowered, start, now)
+
+
 def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Optional[str]:
     """Lý do chắc chắn KHÔNG phải đồng ý, hoặc None (lưới không có ý kiến).
 
-    "negation" | "deferral" | "question" | "other_time". None KHÔNG có nghĩa là
+    "negation" | "deferral" | "question" | "other_time" — lý do ĐẦU TIÊN khớp
+    theo thứ tự trên; một câu có thể khớp nhiều lý do (xem `other_time_veto`
+    để hỏi riêng "giờ khác" không bị lý do khác che). None KHÔNG có nghĩa là
     đồng ý — chỉ là để bộ phân loại quyết.
     """
     lowered = (text or "").strip().lower()
@@ -423,10 +443,9 @@ LabelFn = Callable[[Mapping[str, Any], str, str], Awaitable[Optional[str]]]
 
 VetoMode = Literal["full", "time_only"]
 # Task 15: ở chế độ "time_only", chỉ lý do "giờ khác" (so với đề xuất) còn bị
-# lưới chặn thẳng — code so giờ/ngày chắc chắn hơn model nên vẫn giữ. Phủ
-# định/hoãn/hỏi để bộ phân tích (model) tự đọc, vì chúng dễ bắt oan câu không
-# dấu/nửa dấu hơn.
-_TIME_ONLY_KEPT = {"other_time"}
+# lưới chặn thẳng — code so giờ/ngày chắc chắn hơn model nên vẫn giữ (hỏi độc
+# lập qua `other_time_veto`, xem `decide`). Phủ định/hoãn/hỏi để bộ phân tích
+# (model) tự đọc, vì chúng dễ bắt oan câu không dấu/nửa dấu hơn.
 
 
 async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
@@ -440,16 +459,22 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     suy ra approve từ một câu trả lời không rõ của model.
 
     `veto_mode` (`CONFIRM_VETO_MODE`, Task 15): "full" (mặc định) giữ nguyên
-    bốn lý do phủ quyết; "time_only" bỏ "negation"/"deferral"/"question" —
-    những câu đó vẫn đi tới `label_fn` thay vì bị lưới chặn thẳng.
+    bốn lý do phủ quyết; "time_only" chỉ còn lý do "giờ khác", hỏi ĐỘC LẬP qua
+    `other_time_veto` (không suy từ `veto_reason`, review controller: lý do
+    đầu tiên của `veto_reason` có thể là negation/deferral/question và CHE MẤT
+    một câu cũng đang đổi giờ, vd "không, 4 giờ nha"). `is_go_ahead` chỉ được
+    hỏi khi lý do ĐẦY ĐỦ (`full_reason`, cả bốn) là None — ở "time_only", một
+    câu hỏi/phủ định/hoãn (không đổi giờ) phải đi thẳng tới `label_fn`, không
+    qua `is_go_ahead` (bẫy review: "hủy đi nha?" tự động approve mà không gọi
+    model nếu `is_go_ahead` chạy trên câu còn mang dấu hỏi).
     """
-    reason = veto_reason(text, proposal, now)
-    if veto_mode == "time_only" and reason not in _TIME_ONLY_KEPT:
-        reason = None
+    full_reason = veto_reason(text, proposal, now)
+    reason = ("other_time" if other_time_veto(text, proposal, now) else None
+              if veto_mode == "time_only" else full_reason)
     if reason is not None:
         logger.info("confirm_vetoed", extra={"reason": reason})
         return "reject"
-    if is_go_ahead(text, proposal.get("kind")):
+    if full_reason is None and is_go_ahead(text, proposal.get("kind")):
         logger.info("confirm_go_ahead", extra={"kind": proposal.get("kind")})
         return "approve"
     try:

@@ -348,6 +348,60 @@ async def test_expired_proposal_is_a_new_message(test_db, user, models, monkeypa
     assert await appointments(test_db) == 0
 
 
+async def test_fact_context_changed_time_through_the_real_flow(test_db, user, models):
+    """Task 15 review (finding #3), đầu-cuối: khách đổi giờ NGAY TRONG PHIÊN
+    (lưới code phủ quyết "dạ 4 giờ nha em" bằng "other_time", KHÔNG qua model
+    phân loại) → đề xuất 3 giờ bị `rejected`, agent đề xuất lại 4 giờ, khách
+    "ừ" → chốt — câu chốt phải mang `context = "changed_time"` (đọc qua prompt
+    LLM mà `write_phrase` gửi, vì `complete` không trả `confirm_fact` thô)."""
+    await propose_turn(test_db, user, models)
+    question2 = "Dạ em giữ chỗ 4 giờ chiều mai cho chị Lan, chị chốt giúp em nhé?"
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(question2),
+    ]
+
+    vetoed = await turn(test_db, user, "dạ 4 giờ nha em")
+
+    assert vetoed[-1][1]["answer"] == question2
+    assert models.classifier["calls"] == 0          # lưới code chặn trước model (full mode)
+    assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
+    assert await appointments(test_db) == 0
+
+    models.phrase.replies += [AIMessage("")]        # lỗi → fallback, không cần đúng chữ
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 1
+    booked = await AppointmentService(test_db).upcoming_for(user)
+    assert booked[0].start_at.astimezone(TZ) == tomorrow_at(16)
+    system = models.phrase.calls[-1][0].content
+    assert "changed their mind" in system           # PHRASE_CONTEXT_RULES["changed_time"]
+
+
+async def test_fact_context_after_decline_through_the_real_flow(test_db, user, models):
+    """Task 15 review (finding #3), đầu-cuối: khách nói "không" rồi quay lại
+    chốt Y NGUYÊN giờ cũ — đề xuất đầu bị `rejected` (phủ định, lưới code),
+    đề xuất thứ hai CÙNG GIỜ được duyệt → `context = "after_decline"`."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+
+    declined = await turn(test_db, user, "không")
+
+    assert models.classifier["calls"] == 0
+    assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
+    assert await appointments(test_db) == 0
+
+    models.phrase.replies += [AIMessage("")]
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 1
+    system = models.phrase.calls[-1][0].content
+    assert "fresh booking" in system                # PHRASE_CONTEXT_RULES["after_decline"]
+
+
 async def test_missing_checkpoint_never_approves_a_stale_proposal(test_db, user, models):
     """Thread bị xoá (TTL) mà đề xuất vẫn pending trong DB: không có interrupt →
     lượt mới từ START, không có đường nào tự lấy đề xuất ra mà duyệt."""

@@ -110,7 +110,20 @@ class TestWritePhrase:
         await write_phrase(a_state(confirm_fact=fact, previous_replies=previous))
         system = model.calls[0][0].content
         assert "returning customer" in system
-        assert previous[0] in system
+        # Task 15 review: bọc «» giống hệt dòng "Câu em vừa trả lời ở lượt
+        # trước" trong khối bối cảnh (`context.py`), không chèn trần.
+        assert f"«{previous[0]}»" in system
+
+    async def test_phrase_prompt_last_reply_with_newlines_becomes_one_line_in_guillemets(self, patch_model):
+        """Task 15 review: câu đáp cũ có xuống dòng (vd. do rewrite cũ) không
+        được chèn nguyên văn vào SYSTEM — `single_line` ép về một dòng trước,
+        giống dòng "Câu em vừa trả lời ở lượt trước" của khối bối cảnh."""
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        previous = ["Dạ anh Tám,\nem ghi xong   lịch\ncho anh rồi ạ."]
+        await write_phrase(a_state(previous_replies=previous))
+        system = model.calls[0][0].content
+        assert "\n" not in system.split("«", 1)[1].split("»", 1)[0]
+        assert "«Dạ anh Tám, em ghi xong lịch cho anh rồi ạ.»" in system
 
     async def test_phrase_prompt_without_a_previous_reply_has_no_last_reply_rule(self, patch_model):
         model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
