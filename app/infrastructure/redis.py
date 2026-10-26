@@ -130,6 +130,24 @@ async def cache_get_or_load(
     return value
 
 
+async def cache_set(key: str, value: Any, ttl_s: int, *, encode: Callable[[Any], str]) -> None:
+    """Ghi thẳng (write-through) `value` vào cache sau khi nơi gọi vừa ghi
+    Mongo — dùng thay cho `cache_delete` ở chỗ cần tránh race "xoá rồi một bản
+    đọc cũ hồi sinh cache" (Task 11 review fix, xem `ShopService.set_busy`).
+
+    Redis tắt/lỗi → no-op (ngoài một dòng warning khi lỗi), Mongo vẫn đã là
+    nguồn đúng."""
+    client = get_redis()
+    if client is None:
+        return
+    try:
+        await client.set(key, encode(value), ex=ttl_s)
+    except Exception as exc:
+        logger.warning(
+            "shop_cache_set_through_failed", key=key, error=str(exc), error_type=type(exc).__name__
+        )
+
+
 async def cache_delete(key: str) -> None:
     """Xoá `key` khỏi cache khi dữ liệu gốc vừa đổi (admin sửa trạng thái/giờ).
 

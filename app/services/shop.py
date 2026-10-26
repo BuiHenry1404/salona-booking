@@ -6,7 +6,7 @@ from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import now_utc, to_local
-from app.infrastructure.redis import cache_delete, cache_get_or_load
+from app.infrastructure.redis import cache_get_or_load, cache_set
 from app.models.shop import ShopHours, ShopStatusView
 
 _SINGLETON = {"_id": "singleton"}
@@ -87,7 +87,16 @@ class ShopService:
     async def set_hours(self, open_time: str, close_time: str, closed_days: List[int]) -> ShopHours:
         hours = ShopHours(open_time=open_time, close_time=close_time, closed_days=closed_days)
         await self.hours.update_one(_SINGLETON, {"$set": hours.model_dump()}, upsert=True)
-        await cache_delete(HOURS_CACHE_KEY)
+        # Ghi thẳng (write-through) bản vừa lưu thay vì xoá cache rồi để lần
+        # đọc sau tự nạp lại: XOÁ có một khe hở — một `get_hours()` đang chạy
+        # dở, đã đọc xong Mongo TRƯỚC lần ghi này nhưng chưa kịp set cache,
+        # có thể hoàn tất SAU `cache_delete` và hồi sinh cache với dữ liệu cũ,
+        # sống tới hết TTL (Task 11 review fix). Ghi thẳng đóng khe hở này ở
+        # chiều ngược lại (ghi sau luôn thắng) — vẫn còn ca hiếm: một lần đọc
+        # bắt đầu TRƯỚC lần ghi này nhưng hoàn tất SAU nó vẫn có thể ghi đè
+        # cache bằng dữ liệu cũ hơn; chấp nhận được vì admin đổi giờ hiếm,
+        # tiến trình chỉ có một worker.
+        await cache_set(HOURS_CACHE_KEY, hours.model_dump(), HOURS_CACHE_TTL_SECONDS, encode=_encode_json)
         return hours
 
     async def _load_status_raw(self) -> dict:
@@ -111,8 +120,9 @@ class ShopService:
             {"$set": {"is_busy": True, "busy_until": until, "updated_at": now_utc()}},
             upsert=True,
         )
-        await cache_delete(STATUS_CACHE_KEY)
-        return await self.get_status()
+        raw = {"is_busy": True, "busy_until": until.isoformat()}
+        await self._write_through_status(raw)
+        return _status_raw_to_view(raw)
 
     async def set_free(self) -> ShopStatusView:
         await self.status.update_one(
@@ -120,8 +130,27 @@ class ShopService:
             {"$set": {"is_busy": False, "busy_until": None, "updated_at": now_utc()}},
             upsert=True,
         )
-        await cache_delete(STATUS_CACHE_KEY)
-        return await self.get_status()
+        raw = {"is_busy": False, "busy_until": None}
+        await self._write_through_status(raw)
+        return _status_raw_to_view(raw)
+
+    @staticmethod
+    async def _write_through_status(raw: dict) -> None:
+        """Ghi thẳng dữ liệu THÔ vừa lưu vào cache thay vì `cache_delete` rồi
+        để `get_status()` tự nạp lại (Task 11 review fix).
+
+        Khe hở còn lại nếu dùng xoá: một `get_status()` đang chạy đọc TRƯỚC
+        lần ghi Mongo này, hoàn tất SAU khi hàm này đã xoá cache — nó hồi sinh
+        cache bằng dữ liệu cũ, sống tới hết TTL (30s) dù tiệm đã đổi trạng
+        thái. Ghi thẳng khiến lần ghi SAU luôn thắng, đóng khe hở ở chiều hay
+        gặp nhất. Ca hiếm còn sót: một lần đọc bắt đầu trước NHƯNG hoàn tất
+        sau cả bước ghi thẳng này (chen đúng vào giữa hai dòng `update_one`
+        và `cache_set` không giúp gì — vẫn còn khả năng race nếu có nhiều
+        worker) vẫn có thể ghi đè bằng dữ liệu cũ hơn; chấp nhận được vì admin
+        bấm bận/rảnh là thao tác hiếm, tiến trình chỉ chạy MỘT worker
+        (AGENTS.md), và cache tự đúng lại sau tối đa 30s.
+        """
+        await cache_set(STATUS_CACHE_KEY, raw, STATUS_CACHE_TTL_SECONDS, encode=_encode_json)
 
     async def is_open_at(self, dt: datetime) -> bool:
         return is_within(await self.get_hours(), dt)
