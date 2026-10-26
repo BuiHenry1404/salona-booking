@@ -219,17 +219,22 @@ def derive_address(full_name: Optional[str]) -> tuple[str, str]:
 def address_phrase(user: "User") -> str:
     """'chị Lan', 'anh Hùng', hoặc 'anh chị' khi chưa biết cách gọi (Task 13).
 
-    Đổi chữ ký từ `full_name` sang `user`: cách gọi giờ đọc `user.self_address`
-    — khách TỰ xưng (`detect_self_address`), hoặc tiền tố admin gõ đã được
-    migration lúc khởi động seed vào đó. Không còn tự suy từ `full_name` ở
-    đây nữa (đó là việc của `derive_address`/migration, một lần); tên đầy đủ
-    không tiền tố ("Nguyễn Thị Lan") thì ở "anh chị" cho tới khi khách tự xưng
-    — không đoán giới tính từ tên. Không ghép tên vào lời gọi trống: "anh chị
-    Bảy" không ai nói.
+    Đổi chữ ký từ `full_name` sang `user`. Thứ tự: `user.self_address` trước
+    (khách TỰ xưng qua `detect_self_address`, hoặc admin đã sửa tay) — đây là
+    thông tin MỚI NHẤT, thắng cả tiền tố cũ nếu hai thứ lệch nhau. Không có
+    thì lùi về tiền tố `full_name` qua `derive_address` NGAY TẠI ĐÂY (không
+    chỉ đợi migration lúc khởi động): admin tạo tài khoản mới ("Cô Mai") giữa
+    lúc app đang chạy (một worker sống lâu, Telegram long polling) phải được
+    gọi đúng ngay lượt đầu, không đợi tới lần khởi động kế — migration lúc
+    khởi động chỉ là SEED một lần cho dữ liệu cũ, không phải nguồn duy nhất.
+    Hết hai nấc đó mới tới "anh chị" — tên đầy đủ không tiền tố ("Nguyễn Thị
+    Lan") ở "anh chị" cho tới khi khách tự xưng, không đoán giới tính từ tên.
+    Không ghép tên vào lời gọi trống: "anh chị Bảy" không ai nói.
     """
     if user.self_address:
         return f"{user.self_address} {display_name(user.full_name)}"
-    return "anh chị"
+    address, name = derive_address(user.full_name)
+    return f"{address} {name}" if name and address != "anh chị" else address
 
 
 def display_name(full_name: Optional[str]) -> str:

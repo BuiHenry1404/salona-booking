@@ -19,7 +19,6 @@ from app.agents.booking_graph import agents, analyzer, events, phrase, reply, re
 from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.core.clock import TZ, now_utc, to_local
-from app.repositories.user import UserRepository
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -37,12 +36,7 @@ def tomorrow_at(hour):
 
 @pytest.fixture
 async def user(test_db):
-    """`full_name` giữ tiền tố "Cô Lan" cho các khẳng định đọc tên, nhưng cách
-    gọi giờ đọc `self_address` (Task 13) — seed nó ở đây như migration lúc
-    khởi động thật sự làm cho khách có tiền tố (`seed_self_address_from_names`)."""
-    created = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
-    await UserRepository(test_db).seed_self_address_from_names()
-    return await UserRepository(test_db).get_by_id(str(created.id))
+    return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
 
 
 @pytest.fixture
@@ -715,9 +709,7 @@ def in_two_days(hour):
 
 @pytest.fixture
 async def hung(test_db):
-    created = await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Hùng")
-    await UserRepository(test_db).seed_self_address_from_names()
-    return await UserRepository(test_db).get_by_id(str(created.id))
+    return await AuthService(test_db).create_user("0987654321", "matkhau123", "Chú Hùng")
 
 
 async def graph_values(test_db, user):

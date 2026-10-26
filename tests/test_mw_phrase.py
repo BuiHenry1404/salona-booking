@@ -12,7 +12,7 @@ from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.models.user import User
 from tests.fakes import Hang, scripted
 
-USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám", self_address="anh")
+USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám")
 WHEN = "Thứ Ba 15/9, 9 giờ sáng"
 FACT = {"kind": "booked", "when": WHEN, "note": "cắt tóc", "address": "anh Tám", "error": None}
 FALLBACK = f"Xong rồi ạ. Hẹn gặp anh Tám {WHEN} nhé."

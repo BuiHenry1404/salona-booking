@@ -169,6 +169,17 @@ class TestPronoun:
         assert check_pronoun("Dạ chị Lan, mai 9 giờ sáng ạ.", address, "Lan") is False
         assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", address, "Lan") is True
 
+    def test_pronoun_check_accepts_the_live_prefix_before_migration_runs(self):
+        """Review (2026-10-26): admin tạo tài khoản mới ("Cô Mai") giữa lúc
+        app đang chạy — `self_address` chưa có (migration lúc khởi động chỉ
+        chạy MỘT lần lúc boot), nhưng `address_phrase` vẫn phải suy đúng từ
+        tiền tố NGAY, không đợi tới lần khởi động kế."""
+        user = User(phone="0912345678", hashed_password="x", full_name="Cô Mai")
+        address = address_phrase(user)
+        assert address == "chị Mai"
+        assert check_pronoun("Dạ chị Mai, mai 9 giờ sáng ạ.", address, "Mai") is False
+        assert check_pronoun("Anh Mai muốn đặt giờ nào ạ?", address, "Mai") is True
+
 
 class TestClock:
     @pytest.mark.parametrize("draft", ["Hẹn anh 15:00 nhé.", "Em giữ chỗ chín giờ sáng ạ.",

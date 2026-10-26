@@ -192,10 +192,12 @@ class TestDeriveAddress:
 
 
 class TestAddressPhrase:
-    """Task 13: chữ ký đổi từ `full_name` sang `user` — cách gọi giờ đọc
-    `user.self_address` (khách tự xưng/tiền tố đã seed), không tự suy từ tên
-    nữa. Tên có tiền tố mà CHƯA có `self_address` (migration chưa chạy) vẫn ở
-    "anh chị" — đúng ý "không đoán giới tính từ tên"."""
+    """Task 13 (sửa theo review): chữ ký đổi từ `full_name` sang `user` —
+    `self_address` đọc trước (khách tự xưng, hoặc admin đã sửa tay — thông
+    tin MỚI NHẤT), rồi mới tới tiền tố `full_name` qua `derive_address` NGAY
+    TẠI ĐÂY — tài khoản admin tạo mới giữa lúc app đang chạy ("Cô Mai") phải
+    được gọi đúng ngay lượt đầu, không đợi migration lúc khởi động kế tiếp.
+    Tên không tiền tố thì "anh chị" — không đoán giới tính từ tên đầy đủ."""
 
     def test_self_address_keeps_the_name(self):
         # `display_name` chỉ cắt tiền tố xưng hô; tên không tiền tố đi nguyên
@@ -203,11 +205,23 @@ class TestAddressPhrase:
         assert address_phrase(a_user("Lan", self_address="chị")) == "chị Lan"
         assert address_phrase(a_user("Cô Lan", self_address="chị")) == "chị Lan"
 
-    def test_no_self_address_falls_back_to_anh_chi_even_with_a_prefix(self):
-        # "anh chị Bảy" không ai nói. Chưa biết cách gọi thì gọi trống.
+    def test_no_self_address_falls_back_to_the_live_prefix(self):
+        # "Cô Mai" chưa qua migration (admin vừa tạo tài khoản) vẫn phải
+        # được gọi đúng ngay lượt đầu — không đợi tới lần khởi động kế.
+        assert address_phrase(a_user("Cô Mai")) == "chị Mai"
+        assert address_phrase(a_user("Chú Hùng")) == "anh Hùng"
+
+    def test_ambiguous_prefix_or_no_prefix_falls_back_to_anh_chi(self):
+        # "anh chị Bảy" không ai nói. "Bác" mơ hồ, tên đầy đủ không tiền tố
+        # thì không được đoán giới tính.
         assert address_phrase(a_user("Bác Bảy")) == "anh chị"
-        assert address_phrase(a_user("Cô Lan")) == "anh chị"
+        assert address_phrase(a_user("Nguyễn Thị Lan")) == "anh chị"
         assert address_phrase(a_user(None)) == "anh chị"
+
+    def test_self_address_wins_over_a_conflicting_prefix(self):
+        # Khách tự xưng (hoặc admin sửa tay) là thông tin MỚI nhất — thắng cả
+        # tiền tố cũ trong full_name nếu hai thứ lệch nhau.
+        assert address_phrase(a_user("Cô Lan", self_address="anh")) == "anh Lan"
 
 
 class TestDisplayName:
@@ -231,6 +245,11 @@ class TestContextBlockAddress:
     def test_block_pins_one_form_of_address(self):
         # Model chỉ việc chép dòng này, không tự chọn register mỗi lượt.
         assert "Gọi khách là: chị Lan" in self._block("Cô Lan", self_address="chị")
+
+    def test_block_pins_the_live_prefix_without_self_address(self):
+        # Tài khoản mới admin vừa tạo ("Cô Mai"), chưa qua migration lúc khởi
+        # động — vẫn phải được gọi đúng ngay.
+        assert "Gọi khách là: chị Mai" in self._block("Cô Mai")
 
     def test_block_never_leaks_the_forbidden_register(self):
         # BOOKING_PROMPT cấm nói "cô/chú/bác"; khối bối cảnh không được
