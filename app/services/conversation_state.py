@@ -121,45 +121,76 @@ class ConversationStateService:
 
     async def apply_turn_analysis(self, user_id: str, a: "TurnAnalysis",
                                   last_bot_text: str) -> None:
-        """Ghi THẲNG kết quả bộ phân tích vào `state.slots` của HÔM NAY —
-        không gọi LLM, không nén gì. Tạo state rỗng nếu chưa có (vd. lượt đầu
-        phiên, hoặc đã sang ngày mới). `a` đã qua `sanitize_analysis` trước
-        khi tới đây — hàm này KHÔNG lọc lại nội dung, chỉ hợp nhất và chặn trần.
+        """Ghi THẲNG kết quả bộ phân tích vào `state.slots.{service,stated,asked}`
+        của HÔM NAY — không gọi LLM, không nén gì. `a` đã qua `sanitize_analysis`
+        trước khi tới đây — hàm này KHÔNG lọc lại nội dung, chỉ hợp nhất và
+        chặn trần.
+
+        CHỈ `$set` BA trường slots này (review Task 12 #6) — không đọc-sửa-ghi
+        CẢ document như `_compact`/`set_state` làm: một lượt nén chạy song
+        song giữa lúc đọc và lúc ghi ở đây sẽ bị ghi đè `summary`/
+        `covers_until`, và `$set` nguyên document cũng giẫm lên `$inc` của
+        `bump_state_failures`. Document/`state` CHƯA có thì khởi tạo — không
+        có gì để giẫm lên, giống cách `bump_state_failures` tự tạo state rỗng
+        khi gặp user mới.
         """
         now = now_utc()
         state = await self.conversations.get_state(user_id)
-        if state is None:
-            state = ConversationState(day=to_local(now).date(), covers_until=now,
-                                      summary=[], slots=None)
-        slots = state.slots or ConversationSlots()
+        current = state.slots if state else None
 
-        if a.service:
-            slots.service = a.service
+        service = a.service or (current.service if current else None)
 
-        if a.stated:
-            merged = list(slots.stated)
-            for item in a.stated:
-                if item not in merged:
-                    merged.append(item)
-            slots.stated = merged[-MAX_STATED:]
+        merged_stated = list(current.stated) if current else []
+        for item in a.stated:
+            if item not in merged_stated:
+                merged_stated.append(item)
+        merged_stated = merged_stated[-MAX_STATED:]
 
-        if last_bot_text and last_bot_text.strip().endswith("?"):
-            question = single_line(last_bot_text, STATED_MAX_CHARS)
-            if question:
-                asked = list(slots.asked)
-                existing = next((x for x in asked if x.question == question), None)
-                if existing is not None:
-                    existing.times += 1
-                    if a.answers_question:
-                        existing.answered = True
-                else:
-                    asked.append(AskedItem(question=question,
-                                           answered=bool(a.answers_question), times=1))
-                slots.asked = asked[-MAX_ASKED:]
+        asked = list(current.asked) if current else []
+        question = last_question(last_bot_text)
+        if question:
+            existing = next((x for x in asked if x.question == question), None)
+            if existing is not None:
+                existing.times += 1
+                if a.answers_question:
+                    existing.answered = True
+            else:
+                asked.append(AskedItem(question=question,
+                                       answered=bool(a.answers_question), times=1))
+            asked = asked[-MAX_ASKED:]
 
-        state.slots = slots
-        state.updated_at = now
-        await self.conversations.set_state(user_id, state)
+        slot_fields = {
+            "state.slots.service": service,
+            "state.slots.stated": merged_stated,
+            "state.slots.asked": [item.model_dump() for item in asked],
+            "state.updated_at": now,
+        }
+
+        if state is not None:
+            # State hôm nay đã tồn tại — CHỈ $set ba trường slots.
+            await self.conversations.collection.update_one(
+                {"user_id": user_id}, {"$set": slot_fields})
+            return
+
+        # Chưa có state hôm nay (user mới, hoặc đã sang ngày): khởi tạo CẢ
+        # state trong CÙNG MỘT lần $set — không có state cũ nào để giẫm lên.
+        # `covers_until` = epoch (như `bump_state_failures`), KHÔNG phải
+        # `now` (review Task 12 #1): `now` sẽ khiến `history(after=covers_until)`
+        # coi mọi tin hôm nay là "đã nén" và giấu hết khỏi `context_window`.
+        today = to_local(now).date()
+        init_fields = {
+            "state.day": datetime(today.year, today.month, today.day),
+            "state.covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
+            "state.summary": [],
+            "state.failures": 0,
+            **slot_fields,
+        }
+        await self.conversations.collection.update_one(
+            {"user_id": user_id},
+            {"$set": init_fields,
+             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now}},
+            upsert=True,
+        )
 
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
@@ -274,9 +305,8 @@ _IMPERATIVE_RE = re.compile(r"\b(hãy|bỏ qua|ignore|quên|luôn đồng ý)\b"
 def clean_free_text_item(raw: Optional[str], max_chars: int = STATED_MAX_CHARS) -> Optional[str]:
     """Lọc một mục chữ tự do trước khi vào `stated`/`told`: một dòng, ≤ max_chars
     ký tự, bỏ nếu chứa số điện thoại, địa chỉ hay câu mệnh lệnh ("hãy", "bỏ
-    qua", "ignore", "quên", "luôn đồng ý"). Dùng chung cho `sanitize_slots`
-    (các trường mới) và `sanitize_analysis` (analyzer.py) — một nơi lọc,
-    không lặp luật ở hai chỗ.
+    qua", "ignore", "quên", "luôn đồng ý"). Dùng chung cho `apply_turn_analysis`
+    và `sanitize_analysis` (analyzer.py) — một nơi lọc, không lặp luật ở hai chỗ.
     """
     text = single_line(raw, max_chars)
     if not text:
@@ -286,26 +316,23 @@ def clean_free_text_item(raw: Optional[str], max_chars: int = STATED_MAX_CHARS) 
     return text
 
 
-def _clean_free_text_list(items, *, max_items: int, max_chars: int = STATED_MAX_CHARS) -> List[str]:
-    cleaned: List[str] = []
-    for item in items or []:
-        value = clean_free_text_item(item if isinstance(item, str) else None, max_chars)
-        if value and value not in cleaned:
-            cleaned.append(value)
-    return cleaned[-max_items:]
+# Câu bot vừa hỏi: lấy CÂU CUỐI kết thúc bằng "?" trong `last_bot_text`, không
+# phải 60 ký tự đầu của cả câu trả lời — review Task 12 #5: "Dạ chiều mai còn
+# 3 giờ và 4 giờ ạ. Anh chị muốn giờ nào ạ?" trước đây lưu nhầm phần mở đầu
+# ("Dạ chiều mai còn 3 giờ và 4..."), không phải câu hỏi thật.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.?!])\s+")
 
 
-def _clean_asked_list(items) -> List[AskedItem]:
-    cleaned: List[AskedItem] = []
-    for item in items or []:
-        if not isinstance(item, AskedItem):
-            continue
-        question = clean_free_text_item(item.question, STATED_MAX_CHARS)
-        if not question:
-            continue
-        times = item.times if isinstance(item.times, int) and item.times >= 1 else 1
-        cleaned.append(AskedItem(question=question, answered=bool(item.answered), times=times))
-    return cleaned[-MAX_ASKED:]
+def last_question(text: Optional[str]) -> Optional[str]:
+    """Câu hỏi CUỐI CÙNG trong một câu trả lời của bot, hoặc None nếu câu trả
+    lời không kết ở một câu hỏi (vd. kết bằng dấu chấm, hoặc rỗng)."""
+    if not text:
+        return None
+    parts = [p.strip() for p in _SENTENCE_SPLIT.split(text.strip()) if p.strip()]
+    for part in reversed(parts):
+        if part.endswith("?"):
+            return single_line(part, STATED_MAX_CHARS)
+    return None
 
 
 def _drop(user_id: str, field: str, value) -> None:
@@ -396,14 +423,16 @@ def sanitize_slots(
         declined.append(moment.isoformat())
     declined = declined[-MAX_DECLINED:]
 
-    stated = _clean_free_text_list(raw.stated, max_items=MAX_STATED)
-    told = _clean_free_text_list(raw.told, max_items=MAX_TOLD)
-    asked = _clean_asked_list(raw.asked)
-    # `agreed_at` CHỈ được code ghi từ một đề xuất thật đã duyệt
-    # (`apply_turn_analysis` tương lai) — lượt nén LLM không bao giờ có căn
-    # cứ để tự đoán mốc này, nên luôn bỏ bất kỳ giá trị nào nó bịa ra.
-    if raw.agreed_at is not None:
-        _drop(user_id, "agreed_at", raw.agreed_at)
+    # `stated`/`asked`/`told`/`agreed_at` KHÔNG BAO GIỜ đến từ lượt nén LLM
+    # (review Task 12 #3 / design §3): chúng là của bộ phân tích + code
+    # (`apply_turn_analysis`), ghi thẳng vào `state.slots` ở một đường hoàn
+    # toàn khác, không qua `sanitize_slots`. `StateOutput.slots` vẫn khai báo
+    # kiểu `ConversationSlots` đầy đủ (schema `with_structured_output` thấy
+    # được 4 trường này), nên model CÓ THỂ bịa ra giá trị — luôn bỏ, không lọc
+    # giữ lại, để không ghi đè lên dữ kiện bộ phân tích đã ghi trước lượt nén.
+    for field in ("stated", "asked", "told", "agreed_at"):
+        if getattr(raw, field):
+            _drop(user_id, field, getattr(raw, field))
 
     cleaned = ConversationSlots(
         intent=intent,
@@ -411,10 +440,6 @@ def sanitize_slots(
         day=day.isoformat() if day else None,
         time=clock.strftime("%H:%M") if clock else None,
         declined=declined,
-        stated=stated,
-        told=told,
-        asked=asked,
-        agreed_at=None,
     )
     # Rỗng hoàn toàn thì trả None: khối slots sẽ không được in ra, và lượt nén
     # KHÔNG bị tính là hỏng — hội thoại tán gẫu thì rỗng mới là đúng.

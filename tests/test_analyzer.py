@@ -5,15 +5,18 @@ hàm, không chạy qua `run_turn`. Không chạm DB, model giả thay `build_ch
 (cùng khuôn `test_conversation_state_service.py`, `test_timeparse_llm.py`).
 """
 import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.booking_graph.analyzer import TurnAnalysis, analyze_turn, sanitize_analysis
+from app.agents.booking_graph.prompts import ANALYZE_PROMPT
 
 
 class FakeStructured:
     def __init__(self, reply=None, fail=False):
-        self.reply, self.fail = reply, fail
+        self.reply, self.fail, self.sent = reply, fail, None
 
     async def ainvoke(self, messages):
+        self.sent = messages
         if self.fail:
             raise RuntimeError("azure down")
         return self.reply
@@ -32,13 +35,13 @@ class FakeModel:
 def patch_model(monkeypatch):
     def _install(reply=None, fail=False):
         structured = FakeStructured(reply, fail)
-        kwargs_box = {}
+        box = {"structured": structured}
 
         def _build(**kwargs):
-            kwargs_box["kwargs"] = kwargs
+            box["kwargs"] = kwargs
             return FakeModel(structured)
         monkeypatch.setattr("app.agents.booking_graph.analyzer.build_chat_model", _build)
-        return kwargs_box
+        return box
     return _install
 
 
@@ -105,14 +108,31 @@ async def test_stated_is_capped_at_two(patch_model):
 
 
 async def test_analyzer_does_not_stream_and_uses_low_reasoning(patch_model):
-    kwargs_box = patch_model(reply=TurnAnalysis(route="booking"))
+    box = patch_model(reply=TurnAnalysis(route="booking"))
     await analyze_turn([], "chào em", None)
-    kwargs = kwargs_box["kwargs"]
+    kwargs = box["kwargs"]
     assert kwargs["streaming"] is False
     assert kwargs["reasoning_effort"] == "low"
     assert kwargs["tags"] == ["analyze"]
     assert kwargs["timeout"] == 8
     assert kwargs["max_retries"] == 1
+
+
+async def test_customer_text_and_bot_question_go_in_a_human_message(patch_model):
+    """Review Task 12 #4: chữ khách gõ (và câu bot vừa hỏi) phải nằm trong
+    HumanMessage, không phải SystemMessage — mirror `reply.classify_reply`."""
+    box = patch_model(reply=TurnAnalysis(route="booking"))
+    await analyze_turn([], "làm móng lúc 3 giờ chiều mai", PENDING,
+                       bot_question="Chị muốn làm dịch vụ gì ạ?")
+    sent = box["structured"].sent
+    assert isinstance(sent[0], SystemMessage)
+    assert sent[0].content == ANALYZE_PROMPT
+    last = sent[-1]
+    assert isinstance(last, HumanMessage)
+    assert "làm móng lúc 3 giờ chiều mai" in last.content
+    assert "Chị muốn làm dịch vụ gì ạ?" in last.content
+    assert not any(isinstance(m, SystemMessage) and
+                  "làm móng lúc 3 giờ chiều mai" in str(m.content) for m in sent[1:])
 
 
 class TestTurnAnalysisFallback:

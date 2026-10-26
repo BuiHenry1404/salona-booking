@@ -259,6 +259,34 @@ async def test_compaction_stores_sanitized_slots(test_db, patch_model):
     assert state.slots.time == "15:00"
 
 
+async def test_compaction_never_writes_stated_asked_told(test_db, patch_model):
+    """Review Task 12 #3: `stated`/`asked`/`told`/`agreed_at` là của bộ phân
+    tích + code (`apply_turn_analysis`), KHÔNG của lượt nén — dù
+    `StateOutput.slots` khai báo đủ kiểu `ConversationSlots` (model có thể
+    bịa ra các trường này), `sanitize_slots` phải luôn bỏ chúng."""
+    from app.models.conversation import AgreedAt, AskedItem
+
+    patch_model(reply=StateOutput(
+        summary=["Khách muốn làm tóc."],
+        slots=ConversationSlots(
+            service="làm tóc",
+            stated=["để tiệm chọn giờ"],
+            asked=[AskedItem(question="Chị muốn giờ nào ạ?", answered=True, times=3)],
+            told=["chiều mai hết chỗ"],
+            agreed_at=AgreedAt(proposal_id="p1", at=now_utc()),
+        ),
+    ))
+    await _seed(test_db, turns=12)
+
+    assert await ConversationStateService(test_db).maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.service == "làm tóc"
+    assert state.slots.stated == []
+    assert state.slots.asked == []
+    assert state.slots.told == []
+    assert state.slots.agreed_at is None
+
 
 async def test_empty_slots_are_not_a_failure(test_db, patch_model):
     """Tán gẫu thì không có slot nào — không được đốt cầu chì vì chuyện đó."""

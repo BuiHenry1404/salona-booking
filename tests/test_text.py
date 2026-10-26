@@ -55,3 +55,30 @@ class TestDetectSelfAddress:
 
     def test_unaccented_anh_via_cho(self):
         assert detect_self_address("cho anh 3h") == "anh"
+
+    # Review Task 12 #2: "em"/"con"/"bé" là người đang NÓI — chị/anh trong
+    # câu là người được nhắc tới (lễ tân hoặc người thứ ba), không phải tự
+    # xưng. "giúp/cho chị/anh TÊN" là nhờ vả CHO người thứ ba.
+    def test_em_asking_about_chi_is_not_self_address(self):
+        assert detect_self_address("em muốn hỏi chị làm được không") is None
+
+    def test_em_asking_about_anh_is_not_self_address(self):
+        assert detect_self_address("em hỏi anh rảnh không") is None
+
+    def test_con_is_not_self_address_even_with_chi(self):
+        assert detect_self_address("con muốn chị làm móng cho con") is None
+
+    def test_be_is_not_self_address_even_with_chi(self):
+        assert detect_self_address("bé muốn chị làm cho nó") is None
+
+    def test_giup_chi_name_is_a_third_person_favour(self):
+        assert detect_self_address("giúp chị hoa đặt lịch") is None
+
+    def test_cho_chi_name_is_a_third_person_favour(self):
+        assert detect_self_address("cho chị lan làm móng") is None
+
+    def test_mixed_accents_chi_lam_mong(self):
+        assert detect_self_address("chị lam mong") == "chị"
+
+    def test_chi_with_the_di_verb(self):
+        assert detect_self_address("chị đi làm tóc") == "chị"

@@ -14,7 +14,7 @@ câu khách gõ, gắn nhãn `self_address` sai giới, hay nhét câu mệnh l�
 import asyncio
 from typing import Any, List, Literal, Mapping, Optional, Sequence
 
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.booking_graph.prompts import ANALYZE_PROMPT
@@ -66,11 +66,19 @@ def _describe_pending(pending: Optional[Mapping[str, Any]]) -> str:
 
 
 async def analyze_turn(messages: Sequence[BaseMessage], customer_text: str,
-                       pending: Optional[Mapping[str, Any]]) -> TurnAnalysis:
+                       pending: Optional[Mapping[str, Any]],
+                       bot_question: str = "") -> TurnAnalysis:
     """Một lượt structured output, tag `analyze`, `streaming=False` (bẫy #8:
     JSON phân tích không bao giờ được stream ra màn hình khách). Mọi lỗi/
     timeout/kết quả sai schema → `TurnAnalysis.fallback`. Kết quả LUÔN qua
-    `sanitize_analysis` trước khi trả về."""
+    `sanitize_analysis` trước khi trả về.
+
+    Chữ khách gõ (và câu bot vừa hỏi) nằm trong `HumanMessage` CUỐI, không
+    phải `SystemMessage` (review Task 12 #4) — cùng cấu trúc với
+    `reply.classify_reply`: vai "system" là chỗ của chỉ dẫn cố định, không
+    phải chữ khách tự gõ (chữ khách trong vai system dễ bị model đọc như một
+    chỉ dẫn thay vì dữ liệu cần phân tích).
+    """
     has_pending = pending is not None
     try:
         model = build_chat_model(tags=["analyze"], streaming=False,
@@ -78,11 +86,12 @@ async def analyze_turn(messages: Sequence[BaseMessage], customer_text: str,
                                  timeout=ANALYZE_TIMEOUT_SECONDS,
                                  max_retries=ANALYZE_MAX_RETRIES)
         structured = model.with_structured_output(TurnAnalysis)
-        human = (f"{_describe_pending(pending)}\n"
-                f"Customer's new message: {customer_text}")
+        human = HumanMessage(content=(
+            f"{_describe_pending(pending)}\n"
+            f"Receptionist's last message: {bot_question or '(none)'}\n"
+            f"Customer's new message: {customer_text}"))
         result = await asyncio.wait_for(
-            structured.ainvoke([SystemMessage(content=ANALYZE_PROMPT), *messages,
-                               SystemMessage(content=human)]),
+            structured.ainvoke([SystemMessage(content=ANALYZE_PROMPT), *messages, human]),
             timeout=ANALYZE_TIMEOUT_SECONDS)
         if not isinstance(result, TurnAnalysis):
             raise TypeError(f"unexpected analyzer result {type(result).__name__}")

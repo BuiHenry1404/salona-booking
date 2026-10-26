@@ -246,3 +246,65 @@ class TestApplyTurnAnalysis:
         state = await ConversationService(test_db).get_state("u1")
         assert len(state.slots.stated) == 5
         assert state.slots.stated.count("điều 5") == 1
+
+    async def test_asked_stores_only_the_last_question_sentence(self, test_db):
+        """Review Task 12 #5: câu trả lời có một câu khẳng định trước câu hỏi
+        — chỉ câu hỏi CUỐI mới được lưu, không phải 60 ký tự đầu của cả câu."""
+        svc = ConversationStateService(test_db)
+        a = TurnAnalysis(route="booking", answers_question=False)
+        await svc.apply_turn_analysis(
+            "u1", a, "Dạ chiều mai còn 3 giờ và 4 giờ ạ. Anh chị muốn giờ nào ạ?")
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.asked[0].question == "Anh chị muốn giờ nào ạ?"
+
+    async def test_two_different_questions_with_the_same_preamble_are_two_items(self, test_db):
+        svc = ConversationStateService(test_db)
+        a = TurnAnalysis(route="booking")
+        await svc.apply_turn_analysis(
+            "u1", a, "Dạ chiều mai còn 3 giờ và 4 giờ ạ. Anh chị muốn giờ nào ạ?")
+        await svc.apply_turn_analysis(
+            "u1", a, "Dạ chiều mai còn 3 giờ và 4 giờ ạ. Có cần thêm gì không ạ?")
+        state = await ConversationService(test_db).get_state("u1")
+        questions = [item.question for item in state.slots.asked]
+        assert questions == ["Anh chị muốn giờ nào ạ?", "Có cần thêm gì không ạ?"]
+        assert all(item.times == 1 for item in state.slots.asked)
+
+    async def test_covers_until_stays_at_epoch_so_todays_messages_still_show(self, test_db):
+        """Review Task 12 #1: tạo state mới KHÔNG được đặt `covers_until=now`
+        — làm vậy thì `history(after=covers_until)`/`context_window` coi mọi
+        tin hôm nay là đã nén và giấu hết đi."""
+        conv = ConversationService(test_db)
+        await conv.append("u1", "user", "chào em")
+        await conv.append("u1", "assistant", "dạ chào chị")
+        await conv.append("u1", "user", "em muốn làm móng")
+
+        svc = ConversationStateService(test_db)
+        await svc.apply_turn_analysis("u1", TurnAnalysis(route="booking"), "")
+
+        summary, slots, msgs = await conv.context_window("u1")
+        assert len(msgs) == 3
+
+    async def test_concurrent_compaction_summary_and_failures_are_not_clobbered(self, test_db):
+        """Review Task 12 #6: `apply_turn_analysis` chỉ $set ba trường slots —
+        một `summary`/`failures` được ghi "song song" (mô phỏng ở đây bằng ghi
+        trực tiếp giữa hai lượt gọi) phải sống sót qua lượt gọi SAU."""
+        svc = ConversationStateService(test_db)
+        conv = ConversationService(test_db)
+
+        await svc.apply_turn_analysis("u1", TurnAnalysis(route="booking"), "")
+
+        # Mô phỏng một lượt nén + bump_state_failures chạy "song song": ghi
+        # thẳng summary và failures vào document, không qua apply_turn_analysis.
+        await test_db["conversations"].update_one(
+            {"user_id": "u1"},
+            {"$set": {"state.summary": ["Khách muốn làm tóc."]},
+             "$inc": {"state.failures": 2}},
+        )
+
+        await svc.apply_turn_analysis(
+            "u1", TurnAnalysis(route="booking", service="làm móng"), "Giờ nào ạ?")
+
+        state = await conv.get_state("u1")
+        assert state.summary == ["Khách muốn làm tóc."]
+        assert state.failures == 2
+        assert state.slots.service == "làm móng"
