@@ -33,6 +33,7 @@ from app.agents.booking_graph.context import (address_phrase, declined_line,
                                               queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
 from app.core.clock import now_utc
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.user import User
 from app.services.proposal import (PROPOSAL_MAX_AGE_MINUTES,  # noqa: F401 (re-export)
@@ -57,30 +58,36 @@ def _sentence_start(phrase: str) -> str:
     return phrase[:1].upper() + phrase[1:]
 
 
-def _done(address, kind, when=None, note=None, error=None, fallback=""):
+def _done(address, kind, when=None, note=None, error=None, fallback="", context="first_time"):
     """`confirm_fact` (số liệu, cho phrase viết câu chốt) + `fallback` (câu cứng,
-    guard dùng khi LLM viết sai số liệu)."""
+    guard dùng khi LLM viết sai số liệu). `context` (Task 15): mạch câu chốt
+    ("first_time"/"returning"/"changed_time"/"after_decline") — `phrase` đọc
+    để chọn mẫu/văn phong, thiếu thì coi là lần đầu."""
     return {"confirm_fact": {"kind": kind, "when": when, "note": note,
-                             "address": address, "error": error},
+                             "address": address, "error": error, "context": context},
             "fallback": fallback}
 
 
-def confirm_fact_for(result: ApprovalResult, address: str) -> Optional[dict]:
+def confirm_fact_for(result: ApprovalResult, address: str, *, context: str = "first_time") -> Optional[dict]:
     """Kết quả `approve` → câu chốt, ĐÚNG các nhánh và chuỗi của node cũ.
-    `not_approvable` → None: không có gì để chốt, câu khách là tin mới."""
+    `not_approvable` → None: không có gì để chốt, câu khách là tin mới.
+
+    `context` (Task 15) do chỗ gọi tính sẵn (`_resolve_context`) — hàm này chỉ
+    mang nó vào `confirm_fact`, không tự quyết.
+    """
     if result.outcome == "not_approvable":
         return None
     kind = result.kind
     if result.outcome == "failed":
         message = result.error or "Có lỗi xảy ra"
         if kind == "cancel":
-            return _done(address, "failed", error=message, fallback=f"Dạ {message} ạ.")
-        return _done(address, "failed", error=message,
+            return _done(address, "failed", error=message, fallback=f"Dạ {message} ạ.", context=context)
+        return _done(address, "failed", error=message, context=context,
                      fallback=f"Dạ {message} ạ. {_sentence_start(address)} chọn giờ khác giúp em nhé.")
 
     if kind == "cancel":
         when = format_vi_datetime(result.proposal.start_at)
-        return _done(address, "cancelled", when=when,
+        return _done(address, "cancelled", when=when, context=context,
                      fallback=f"Em hủy lịch {when} cho {address} xong rồi ạ. Cần đặt lại thì cứ nhắn em nhé.")
 
     appointment = result.appointment
@@ -89,25 +96,46 @@ def confirm_fact_for(result: ApprovalResult, address: str) -> Optional[dict]:
         # thật là nhầm thay vì báo một giờ không kiểm được.
         logger.warning("bad_proposal_result", extra={
             "proposal_id": str(result.proposal.id) if result.proposal else None})
-        return _done(address, "failed", error="em nhầm mất rồi",
+        return _done(address, "failed", error="em nhầm mất rồi", context=context,
                      fallback=f"Dạ em nhầm mất rồi, {address} nhắc lại ngày giờ giúp em ạ.")
     when = format_vi_datetime(appointment.start_at)
     if kind == "move":
-        return _done(address, "moved", when=when, note=appointment.note,
+        return _done(address, "moved", when=when, note=appointment.note, context=context,
                      fallback=f"Em dời lịch xong rồi ạ. Hẹn gặp {address} {when} nhé.")
-    return _done(address, "booked", when=when, note=appointment.note,
+    return _done(address, "booked", when=when, note=appointment.note, context=context,
                  fallback=f"Xong rồi ạ. Hẹn gặp {address} {when} nhé.")
 
 
+async def _resolve_context(db: AsyncIOMotorDatabase, user: User, proposal, context_block: str) -> str:
+    """Task 15: mạch câu chốt, suy từ DB + khối bối cảnh — ưu tiên
+    `changed_time` > `after_decline` > `returning` > `first_time` (controller
+    ruling). Không truy vấn nặng thêm cho `returning`: đọc lại đúng dòng
+    "Khách đã đến:" mà `load_context` (Task 14) đã dựng sẵn trong khối bối
+    cảnh, không hỏi lại DB.
+    """
+    if proposal is not None and await ProposalService(db).had_superseded_today(user, proposal.created_at):
+        return "changed_time"
+    block = context_block or ""
+    if "[declined" in block:
+        return "after_decline"
+    if "Khách đã đến:" in block:
+        return "returning"
+    return "first_time"
+
+
 async def execute_proposal(db: AsyncIOMotorDatabase, user: User, proposal_id: str, *,
-                           turn_at) -> Optional[dict]:
+                           turn_at, context_block: str = "") -> Optional[dict]:
     """Duyệt đề xuất qua cổng ghi của service rồi dựng câu chốt.
 
     Xưng hô suy từ `full_name` bằng code, không nhận từ model: model quên
-    truyền là câu chốt mất lời gọi, mà nó quên thật.
+    truyền là câu chốt mất lời gọi, mà nó quên thật. `context_block` (Task 15)
+    dùng để suy `confirm_fact["context"]`.
     """
     result = await ProposalService(db).approve(user, proposal_id, turn_at=turn_at)
-    return confirm_fact_for(result, address_phrase(user))
+    if result.outcome == "not_approvable":
+        return None
+    context = await _resolve_context(db, user, result.proposal, context_block)
+    return confirm_fact_for(result, address_phrase(user), context=context)
 
 
 def with_queue_offer(out: dict, queue: list, address: str) -> dict:
@@ -178,7 +206,8 @@ async def _handle_button(db: AsyncIOMotorDatabase, user: User, state: GraphState
         # `now`, không `state["asked_at"]`: nút bấm không đi qua `record` (không
         # có lượt mới ghi lại mốc "bây giờ"), nên mốc của CHÍNH cú bấm này mới
         # đúng là lượt sau đề xuất — dùng `asked_at` cũ sẽ luôn là "same_turn".
-        out = await execute_proposal(db, user, proposal_id, turn_at=now)
+        out = await execute_proposal(db, user, proposal_id, turn_at=now,
+                                     context_block=state.get("context_block", ""))
         if out is None:
             # `approve` không duyệt được (hết hạn/đổi ý/đã bị đóng) — chưa ghi gì.
             return _stale_button_reply(address)
@@ -245,7 +274,8 @@ def make_confirm_node(
             # nên đi đường chốt như thường: khách nghe xác nhận cho lịch có thật.
             logger.info("proposal_already_approved", extra={"proposal_id": proposal_id})
             out = await execute_proposal(db, user, proposal_id,
-                                         turn_at=state.get("asked_at") or now_utc())
+                                         turn_at=state.get("asked_at") or now_utc(),
+                                         context_block=state.get("context_block", ""))
             if out is not None:
                 return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "text"}
 
@@ -285,14 +315,15 @@ def make_confirm_node(
             return analysis.reply_to_proposal or "unclear"
 
         decision = await reply.decide(text, facts, bot_question=question, now=now_utc(),
-                                      label_fn=label_fn)
+                                      label_fn=label_fn, veto_mode=settings.confirm_veto_mode)
         # `analysis` chỉ có khi bộ phân tích đã chạy (lưới phủ quyết/go-ahead
         # thì không) — `events` ghi nó vào slots sau `complete`.
         analysed = {"analysis": captured["analysis"]} if captured else {}
 
         if decision == "approve":
             out = await execute_proposal(db, user, proposal_id,
-                                         turn_at=state.get("asked_at") or now_utc())
+                                         turn_at=state.get("asked_at") or now_utc(),
+                                         context_block=state.get("context_block", ""))
             if out is None:
                 # Không duyệt được: về supervisor — nó dùng lại `analysis` này,
                 # không gọi bộ phân tích lần hai.

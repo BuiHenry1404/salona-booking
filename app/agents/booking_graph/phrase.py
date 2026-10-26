@@ -6,7 +6,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS, repeats
 from app.agents.booking_graph.history import model_history
-from app.agents.booking_graph.prompts import (PHRASE_KIND_SENTENCES, PHRASE_PROMPT,
+from app.agents.booking_graph.prompts import (PHRASE_CONTEXT_RULES, PHRASE_KIND_SENTENCES,
+                                              PHRASE_LAST_REPLY_RULE, PHRASE_PROMPT,
                                               PHRASE_QUEUED_RULE)
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
@@ -127,8 +128,15 @@ async def write_phrase(state) -> str:
                  if when else "")
     queued = fact.get("queued_when") or []
     queued_rule = PHRASE_QUEUED_RULE.format(when="; ".join(queued)) if queued else ""
-    system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, when_rule=when_rule,
-                                  queued_rule=queued_rule,
+    # Task 15: mạch câu chốt + câu đáp gần nhất, đều nhét vào SYSTEM (không
+    # thêm message mới) — giữ nguyên thứ tự messages mà guard/test đang dựa vào.
+    context_rule = PHRASE_CONTEXT_RULES.get(fact.get("context") or "first_time", "")
+    previous_replies = state.get("previous_replies") or []
+    last_reply = previous_replies[-1] if previous_replies else ""
+    if last_reply:
+        context_rule = f"{context_rule}{PHRASE_LAST_REPLY_RULE.format(last_reply=last_reply)}"
+    system = PHRASE_PROMPT.format(kind_sentence=kind_sentence, context_rule=context_rule,
+                                  when_rule=when_rule, queued_rule=queued_rule,
                                   address=fact.get("address") or "anh chị")
     # Lịch sử cắt đúng như agent (tin đã nén không gửi lại) — xem history.py.
     history = model_history(state["messages"][:-1], after=state.get("history_after"),

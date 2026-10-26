@@ -5,7 +5,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-from app.core.clock import now_utc
+from app.core.clock import local_day_bounds, now_utc, to_local
 from app.models.proposal import Proposal
 from app.repositories.base import BaseRepository
 
@@ -76,6 +76,17 @@ class ProposalRepository(BaseRepository[Proposal]):
             {"$set": {"status": to_status, "updated_at": now_utc(), **(extra or {})}},
         )
         return result.modified_count == 1
+
+    async def has_superseded_today_before(self, user_id: str, before: datetime) -> bool:
+        """Task 15: có đề xuất `superseded` của khách, tạo CÙNG NGÀY giờ VN với
+        `before` (đề xuất vừa được duyệt) và TRƯỚC nó — dấu hiệu khách đã đổi ý
+        về giờ ngay trong phiên này (`context = "changed_time"`)."""
+        start, _ = local_day_bounds(to_local(before).date())
+        doc = await self.collection.find_one({
+            "user_id": user_id, "status": "superseded",
+            "created_at": {"$gte": start, "$lt": before},
+        })
+        return doc is not None
 
     async def increment_unclear(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
         oid = _oid(proposal_id)

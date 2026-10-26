@@ -269,3 +269,57 @@ def test_short_affirmations_are_recognised(text):
 ])
 def test_short_affirmations_rejects_everything_else(text):
     assert not is_short_affirmation(text), text
+
+
+# --- `CONFIRM_VETO_MODE` (Task 15): "time_only" chỉ giữ "other_time" ----------
+
+from app.agents.booking_graph.reply import decide  # noqa: E402
+
+QUESTION = "Dạ em giữ chỗ Thứ Ba 20/10, 3 giờ chiều cho chị Lan, chị chốt giúp em nhé?"
+
+
+async def test_time_only_mode_lets_negation_reach_the_classifier():
+    """"dạ hông" ở chế độ "full" bị lưới chặn thẳng (xem bảng G ở trên);
+    "time_only" phải để nó đi tới `label_fn` — lưới không còn ý kiến về
+    phủ định/hoãn/hỏi, chỉ "giờ khác" mới bị chặn thẳng."""
+    calls = []
+
+    async def label_fn(proposal, bot_question, customer_text):
+        calls.append(customer_text)
+        return "reject"
+
+    result = await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                          veto_mode="time_only")
+    assert calls == ["dạ hông"]
+    assert result == "reject"
+
+
+async def test_time_only_mode_still_vetoes_a_different_time():
+    """"other_time" vẫn bị lưới chặn thẳng ở "time_only" — code so giờ/ngày
+    chắc chắn hơn model, giữ nguyên bất kể chế độ."""
+    async def label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called for other_time")
+
+    result = await decide("dạ 4 giờ nha em", P_BOOK, QUESTION, NOW,
+                          label_fn=label_fn, veto_mode="time_only")
+    assert result == "reject"
+
+
+async def test_default_veto_mode_is_full_and_still_vetoes_negation():
+    """An toàn: không truyền `veto_mode` thì vẫn là "full" — không đổi hành vi
+    hiện có khi cờ chưa bật."""
+    async def label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called in full mode")
+
+    assert await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn) == "reject"
+
+
+async def test_time_only_mode_with_an_unclear_classifier_label_never_approves():
+    """An toàn (yêu cầu bắt buộc của task): gõ "dạ hông" ở "time_only" đi tới
+    bộ phân tích; bộ phân tích không chắc ("unclear") thì KHÔNG được ghi lịch."""
+    async def label_fn(proposal, bot_question, customer_text):
+        return "unclear"
+
+    result = await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                          veto_mode="time_only")
+    assert result == "unclear"

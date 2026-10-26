@@ -421,8 +421,16 @@ REPLY_LABELS = frozenset(ReplyLabel.__args__)
 LabelFn = Callable[[Mapping[str, Any], str, str], Awaitable[Optional[str]]]
 
 
+VetoMode = Literal["full", "time_only"]
+# Task 15: ở chế độ "time_only", chỉ lý do "giờ khác" (so với đề xuất) còn bị
+# lưới chặn thẳng — code so giờ/ngày chắc chắn hơn model nên vẫn giữ. Phủ
+# định/hoãn/hỏi để bộ phân tích (model) tự đọc, vì chúng dễ bắt oan câu không
+# dấu/nửa dấu hơn.
+_TIME_ONLY_KEPT = {"other_time"}
+
+
 async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
-                 now: datetime, *, label_fn: LabelFn) -> str:
+                 now: datetime, *, label_fn: LabelFn, veto_mode: VetoMode = "full") -> str:
     """Lưới code TRƯỚC: có lý do phủ quyết thì "reject" và KHÔNG gọi model.
     Rồi go-ahead ("dời đi", "hủy đi" khi đang chốt dời/hủy). Câu lọt qua cả hai
     mới hỏi `label_fn` (bộ phân tích, Task 12b). Chỉ "approve" mới dẫn tới ghi.
@@ -430,8 +438,14 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     `label_fn` bắt buộc (không có mặc định): người gọi phải chọn rõ nguồn nhãn.
     Nó nổ, hay trả gì ngoài bốn nhãn (kể cả None) → "unclear" — không bao giờ
     suy ra approve từ một câu trả lời không rõ của model.
+
+    `veto_mode` (`CONFIRM_VETO_MODE`, Task 15): "full" (mặc định) giữ nguyên
+    bốn lý do phủ quyết; "time_only" bỏ "negation"/"deferral"/"question" —
+    những câu đó vẫn đi tới `label_fn` thay vì bị lưới chặn thẳng.
     """
     reason = veto_reason(text, proposal, now)
+    if veto_mode == "time_only" and reason not in _TIME_ONLY_KEPT:
+        reason = None
     if reason is not None:
         logger.info("confirm_vetoed", extra={"reason": reason})
         return "reject"

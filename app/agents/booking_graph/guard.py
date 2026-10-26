@@ -18,6 +18,7 @@ from datetime import datetime
 from app.agents.booking_graph.context import (_clock_phrase, address_phrase, derive_address,
                                               format_vi_datetime, live_queue)
 from app.core.clock import to_local
+from app.core.config import settings
 from app.core.text import single_line
 from app.core.logging import get_logger
 from app.models.user import User
@@ -447,15 +448,20 @@ def content_kept(original: str, rewritten: str) -> bool:
 
 def find_violations(draft: str, *, previous_replies: Sequence[str], address: str, name: str,
                     customer_text: str, claims: Optional[dict] = None,
-                    has_proposal: bool = True) -> List[str]:
+                    has_proposal: bool = True, voice_rules: bool = True) -> List[str]:
+    """`voice_rules=False` (cờ `GUARD_VOICE_RULES`, Task 15): bỏ ba phép kiểm
+    GIỌNG (`repeat`/`pronoun`/`clock`) để đo ảnh hưởng tới điểm "tự nhiên" của
+    judge — benchmark trước khi đổi mặc định. `claim` (nói sai sự thật) và
+    `ask_without_proposal` (Task 9, lỗi LLM-02) không phải chuyện giọng, luôn
+    chạy; tên tool cũng luôn bị xoá, ở `apply_guard`, không ở đây."""
     codes: List[str] = []
     if has_false_claim(draft, claims):
         codes.append("claim")
-    if not customer_asked_to_repeat(customer_text) and repeats(draft, previous_replies):
+    if voice_rules and not customer_asked_to_repeat(customer_text) and repeats(draft, previous_replies):
         codes.append("repeat")
-    if check_pronoun(draft, address, name):
+    if voice_rules and check_pronoun(draft, address, name):
         codes.append("pronoun")
-    if check_clock(draft):
+    if voice_rules and check_clock(draft):
         codes.append("clock")
     if not has_proposal and asks_yes_no_about_a_clock(draft):
         codes.append("ask_without_proposal")
@@ -524,9 +530,10 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     customer_text = state.get("customer_text") or ""
     claims = claim_facts(state)
     has_proposal = bool(state.get("proposal_id"))
+    voice_rules = settings.guard_voice_rules
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
                             customer_text=customer_text, claims=claims,
-                            has_proposal=has_proposal)
+                            has_proposal=has_proposal, voice_rules=voice_rules)
     if not codes:
         return {"answer": announce_queue(draft, state, address), "answer_source": "llm", "violations": []}
 
@@ -535,7 +542,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     rewritten = strip_tool_names(new) if new else draft
     second = find_violations(rewritten, previous_replies=previous, address=address, name=name,
                              customer_text=customer_text, claims=claims,
-                             has_proposal=has_proposal)
+                             has_proposal=has_proposal, voice_rules=voice_rules)
     if not content_kept(draft, rewritten) and "claim" not in codes:
         second.append("content")
     out = _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)

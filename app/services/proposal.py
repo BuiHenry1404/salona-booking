@@ -190,6 +190,11 @@ class ProposalService:
         hạn như `get`): khối bối cảnh chỉ cần biết nó đã bị từ chối hay chưa."""
         return await self.repo.latest_for_user(str(user.id))
 
+    async def had_superseded_today(self, user: User, before: datetime) -> bool:
+        """Task 15: khách có đề xuất `superseded` trong CÙNG NGÀY giờ VN,
+        TRƯỚC mốc `before` — dùng để suy `confirm_fact["context"] = "changed_time"`."""
+        return await self.repo.has_superseded_today_before(str(user.id), before)
+
     async def reject(self, user: User, proposal_id: str) -> bool:
         return await self._close(user, proposal_id, "rejected")
 

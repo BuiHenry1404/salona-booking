@@ -82,8 +82,57 @@ async def test_confirm_returns_fact_and_fallback_not_answer(test_db):
     out = await execute_proposal(test_db, user, await book_proposal(test_db, user), turn_at=later())
     assert "answer" not in out
     assert out["confirm_fact"] == {"kind": "booked", "when": format_vi_datetime(tomorrow_at(15)),
-                                   "note": "làm tóc", "address": "chị Lan", "error": None}
+                                   "note": "làm tóc", "address": "chị Lan", "error": None,
+                                   "context": "first_time"}
     assert out["fallback"].startswith("Xong rồi ạ")
+
+
+async def test_fact_context_is_changed_time_after_a_superseded_proposal(test_db):
+    """Task 15: khách đổi ý giờ TRONG CÙNG phiên (đề xuất cũ bị `superseded`
+    khi khách xin giờ khác) — câu chốt phải mang `context = "changed_time"`."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    await service.create(user, "book", tomorrow_at(15), "làm tóc")   # bị superseded ngay dưới
+    second = str((await service.create(user, "book", tomorrow_at(16), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, second, turn_at=later())
+
+    assert out["confirm_fact"]["context"] == "changed_time"
+
+
+async def test_fact_context_is_first_time_without_any_signal(test_db):
+    user = await a_user(test_db)
+    out = await execute_proposal(test_db, user, await book_proposal(test_db, user), turn_at=later())
+    assert out["confirm_fact"]["context"] == "first_time"
+
+
+async def test_fact_context_is_after_decline_when_context_block_has_declined_tag(test_db):
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    out = await execute_proposal(test_db, user, pid, turn_at=later(),
+                                 context_block="Hôm nay: Thứ Hai 19/10.\n[declined: book, iso: 2026-10-20T15:00:00+07:00]")
+    assert out["confirm_fact"]["context"] == "after_decline"
+
+
+async def test_fact_context_is_returning_when_context_block_lists_recent_visits(test_db):
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    out = await execute_proposal(test_db, user, pid, turn_at=later(),
+                                 context_block="Hôm nay: Thứ Hai 19/10.\nKhách đã đến:\n  - 1/10")
+    assert out["confirm_fact"]["context"] == "returning"
+
+
+async def test_fact_context_priority_changed_time_wins_over_after_decline(test_db):
+    """Ruling: changed_time > after_decline > returning > first_time."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    await service.create(user, "book", tomorrow_at(15), "làm tóc")
+    second = str((await service.create(user, "book", tomorrow_at(16), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, second, turn_at=later(),
+                                 context_block="[declined: book, iso: 2026-10-20T15:00:00+07:00]")
+
+    assert out["confirm_fact"]["context"] == "changed_time"
 
 
 async def test_taken_slot_produces_a_friendly_message_not_a_crash(test_db):

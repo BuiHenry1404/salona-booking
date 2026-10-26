@@ -313,6 +313,7 @@ PHRASE_PROMPT = f"""You are the receptionist at a Vietnamese nail and hair salon
 {_VIETNAMESE_ONLY}
 
 {{kind_sentence}}
+{{context_rule}}
 
 Tell the customer in one or two natural Vietnamese sentences that fit the
 conversation so far. {{when_rule}}{{queued_rule}}
@@ -336,6 +337,22 @@ PHRASE_KIND_SENTENCES = {
     "cancelled": "The salon has just CANCELLED this customer's appointment at the time below.",
     "failed": "The salon could NOT complete the booking. The reason, in Vietnamese, is: {error}. Say so and ask them to pick another time.",
 }
+
+# Task 15: mạch câu chốt (`fact["context"]`, do `confirm.py` tính) — mỗi mạch
+# một câu gợi ý GIỌNG, không phải sự kiện bắt buộc nhắc (model vẫn không được
+# bịa chi tiết). Rỗng cho "first_time": không có gì đặc biệt để nói thêm.
+PHRASE_CONTEXT_RULES = {
+    "first_time": "",
+    "returning": "CONTEXT: this is a returning customer (see their recent visits in the context block below); you may sound familiar, but do not invent any detail about those visits.",
+    "changed_time": "CONTEXT: the customer changed their mind about the time earlier in this same conversation; state the FINAL time below clearly so there is no doubt which one now stands.",
+    "after_decline": "CONTEXT: the customer said no to an earlier proposal before agreeing to this one; do not mention that earlier refusal, just confirm this one warmly as a fresh booking.",
+}
+
+# Task 15: nhắc câu đáp LLM gần nhất (`previous_replies[-1]`) để model không
+# lặp lại đúng khung câu cũ — cùng mục tiêu với `guard.repeats`, nhưng nói
+# thẳng cho model tự tránh thay vì chờ guard bắt rồi viết lại.
+PHRASE_LAST_REPLY_RULE = ("\nYour own last reply in this conversation was: \"{last_reply}\"\n"
+                          "Do not reuse its opening words or sentence structure; vary the phrasing.")
 
 
 # Bộ phân loại câu khách trả lời câu hỏi xác nhận (reply.py). Tiếng Anh, KHÔNG

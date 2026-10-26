@@ -283,3 +283,34 @@ class TestFindViolations:
                                 customer_text="3 giờ chiều mai còn trống không em",
                                 has_proposal=False)
         assert "ask_without_proposal" not in codes
+
+    def test_voice_rules_off_keeps_claim_and_tool_name_only(self):
+        """Task 15 (`GUARD_VOICE_RULES=false`): bỏ ba phép kiểm GIỌNG
+        (`repeat`/`pronoun`/`clock`) — `claim` (nói sai sự thật) và
+        `ask_without_proposal` (Task 9) không phải chuyện giọng, vẫn chạy.
+        Tên tool luôn bị xoá ở `apply_guard`, trước mọi phép kiểm — không
+        thuộc `find_violations`, nên không kiểm lại ở đây."""
+        draft = "Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé. Em đã giữ chỗ rồi."
+        claims = {"clocks": [], "any": False, "unknown": False}
+        full = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
+                               customer_text="giá bao nhiêu", claims=claims)
+        assert full == ["claim", "pronoun", "clock"]
+
+        off = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
+                              customer_text="giá bao nhiêu", claims=claims, voice_rules=False)
+        assert off == ["claim"]
+
+    def test_voice_rules_off_still_flags_ask_without_proposal(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=False,
+                                voice_rules=False)
+        assert "ask_without_proposal" in codes
+
+    def test_voice_rules_default_is_on(self):
+        """An toàn: không truyền `voice_rules` thì vẫn kiểm đủ ba luật giọng —
+        không đổi hành vi hiện có khi cờ chưa bật."""
+        codes = find_violations("Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé.",
+                                previous_replies=[], address="anh Tám", name="Tám",
+                                customer_text="giá bao nhiêu")
+        assert codes == ["pronoun", "clock"]

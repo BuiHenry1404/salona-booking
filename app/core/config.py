@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     checkpoint_ttl_days: int = 7
     timezone: str
 
+    # Task 15 — đo benchmark `edge` ở cả hai chế độ trước khi đổi mặc định.
+    # Lưới phủ quyết lượt xác nhận (`reply.decide`): "full" giữ cả bốn lý do
+    # (phủ định/hoãn/hỏi/giờ khác); "time_only" chỉ giữ "giờ khác" + go-ahead,
+    # để phủ định/hoãn/hỏi đi tới bộ phân tích thay vì bị lưới chặn thẳng.
+    confirm_veto_mode: Literal["full", "time_only"] = "full"
+    # Luật giọng trong guard (lặp/xưng hô/giờ viết sai dạng): tắt (false) để đo
+    # ảnh hưởng tới điểm "tự nhiên" của judge — `claim`/`ask_without_proposal`
+    # và việc xoá tên tool luôn chạy, không phụ thuộc cờ này.
+    guard_voice_rules: bool = True
+
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.
     # Bắt buộc có giá trị thật trước khi chạy production.
     shop_phone: str

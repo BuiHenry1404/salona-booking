@@ -99,6 +99,33 @@ class TestWritePhrase:
         await write_phrase(a_state())
         assert "NOT held" not in model.calls[0][0].content
 
+    async def test_phrase_prompt_mentions_context_and_last_reply(self, patch_model):
+        """Task 15: prompt phải đọc `fact["context"]` (gợi ý giọng theo mạch)
+        và câu đáp LLM gần nhất (`previous_replies[-1]`) — để không lặp khung
+        câu cũ. Cả hai nằm trong SYSTEM, không thêm message mới (xem test
+        `test_no_state_leaves_the_message_order_unchanged` — số message không đổi)."""
+        model = patch_model("Dạ anh Tám, lần này em đặt vào Thứ Ba 15/9, 9 giờ sáng rồi ạ.")
+        fact = {**FACT, "context": "returning"}
+        previous = ["Dạ anh Tám, em ghi xong lịch cho anh rồi ạ."]
+        await write_phrase(a_state(confirm_fact=fact, previous_replies=previous))
+        system = model.calls[0][0].content
+        assert "returning customer" in system
+        assert previous[0] in system
+
+    async def test_phrase_prompt_without_a_previous_reply_has_no_last_reply_rule(self, patch_model):
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        await write_phrase(a_state())  # previous_replies=[] mặc định ở a_state()
+        system = model.calls[0][0].content
+        assert "last reply" not in system
+
+    async def test_phrase_prompt_defaults_missing_context_to_first_time(self, patch_model):
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        fact = {k: v for k, v in FACT.items() if k != "context"}
+        await write_phrase(a_state(confirm_fact=fact))
+        system = model.calls[0][0].content
+        assert "returning customer" not in system
+        assert "changed their mind" not in system
+
 
 class TestCodePhrase:
     """`code_phrase`: câu chốt đường nút, viết bằng CODE — không gọi LLM."""
