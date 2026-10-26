@@ -19,7 +19,7 @@ Hai tầng chịu lỗi KHÁC NHAU, đừng nhầm:
 KHÔNG fail-hard như Mongo trong cả hai trường hợp — mất Redis chỉ đáng một
 dòng warning, app chạy tiếp bằng Mongo.
 """
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import redis.asyncio as redis_asyncio
 
@@ -84,6 +84,65 @@ async def ping_redis() -> bool:
         _disabled = True
         _client = None
         return False
+
+
+async def cache_get_or_load(
+    key: str,
+    ttl_s: int,
+    loader: Callable[[], Awaitable[Any]],
+    *,
+    encode: Callable[[Any], str],
+    decode: Callable[[str], Any],
+) -> Any:
+    """Đọc `key` qua Redis trước, gọi `loader()` (Mongo) khi trống/lỗi/tắt.
+
+    `encode`/`decode` do nơi gọi truyền vào (Task 11, shop status/hours) để
+    hàm này ở lại JSON-thuần trong Redis mà vẫn giữ kiểu Pydantic/datetime an
+    toàn phía gọi — không đoán cấu trúc dữ liệu ở đây.
+
+    Redis `None` (tắt/chưa cấu hình) → gọi thẳng `loader()`, không set lại gì
+    (set vào `None` cũng không làm được). Lỗi Redis ở BẤT KỲ bước nào (get hay
+    set) → warning rồi tiếp tục bằng `loader()`, cùng kiểu chịu lỗi với
+    `MessageDedupe` — không ghim tắt vĩnh viễn, lần gọi sau vẫn thử Redis lại.
+    """
+    client = get_redis()
+    if client is not None:
+        try:
+            cached = await client.get(key)
+            if cached is not None:
+                return decode(cached)
+        except Exception as exc:
+            logger.warning(
+                "shop_cache_get_failed", key=key, error=str(exc), error_type=type(exc).__name__
+            )
+            client = None
+
+    value = await loader()
+
+    if client is not None:
+        try:
+            await client.set(key, encode(value), ex=ttl_s)
+        except Exception as exc:
+            logger.warning(
+                "shop_cache_set_failed", key=key, error=str(exc), error_type=type(exc).__name__
+            )
+
+    return value
+
+
+async def cache_delete(key: str) -> None:
+    """Xoá `key` khỏi cache khi dữ liệu gốc vừa đổi (admin sửa trạng thái/giờ).
+
+    Redis tắt/lỗi → no-op, dữ liệu gốc (Mongo) đã là nguồn đúng rồi."""
+    client = get_redis()
+    if client is None:
+        return
+    try:
+        await client.delete(key)
+    except Exception as exc:
+        logger.warning(
+            "shop_cache_delete_failed", key=key, error=str(exc), error_type=type(exc).__name__
+        )
 
 
 def reset_redis_for_tests() -> None:
