@@ -5,9 +5,10 @@ from app.agents.booking_graph.context import (address_phrase,
                                               build_context_block,
                                               derive_address, display_name,
                                               format_vi_datetime,
-                                              format_vi_hhmm)
+                                              format_vi_hhmm, render_slots)
 from app.core.clock import TZ
 from app.models.appointment import Appointment
+from app.models.conversation import AgreedAt, AskedItem, ConversationSlots
 from app.models.shop import ShopStatusView
 from app.models.user import User
 
@@ -395,3 +396,23 @@ class TestDeclinedLineInLoadContext:
         assert format_vi_datetime(self.tomorrow_at(16)) in line
         assert "lịch cũ vẫn giữ nguyên" in line
         assert f"[declined: move, iso: {self.tomorrow_at(16).isoformat()}]" in line
+
+
+class TestRenderSlotsShowsExtendedGroups:
+    """Task 12: `stated`/`asked`/`told`/`agreed_at` — 4 nhóm do bộ phân tích
+    và code dựng (không phải lượt nén LLM), in cùng khối `render_slots`."""
+
+    def test_render_slots_shows_stated_asked_told(self):
+        slots = ConversationSlots(
+            stated=["để tiệm chọn giờ", "chỉ rảnh sau 5 giờ"],
+            asked=[AskedItem(question="Chị muốn làm dịch vụ gì ạ?",
+                             answered=False, times=2)],
+            told=["chiều mai hết chỗ"],
+            agreed_at=AgreedAt(proposal_id="p1",
+                               at=datetime(2026, 9, 19, 10, 0, tzinfo=TZ)),
+        )
+        block = render_slots(slots)
+        assert "- Khách đã nói rõ: để tiệm chọn giờ; chỉ rảnh sau 5 giờ" in block
+        assert '"Chị muốn làm dịch vụ gì ạ?" (chưa đáp ×2)' in block
+        assert "- Em đã nói với khách: chiều mai hết chỗ" in block
+        assert "chỉ để nói, không phải để ghi" in block

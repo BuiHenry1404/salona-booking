@@ -421,8 +421,9 @@ class TestBookingPromptSlimmed:
         # nhà rảnh không ≠ chủ tiệm (rule 1) và vế [relative]/[deferral] ở
         # rule 4 — đo được 8869 — mốc lên 8900. LLM-02 (2026-10-20): rule 1
         # cấm hỏi có/không về giờ chưa propose_appointment — đo được 9057 —
-        # mốc lên 9100.
-        assert len(BOOKING_PROMPT) < 9100
+        # mốc lên 9100. Task 12 (2026-10-26): rule 11 mới, đọc khối trạng
+        # thái mở rộng (asked/stated/told) — đo được 9327 — mốc lên 9400.
+        assert len(BOOKING_PROMPT) < 9400
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -640,3 +641,31 @@ class TestNoYesNoQuestionWithoutAProposal:
 
     def test_the_rule_is_stated(self):
         assert "propose_appointment" in BOOKING_PROMPT and "before asking" in BOOKING_PROMPT
+
+
+class TestAnalyzePrompt:
+    """Task 12: bộ phân tích đầu lượt thay cả supervisor lẫn classify_reply.
+    Cùng luật bẫy #15/#16: không câu ví dụ tiếng Việt. "chị"/"anh" là NHÃN
+    thật của trường self_address, cùng vai với đại từ trong khối VOICE."""
+
+    def test_analyze_prompt_has_no_vietnamese_sample_sentences(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        import re
+        body = ANALYZE_PROMPT
+        for word in ('"chị"', '"anh"'):
+            body = body.replace(word, "")
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(body), vi.search(body).group()
+
+    def test_analyze_prompt_defines_route_and_reply_to_proposal(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        for label in ("booking", "shop", "social"):
+            assert f'"{label}"' in ANALYZE_PROMPT
+        for label in ("approve", "reject", "change", "unclear"):
+            assert f'"{label}"' in ANALYZE_PROMPT
+
+    def test_analyze_prompt_mentions_every_output_field(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        for field in ("route", "reply_to_proposal", "service", "time_text",
+                     "self_address", "stated", "answers_question"):
+            assert f"{field}:" in ANALYZE_PROMPT

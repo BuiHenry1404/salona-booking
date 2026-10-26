@@ -9,9 +9,11 @@ from datetime import datetime, timezone
 import pytest
 import structlog
 
+from app.agents.booking_graph.analyzer import TurnAnalysis
 from app.agents.booking_graph.context import render_slots
 from app.models.conversation import ConversationSlots
-from app.services.conversation_state import sanitize_slots
+from app.services.conversation import ConversationService
+from app.services.conversation_state import ConversationStateService, sanitize_slots
 
 # 2026-09-19 10:00 UTC = 17:00 giờ VN (UTC+7).
 NOW = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
@@ -211,3 +213,36 @@ def test_render_never_uses_a_forbidden_honorific():
                                          day="2026-09-20", time="15:00"))
     for word in (" con ", " cô ", " chú ", " bác "):
         assert word not in f" {out} "
+
+
+class TestApplyTurnAnalysis:
+    """`apply_turn_analysis`: ghi thẳng vào `state.slots`, không gọi LLM.
+    Chạm Mongo thật (test_db) vì nó đọc/ghi document hôm nay."""
+
+    async def test_apply_turn_analysis_marks_question_answered(self, test_db):
+        svc = ConversationStateService(test_db)
+        a = TurnAnalysis(route="booking", answers_question=True)
+        await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.asked[0].answered is True
+        assert state.slots.asked[0].times == 1
+
+    async def test_repeated_question_increments_times(self, test_db):
+        svc = ConversationStateService(test_db)
+        a = TurnAnalysis(route="booking", answers_question=False)
+        await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
+        await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.asked[0].times == 2
+        assert state.slots.asked[0].answered is False
+
+    async def test_stated_capped_at_five_and_deduped(self, test_db):
+        svc = ConversationStateService(test_db)
+        for i in range(6):
+            a = TurnAnalysis(route="booking", stated=[f"điều {i}"])
+            await svc.apply_turn_analysis("u1", a, "")
+        a = TurnAnalysis(route="booking", stated=["điều 5"])
+        await svc.apply_turn_analysis("u1", a, "")
+        state = await ConversationService(test_db).get_state("u1")
+        assert len(state.slots.stated) == 5
+        assert state.slots.stated.count("điều 5") == 1

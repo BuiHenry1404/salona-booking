@@ -3,8 +3,9 @@
 Spec: docs/superpowers/specs/2026-09-19-conversation-state-design.md.
 """
 import asyncio
+import re
 from datetime import date, datetime, time as dtime, timedelta
-from typing import List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, field_validator
@@ -14,8 +15,12 @@ from app.core.clock import ensure_aware, now_utc, to_local
 from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
-from app.models.conversation import ChatMessage, ConversationSlots, ConversationState
+from app.models.conversation import (AskedItem, ChatMessage, ConversationSlots,
+                                     ConversationState)
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
+
+if TYPE_CHECKING:  # tránh vòng import: analyzer.py cần clean_free_text_item ở đây.
+    from app.agents.booking_graph.analyzer import TurnAnalysis
 
 logger = get_logger(__name__)
 
@@ -114,6 +119,48 @@ class ConversationStateService:
         thức là `ConversationService._session_cutoff()`, không lặp lại ở đây."""
         return await self.conversations.session_messages(user_id)
 
+    async def apply_turn_analysis(self, user_id: str, a: "TurnAnalysis",
+                                  last_bot_text: str) -> None:
+        """Ghi THẲNG kết quả bộ phân tích vào `state.slots` của HÔM NAY —
+        không gọi LLM, không nén gì. Tạo state rỗng nếu chưa có (vd. lượt đầu
+        phiên, hoặc đã sang ngày mới). `a` đã qua `sanitize_analysis` trước
+        khi tới đây — hàm này KHÔNG lọc lại nội dung, chỉ hợp nhất và chặn trần.
+        """
+        now = now_utc()
+        state = await self.conversations.get_state(user_id)
+        if state is None:
+            state = ConversationState(day=to_local(now).date(), covers_until=now,
+                                      summary=[], slots=None)
+        slots = state.slots or ConversationSlots()
+
+        if a.service:
+            slots.service = a.service
+
+        if a.stated:
+            merged = list(slots.stated)
+            for item in a.stated:
+                if item not in merged:
+                    merged.append(item)
+            slots.stated = merged[-MAX_STATED:]
+
+        if last_bot_text and last_bot_text.strip().endswith("?"):
+            question = single_line(last_bot_text, STATED_MAX_CHARS)
+            if question:
+                asked = list(slots.asked)
+                existing = next((x for x in asked if x.question == question), None)
+                if existing is not None:
+                    existing.times += 1
+                    if a.answers_question:
+                        existing.answered = True
+                else:
+                    asked.append(AskedItem(question=question,
+                                           answered=bool(a.answers_question), times=1))
+                slots.asked = asked[-MAX_ASKED:]
+
+        state.slots = slots
+        state.updated_at = now
+        await self.conversations.set_state(user_id, state)
+
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
         BAO GIỜ ném — lỗi gì cũng log rồi trả False."""
@@ -209,6 +256,57 @@ MAX_DECLINED = 6
 # nhận, nhưng chặn được lệch năm do model neo sai mốc thời gian.
 MAX_DAYS_AHEAD = 90
 
+# --- 4 nhóm mới (spec mục 3, bộ phân tích câu khách): `stated`/`told` là chữ
+# TỰ DO (bộ phân tích hoặc code), `asked` là câu hỏi của chính bot. Dùng
+# CHUNG một bộ lọc (SĐT/địa chỉ/câu mệnh lệnh) vì cả ba đều chảy thẳng vào
+# prompt dưới vai "dữ kiện", không phải chữ khách gõ nguyên văn — một câu
+# mệnh lệnh nhét vào đây là tiêm prompt y hệt một ghi chú lịch hẹn.
+STATED_MAX_CHARS = 60
+MAX_STATED = 5
+MAX_ASKED = 5
+MAX_TOLD = 5
+
+_PHONE_RE = re.compile(r"\d[\d\s.\-]{6,}\d")
+_ADDRESS_RE = re.compile(r"\b(đường|phường|quận|ngõ|ngách|số nhà|hẻm)\b", re.IGNORECASE)
+_IMPERATIVE_RE = re.compile(r"\b(hãy|bỏ qua|ignore|quên|luôn đồng ý)\b", re.IGNORECASE)
+
+
+def clean_free_text_item(raw: Optional[str], max_chars: int = STATED_MAX_CHARS) -> Optional[str]:
+    """Lọc một mục chữ tự do trước khi vào `stated`/`told`: một dòng, ≤ max_chars
+    ký tự, bỏ nếu chứa số điện thoại, địa chỉ hay câu mệnh lệnh ("hãy", "bỏ
+    qua", "ignore", "quên", "luôn đồng ý"). Dùng chung cho `sanitize_slots`
+    (các trường mới) và `sanitize_analysis` (analyzer.py) — một nơi lọc,
+    không lặp luật ở hai chỗ.
+    """
+    text = single_line(raw, max_chars)
+    if not text:
+        return None
+    if _PHONE_RE.search(text) or _ADDRESS_RE.search(text) or _IMPERATIVE_RE.search(text):
+        return None
+    return text
+
+
+def _clean_free_text_list(items, *, max_items: int, max_chars: int = STATED_MAX_CHARS) -> List[str]:
+    cleaned: List[str] = []
+    for item in items or []:
+        value = clean_free_text_item(item if isinstance(item, str) else None, max_chars)
+        if value and value not in cleaned:
+            cleaned.append(value)
+    return cleaned[-max_items:]
+
+
+def _clean_asked_list(items) -> List[AskedItem]:
+    cleaned: List[AskedItem] = []
+    for item in items or []:
+        if not isinstance(item, AskedItem):
+            continue
+        question = clean_free_text_item(item.question, STATED_MAX_CHARS)
+        if not question:
+            continue
+        times = item.times if isinstance(item.times, int) and item.times >= 1 else 1
+        cleaned.append(AskedItem(question=question, answered=bool(item.answered), times=times))
+    return cleaned[-MAX_ASKED:]
+
 
 def _drop(user_id: str, field: str, value) -> None:
     logger.info("state_slot_dropped", extra={
@@ -298,12 +396,25 @@ def sanitize_slots(
         declined.append(moment.isoformat())
     declined = declined[-MAX_DECLINED:]
 
+    stated = _clean_free_text_list(raw.stated, max_items=MAX_STATED)
+    told = _clean_free_text_list(raw.told, max_items=MAX_TOLD)
+    asked = _clean_asked_list(raw.asked)
+    # `agreed_at` CHỈ được code ghi từ một đề xuất thật đã duyệt
+    # (`apply_turn_analysis` tương lai) — lượt nén LLM không bao giờ có căn
+    # cứ để tự đoán mốc này, nên luôn bỏ bất kỳ giá trị nào nó bịa ra.
+    if raw.agreed_at is not None:
+        _drop(user_id, "agreed_at", raw.agreed_at)
+
     cleaned = ConversationSlots(
         intent=intent,
         service=service,
         day=day.isoformat() if day else None,
         time=clock.strftime("%H:%M") if clock else None,
         declined=declined,
+        stated=stated,
+        told=told,
+        asked=asked,
+        agreed_at=None,
     )
     # Rỗng hoàn toàn thì trả None: khối slots sẽ không được in ra, và lượt nén
     # KHÔNG bị tính là hỏng — hội thoại tán gẫu thì rỗng mới là đúng.

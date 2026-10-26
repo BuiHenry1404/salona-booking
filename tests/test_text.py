@@ -1,4 +1,4 @@
-from app.core.text import single_line
+from app.core.text import detect_self_address, single_line
 
 
 class TestSingleLine:
@@ -28,3 +28,30 @@ class TestSingleLine:
 
     def test_an_ordinary_value_is_untouched(self):
         assert single_line("làm tóc", 80) == "làm tóc"
+
+
+class TestDetectSelfAddress:
+    """Task 13 interface, dựng ở Task 12 vì sanitize_analysis cần nó. Khách
+    lớn tuổi tự xưng bằng chính cách họ muốn được gọi — "chị đặt lịch" là
+    CHÍNH khách muốn đặt, không phải đang nói về người khác."""
+
+    def test_self_address_chi_mid_sentence(self):
+        assert detect_self_address("mai 3 giờ chị làm móng") == "chị"
+
+    def test_self_address_anh_via_cho(self):
+        assert detect_self_address("cho anh 3 giờ chiều") == "anh"
+
+    def test_em_is_not_self_address(self):
+        assert detect_self_address("em muốn làm tóc") is None
+
+    def test_third_person_capitalised_name_is_not_self_address(self):
+        assert detect_self_address("chị Hoa bạn em làm được không") is None
+
+    def test_anh_chi_together_is_not_self_address(self):
+        assert detect_self_address("anh chị ơi") is None
+
+    def test_unaccented_chi(self):
+        assert detect_self_address("chi lam mong") == "chị"
+
+    def test_unaccented_anh_via_cho(self):
+        assert detect_self_address("cho anh 3h") == "anh"

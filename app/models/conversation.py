@@ -29,6 +29,23 @@ class DaySummary(BaseModel):
     preview: str
 
 
+class AskedItem(BaseModel):
+    """Một câu bot đã hỏi, do CODE dựng (không phải lượt nén LLM) — xem
+    `ConversationStateService.apply_turn_analysis`."""
+
+    question: str
+    answered: bool = False
+    times: int = 1
+
+
+class AgreedAt(BaseModel):
+    """Khách đã đồng ý một đề xuất lúc nào — CHỈ để viết câu, không phải căn
+    cứ để ghi lịch (việc ghi lịch vẫn qua node confirm đọc DB như cũ)."""
+
+    proposal_id: str
+    at: datetime
+
+
 class ConversationSlots(BaseModel):
     """Dữ kiện dạng trường của cuộc trò chuyện hôm nay, do lượt nén (LLM) sinh.
 
@@ -39,6 +56,12 @@ class ConversationSlots(BaseModel):
 
     Không có đường code nào đặt/dời/hủy lịch dựa trên các field này. Chúng chỉ
     được in thành chữ trong prompt, và luôn THUA khối bối cảnh.
+
+    `stated`, `asked`, `told`, `agreed_at` là 4 nhóm MỚI (spec mục 3, bộ phân
+    tích): `stated` do bộ phân tích mỗi lượt ghi thẳng (không qua LLM nén);
+    `asked`/`told`/`agreed_at` do CODE dựng. Để chung model vì cả hai loại đều
+    sống trong `ConversationState.slots` và được `render_slots` in ra cùng
+    một khối — tách model riêng chỉ thêm một chỗ nữa phải đồng bộ.
     """
 
     intent: Optional[str] = None                 # "book" | "reschedule" | "cancel"
@@ -46,6 +69,10 @@ class ConversationSlots(BaseModel):
     day: Optional[str] = None                    # "YYYY-MM-DD"
     time: Optional[str] = None                   # "HH:MM"
     declined: List[str] = Field(default_factory=list)   # ISO local, giờ khách đã lắc
+    stated: List[str] = Field(default_factory=list)     # điều khách đã nói rõ/từ chối, ≤5
+    asked: List[AskedItem] = Field(default_factory=list)  # câu bot đã hỏi, ≤5
+    told: List[str] = Field(default_factory=list)       # điều bot đã khẳng định, ≤5
+    agreed_at: Optional[AgreedAt] = None
 
 
 class ConversationState(BaseModel):

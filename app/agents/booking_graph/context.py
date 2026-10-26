@@ -113,6 +113,24 @@ def render_slots(slots) -> str:
                 format_vi_datetime(datetime.fromisoformat(x)) for x in slots.declined
             )
             lines.append(f"- Đã chào mà khách không lấy: {offered}")
+        if slots.stated:
+            lines.append(f"- Khách đã nói rõ: {'; '.join(slots.stated)}")
+        if slots.asked:
+            items = []
+            for item in slots.asked:
+                status = "đã đáp" if item.answered else "chưa đáp"
+                if item.times and item.times >= 2:
+                    status = f"{status} ×{item.times}"
+                items.append(f'"{item.question}" ({status})')
+            lines.append(f"- Em đã hỏi: {'; '.join(items)}")
+        if slots.told:
+            lines.append(f"- Em đã nói với khách: {'; '.join(slots.told)}")
+        if slots.agreed_at:
+            when = to_local(slots.agreed_at.at).strftime("%H:%M")
+            lines.append(
+                f"- Khách đã đồng ý đề xuất lúc {when} "
+                "(chỉ để nói, không phải để ghi)"
+            )
     except Exception as exc:
         # sanitize_slots đã chặn mọi giá trị tới được đây, nhưng một document
         # cũ/hỏng lọt qua thì ném ở đây là events.py nuốt thành "Máy đang bận
