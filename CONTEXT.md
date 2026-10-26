@@ -51,17 +51,19 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 | Mốc | Task | Trạng thái 25/10 |
 |---|---|---|
 | M1 nút xác nhận | 1 reasoning_effort · 2 confirm nhận nút · 3 câu chốt bằng code · 4 `complete.proposal` · 5 event `confirm_proposal` · 6 frontend nút · 7 bench nút | **xong**, tag `target/m1` = `a5af160` |
-| M2 LLM-02 + tin trùng | 8 "ok" ngắn sau booking → booking · 9 guard `ask_without_proposal` | **xong** (`739cd2b`, `85f3753`) |
-| | 10 dedupe `message_id` (Redis, dự phòng Mongo) | **đã commit** `42a28a2` (bench `a149ab7`); review ra 5 lỗi (race Redis→Mongo, "running" không hết hạn, ping/timeout, kịch bản bench) → **đang sửa vòng 1** — xem dòng Task 10 + Ruling cuối sổ tiến độ |
-| | 11 cache trạng thái tiệm qua Redis | chưa |
+| M2 LLM-02 + tin trùng | 8 "ok" ngắn sau booking → booking · 9 guard `ask_without_proposal` · 10 dedupe `message_id` (Redis, dự phòng Mongo) | **xong** (`739cd2b`, `85f3753`, `d466c53`; bench `f5b59ff`) |
+| | 11 cache trạng thái tiệm qua Redis | **đang làm** (26/10) |
 | M3 trí nhớ | 12 bộ phân tích câu khách · 12b nối vào supervisor/confirm · 12c nén theo mục, cuốn chiếu, kèm câu gốc · 13 `self_address`/`staff_note` · 14 `conversation_sessions` | chưa |
 | M4 tự nhiên | 15 phrase theo ngữ cảnh + cờ `CONFIRM_VETO_MODE`/`GUARD_VOICE_RULES` · 16 rubric judge + đo ma trận cờ | chưa |
 
-- **Benchmark M1** (`harness-b/align` vs `target/m1`, tag edge+llm, k=4) chạy nền
-  từ 25/10 12:47 → `../salona-booking/bench/results/20261025-124743-5a317b/`.
+- **Benchmark M1** (`harness-b/align` vs `target/m1`, tag edge+llm, k=4) →
+  `../salona-booking/bench/results/20261025-124743-5a317b/`. Bị dừng khi phiên
+  25/10 kết thúc (82 lượt xong); chạy tiếp 26/10 bằng tiến trình tách rời
+  (`setsid nohup … bench run --resume <run_dir>`, log `bench/results/m1-resume.log`)
+  nên không chết theo phiên. Kiểm còn chạy: `pgrep -f "bench run --resume"`.
   Xem kết quả: `bench/.venv/bin/python -m bench compare <run_dir> --base harness-b/align -o out.html`
   (chạy từ `salona-booking/`). Chưa đọc, chưa ghi số vào đây.
-- Test lúc viết: **1491 backend** (25 deselected cần Azure) + **289 frontend**, xanh.
+- Test lúc viết: **1500 backend** (25 deselected cần Azure) + **289 frontend**, xanh.
   **Chỉ chạy MỘT tiến trình pytest một lúc** (chung DB `chatbot_test_db`).
 
 ### Quyết định đã chốt trong đợt này (đừng mở lại)
