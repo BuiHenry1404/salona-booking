@@ -22,49 +22,73 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — checkpoint 2026-10-25 (đọc mục này trước khi làm tiếp)
+## Trạng thái — checkpoint 2026-10-26 (đọc mục này trước khi làm tiếp)
 
 ### Ở đâu
 
 | Thư mục | Nhánh | Dùng cho |
 |---|---|---|
-| `salona-booking-harness-b/` | `feat/target-architecture` | **code app đang làm** (tách từ `main` @ `cdc7e35`) |
-| `salona-booking/` | `bench/harness-benchmark` | benchmark (`bench/`), chạy so sánh các ref |
+| `salona-booking-harness-b/` | `feat/target-architecture` | **code app đang làm** (tách từ `main` @ `cdc7e35`), **chưa merge, chưa push** |
+| `salona-booking/` | `bench/harness-benchmark` | benchmark (`bench/`) — **không chạy nữa** (xem dưới) |
 
 `main` = Harness B (LangChain `create_agent` + middleware + `interrupt` + checkpointer
 Mongo), đã push. Mọi việc mới đi `feat/... → henry/develop → main`, không commit
 thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus 5.5
 <noreply@anthropic.com>` (từ 25/10; commit trước đó dùng Fable 5.1).
 
-### Đang thực thi plan nào
+### Plan đang chạy
 
 - Spec: `docs/superpowers/specs/2026-10-20-target-architecture-design.md`
 - Plan: `docs/superpowers/plans/2026-10-20-target-architecture.md` (16 task + 12b, 12c)
 - Sơ đồ: `docs/research/Architech.md`
 - **Sổ tiến độ (nguồn sự thật để chạy tiếp):**
   `.superpowers/sdd/2026-10-20-target-architecture/progress.md` — dòng
-  `Task N: complete` = xong, đừng làm lại; mọi `Ruling:` là quyết định đã chốt.
-  Brief/report/review từng task nằm cùng thư mục.
+  `Task N: complete` = xong, đừng làm lại; mọi `Ruling:` là quyết định đã chốt;
+  mọi `minor (deferred)` là việc nhỏ để review cuối phân loại.
 - Thực thi bằng skill `superpowers:subagent-driven-development` (mỗi task: một
   implementer + một reviewer; tối đa 5 vòng sửa).
 
-| Mốc | Task | Trạng thái 25/10 |
-|---|---|---|
-| M1 nút xác nhận | 1 reasoning_effort · 2 confirm nhận nút · 3 câu chốt bằng code · 4 `complete.proposal` · 5 event `confirm_proposal` · 6 frontend nút · 7 bench nút | **xong**, tag `target/m1` = `a5af160` |
-| M2 LLM-02 + tin trùng | 8 "ok" ngắn sau booking → booking · 9 guard `ask_without_proposal` · 10 dedupe `message_id` (Redis, dự phòng Mongo) | **xong** (`739cd2b`, `85f3753`, `d466c53`; bench `f5b59ff`) |
-| | 11 cache trạng thái tiệm qua Redis | **đang làm** (26/10) |
-| M3 trí nhớ | 12 bộ phân tích câu khách · 12b nối vào supervisor/confirm · 12c nén theo mục, cuốn chiếu, kèm câu gốc · 13 `self_address`/`staff_note` · 14 `conversation_sessions` | chưa |
-| M4 tự nhiên | 15 phrase theo ngữ cảnh + cờ `CONFIRM_VETO_MODE`/`GUARD_VOICE_RULES` · 16 rubric judge + đo ma trận cờ | chưa |
+### ĐÃ LÀM
 
-- **Benchmark M1** (`harness-b/align` vs `target/m1`, tag edge+llm, k=4) →
-  `../salona-booking/bench/results/20261025-124743-5a317b/`. Bị dừng khi phiên
-  25/10 kết thúc (82 lượt xong); chạy tiếp 26/10 bằng tiến trình tách rời
-  (`setsid nohup … bench run --resume <run_dir>`, log `bench/results/m1-resume.log`)
-  nên không chết theo phiên. Kiểm còn chạy: `pgrep -f "bench run --resume"`.
-  Xem kết quả: `bench/.venv/bin/python -m bench compare <run_dir> --base harness-b/align -o out.html`
-  (chạy từ `salona-booking/`). Chưa đọc, chưa ghi số vào đây.
-- Test lúc viết: **1500 backend** (25 deselected cần Azure) + **289 frontend**, xanh.
-  **Chỉ chạy MỘT tiến trình pytest một lúc** (chung DB `chatbot_test_db`).
+| Mốc | Task | Commit cuối |
+|---|---|---|
+| M1 nút xác nhận (tag `target/m1`) | 1 `reasoning_effort` cho các lượt phân loại · 2 node `confirm` nhận nút · 3 câu chốt bằng code cho nút · 4 `complete` mang `proposal` · 5 event Socket.IO `confirm_proposal` · 6 frontend nút Đồng ý/Không (xếp dọc, rộng hết ngang, khóa khi mất mạng) · 7 bench: lượt bấm nút | `a5af160` (bench `8095ee8`) |
+| M2 LLM-02 + tin trùng (tag `target/m2`) | 8 "ok" ngắn sau lượt booking → booking · 9 guard `ask_without_proposal` · 10 chống tin trùng `message_id` (Redis, dự phòng Mongo) · 11 cache trạng thái/giờ tiệm qua Redis (ghi xuyên khi admin đổi) | `95ad33f` (bench `f5b59ff`) |
+| M3 trí nhớ (tag `target/m3`) | 12 bộ phân tích câu khách (module) · 12b nối vào supervisor + confirm, mỗi lượt ≤ 1 lượt LLM · 12c nén theo mục cố định, cuốn chiếu, kèm câu gốc khách · 13 `self_address` (khách tự xưng / tiền tố tên) + `staff_note` + bỏ SĐT khỏi prompt · 14 `conversation_sessions` + dòng "Lần trước" / "Khách đã đến" | `f4de292` |
+
+Mỗi task đã qua review (spec + chất lượng); đa số cần đúng một vòng sửa.
+
+### ĐANG LÀM
+
+- **Task 15**: câu chốt theo ngữ cảnh (khách mới / khách quen / vừa đổi giờ / vừa từ
+  chối) + cờ `CONFIRM_VETO_MODE=full|time_only`, `GUARD_VOICE_RULES=true|false`
+  (mặc định giữ hành vi cũ). Theo lệnh chủ dự án: **xong Task 15 + review thì DỪNG**.
+
+### CHƯA LÀM
+
+- **Task 16**: rubric judge chấm "anh chị" đúng ý đồ, kịch bản `khach-tu-xung-chi` —
+  chỉ phần code + unit test; KHÔNG chạy benchmark.
+- **Review toàn nhánh** (model mạnh nhất) + một đợt sửa; phân loại các `minor (deferred)` trong sổ.
+- **Merge** `feat/target-architecture → henry/develop → main` — chủ dự án đã đồng ý
+  merge sau khi xong; **push chưa được hỏi** (hỏi trước khi push).
+- Cập nhật `docs/research/Architech.md` + spec mục 4 cho khớp code (đã ghi trong sổ).
+
+### Benchmark — đã dừng (26/10, quyết định chủ dự án: tốn phí)
+
+- **Không chạy benchmark gọi Azure nữa**; chỉ kiểm bằng test case (pytest/vitest, model
+  giả). Muốn chạy thì hỏi trước, kèm ước lượng số lượt.
+- Kết quả M1 dở dang (217/~384 lượt, `../salona-booking/bench/results/20261025-124743-5a317b/`):
+  ghi sai **0** cả hai bản; nút bấm chốt lịch **0,07–0,19 s** (gõ chữ ~4 s); đạt 98% (`align`)
+  so 96% (`m1`) — chênh do 1 lần Azure timeout + lỗi ghi chú dịch vụ có sẵn (LLM-22/23/28);
+  độ tự nhiên chưa đổi (~2.1/5). Báo cáo dựng lại được bằng `bench compare` (không gọi API).
+- Đổi khung LangChain tự nó không làm bot tốt hơn; cải thiện đến từ logic xác nhận (A→B:
+  ghi sai 8→0) và nút bấm. M3/M4 nhắm vào độ tự nhiên nhưng **chưa có số đo**.
+
+### Test
+
+**1642 backend** (25 deselected cần Azure; 1 test Telegram tự skip sau 15:00) +
+**289 frontend**, xanh lúc viết. **Chỉ chạy MỘT tiến trình pytest một lúc** (chung
+DB `chatbot_test_db`). Toàn suite mất ~6–7 phút.
 
 ### Quyết định đã chốt trong đợt này (đừng mở lại)
 
@@ -88,10 +112,10 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 - **Không có memory LLM tự trích qua nhiều phiên.** Qua phiên chỉ có hồ sơ do code
   dựng: `self_address`, `staff_note`, 3 lần đến gần nhất, tóm tắt phiên gần nhất 7 ngày.
 - Guard giữ regex cho luật an toàn/sự thật (`claim`, `tool_name`,
-  `ask_without_proposal`); ba luật giọng (`repeat`, `pronoun`, `clock`) để benchmark
-  quyết qua cờ ở Task 15.
-- **Để sau, chờ benchmark M2:** khi rewrite không gỡ được câu hỏi có/không về giờ,
-  guard vẫn gửi câu gốc; chưa thay bằng câu cứng vì lưới Task 8 đã giữ được lịch.
+  `ask_without_proposal`); ba luật giọng (`repeat`, `pronoun`, `clock`) bật/tắt qua cờ
+  `GUARD_VOICE_RULES` (Task 15) — không còn benchmark để quyết, giữ mặc định bật.
+- **Để sau:** khi rewrite không gỡ được câu hỏi có/không về giờ, guard vẫn gửi câu gốc;
+  chưa thay bằng câu cứng vì lưới Task 8 đã giữ được lịch.
 - Ràng buộc giao diện ở mục dưới (19px, nút 56px, rộng hết ngang) thắng mọi con số
   khác trong plan.
 
