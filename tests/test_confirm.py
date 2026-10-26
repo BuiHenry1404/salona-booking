@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from app.agents.booking_graph import reply
+from app.agents.booking_graph import analyzer, reply
 from app.agents.booking_graph.confirm import (PROPOSAL_MAX_AGE_MINUTES,
                                               _sentence_start, clarify_question,
                                               execute_proposal, make_confirm_node)
@@ -238,15 +238,23 @@ CFG = {"configurable": {"thread_id": "t1"}}
 
 @pytest.fixture
 def classifier(monkeypatch):
-    """Bộ phân loại giả: trả nhãn đặt sẵn, đếm số lần được gọi."""
+    """Bộ phân tích giả (Task 12b — nhãn cuối của câu gõ chữ đến từ
+    `analyze_turn`, không còn từ `classify_reply`): trả nhãn đặt sẵn, đếm số
+    lần được gọi. `classify_reply` bị gài nổ: đường chính không được gọi nó."""
     state = {"label": "approve", "calls": 0}
 
-    async def fake(proposal, bot_question, customer_text):
+    async def fake(messages, customer_text, pending, bot_question=""):
+        assert pending is not None, "confirm luôn đưa đề xuất cho bộ phân tích"
         state["calls"] += 1
         state["question"] = bot_question
-        return state["label"]
+        return analyzer.sanitize_analysis(
+            analyzer.TurnAnalysis(reply_to_proposal=state["label"]), customer_text, True)
 
-    monkeypatch.setattr(reply, "classify_reply", fake)
+    async def classify_must_not_run(*a, **kw):
+        raise AssertionError("classify_reply không còn nằm trên đường chính")
+
+    monkeypatch.setattr(analyzer, "analyze_turn", fake)
+    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     return state
 
 
@@ -304,6 +312,40 @@ async def test_resume_with_approve_writes_once(test_db, classifier):
     assert classifier["question"] == QUESTION           # model thấy đúng câu bot vừa hỏi
     assert await test_db["appointments"].count_documents({}) == 1
     assert await status_of(test_db, pid) == "approved"
+
+
+async def test_resume_stores_the_analysis_in_state(test_db, classifier):
+    """Task 12b: phân tích của câu gõ chữ nằm lại trong state (`analysis`) để
+    `events` ghi `stated`/`asked` vào slots sau `complete`."""
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "ừ em")
+
+    assert classifier["calls"] == 1
+    assert values["analysis"]["reply_to_proposal"] == "approve"
+
+
+async def test_analyzer_label_none_is_unclear_and_never_books(test_db, classifier, monkeypatch):
+    """Bộ phân tích trả `reply_to_proposal=None` (kể cả khi lọt sanitize):
+    confirm coi là "unclear" — hỏi lại, không ghi."""
+    async def no_label(messages, customer_text, pending, bot_question=""):
+        classifier["calls"] += 1
+        return analyzer.TurnAnalysis(reply_to_proposal=None)
+    monkeypatch.setattr(analyzer, "analyze_turn", no_label)
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "ừ em")
+
+    assert classifier["calls"] == 1
+    assert values["confirm_fact"]["kind"] == "clarify"
+    assert await test_db["appointments"].count_documents({}) == 0
+    assert await status_of(test_db, pid) == "pending"
 
 
 @pytest.mark.parametrize("text", ["dạ ko em", "da ko em", "dạ khoan", "để chị hỏi thằng Huy đã",

@@ -248,12 +248,15 @@ async def test_phrase_sends_only_the_window(monkeypatch):
 
 
 async def test_supervisor_sees_the_last_turns_of_the_window_only(monkeypatch):
-    from app.agents.booking_graph import supervisor
+    from app.agents.booking_graph import analyzer, supervisor
     from tests.fakes import scripted
     model = scripted([AIMessage("social")], tags=("supervisor",))
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: model)
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: model)
     t = now_ms() - timedelta(minutes=10)
     old, new = _pair("cũ", "đáp cũ", t), _pair("mới", "đáp mới", t + timedelta(minutes=2))
     await supervisor.supervise({"messages": [*old, *new, HumanMessage("chào")],
                                 "history_after": t + timedelta(minutes=1)})
-    assert [m.content for m in model.calls[0][1:]] == ["mới", "đáp mới", "chào"]
+    # Bộ phân tích (Task 12b): câu khách nằm trong HumanMessage CUỐI do
+    # `analyze_turn` dựng, sau cửa sổ lịch sử.
+    assert [m.content for m in model.calls[0][1:-1]] == ["mới", "đáp mới"]
+    assert model.calls[0][-1].content.endswith("Customer's new message: chào")

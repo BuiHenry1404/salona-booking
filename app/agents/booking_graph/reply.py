@@ -3,7 +3,8 @@
 Thay `is_affirmative` (regex tìm từ "đồng ý" ở BẤT KỲ đâu trong câu — "phải tính
 trước cho chắc" từng ghi lịch thật). Hướng đã đảo: code không còn quyết "đồng
 ý"; nó chỉ được quyết "chắc chắn KHÔNG phải đồng ý". Câu nào lưới cho qua mới
-tới bộ phân loại, và chỉ ghi khi model nói approve VÀ lưới không phủ quyết.
+tới nhãn của model (`label_fn` — bộ phân tích đầu lượt trên đường chính, Task
+12b), và chỉ ghi khi model nói approve VÀ lưới không phủ quyết.
 
 Lưới so trên CẢ bản có dấu lẫn bản đã bỏ dấu: khách lớn tuổi gõ không dấu hoặc
 nửa dấu nửa không ("dạ khong em"). Bỏ dấu sinh trùng chữ ("Hồng" → "hong",
@@ -13,7 +14,7 @@ một lượt booking hỏi lại, bỏ sót là ghi nhầm lịch.
 import asyncio
 import re
 from datetime import datetime
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Awaitable, Callable, Literal, Mapping, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -412,10 +413,24 @@ async def classify_reply(proposal: Mapping[str, Any], bot_question: str,
         return "unclear"
 
 
+ReplyLabel = Literal["approve", "reject", "change", "unclear"]
+REPLY_LABELS = frozenset(ReplyLabel.__args__)
+# Cùng chữ ký với `classify_reply` (proposal, bot_question, customer_text) —
+# nên `classify_reply` vẫn cắm vào được để so sánh, dù đường chính (confirm,
+# Task 12b) cắm bộ phân tích đầu lượt.
+LabelFn = Callable[[Mapping[str, Any], str, str], Awaitable[Optional[str]]]
+
+
 async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
-                 now: datetime) -> str:
+                 now: datetime, *, label_fn: LabelFn) -> str:
     """Lưới code TRƯỚC: có lý do phủ quyết thì "reject" và KHÔNG gọi model.
-    Không thì nhãn của bộ phân loại. Chỉ "approve" mới dẫn tới ghi lịch."""
+    Rồi go-ahead ("dời đi", "hủy đi" khi đang chốt dời/hủy). Câu lọt qua cả hai
+    mới hỏi `label_fn` (bộ phân tích, Task 12b). Chỉ "approve" mới dẫn tới ghi.
+
+    `label_fn` bắt buộc (không có mặc định): người gọi phải chọn rõ nguồn nhãn.
+    Nó nổ, hay trả gì ngoài bốn nhãn (kể cả None) → "unclear" — không bao giờ
+    suy ra approve từ một câu trả lời không rõ của model.
+    """
     reason = veto_reason(text, proposal, now)
     if reason is not None:
         logger.info("confirm_vetoed", extra={"reason": reason})
@@ -423,4 +438,14 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     if is_go_ahead(text, proposal.get("kind")):
         logger.info("confirm_go_ahead", extra={"kind": proposal.get("kind")})
         return "approve"
-    return await classify_reply(proposal, bot_question, text)
+    try:
+        label = await label_fn(proposal, bot_question, text)
+    except Exception as exc:
+        # CancelledError (lượt mới thay) là BaseException — không bị nuốt.
+        logger.warning("confirm_label_failed", extra={"error": str(exc)[:200],
+                                                      "error_type": type(exc).__name__})
+        return "unclear"
+    if label not in REPLY_LABELS:
+        logger.warning("confirm_label_invalid", extra={"label": str(label)[:40]})
+        return "unclear"
+    return label

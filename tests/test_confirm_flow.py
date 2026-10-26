@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from app.agents import checkpoint
-from app.agents.booking_graph import agents, events, phrase, reply, rewrite, supervisor
+from app.agents.booking_graph import agents, analyzer, events, phrase, reply, rewrite
 from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.core.clock import TZ, now_utc, to_local
@@ -41,23 +41,48 @@ async def user(test_db):
 
 @pytest.fixture
 def models(monkeypatch):
+    """Task 12b: một bộ phân tích (`analyzer.analyze_turn`) thay cả supervisor
+    model lẫn `classify_reply`. Bọc nó để tách hai đường cho dễ khẳng định:
+
+    - tin mới (`pending=None`, từ supervisor): chạy `analyze_turn` THẬT trên
+      model giả `sup` (đếm `sup.calls` như trước);
+    - câu trả lời đề xuất (`pending` khác None, từ confirm): "bộ phân loại"
+      giả — trả `classifier["label"]` (hoặc `classifier["fn"]`), đếm
+      `classifier["calls"]`.
+
+    `analyzer_calls` đếm MỌI lời gọi (mỗi lượt tối đa một). `classify_reply`
+    bị gài nổ: đường chính không được gọi nó nữa."""
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
     phrase_model = scripted([])
-    classifier = {"label": "approve", "calls": 0}
+    classifier = {"label": "approve", "calls": 0, "fn": None}
+    analyzer_calls = []
+    real_analyze = analyzer.analyze_turn
 
-    async def fake_classify(proposal, bot_question, customer_text):
+    async def fake_analyze(messages, customer_text, pending, bot_question=""):
+        analyzer_calls.append({"pending": pending, "customer_text": customer_text,
+                               "bot_question": bot_question})
+        if pending is None:
+            return await real_analyze(messages, customer_text, pending, bot_question=bot_question)
         classifier["calls"] += 1
-        return classifier["label"]
+        label = (classifier["label"] if classifier["fn"] is None
+                 else await classifier["fn"](pending, bot_question, customer_text))
+        return analyzer.sanitize_analysis(
+            analyzer.TurnAnalysis(reply_to_proposal=label), customer_text, True)
 
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    async def classify_must_not_run(*a, **kw):
+        raise AssertionError("classify_reply không còn nằm trên đường chính")
+
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "analyze_turn", fake_analyze)
     monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
     monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: phrase_model)
     monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
-    monkeypatch.setattr(reply, "classify_reply", fake_classify)
+    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
     monkeypatch.setattr(events, "get_callbacks", lambda: [])
-    return SimpleNamespace(sup=sup, agent=agent, phrase=phrase_model, classifier=classifier)
+    return SimpleNamespace(sup=sup, agent=agent, phrase=phrase_model, classifier=classifier,
+                           analyzer_calls=analyzer_calls)
 
 
 async def turn(test_db, user, text):
@@ -447,7 +472,7 @@ async def test_resume_cancelled_while_classifying_then_yes_books_once(test_db, u
         if calls["n"] == 1:
             await asyncio.sleep(5)
         return "approve"
-    monkeypatch.setattr(reply, "classify_reply", slow_then_approve)
+    models.classifier["fn"] = slow_then_approve
 
     second = asyncio.create_task(turn(test_db, user, "ừ"))
     await asyncio.sleep(0.2)
@@ -723,7 +748,7 @@ async def test_live_b2_two_bookings_in_one_message_are_booked_one_at_a_time(test
     async def classify(proposal, bot_question, customer_text):
         seen_by_classifier.append(proposal)
         return "approve"
-    monkeypatch.setattr(reply, "classify_reply", classify)
+    models.classifier["fn"] = classify
     models.phrase.replies += [AIMessage(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")]
     out = await turn(test_db, hung, "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao")
     assert seen_by_classifier and seen_by_classifier[0]["queued"] == [two.isoformat()]
@@ -1077,3 +1102,84 @@ async def test_run_turn_resumes_a_button_reply_end_to_end(test_db, user, models)
 
     stored = (await test_db["conversations"].find_one({"user_id": str(user.id)}))["messages"]
     assert stored[-2]["content"] == "Đồng ý"               # lịch sử cho thấy khách đã bấm gì
+
+
+# --- Task 12b: bộ phân tích trên đường chính ------------------------------------
+
+async def test_typed_reply_uses_analyzer_label_after_veto_grid(test_db, user, models):
+    """Veto vẫn thắng: "dạ ko em" + bộ phân tích "approve" → không ghi, và bộ
+    phân tích KHÔNG được gọi (lưới chặn trước)."""
+    await propose_turn(test_db, user, models)
+    models.classifier["label"] = "approve"
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+    before = len(models.analyzer_calls)
+
+    await turn(test_db, user, "dạ ko em")
+
+    assert await appointments(test_db) == 0
+    assert models.classifier["calls"] == 0
+    assert len(models.analyzer_calls) == before
+
+    # Câu lọt lưới: nhãn cuối là của bộ phân tích, có đề xuất đi kèm.
+    await propose_turn(test_db, user, models)
+    models.phrase.replies += [AIMessage("")]
+    await turn(test_db, user, "ừ được đó em")
+    assert models.classifier["calls"] == 1
+    assert models.analyzer_calls[-1]["pending"]["kind"] == "book"
+    assert models.analyzer_calls[-1]["bot_question"] == QUESTION
+    assert await appointments(test_db) == 1
+
+
+async def test_analyzer_failure_on_typed_reply_never_books(test_db, user, models, monkeypatch):
+    """Bộ phân tích THẬT, model nổ → bản lùi "unclear": hỏi lại, không ghi."""
+    await propose_turn(test_db, user, models)
+    monkeypatch.setattr(analyzer, "analyze_turn", _REAL_ANALYZE)
+
+    def boom(**kw):
+        raise RuntimeError("azure 500")
+    monkeypatch.setattr(analyzer, "build_chat_model", boom)
+    models.phrase.replies += [AIMessage("")]
+
+    out = await turn(test_db, user, "ừ được đó em")
+
+    assert await appointments(test_db) == 0
+    assert (await pending(test_db, user)) is not None          # đề xuất còn chờ
+    assert "chốt giúp em" in out[-1][1]["answer"]             # câu hỏi lại của code
+
+
+# `analyze_turn` gốc — fixture `models` bọc nó, test cần bản thật thì lấy ở đây.
+_REAL_ANALYZE = analyzer.analyze_turn
+
+
+async def test_button_turn_never_calls_analyzer(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    before = len(models.analyzer_calls)
+    proposal = await pending(test_db, user)
+
+    await button(test_db, user, "yes", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 1
+    assert len(models.analyzer_calls) == before
+    assert models.classifier["calls"] == 0
+
+
+async def test_analyzer_runs_at_most_once_per_turn(test_db, user, models, monkeypatch):
+    """Tin mới: một lời gọi (supervisor). Trả lời đề xuất bằng chữ mà đề xuất
+    không duyệt được (approve → not_approvable → về supervisor): vẫn MỘT lời
+    gọi — supervisor dùng lại phân tích của confirm."""
+    models.agent.replies += [AIMessage("Dạ chào chị ạ")]
+    await turn(test_db, user, "chào em")
+    assert len(models.analyzer_calls) == 1
+
+    await propose_turn(test_db, user, models)
+    assert len(models.analyzer_calls) == 2
+
+    async def not_approvable(self, user, proposal_id, *, turn_at):
+        return proposal_module.ApprovalResult(outcome="not_approvable")
+    monkeypatch.setattr(ProposalService, "approve", not_approvable)
+    models.agent.replies += [AIMessage("Dạ chị muốn đặt giờ nào ạ?")]
+
+    await turn(test_db, user, "ừ được đó em")
+
+    assert len(models.analyzer_calls) == 3
+    assert await appointments(test_db) == 0

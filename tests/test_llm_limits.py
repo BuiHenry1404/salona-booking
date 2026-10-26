@@ -11,7 +11,7 @@ from langchain.agents.middleware import ModelRetryMiddleware
 from langchain_core.messages import AIMessage
 
 from app.agents import llm
-from app.agents.booking_graph import agents, events, phrase, rewrite, supervisor
+from app.agents.booking_graph import agents, analyzer, events, phrase, rewrite
 from app.core.config import settings
 from app.services.auth import AuthService
 from tests.fakes import Hang, scripted
@@ -84,7 +84,7 @@ async def user(test_db):
 def models(monkeypatch):
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
     monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
     monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: scripted([]))
     monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
@@ -221,11 +221,11 @@ def test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap():
     lượt. Mỗi đường của một lượt — tin mới (supervisor) hay resume (bộ phân
     loại) — cộng ngân sách xấu nhất: bước phân loại + một lần gọi model agent
     kèm thử lại + rewrite của guard. Live: supervisor 3 × 20 giây > 60 giây."""
-    from app.agents.booking_graph import guard, reply
+    from app.agents.booking_graph import guard
     agent_call = (llm.LLM_TIMEOUT_SECONDS * (1 + agents.MODEL_RETRIES)
                   + agents.MODEL_RETRY_DELAY_SECONDS * 1.25 * agents.MODEL_RETRIES)
-    fresh = supervisor.SUPERVISOR_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
-    resume = reply.CLASSIFY_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
+    fresh = analyzer.ANALYZE_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
+    resume = analyzer.ANALYZE_TIMEOUT_SECONDS + agent_call + guard.REWRITE_TIMEOUT_SECONDS
     assert fresh < events.TURN_TIMEOUT_SECONDS
     assert resume < events.TURN_TIMEOUT_SECONDS
 
@@ -233,7 +233,7 @@ def test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap():
 async def test_supervisor_stall_degrades_to_booking_not_to_an_error(test_db, user, models, monkeypatch):
     """Lỗi live 1: supervisor treo → lượt vẫn trả lời (route booking), không
     `error`, và xong sớm hơn hẳn trần lượt."""
-    monkeypatch.setattr(supervisor, "SUPERVISOR_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(analyzer, "ANALYZE_TIMEOUT_SECONDS", 0.2)
     models.sup.replies += [Hang(30, AIMessage("social"))]
     models.agent.replies += [AIMessage("Dạ chị muốn đặt ngày nào ạ?")]
 
@@ -272,8 +272,8 @@ async def test_stalled_azure_on_the_real_sdk_degrades_instead_of_timing_out(
         monkeypatch.setattr(settings, "azure_openai_api_key", SecretStr("khoa-gia"))
         monkeypatch.setattr(settings, "azure_openai_endpoint",
                             f"http://127.0.0.1:{hole.getsockname()[1]}")
-        monkeypatch.setattr(supervisor, "build_chat_model", llm.build_chat_model)
-        monkeypatch.setattr(supervisor, "SUPERVISOR_TIMEOUT_SECONDS", 0.5)
+        monkeypatch.setattr(analyzer, "build_chat_model", llm.build_chat_model)
+        monkeypatch.setattr(analyzer, "ANALYZE_TIMEOUT_SECONDS", 0.5)
         monkeypatch.setattr(events, "TURN_TIMEOUT_SECONDS", 6.0)
         models.agent.replies += [AIMessage("Dạ chị muốn làm móng ngày nào ạ?")]
         logged = []

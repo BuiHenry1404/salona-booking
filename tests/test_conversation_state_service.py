@@ -296,7 +296,9 @@ async def test_empty_slots_are_not_a_failure(test_db, patch_model):
     assert await ConversationStateService(test_db).maybe_compact("u1") is True
 
     state = await ConversationService(test_db).get_state("u1")
-    assert state.slots is None
+    # Task 12b: lượt nén chỉ `$set` các trường nó sở hữu → slots có thể là
+    # một object rỗng thay vì None; cả hai đều không in ra khối slots nào.
+    assert state.slots is None or state.slots == ConversationSlots()
     assert state.failures == 0
 
 
@@ -337,3 +339,80 @@ async def test_the_prompt_promises_the_same_cap_the_code_enforces(test_db, patch
     assert str(NOTE_MAX) in service_line
     assert str(BULLET_MAX_CHARS) not in service_line
     assert f"{BULLET_MAX_CHARS} characters" in prompt        # summary giữ trần cũ
+
+
+
+# --- Task 12b: lượt nén không được xoá trường của bộ phân tích ------------------
+
+async def test_compaction_keeps_the_analyzer_fields(test_db, patch_model):
+    """`_compact` từng `$set` CẢ `state` (set_state) — xoá sạch
+    `stated`/`asked` mà `apply_turn_analysis` vừa ghi. Giờ nó chỉ ghi các
+    trường nó sở hữu."""
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+
+    await _seed(test_db, turns=12)
+    svc = ConversationStateService(test_db)
+    await svc.apply_turn_analysis(
+        "u1", TurnAnalysis(stated=["để tiệm chọn giờ"], service="làm móng gel"),
+        "Chị muốn giờ nào ạ?")
+    patch_model(reply=StateOutput(summary=["Khách muốn làm tóc."],
+                                  slots=ConversationSlots(intent="book")))
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.summary == ["Khách muốn làm tóc."]           # phần của lượt nén
+    assert state.covers_until.year > 1970
+    assert state.slots.intent == "book"
+    assert state.slots.stated == ["để tiệm chọn giờ"]          # phần của bộ phân tích
+    assert [x.question for x in state.slots.asked] == ["Chị muốn giờ nào ạ?"]
+    assert state.slots.service == "làm móng gel"              # nén không có service: giữ
+
+
+async def test_compaction_overwrites_service_only_with_a_value(test_db, patch_model):
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+
+    await _seed(test_db, turns=12)
+    svc = ConversationStateService(test_db)
+    await svc.apply_turn_analysis("u1", TurnAnalysis(service="làm móng gel"), "")
+    patch_model(reply=StateOutput(summary=["Khách muốn sơn gel."],
+                                  slots=ConversationSlots(service="sơn gel")))
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.service == "sơn gel"
+
+
+async def test_analysis_lands_on_a_state_whose_slots_are_null(test_db, patch_model):
+    """`bump_state_failures` (nén hỏng) tạo state với `slots: null`; `$set`
+    `state.slots.stated` trên null là lỗi Mongo — bộ phân tích phải vẫn ghi được."""
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+
+    await ConversationService(test_db).bump_state_failures("u1")
+    await ConversationStateService(test_db).apply_turn_analysis(
+        "u1", TurnAnalysis(stated=["để tiệm chọn giờ"]), "")
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.stated == ["để tiệm chọn giờ"]
+    assert state.failures == 1
+
+
+async def test_analysis_replaces_a_stale_state_from_yesterday(test_db):
+    """State của hôm qua (`day` khác hôm nay) không được để lại `stated`/`summary`
+    cũ khi bộ phân tích tạo state hôm nay."""
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+    from app.models.conversation import ConversationState
+
+    yesterday = to_local(now_utc()).date() - timedelta(days=1)
+    await ConversationService(test_db).set_state("u1", ConversationState(
+        day=yesterday, covers_until=now_utc() - timedelta(days=1), summary=["cũ"],
+        slots=ConversationSlots(stated=["điều hôm qua"], intent="cancel")))
+
+    await ConversationStateService(test_db).apply_turn_analysis(
+        "u1", TurnAnalysis(stated=["điều hôm nay"]), "")
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.stated == ["điều hôm nay"]
+    assert state.slots.intent is None and state.summary == []
+    assert state.covers_until.year == 1970

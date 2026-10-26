@@ -9,7 +9,9 @@ Thay node regex cũ (`is_affirmative` + cờ `pending_confirmation` trong
    token `respond` bình thường), rồi tới đây: `interrupt(...)`. Lượt chat kết
    thúc với `complete` như A.
 3. Lượt sau `run_turn` resume bằng câu khách. Node đọc lại đề xuất từ DB (theo
-   chủ), rồi `decide`: lưới code phủ quyết trước, bộ phân loại sau. CHỈ approve
+   chủ), rồi `decide`: lưới code phủ quyết trước, go-ahead, rồi nhãn của bộ
+   phân tích đầu lượt (`analyzer.analyze_turn`, Task 12b). Nút bấm (dict)
+   không bao giờ gọi bộ phân tích. CHỈ approve
    mới gọi `ProposalService.approve` — cổng ghi duy nhất, kiểm lại mọi thứ.
 
 Không có tool ghi. Code sau `interrupt()` chạy đúng một lần mỗi lần resume; nếu
@@ -25,7 +27,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import interrupt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph import reply
+from app.agents.booking_graph import analyzer, reply
 from app.agents.booking_graph.context import (address_phrase, declined_line,
                                               format_vi_datetime, live_queue,
                                               queue_offer, with_line)
@@ -267,15 +269,37 @@ def make_confirm_node(
         queue = live_queue(state.get("queued"))
         facts = {"kind": proposal.kind, "start_at": proposal.start_at,
                  "queued": [q["start_at"] for q in queue]}
-        decision = await reply.decide(text, facts, bot_question=question, now=now_utc())
+
+        # Nhãn cuối của câu gõ chữ = bộ phân tích đầu lượt (Task 12b), thay
+        # `classify_reply`. Chỉ chạy khi lưới phủ quyết VÀ go-ahead đều cho qua
+        # (`reply.decide` giữ nguyên thứ tự) — nên tối đa một lời gọi mỗi lượt.
+        # Lời gọi đã có đề xuất (`pending=facts`) nên `reply_to_proposal` không
+        # bao giờ None sau sanitize; vẫn ép None/lạ → "unclear" ở đây và ở
+        # `decide`: không bao giờ ghi khi model không nói rõ approve.
+        captured: dict = {}
+
+        async def label_fn(proposal_facts, bot_question, customer_text):
+            analysis = await analyzer.analyze_turn(
+                [], customer_text, proposal_facts, bot_question=bot_question)
+            captured["analysis"] = analysis.model_dump()
+            return analysis.reply_to_proposal or "unclear"
+
+        decision = await reply.decide(text, facts, bot_question=question, now=now_utc(),
+                                      label_fn=label_fn)
+        # `analysis` chỉ có khi bộ phân tích đã chạy (lưới phủ quyết/go-ahead
+        # thì không) — `events` ghi nó vào slots sau `complete`.
+        analysed = {"analysis": captured["analysis"]} if captured else {}
 
         if decision == "approve":
             out = await execute_proposal(db, user, proposal_id,
                                          turn_at=state.get("asked_at") or now_utc())
             if out is None:
-                return {"proposal_id": None, "gate_next": "supervisor"}
+                # Không duyệt được: về supervisor — nó dùng lại `analysis` này,
+                # không gọi bộ phân tích lần hai.
+                return {"proposal_id": None, "gate_next": "supervisor", **analysed}
             out = with_queue_offer(out, queue, address)
-            return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "text"}
+            return {**out, "proposal_id": None, "gate_next": "phrase", "confirm_source": "text",
+                    **analysed}
 
         if decision == "unclear":
             marked = await proposals.mark_unclear(user, proposal_id)
@@ -289,7 +313,8 @@ def make_confirm_node(
                 logger.info("confirm_unclear", extra={"proposal_id": proposal_id})
                 return {"draft": ask, "fallback": ask, "gate_next": "phrase",
                         "confirm_fact": {"kind": "clarify", "when": when, "note": None,
-                                         "address": address, "error": None}}
+                                         "address": address, "error": None},
+                        **analysed}
         elif decision == "change":
             await proposals.supersede(user, proposal_id)
         else:
@@ -306,7 +331,8 @@ def make_confirm_node(
         logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
         return {"proposal_id": None, "gate_next": "booking",
                 "context_block": with_line(state.get("context_block", ""),
-                                           declined_line(proposal))}
+                                           declined_line(proposal)),
+                **analysed}
 
     return node
 

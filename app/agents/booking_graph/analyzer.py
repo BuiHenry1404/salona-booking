@@ -2,9 +2,9 @@
 
 Thay LƯỢT của supervisor (định tuyến) VÀ của `reply.classify_reply` (đọc câu
 đáp đề xuất): một lượt structured output duy nhất, mỗi turn vẫn tối đa một
-lượt LLM trước agent — không thêm lượt nào. Module này CHƯA được nối vào
-graph (Task 12b lo việc đó); ở đây chỉ dựng `analyze_turn`, `TurnAnalysis` và
-`sanitize_analysis`.
+lượt LLM trước agent — không thêm lượt nào. Task 12b nối nó vào graph:
+`supervisor.supervise` (tin mới, sau lối tắt code) và nhãn cuối của
+`reply.decide` trong node `confirm` (câu gõ chữ, sau lưới phủ quyết/go-ahead).
 
 Mọi kết quả — kể cả bản lùi an toàn khi lỗi/timeout — đều phải qua
 `sanitize_analysis` trước khi dùng: model có thể bịa `time_text` không phải

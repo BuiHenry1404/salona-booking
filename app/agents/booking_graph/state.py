@@ -36,3 +36,8 @@ class GraphState(TypedDict, total=False):
     # xoá mỗi lượt mới — phải sống qua checkpointer để supervisor lượt sau
     # biết "ừ" tiếp theo có phải đang nối lượt booking không (lỗi LLM-02).
     last_route: NotRequired[str]
+    # Kết quả bộ phân tích đầu lượt (`TurnAnalysis.model_dump()`, Task 12b) —
+    # supervisor hoặc confirm ghi, TỐI ĐA một lần mỗi lượt; `events` đọc sau
+    # `complete` để ghi `stated`/`asked` vào slots. `fresh_turn_fields` đặt
+    # lại None mỗi lượt: phân tích của lượt trước không được mang sang.
+    analysis: NotRequired[Optional[dict]]

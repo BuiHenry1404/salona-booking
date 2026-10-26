@@ -25,9 +25,10 @@ logger = get_logger(__name__)
 
 # Trần thời gian của MỘT lượt (A-04): Azure treo thì khách nhận câu lỗi như A
 # thay vì chờ mãi. Phải lớn hơn TỔNG ngân sách xấu nhất trên một đường của
-# lượt, không chỉ phần agent: bước phân loại (supervisor 8 giây ở tin mới, bộ
-# phân loại 8 giây ở resume) + một lần gọi model agent kèm thử lại (20 giây ×
-# (1 + 1) + 0,5 giây) + rewrite của guard (8 giây) ≈ 56,5 giây. Có test chặn
+# lượt, không chỉ phần agent: bước phân loại (bộ phân tích 8 giây, ở supervisor
+# với tin mới HOẶC ở confirm khi resume — tối đa một lần mỗi lượt) + một lần
+# gọi model agent kèm thử lại (20 giây × (1 + 1) + 0,5 giây) + rewrite của
+# guard (8 giây) ≈ 56,5 giây. Có test chặn
 # (`test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap`): một lần
 # gọi treo phải xuống cấp (fallback, thử lại), không ăn hết trần.
 TURN_TIMEOUT_SECONDS = 60
@@ -113,6 +114,44 @@ async def pick_thread(graph, user_id: str, now: datetime) -> str:
     return today
 
 
+def bot_text_before_turn(messages) -> str:
+    """Câu bot mà câu khách CỦA LƯỢT NÀY đang trả lời — để `apply_turn_analysis`
+    ghi/tăng `asked`. Chỉ khi nó đứng NGAY trước câu khách lượt này (tin
+    HumanMessage cuối): hai tin khách liền nhau (lượt trước bị thay/lỗi, không
+    có câu bot ở giữa) thì câu bot cũ đã thuộc về lượt trước → "" để không
+    tăng `asked.times` lần hai cho cùng một câu hỏi."""
+    messages = list(messages or [])
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            before = messages[i - 1] if i > 0 else None
+            if isinstance(before, AIMessage):
+                return str(before.content or "")
+            return ""
+    return ""
+
+
+async def apply_analysis(db: AsyncIOMotorDatabase, user_id: str, values: dict) -> None:
+    """Ghi kết quả bộ phân tích của lượt vào slots (Task 12b). Sau `complete`,
+    dưới `shield` (lượt mới thay giữa chừng không được cắt đôi lần ghi). KHÔNG
+    BAO GIỜ ném: lỗi ở đây chỉ đáng mất dữ kiện slots của một lượt."""
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+
+    analysis = values.get("analysis")
+    if not analysis:
+        return
+    try:
+        await asyncio.shield(asyncio.ensure_future(
+            ConversationStateService(db).apply_turn_analysis(
+                user_id, TurnAnalysis(**analysis),
+                last_bot_text=bot_text_before_turn(values.get("messages")))))
+    except Exception as exc:
+        # CancelledError là BaseException: lượt bị thay vẫn huỷ như thường
+        # (phần ghi đã shield chạy nốt).
+        logger.warning("turn_analysis_apply_failed", extra={
+            "user_id": user_id, "error": str(exc)[:200], "error_type": type(exc).__name__,
+        })
+
+
 def fresh_turn_fields(context: dict, question: str) -> dict:
     """Mọi khoá một lượt sinh ra, đặt lại cho lượt mới.
 
@@ -137,6 +176,9 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         # lượt nó duyệt — không reset ở đây thì một lượt gõ chữ SAU một lượt
         # bấm nút sẽ mang nhầm "button" sang (khoá cũ không có trong input này).
         "confirm_source": "text",
+        # Phân tích là của MỘT lượt: để lại thì supervisor lượt sau tưởng đã
+        # phân tích rồi (bỏ qua model), và events ghi slots lần hai.
+        "analysis": None,
         "context_block": context["context_block"],
         "summary": context.get("summary") or [],
         "slots": context.get("slots"),
@@ -381,6 +423,11 @@ async def _run_turn(
 
         proposal = await pending_proposal_payload(db, user, snapshot)
         yield AgentEvent("complete", {"answer": answer, "proposal": proposal})
+
+        # Sau complete, cạnh `persist`: dữ kiện bộ phân tích vào slots NGAY
+        # lượt này (lượt sau thấy `stated` mà không chờ nén nền). Ghi TRƯỚC khi
+        # lên lịch nén để hai lần ghi không chạy chồng ngay từ đầu.
+        await apply_analysis(db, user_id, values)
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không

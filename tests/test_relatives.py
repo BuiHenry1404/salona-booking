@@ -12,7 +12,7 @@ model, và agent đọc một dòng code viết trong khối bối cảnh.
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph import supervisor
+from app.agents.booking_graph import analyzer, supervisor
 from app.agents.booking_graph.relatives import aside_line, asks_if_relative_free, defers
 from tests.fakes import scripted
 
@@ -65,7 +65,7 @@ async def test_supervisor_sends_them_to_booking_without_the_model(monkeypatch, t
     """Model giả trả "shop" (đúng lỗi lượt 4): code phải đi trước, không hỏi model.
     (Model ném lỗi thì supervisor cũng ra booking — không chứng minh được gì.)"""
     sup = scripted([AIMessage("shop")], tags=("supervisor",))
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
     assert await supervisor.supervise({"messages": [HumanMessage(text)]}) == {"route": "booking"}
     assert sup.calls == []
 

@@ -15,8 +15,7 @@ from app.core.clock import ensure_aware, now_utc, to_local
 from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
-from app.models.conversation import (AskedItem, ChatMessage, ConversationSlots,
-                                     ConversationState)
+from app.models.conversation import AskedItem, ChatMessage, ConversationSlots
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
 if TYPE_CHECKING:  # tránh vòng import: analyzer.py cần clean_free_text_item ở đây.
@@ -119,6 +118,43 @@ class ConversationStateService:
         thức là `ConversationService._session_cutoff()`, không lặp lại ở đây."""
         return await self.conversations.session_messages(user_id)
 
+    async def _set_today_fields(self, user_id: str, fields: dict, now: datetime) -> None:
+        """`$set` ĐÚNG các trường `state.*` trong `fields` của state HÔM NAY —
+        không bao giờ ghi CẢ `state` (review Task 12/12b). Lượt nén
+        (`_compact`) và bộ phân tích (`apply_turn_analysis`) mỗi bên chỉ sở
+        hữu một phần của `state`; ghi cả document là xoá phần của bên kia (vd.
+        nén xoá `stated`/`asked`) và giẫm lên lần ghi song song.
+
+        MỘT lệnh update dạng pipeline (nguyên tử trên document), xử lý luôn
+        ba ca mà `$set` đường chấm thường bị vấp:
+        - chưa có document → upsert (`messages: []`, `created_at`);
+        - `state` thiếu hoặc của NGÀY KHÁC → thay bằng state rỗng của hôm nay
+          (`covers_until` = epoch — `now` sẽ giấu mọi tin hôm nay khỏi
+          `context_window`, review Task 12 #1), không để sót dữ kiện hôm qua;
+        - `state.slots` là null (`set_state`/`bump_state_failures` ghi
+          `slots: None`) → `{}`: `$set state.slots.x` trên null là lỗi Mongo.
+        Giá trị bọc `$literal`: chữ khách (`stated`) bắt đầu bằng "$" không
+        được hiểu thành đường dẫn trường trong pipeline.
+        """
+        today = to_local(now).date()
+        day = datetime(today.year, today.month, today.day)
+        fresh = {"day": day, "covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
+                 "summary": [], "updated_at": now, "failures": 0, "slots": {}}
+        await self.conversations.collection.update_one(
+            {"user_id": user_id},
+            [
+                {"$set": {
+                    "state": {"$cond": [{"$eq": ["$state.day", day]}, "$state",
+                                        {"$literal": fresh}]},
+                    "messages": {"$ifNull": ["$messages", []]},
+                    "created_at": {"$ifNull": ["$created_at", {"$literal": now}]},
+                }},
+                {"$set": {"state.slots": {"$ifNull": ["$state.slots", {}]}}},
+                {"$set": {key: {"$literal": value} for key, value in fields.items()}},
+            ],
+            upsert=True,
+        )
+
     async def apply_turn_analysis(self, user_id: str, a: "TurnAnalysis",
                                   last_bot_text: str) -> None:
         """Ghi THẲNG kết quả bộ phân tích vào `state.slots.{service,stated,asked}`
@@ -130,9 +166,8 @@ class ConversationStateService:
         CẢ document như `_compact`/`set_state` làm: một lượt nén chạy song
         song giữa lúc đọc và lúc ghi ở đây sẽ bị ghi đè `summary`/
         `covers_until`, và `$set` nguyên document cũng giẫm lên `$inc` của
-        `bump_state_failures`. Document/`state` CHƯA có thì khởi tạo — không
-        có gì để giẫm lên, giống cách `bump_state_failures` tự tạo state rỗng
-        khi gặp user mới.
+        `bump_state_failures`. Document/`state` CHƯA có (hay của hôm qua,
+        hay `slots: null`) thì `_set_today_fields` khởi tạo trong cùng lệnh.
         """
         now = now_utc()
         state = await self.conversations.get_state(user_id)
@@ -159,38 +194,12 @@ class ConversationStateService:
                                        answered=bool(a.answers_question), times=1))
             asked = asked[-MAX_ASKED:]
 
-        slot_fields = {
+        await self._set_today_fields(user_id, {
             "state.slots.service": service,
             "state.slots.stated": merged_stated,
             "state.slots.asked": [item.model_dump() for item in asked],
             "state.updated_at": now,
-        }
-
-        if state is not None:
-            # State hôm nay đã tồn tại — CHỈ $set ba trường slots.
-            await self.conversations.collection.update_one(
-                {"user_id": user_id}, {"$set": slot_fields})
-            return
-
-        # Chưa có state hôm nay (user mới, hoặc đã sang ngày): khởi tạo CẢ
-        # state trong CÙNG MỘT lần $set — không có state cũ nào để giẫm lên.
-        # `covers_until` = epoch (như `bump_state_failures`), KHÔNG phải
-        # `now` (review Task 12 #1): `now` sẽ khiến `history(after=covers_until)`
-        # coi mọi tin hôm nay là "đã nén" và giấu hết khỏi `context_window`.
-        today = to_local(now).date()
-        init_fields = {
-            "state.day": datetime(today.year, today.month, today.day),
-            "state.covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
-            "state.summary": [],
-            "state.failures": 0,
-            **slot_fields,
-        }
-        await self.conversations.collection.update_one(
-            {"user_id": user_id},
-            {"$set": init_fields,
-             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now}},
-            upsert=True,
-        )
+        }, now)
 
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
@@ -264,13 +273,26 @@ class ConversationStateService:
             user_id=user_id,
         )
 
-        await self.conversations.set_state(user_id, ConversationState(
-            day=to_local(now).date(),
-            covers_until=older[-1].created_at,
-            summary=result.summary,
-            slots=slots,
-            failures=0,
-        ))
+        # CHỈ các trường lượt nén sở hữu (Task 12b) — `set_state` ghi CẢ
+        # `state` và xoá `stated`/`asked`/`told`/`agreed_at` mà bộ phân tích
+        # (`apply_turn_analysis`) đã ghi giữa hai lượt nén. `service` cả hai
+        # bên cùng ghi: nén chỉ được ghi đè khi nó CÓ giá trị — nén không thấy
+        # dịch vụ không có nghĩa là khách chưa nói.
+        today = to_local(now).date()
+        fields = {
+            "state.day": datetime(today.year, today.month, today.day),
+            "state.covers_until": older[-1].created_at,
+            "state.summary": result.summary,
+            "state.updated_at": now,
+            "state.failures": 0,
+            "state.slots.intent": slots.intent if slots else None,
+            "state.slots.day": slots.day if slots else None,
+            "state.slots.time": slots.time if slots else None,
+            "state.slots.declined": list(slots.declined) if slots else [],
+        }
+        if slots and slots.service:
+            fields["state.slots.service"] = slots.service
+        await self._set_today_fields(user_id, fields, now)
         logger.info("state_compacted", extra={
             "user_id": user_id, "bullets": len(result.summary), "compacted": len(older),
             "slots": bool(slots),

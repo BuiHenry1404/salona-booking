@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from langchain_core.messages import HumanMessage
 
-from app.agents.booking_graph import supervisor
+from app.agents.booking_graph import analyzer, supervisor
 from app.agents.booking_graph.context import (QUEUE_MAX_AGE_MINUTES, live_queue,
                                               queue_offer, queued_line)
 from app.agents.booking_graph.middleware.confirm import next_queue
@@ -58,6 +58,6 @@ def test_queued_line_and_offer_are_code_written():
 async def test_supervisor_routes_to_booking_while_a_request_waits(monkeypatch):
     def boom(**kw):
         raise AssertionError("supervisor model must not be called")
-    monkeypatch.setattr(supervisor, "build_chat_model", boom)
+    monkeypatch.setattr(analyzer, "build_chat_model", boom)
     out = await supervisor.supervise({"messages": [HumanMessage("ừ")], "queued": [item(LATER)]})
     assert out == {"route": "booking"}
