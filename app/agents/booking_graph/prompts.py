@@ -415,6 +415,16 @@ Sections:
   it, for the same reason as wants.
 - open (at most {open_max} items): what is still unresolved.
 
+WITHDRAWAL: when the customer withdraws or cancels something that is already
+in the previous digest's wants, never simply leave wants empty to signal
+that — an empty wants list means "nothing changed, keep the previous one",
+never "the customer no longer wants anything". Instead write a wants item
+that the customer no longer wants it (for example "no longer wants X"), and
+move the original item into declined. The same applies to constraints: when
+a constraint no longer applies, write a constraints item that it no longer
+applies (for example "constraint X no longer applies") instead of leaving
+constraints empty.
+
 Do NOT record whether an appointment is currently booked or cancelled — the
 live schedule is supplied separately and wins. Do NOT quote sentences from
 either side in any section; write facts about the customer, never

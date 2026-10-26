@@ -265,6 +265,33 @@ async def test_previous_digest_is_passed_to_the_compaction_prompt(test_db, patch
     assert first[0].content not in prompt          # tin đã phủ không gửi lại
 
 
+async def test_withdrawal_sticks_and_is_not_restored_by_the_rolling_merge(test_db, patch_model):
+    """Review finding (2026-10-26): nếu model trả `wants=[]` để báo khách rút
+    yêu cầu, `merge_digest` (đúng theo plan: rỗng = giữ nguyên) sẽ PHỤC HỒI
+    want cũ — và tin rút yêu cầu đã nằm sau `covers_until` nên không bao giờ
+    xuất hiện lại ở NEW MESSAGES của lượt nén sau. Theo luật WITHDRAWAL mới
+    của `DIGEST_PROMPT`, model phải ghi một mục `wants` MỚI nói rõ đã rút —
+    test này canh rằng khi model làm đúng vậy, việc rút bỏ ở lại, không bị
+    cuốn chiếu phục hồi."""
+    patch_model(reply=StateOutput(digest=StateDigest(wants=["làm tóc"])))
+    await _seed(test_db, 12)
+    svc = ConversationStateService(test_db)
+    assert await svc.maybe_compact("u1") is True
+
+    # Lượt nén sau: khách đã rút yêu cầu — model ghi đúng luật WITHDRAWAL
+    # (mục wants MỚI nói đã rút, KHÔNG để wants rỗng).
+    patch_model(reply=StateOutput(digest=StateDigest(
+        wants=["không còn muốn làm tóc nữa"], declined=["làm tóc"],
+    )))
+    await _seed(test_db, 12)
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.digest.wants == ["không còn muốn làm tóc nữa"]
+    assert "làm tóc" not in state.digest.wants
+    assert state.digest.declined == ["làm tóc"]
+
+
 async def test_already_covered_session_does_not_recompact(test_db, patch_model):
     model = patch_model()
     await _seed(test_db, 12)

@@ -704,3 +704,13 @@ class TestDigestPromptIsEnglishWithNoVietnameseSamples:
     def test_asks_for_the_same_slots_as_before(self):
         assert "slots" in DIGEST_PROMPT.lower()
         assert "YYYY-MM-DD" in DIGEST_PROMPT
+
+    def test_withdrawal_rule_forbids_signalling_by_an_empty_list(self):
+        """Review finding: `merge_digest`'s empty-means-keep (plan-mandated)
+        means an empty `wants`/`constraints` from the model can never mean
+        "the customer withdrew it" — the prompt must say so explicitly and
+        tell the model to record the withdrawal as a positive item instead."""
+        assert "WITHDRAWAL" in DIGEST_PROMPT
+        assert "no longer wants" in DIGEST_PROMPT
+        assert "no longer applies" in DIGEST_PROMPT
+        assert "never simply leave wants empty" in DIGEST_PROMPT
