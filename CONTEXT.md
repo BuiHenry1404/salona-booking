@@ -59,15 +59,25 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 
 Mỗi task đã qua review (spec + chất lượng); đa số cần đúng một vòng sửa.
 
-### ĐANG LÀM
+### ĐÃ LÀM thêm (26/10)
 
-- **Task 15**: câu chốt theo ngữ cảnh (khách mới / khách quen / vừa đổi giờ / vừa từ
-  chối) + cờ `CONFIRM_VETO_MODE=full|time_only`, `GUARD_VOICE_RULES=true|false`
-  (mặc định giữ hành vi cũ). Theo lệnh chủ dự án: **xong Task 15 + review thì DỪNG**.
+- **Task 15** (`c6ad77b`): câu chốt theo ngữ cảnh (khách mới / khách quen / vừa đổi giờ /
+  vừa từ chối — suy từ đề xuất đã đóng trong ngày) + cờ `CONFIRM_VETO_MODE=full|time_only`,
+  `GUARD_VOICE_RULES=true|false` (mặc định giữ hành vi cũ). Qua review sau 1 vòng sửa.
+- **Đã DỪNG** sau Task 15 theo lệnh chủ dự án.
+
+### ĐANG BÀN (chưa quyết)
+
+- Chủ dự án thấy kiến trúc "cứ phải vá liên tục". Nguyên nhân: agent booking (LLM) tự
+  lái luồng đặt lịch, mỗi kiểu lái sai cần một lớp chặn mới. Đề xuất đang bàn: **4 bước** —
+  HIỂU (LLM, bộ phân tích có sẵn) → CẬP NHẬT phiếu đặt lịch (code) → QUYẾT hành động
+  (code, bảng luật) → NÓI (LLM viết câu từ số liệu). Giữ nguyên vỏ: nút, proposals, Redis,
+  trí nhớ. Làm sau cờ `BOOKING_ENGINE=agent|rules`. Nếu chọn hướng này, Task 16 và phần
+  lớn các bản vá quanh agent (lối tắt "ok", `ask_without_proposal`, lưới từ khóa) sẽ thừa.
 
 ### CHƯA LÀM
 
-- **Task 16**: rubric judge chấm "anh chị" đúng ý đồ, kịch bản `khach-tu-xung-chi` —
+- **Task 16** (tạm treo, chờ quyết hướng 4 bước): rubric judge chấm "anh chị" đúng ý đồ, kịch bản `khach-tu-xung-chi` —
   chỉ phần code + unit test; KHÔNG chạy benchmark.
 - **Review toàn nhánh** (model mạnh nhất) + một đợt sửa; phân loại các `minor (deferred)` trong sổ.
 - **Merge** `feat/target-architecture → henry/develop → main` — chủ dự án đã đồng ý
