@@ -13,7 +13,7 @@ class GraphState(TypedDict, total=False):
     messages: Annotated[List[AnyMessage], add_messages]
     user_id: str
     context_block: str
-    summary: List[str]
+    summary: str                      # digest 5 mục đã dựng sẵn thành chữ (Task 12c), hay "" khi rỗng
     slots: Optional[Any]         # ConversationSlots đã sạch; None khi không có
     proposal_id: Optional[str]       # đề xuất chờ khách đồng ý (DB `proposals`)
     queued: List[Dict[str, Any]]     # lịch khách xin thêm, chờ đề xuất lần lượt (context.queued_line)

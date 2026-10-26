@@ -189,7 +189,7 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
                                                  queued_line(queue)),
                                        aside_line(state.get("customer_text") or "")),
             "queued": queue,
-            "summary": state.get("summary") or [],
+            "summary": state.get("summary") or "",
             "slots": state.get("slots"),
             # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
             # bị gửi lại nguyên văn mỗi lượt (F2).

@@ -131,7 +131,9 @@ async def test_load_context_returns_the_state_summary(test_db):
         day=to_local(now_utc()).date(), covers_until=cut, summary=["Khách chào."]))
 
     context = await load_context(test_db, user, "x")
-    assert context["summary"] == ["Khách chào."]
+    # Task 12c: `summary` giờ là chuỗi đã dựng sẵn (tài liệu này chỉ có
+    # `summary` cũ, chưa có `digest` → fallback render gạch đầu dòng).
+    assert "- Khách chào." in context["summary"]
     assert [m.content for m in context["history"]] == ["mới"]
 
 

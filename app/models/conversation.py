@@ -75,6 +75,25 @@ class ConversationSlots(BaseModel):
     agreed_at: Optional[AgreedAt] = None
 
 
+class StateDigest(BaseModel):
+    """Bản tóm tắt CUỐN CHIẾU theo 5 mục cố định (spec mục 3, đoạn "Nén giữ
+    lại, đổi cách tóm", thêm 25/10/2026) — thay cho `summary` tự do kiểu gạch
+    đầu dòng của Task 12.
+
+    THÙNG CHỨA THÔ như `ConversationSlots`: không validate gì ở đây (đích của
+    `with_structured_output`, một field sai kiểu sẽ đánh trượt cả lượt nén).
+    Lọc độ dài/nội dung và cắt trần nằm ở `sanitize_digest`
+    (`conversation_state.py`), cuốn chiếu (giữ `wants`/`constraints` khi bản
+    mới rỗng) nằm ở `merge_digest`.
+    """
+
+    wants: List[str] = Field(default_factory=list)        # khách muốn gì — kể cả đổi ý; ≤4
+    settled: List[str] = Field(default_factory=list)      # đã chốt/đã ghi; ≤4
+    declined: List[str] = Field(default_factory=list)     # đã từ chối (ngoài phạm vi/của người khác); ≤4
+    constraints: List[str] = Field(default_factory=list)  # ràng buộc khách nêu; ≤4
+    open: List[str] = Field(default_factory=list)         # còn dang dở; ≤3
+
+
 class ConversationState(BaseModel):
     """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
     xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
@@ -84,7 +103,11 @@ class ConversationState(BaseModel):
 
     day: date                        # ngày VN state thuộc về; khác hôm nay là bỏ
     covers_until: datetime           # created_at của tin CUỐI đã được nén
+    # `summary` giữ lại CHỈ để tài liệu cũ (trước Task 12c) vẫn đọc được —
+    # lượt nén từ giờ ghi `digest`, không ghi thêm vào `summary` nữa.
     summary: List[str] = Field(default_factory=list)
+    digest: Optional[StateDigest] = None          # document cũ → None, không migrate
+    customer_quotes: List[str] = Field(default_factory=list)  # câu gốc khách, do code chọn
     updated_at: datetime = Field(default_factory=now_utc)
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
     slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate

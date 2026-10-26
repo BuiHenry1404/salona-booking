@@ -58,7 +58,8 @@ async def test_state_sits_right_after_the_system_prompt():
     model = scripted([tool_call_message(), AIMessage(content="Dạ.")])
     state = {
         **a_state("còn không em"),
-        "summary": ["Khách muốn làm tóc."],
+        # `summary` giờ là chuỗi đã dựng sẵn (Task 12c), không còn List[str].
+        "summary": "Diễn biến phần trước của cuộc trò chuyện hôm nay:\n- Khách muốn làm tóc.",
         "slots": ConversationSlots(intent="book", service="làm móng bột"),
         "messages": [HumanMessage(content="hôm qua"), AIMessage(content="dạ"),
                      HumanMessage(content="còn không em")],

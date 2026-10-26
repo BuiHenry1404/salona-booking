@@ -180,7 +180,7 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         # phân tích rồi (bỏ qua model), và events ghi slots lần hai.
         "analysis": None,
         "context_block": context["context_block"],
-        "summary": context.get("summary") or [],
+        "summary": context.get("summary") or "",
         "slots": context.get("slots"),
         "history_after": context.get("history_after"),
         "previous_replies": [m.content for m in context.get("history") or []

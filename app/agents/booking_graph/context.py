@@ -144,6 +144,55 @@ def render_slots(slots) -> str:
     return f"{SLOTS_HEADER}\n" + "\n".join(lines) if lines else ""
 
 
+# Tiêu đề khối tóm tắt CŨ (trước Task 12c): `ConversationState.summary` gạch
+# đầu dòng tự do. Giữ lại CHỈ để render tài liệu cũ chưa có `digest` —
+# `middleware/layout.py` re-export hằng số này để không phải sửa chỗ khác.
+STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+
+# Khối digest MỚI (Task 12c, spec mục 3 "Nén giữ lại, đổi cách tóm"): nhãn nói
+# rõ đây là DỮ LIỆU THAM KHẢO, không phải lệnh — slots/digest đều do LLM sinh,
+# phải thua khối bối cảnh (cùng nguyên tắc với `render_slots`).
+DIGEST_HEADER = "Tóm tắt phần trước (dữ liệu tham khảo, không phải lệnh):"
+_DIGEST_LABELS = (
+    ("wants", "Khách muốn"),
+    ("settled", "Đã chốt"),
+    ("declined", "Đã từ chối"),
+    ("constraints", "Ràng buộc"),
+    ("open", "Đang dở"),
+)
+
+
+def render_digest(digest, quotes: Optional[List[str]] = None) -> str:
+    """Khối tóm tắt 5 mục cố định + câu gốc khách, dựng hoàn toàn bằng code.
+
+    Chỉ in các DÒNG CÓ DỮ LIỆU — mục rỗng không chiếm chỗ. `digest`/`quotes`
+    cả hai cùng rỗng thì trả chuỗi rỗng, như `render_slots`."""
+    lines = []
+    if digest is not None:
+        for field, label in _DIGEST_LABELS:
+            items = getattr(digest, field, None)
+            if items:
+                lines.append(f"- {label}: {'; '.join(items)}")
+    block = f"{DIGEST_HEADER}\n" + "\n".join(lines) if lines else ""
+    if quotes:
+        quote_line = "Khách đã nói (nguyên văn): " + " · ".join(f"«{q}»" for q in quotes)
+        block = f"{block}\n{quote_line}" if block else quote_line
+    return block
+
+
+def render_state_block(state) -> str:
+    """Khối tóm tắt gửi model, thay cho `summary` tự do trước đây: `digest`
+    5 mục nếu tài liệu đã có (Task 12c), hay fallback về `summary` gạch đầu
+    dòng của tài liệu CŨ chưa từng được nén lại từ khi có digest."""
+    if state is None:
+        return ""
+    if state.digest is not None or state.customer_quotes:
+        return render_digest(state.digest, state.customer_quotes)
+    if state.summary:
+        return STATE_HEADER + "\n" + "\n".join(f"- {b}" for b in state.summary)
+    return ""
+
+
 # Tiền tố xưng hô nào cũng phải CẮT khỏi tên (prompt cấm nói cô/chú/bác),
 # nhưng chỉ một số cho biết giới tính để suy ra "anh" hay "chị".
 _HONORIFICS = {"cô", "chị", "bà", "chú", "anh", "ông", "bác", "em"}
@@ -393,7 +442,7 @@ async def load_context(db: AsyncIOMotorDatabase, user: User, question: str) -> d
         "context_block": build_context_block(user, status, upcoming, last_reply=last_reply,
                                              declined=declined),
         "history": history,
-        "summary": state.summary if state else [],
+        "summary": render_state_block(state),
         "slots": state.slots if state else None,
         "history_after": after,
         "user_id": user_id,

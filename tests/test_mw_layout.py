@@ -16,20 +16,24 @@ def contents(ms):
 
 def test_context_block_sits_right_before_the_question():
     out = layout_messages([HumanMessage("câu cũ"), AIMessage("đáp cũ"), HumanMessage("câu mới")],
-                          context_block=CTX, summary=[], slots=None)
+                          context_block=CTX, summary="", slots=None)
     assert contents(out) == ["câu cũ", "đáp cũ", CTX, "câu mới"]
 
 
 def test_tool_exchange_of_this_turn_stays_after_the_question():
     tc = AIMessage("", tool_calls=[{"name": "x", "args": {}, "id": "c1"}])
     out = layout_messages([HumanMessage("q"), tc, ToolMessage("r", tool_call_id="c1")],
-                          context_block=CTX, summary=[], slots=None)
+                          context_block=CTX, summary="", slots=None)
     assert contents(out)[:2] == [CTX, "q"] and out[2] is tc and out[3].content == "r"
 
 
 def test_summary_and_slots_ride_in_one_message_before_history():
-    out = layout_messages([HumanMessage("hôm qua"), HumanMessage("còn không em")], context_block=CTX,
-                          summary=["Khách muốn làm tóc."], slots=ConversationSlots(service="làm móng bột"))
+    # `summary` giờ là CHUỖI ĐÃ DỰNG SẴN (Task 12c) — `context.py` quyết định
+    # nội dung (digest 5 mục hay fallback), `layout_messages` chỉ ghép nó vào.
+    out = layout_messages(
+        [HumanMessage("hôm qua"), HumanMessage("còn không em")], context_block=CTX,
+        summary="Diễn biến phần trước của cuộc trò chuyện hôm nay:\n- Khách muốn làm tóc.",
+        slots=ConversationSlots(service="làm móng bột"))
     assert isinstance(out[0], HumanMessage)
     assert out[0].content.startswith("Diễn biến phần trước của cuộc trò chuyện hôm nay:")
     assert "- Khách muốn làm tóc." in out[0].content and "- Dịch vụ: làm móng bột" in out[0].content
@@ -37,19 +41,19 @@ def test_summary_and_slots_ride_in_one_message_before_history():
 
 
 def test_slots_alone_still_make_a_block():
-    out = layout_messages([HumanMessage("q")], context_block=CTX, summary=[],
+    out = layout_messages([HumanMessage("q")], context_block=CTX, summary="",
                           slots=ConversationSlots(service="làm móng bột"))
     assert "- Dịch vụ: làm móng bột" in out[0].content
     assert contents(out)[1:] == [CTX, "q"]
 
 
 def test_no_state_block_when_nothing_to_say():
-    out = layout_messages([HumanMessage("q")], context_block=CTX, summary=[], slots=None)
+    out = layout_messages([HumanMessage("q")], context_block=CTX, summary="", slots=None)
     assert contents(out) == [CTX, "q"]
 
 
 def test_empty_messages_do_not_crash():
-    assert contents(layout_messages([], context_block=CTX, summary=[], slots=None)) == [CTX]
+    assert contents(layout_messages([], context_block=CTX, summary="", slots=None)) == [CTX]
 
 
 async def test_middleware_keeps_the_system_message_first_and_sends_the_layout():

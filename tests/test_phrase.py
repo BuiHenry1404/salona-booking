@@ -60,8 +60,9 @@ class TestWritePhrase:
     async def test_state_is_sent_right_after_the_system_message(self, patch_model):
         """F8: `phrase` phải mang state như `agents.py` — không thì lịch sử bị
         tóm tắt (state thay chỗ) mất tích trong đúng lượt chốt lịch."""
+        # `summary` giờ là chuỗi đã dựng sẵn (Task 12c), không còn List[str].
         model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
-        await write_phrase(a_state(summary=["Khách muốn cắt tóc."]))
+        await write_phrase(a_state(summary="Khách muốn cắt tóc."))
         second = model.calls[0][1]
         assert "Khách muốn cắt tóc." in second.content
 

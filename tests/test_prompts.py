@@ -9,7 +9,7 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
-from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REWRITE_PROMPT,
+from app.agents.booking_graph.prompts import (BOOKING_PROMPT, DIGEST_PROMPT, REWRITE_PROMPT,
                                               SHOP_PROMPT, SOCIAL_PROMPT,
                                               SUPERVISOR_PROMPT)
 
@@ -669,3 +669,38 @@ class TestAnalyzePrompt:
         for field in ("route", "reply_to_proposal", "service", "time_text",
                      "self_address", "stated", "answers_question"):
             assert f"{field}:" in ANALYZE_PROMPT
+
+
+# --- Task 12c: DIGEST_PROMPT (nén cuốn chiếu 5 mục) ------------------------
+
+class TestDigestPromptIsEnglishWithNoVietnameseSamples:
+    """Spec mục 3 "Nén giữ lại, đổi cách tóm": prompt nén viết bằng tiếng Anh,
+    không câu mẫu tiếng Việt (bẫy #15/#16) — nội dung tiếng Việt chỉ nằm
+    trong dữ kiện mà model/khách tạo ra lúc chạy thật, không trong luật."""
+
+    def test_no_vietnamese_diacritics_anywhere(self):
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(DIGEST_PROMPT), vi.search(DIGEST_PROMPT).group()
+
+    def test_today_is_stated_on_the_first_line(self):
+        """CONTEXT.md bẫy #6: model không có mốc nào thì neo vào ngày huấn
+        luyện — `day` gần như không bao giờ sống sót."""
+        assert DIGEST_PROMPT.splitlines()[0].startswith("Today is {today}")
+
+    def test_mentions_all_five_sections(self):
+        for section in ("wants", "settled", "declined", "constraints", "open"):
+            assert f"- {section}" in DIGEST_PROMPT or f"{section}:" in DIGEST_PROMPT
+
+    def test_previous_digest_is_rolled_forward(self):
+        """Cuốn chiếu: prompt phải mang bản digest CŨ vào, và nói rõ cập
+        nhật tiếp chứ không viết lại từ đầu."""
+        assert "PREVIOUS DIGEST" in DIGEST_PROMPT
+        assert "{prev_wants}" in DIGEST_PROMPT and "{prev_constraints}" in DIGEST_PROMPT
+
+    def test_wants_and_constraints_are_kept_unless_contradicted(self):
+        assert "wants" in DIGEST_PROMPT.split("constraints")[0]
+        assert "UNLESS the new messages clearly contradict it" in DIGEST_PROMPT
+
+    def test_asks_for_the_same_slots_as_before(self):
+        assert "slots" in DIGEST_PROMPT.lower()
+        assert "YYYY-MM-DD" in DIGEST_PROMPT

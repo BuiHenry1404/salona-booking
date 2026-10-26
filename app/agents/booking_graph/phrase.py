@@ -4,7 +4,6 @@ from typing import Any, Dict, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.booking_graph.middleware.layout import STATE_HEADER
 from app.agents.booking_graph.guard import PHRASE_TIMEOUT_SECONDS, repeats
 from app.agents.booking_graph.history import model_history
 from app.agents.booking_graph.prompts import (PHRASE_KIND_SENTENCES, PHRASE_PROMPT,
@@ -138,11 +137,10 @@ async def write_phrase(state) -> str:
     # ConversationState đứng NGAY SAU system, cùng vị trí với MessageLayoutMiddleware — không thì
     # đúng lượt chốt lịch lại là lượt duy nhất "quên" cả mạch chuyện đã
     # tóm tắt.
-    summary = state.get("summary") or []
-    summary_messages = (
-        [HumanMessage(content=STATE_HEADER + "\n" + "\n".join(f"- {b}" for b in summary))]
-        if summary else []
-    )
+    # `summary` là chuỗi đã dựng sẵn (digest 5 mục hay fallback — Task 12c),
+    # giống hệt khối `MessageLayoutMiddleware` gửi cho agent booking.
+    summary = state.get("summary") or ""
+    summary_messages = [HumanMessage(content=summary)] if summary else []
     messages = [SystemMessage(content=system), *summary_messages, *history,
                 HumanMessage(content=state.get("context_block", "")), *question]
     model = build_chat_model(tags=["respond"], temperature=0.3)

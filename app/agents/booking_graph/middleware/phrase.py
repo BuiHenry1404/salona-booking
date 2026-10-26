@@ -34,7 +34,7 @@ class PhraseState(AgentState):
     previous_replies: NotRequired[List[str]]
     # `write_phrase` xếp message như agent (bẫy #9) và cắt lịch sử như agent.
     context_block: NotRequired[str]
-    summary: NotRequired[List[str]]
+    summary: NotRequired[str]
     history_after: NotRequired[Optional[datetime]]
     asked_at: NotRequired[Optional[datetime]]
 
