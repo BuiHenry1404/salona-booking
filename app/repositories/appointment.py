@@ -80,6 +80,27 @@ class AppointmentRepository(BaseRepository[Appointment]):
         }).sort("start_at", 1).to_list(length=500)
         return [Appointment(**d) for d in docs]
 
+    async def recent_past_for_user(
+        self, user_id: str, now: datetime, limit: int = 3
+    ) -> List[Appointment]:
+        """`limit` lịch ĐÃ QUA gần nhất của khách này, mới nhất trước — dùng
+        cho dòng "Khách đã đến:" của khối bối cảnh (Task 14).
+
+        `Status` của model chỉ có "booked"/"cancelled" (không có "done") —
+        lịch đã hủy không phải một lần khách thật sự tới, nên chỉ lọc
+        `status="booked"` (đã đặt và chưa hủy) với `start_at` ở quá khứ.
+        """
+        docs = await self.collection.find({
+            "user_id": user_id, "status": "booked", "start_at": {"$lt": now},
+        }).sort("start_at", -1).to_list(length=limit)
+        return [Appointment(**d) for d in docs]
+
+    async def created_since(self, user_id: str, since: datetime) -> bool:
+        """Có lịch nào của khách này được TẠO sau mốc `since` không — dùng để
+        quyết định dòng "Lần trước" (Task 14): còn ý định cũ mà khách ĐÃ đặt
+        lịch mới sau đó thì ý định ấy coi như xong, không nhắc lại."""
+        return await self.exists({"user_id": user_id, "created_at": {"$gt": since}})
+
     async def distinct_customers_by_month(
         self, start: datetime, end: datetime
     ) -> dict[str, int]:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timezone
 import pytest
 
 from app.agents.booking_graph.context import (address_phrase,
@@ -6,11 +6,14 @@ from app.agents.booking_graph.context import (address_phrase,
                                               derive_address, display_name,
                                               format_vi_datetime,
                                               format_vi_hhmm, render_digest,
+                                              render_last_session_line,
+                                              render_recent_visits,
                                               render_slots, render_state_block)
 from app.core.clock import TZ
 from app.models.appointment import Appointment
-from app.models.conversation import (AgreedAt, AskedItem, ConversationSlots,
-                                     ConversationState, StateDigest)
+from app.models.conversation import (AgreedAt, AskedItem, ConversationSession,
+                                     ConversationSlots, ConversationState,
+                                     StateDigest)
 from app.models.shop import ShopStatusView
 from app.models.user import User
 
@@ -544,3 +547,94 @@ class TestRenderStateBlockFallsBackForOldDocuments:
             covers_until=datetime(2026, 10, 26, 3, 0, tzinfo=TZ),
         )
         assert render_state_block(state) == ""
+
+
+# --- Task 14: "Khách đã đến" + "Lần trước" ----------------------------------
+
+def a_visit(day, month, note="làm tóc", year=2026):
+    return Appointment(
+        user_id="u1", start_at=datetime(year, month, day, 9, 0, tzinfo=TZ),
+        duration_minutes=60, note=note,
+    )
+
+
+def a_session(day, wants=None, open_=None, intent="book", expires_at=None):
+    return ConversationSession(
+        user_id="u1", day=day,
+        digest=StateDigest(wants=wants or [], open=open_ or []),
+        slots=ConversationSlots(intent=intent) if intent else None,
+        expires_at=expires_at or datetime(2026, 11, 25, tzinfo=timezone.utc),
+    )
+
+
+class TestRenderRecentVisits:
+    def test_three_past_visits_newest_first_as_passed_in(self):
+        visits = [a_visit(20, 10, note="nhuộm tóc"), a_visit(13, 10, note="cắt tóc")]
+        lines = render_recent_visits(visits)
+        assert lines[0] == "Khách đã đến:"
+        assert lines[1] == "  - 20/10 nhuộm tóc"
+        assert lines[2] == "  - 13/10 cắt tóc"
+
+    def test_empty_list_renders_nothing(self):
+        assert render_recent_visits([]) == []
+
+    def test_visit_without_note_has_no_trailing_junk(self):
+        visits = [a_visit(20, 10, note=None)]
+        assert render_recent_visits(visits) == ["Khách đã đến:", "  - 20/10"]
+
+
+class TestRenderLastSessionLine:
+    def test_yesterday_is_labelled_hom_qua(self):
+        session = a_session(date(2026, 10, 25), wants=["làm tóc"], open_=["chưa chọn giờ"])
+        line = render_last_session_line(session, today=date(2026, 10, 26))
+        assert line.startswith("Lần trước (hôm qua")
+        assert "dữ liệu tham khảo" in line
+        assert "làm tóc; chưa chọn giờ" in line
+
+    def test_older_day_is_labelled_dd_mm(self):
+        session = a_session(date(2026, 10, 20), wants=["làm móng"])
+        line = render_last_session_line(session, today=date(2026, 10, 26))
+        assert "20/10" in line
+        assert "hôm qua" not in line
+
+    def test_empty_digest_still_renders_the_label_line(self):
+        session = a_session(date(2026, 10, 25))
+        line = render_last_session_line(session, today=date(2026, 10, 26))
+        assert line.startswith("Lần trước (hôm qua")
+
+
+class TestBuildContextBlockWithTask14Lines:
+    def test_recent_visits_absent_by_default(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
+        assert "Khách đã đến" not in block
+
+    def test_recent_visits_line_present_when_given(self):
+        block = build_context_block(
+            a_user(), ShopStatusView(is_busy=False), [],
+            recent_visits=[a_visit(20, 10)],
+        )
+        assert "Khách đã đến:" in block
+        assert "20/10" in block
+
+    def test_last_session_absent_by_default(self):
+        block = build_context_block(a_user(), ShopStatusView(is_busy=False), [])
+        assert "Lần trước" not in block
+
+    def test_last_session_line_present_when_given(self):
+        now = datetime(2026, 10, 26, 9, 0, tzinfo=TZ)
+        session = a_session(date(2026, 10, 25), wants=["làm tóc"])
+        block = build_context_block(
+            a_user(), ShopStatusView(is_busy=False), [], now=now, last_session=session,
+        )
+        assert "Lần trước (hôm qua" in block
+
+    def test_both_lines_come_before_the_closing_line(self):
+        now = datetime(2026, 10, 26, 9, 0, tzinfo=TZ)
+        session = a_session(date(2026, 10, 25), wants=["làm tóc"])
+        block = build_context_block(
+            a_user(), ShopStatusView(is_busy=False), [], now=now,
+            recent_visits=[a_visit(20, 10)], last_session=session,
+        )
+        closing_idx = block.index("Nếu có gì trong cuộc trò chuyện")
+        assert block.index("Khách đã đến:") < closing_idx
+        assert block.index("Lần trước") < closing_idx

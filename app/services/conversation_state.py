@@ -15,7 +15,9 @@ from app.core.clock import ensure_aware, now_utc, to_local
 from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
-from app.models.conversation import AskedItem, ChatMessage, ConversationSlots, StateDigest
+from app.models.conversation import (AskedItem, ChatMessage, ConversationSession,
+                                     ConversationSlots, StateDigest)
+from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
 if TYPE_CHECKING:  # tránh vòng import: analyzer.py cần clean_free_text_item ở đây.
@@ -34,6 +36,14 @@ STATE_TIMEOUT_SECONDS = 8            # cùng mốc với parser (CONTEXT.md bẫ
 # để sanitize_digest/merge_digest/DIGEST_PROMPT dùng chung MỘT nguồn.
 DIGEST_CAPS = {"wants": 4, "settled": 4, "declined": 4, "constraints": 4, "open": 3}
 MAX_CUSTOMER_QUOTES = 3               # câu gốc khách, do code chọn (không LLM)
+
+# Task 14 ("Lần trước"): mỗi bản `conversation_sessions` sống 30 ngày kể từ
+# lượt nén ghi ra nó — đủ cho rule "trong 7 ngày gần đây" ở context.py, còn
+# dư nhiều để không xoá hụt.
+SESSION_TTL_DAYS = 30
+# "Lần trước" chỉ nhìn lại ngần này ngày — khớp SESSION_TTL_DAYS ở trên vì
+# context.py cũng dùng hằng số này (xem ConversationStateService.last_session).
+LAST_SESSION_WINDOW_DAYS = 7
 
 
 class StateOutput(BaseModel):
@@ -67,6 +77,17 @@ def split_window(messages, covers_until: Optional[datetime]):
 class ConversationStateService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.conversations = ConversationService(db)
+        self.sessions = ConversationSessionRepository(db)
+
+    async def last_session(
+        self, user_id: str, now: Optional[datetime] = None,
+    ) -> Optional[ConversationSession]:
+        """Phiên gần nhất TRƯỚC hôm nay, trong `LAST_SESSION_WINDOW_DAYS`
+        ngày — nguồn cho dòng "Lần trước" (Task 14, context.py)."""
+        today = to_local(now or now_utc()).date()
+        return await self.sessions.most_recent_before(
+            user_id, today, within_days=LAST_SESSION_WINDOW_DAYS
+        )
 
     async def _todays_messages(self, user_id: str) -> List[ChatMessage]:
         """Cùng mốc cắt với ConversationService.history() — chủ sở hữu công
@@ -90,6 +111,17 @@ class ConversationStateService:
           `slots: None`) → `{}`: `$set state.slots.x` trên null là lỗi Mongo.
         Giá trị bọc `$literal`: chữ khách (`stated`) bắt đầu bằng "$" không
         được hiểu thành đường dẫn trường trong pipeline.
+
+        Task 14 ("Lần trước"), `ConversationSession.closed_at`: CỐ Ý không đặt
+        ở nhánh sang-ngày-mới này. Đây là một update dạng PIPELINE, nguyên tử
+        trên document `conversations` — các stage được phép (`$set`/`$cond`...)
+        không ghi được sang collection khác (`conversation_sessions`), nên
+        biết "state hôm qua vừa bị thay" ở đây không đủ để đóng `closed_at`
+        rẻ: phải đọc lại document TRƯỚC khi ghi đè, tức thêm một round-trip
+        DB cho một nhánh chạy ở MỌI lượt chat (không chỉ lúc nén). Rule "Lần
+        trước" (context.py) không cần `closed_at` — nó dùng `expires_at -
+        SESSION_TTL_DAYS` của chính bản `conversation_sessions` làm mốc "lần
+        nén cuối" — nên bỏ qua, giữ field `closed_at` cho tương lai.
         """
         today = to_local(now).date()
         day = datetime(today.year, today.month, today.day)
@@ -271,6 +303,15 @@ class ConversationStateService:
         if slots and slots.service:
             fields["state.slots.service"] = slots.service
         await self._set_today_fields(user_id, fields, now)
+        # Task 14: mỗi lượt nén thành công cũng ghi/đè bản `conversation_sessions`
+        # CỦA NGÀY HÔM NAY — khác `state.*` ở trên (chỉ sống tới nửa đêm), bản
+        # này còn đọc được sau khi ngày đã qua, làm nguồn cho "Lần trước" của
+        # ngày mai (hoặc xa hơn). `digest`/`slots` ở đây là kết quả CHÍNH lượt
+        # nén này vừa ghi vào `state.*` — cùng giá trị, không đọc lại DB.
+        await self.sessions.upsert(
+            user_id=user_id, day=today, digest=digest, slots=slots,
+            expires_at=now + timedelta(days=SESSION_TTL_DAYS),
+        )
         logger.info("state_compacted", extra={
             "user_id": user_id, "compacted": len(older), "quotes": len(quotes),
             "slots": bool(slots),

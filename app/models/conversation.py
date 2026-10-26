@@ -120,6 +120,32 @@ class ConversationState(BaseModel):
         return value.date() if isinstance(value, datetime) else value
 
 
+class ConversationSession(BaseDocument):
+    """Bản nén của MỘT NGÀY đã qua (Task 14, spec mục 4 "Lần trước"). Khác
+    `ConversationState` (chỉ giữ ngày HÔM NAY, bị ghi đè khi sang ngày mới):
+    đây là 1 doc/user/ngày, sống riêng ngoài `conversations.state`, để "Lần
+    trước" còn đọc được sau khi ngày đã qua. Ghi lúc `_compact` nén thành
+    công (upsert theo khoá `(user_id, day)`); TTL 30 ngày qua `expires_at`.
+
+    `closed_at` CỐ Ý không được đặt ở phiên bản này (xem ghi chú trong
+    `_set_today_fields`) — không rule "Lần trước" nào cần nó.
+    """
+
+    user_id: str
+    day: date
+    digest: Optional[StateDigest] = None
+    slots: Optional[ConversationSlots] = None
+    closed_at: Optional[datetime] = None
+    expires_at: datetime
+
+    @field_validator("day", mode="before")
+    @classmethod
+    def _datetime_to_date(cls, value):
+        # Cùng lý do với ConversationState._datetime_to_date: Mongo không có
+        # kiểu date riêng, đọc lên phải tự ép lại.
+        return value.date() if isinstance(value, datetime) else value
+
+
 class Conversation(BaseDocument):
     """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
 
