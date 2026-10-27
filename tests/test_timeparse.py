@@ -506,3 +506,11 @@ class TestAnchorDayWinsWhenTheTextNamesNoDay:
     async def test_no_anchor_changes_nothing(self, monkeypatch):
         self.install(monkeypatch, at(7, 16))
         assert (await parse_vi_time("4 giờ chiều", NOW)).start_at == at(7, 16)
+
+
+def test_timeparse_only_compiles_the_single_fast_path_regex():
+    import inspect, re
+    from app.agents.booking_graph import timeparse
+    source = inspect.getsource(timeparse)
+    assert len(re.findall(r"re\.compile\(", source)) == 1
+

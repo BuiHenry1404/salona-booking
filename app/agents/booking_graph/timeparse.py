@@ -5,11 +5,11 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.agents.booking_graph import tokens
 from app.agents.llm import build_chat_model
 from app.core.clock import TZ
 from app.core.slots import SLOT_MINUTES, next_slot_after
 from app.core.logging import get_logger
-from app.core.text import strip_diacritics
 from app.models.shop import ShopHours
 from app.services.shop import is_within
 
@@ -67,6 +67,12 @@ class ParsedTime(BaseModel):
     )
     partial_minute: int = Field(default=0, description="Phút, mặc định 0")
     source: Literal["regex", "llm"] = "llm"
+    has_explicit_day: bool = Field(
+        default=False, description="True khi câu khách tự nêu ngày, thứ, hôm nay/mai/mốt hoặc tuần"
+    )
+    has_explicit_clock: bool = Field(
+        default=False, description="True khi câu khách nêu một mốc giờ đồng hồ bằng số"
+    )
 
     @model_validator(mode="after")
     def _a_known_day_is_never_asked_again(self):
@@ -315,32 +321,19 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
 
 
 # --- neo thắng khi câu không nêu ngày (lỗi live 5) ---------------------------
-# KHÔNG phải mẫu parser (bẫy #11: `_match_regex` giữ nguyên, không nới): hai
-# mẫu dưới chỉ quyết có ĐƯA NGÀY CỦA NEO vào kết quả LLM hay không. So trên câu
-# đã bỏ dấu. Bắt nhầm (vd. "một giờ" bỏ dấu thành "mot" = "mốt") chỉ làm neo
-# KHÔNG áp — đúng hành vi cũ, an toàn.
-_NAMES_A_DAY = re.compile(
-    r"\b(nay|mai|mot|kia|hom|bua|thu|chu nhat|cn|tuan|thang|ngay)\b"
-    r"|\b\d{1,2}\s*/\s*\d{1,2}\b", re.IGNORECASE)
-# Một giờ cụ thể bằng số: "4 giờ", "16h", "15h30", "3 rưỡi", "15:30". "bây giờ",
-# "giờ em qua" không có số → không phải giờ để đem sang ngày khác.
-_NAMES_A_CLOCK = re.compile(r"\d{1,2}\s*(gio|h|g|:|ruoi)", re.IGNORECASE)
-
-
-def anchor_day_applies(text: str) -> bool:
+# KHÔNG phải mẫu parser (bẫy #11: `_match_regex` giữ nguyên, không nới):
+# chỉ quyết có ĐƯA NGÀY CỦA NEO vào kết quả LLM hay không. Dùng scanner tokens thuần.
+def anchor_day_applies(text: str, candidate: Optional[ParsedTime] = None) -> bool:
     """Câu nêu một giờ cụ thể mà KHÔNG nêu ngày nào."""
-    bare = strip_diacritics((text or "").lower())
-    return bool(_NAMES_A_CLOCK.search(bare)) and not _NAMES_A_DAY.search(bare)
+    if candidate is not None and candidate.has_explicit_day:
+        return False
+    return tokens.names_a_clock(text or "") and not tokens.names_a_day(text or "")
 
 
 def put_on_anchor_day(candidate: ParsedTime, anchor: Optional[datetime],
                       text: str) -> ParsedTime:
-    """LLM đã điền ngày (thường là HÔM NAY) cho một câu không nêu ngày, trong
-    khi đang bàn về mốc `anchor` (đề xuất vừa bị từ chối / đang chờ, lịch đang
-    dời): giữ giờ của LLM, lấy ngày của neo. `apply_anchor` chỉ chạy khi
-    `start_at` rỗng, nên trước đây ngày LLM tự chọn luôn thắng neo."""
     start = candidate.start_at
-    if anchor is None or start is None or not anchor_day_applies(text):
+    if anchor is None or start is None or not anchor_day_applies(text, candidate):
         return candidate
     local = start.astimezone(TZ) if start.tzinfo else start.replace(tzinfo=TZ)
     day = anchor.astimezone(TZ).date()

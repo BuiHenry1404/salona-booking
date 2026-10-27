@@ -889,3 +889,11 @@ async def test_propose_without_queue_has_no_queue_key(test_db):
     out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
                      .ainvoke({"start_at": tomorrow_at(9).isoformat()}))
     assert "queued" not in out
+
+
+def test_tools_module_uses_zero_regex():
+    import inspect
+    from app.agents.booking_graph import tools
+    source = inspect.getsource(tools)
+    assert "import re" not in source and "re.compile" not in source
+
