@@ -78,9 +78,13 @@ def test_tokens_module_contains_no_regex_imports_or_calls():
     assert "import re" not in source and "re.compile" not in source
 
 
-def test_words_and_cased_words_split_punctuation_ cleanly():
+def test_words_and_cased_words_split_punctuation_cleanly():
     assert tokens.words("Dạ, anh Tám! 15:30 nhé?") == ["dạ", "anh", "tám", "15", "30", "nhé"]
     assert tokens.cased_words("Dạ, Chú Tám ơi!") == ["Dạ", "Chú", "Tám", "ơi"]
+    # Dấu câu sinh vách ngăn `|` trong padded để cụm nhiều từ không nhảy qua dấu phẩy/chấm
+    p = tokens.padded("mất bao, lâu hả chị")
+    assert tokens.has_phrase(p, ("bao lâu",)) is False
+    assert tokens.has_phrase(p, ("bao",)) is True
 
 
 def test_unaccented_words_masks_accented_tokens():
@@ -184,6 +188,39 @@ _DAY_MARKER_WORDS = frozenset({
 })
 
 
+def _tokenize_with_pipes(text: str, *, lower: bool = True,
+                         mask_accented: bool = False) -> List[str]:
+    """Tách từ và giữ vách ngăn `|` tại dấu câu để cụm từ không vượt qua dấu phẩy/chấm."""
+    if not text:
+        return []
+    out: List[str] = []
+    cur: List[str] = []
+    saw_punct = False
+    for ch in text:
+        if ch.isalnum() and ch != "_":
+            if saw_punct and out and out[-1] != "|":
+                out.append("|")
+            saw_punct = False
+            cur.append(ch.lower() if lower else ch)
+        else:
+            if cur:
+                tok = "".join(cur)
+                if mask_accented and strip_diacritics(tok) != tok:
+                    tok = "_"
+                out.append(tok)
+                cur = []
+            if not ch.isspace():
+                saw_punct = True
+    if cur:
+        if saw_punct and out and out[-1] != "|":
+            out.append("|")
+        tok = "".join(cur)
+        if mask_accented and strip_diacritics(tok) != tok:
+            tok = "_"
+        out.append(tok)
+    return out
+
+
 def cased_words(text: str) -> List[str]:
     """Tách từ giữ nguyên chữ hoa/thường; bỏ dấu câu và ký tự `_`."""
     if not text:
@@ -203,19 +240,19 @@ def unaccented_words(text: str) -> List[str]:
 
 
 def padded(text: str) -> str:
-    """Chuỗi từ chữ thường có khoảng trắng đệm hai đầu: `' word1 word2 '`."""
-    ws = words(text)
+    """Chuỗi từ chữ thường có khoảng trắng đệm hai đầu và `|` tại ranh giới dấu câu."""
+    ws = _tokenize_with_pipes(text, lower=True, mask_accented=False)
     return f" {' '.join(ws)} " if ws else " "
 
 
 def padded_bare(text: str) -> str:
-    """Chuỗi từ đã bỏ dấu hoàn toàn, có khoảng trắng đệm hai đầu."""
+    """Chuỗi từ đã bỏ dấu hoàn toàn, có khoảng trắng đệm hai đầu và `|` tại dấu câu."""
     return strip_diacritics(padded(text))
 
 
 def padded_unaccented_only(text: str) -> str:
     """Chuỗi từ trong đó chữ có dấu đã bị che thành `'_'`, có khoảng trắng đệm hai đầu."""
-    ws = unaccented_words(text)
+    ws = _tokenize_with_pipes(text, lower=True, mask_accented=True)
     return f" {' '.join(ws)} " if ws else " "
 
 
@@ -314,7 +351,7 @@ def split_clauses(text: str, *, break_words: Sequence[str] = (),
 
 def scan_spoken_clocks(text: str) -> List[Tuple[int, int, Optional[str]]]:
     """Tìm mọi giờ đọc kiểu `'9 giờ sáng'`, `'3 giờ rưỡi chiều'`, `'3 giờ 15'`."""
-    ws = words(text)
+    ws = _tokenize_with_pipes(text, lower=True)
     out: List[Tuple[int, int, Optional[str]]] = []
     n = len(ws)
     i = 0
@@ -363,7 +400,7 @@ def scan_times(text: str) -> List[Tuple[int, Optional[str], Optional[int]]]:
     if not text:
         return []
     out: List[Tuple[int, Optional[str], Optional[int]]] = []
-    ws = words(text)
+    ws = _tokenize_with_pipes(text, lower=True)
     n = len(ws)
     i = 0
     while i < n:
@@ -805,7 +842,7 @@ _DEFERRAL_REPLIES = (
 
 def _person_near_free(word_list: Sequence[str], persons: Sequence[str], free_word: str) -> bool:
     """Tìm từ chỉ người trong `persons` đứng trước `free_word` trong phạm vi ≤ 3 từ giữa,
-    mà khoảng giữa không chứa từ chỉ chủ tiệm (`chủ`, `tiệm`)."""
+    mà khoảng giữa không vượt dấu câu (`|`) và không chứa từ chỉ chủ tiệm (`chủ`, `tiệm`)."""
     n = len(word_list)
     for phrase in persons:
         p_tokens = phrase.split()
@@ -815,6 +852,8 @@ def _person_near_free(word_list: Sequence[str], persons: Sequence[str], free_wor
                 continue
             start = i + plen
             for j in range(start, min(n, start + 4)):
+                if word_list[j] == "|":
+                    break
                 if word_list[j] == free_word:
                     between = word_list[i:j + 1]
                     if not any(w in _SHOP_WORDS for w in between):
@@ -824,10 +863,10 @@ def _person_near_free(word_list: Sequence[str], persons: Sequence[str], free_wor
 
 def asks_if_relative_free(text: str) -> bool:
     """Khách hỏi một người KHÁCH nhắc tới có rảnh không (không phải chủ tiệm)."""
-    ws = tokens.words(text)
+    ws = tokens.padded(text).split()
     if _person_near_free(ws, _PERSONS_ACC, "rảnh"):
         return True
-    ws_unacc = tokens.unaccented_words(text)
+    ws_unacc = tokens.padded_unaccented_only(text).split()
     return _person_near_free(ws_unacc, _PERSONS_BARE, "ranh")
 
 
@@ -836,13 +875,15 @@ def _has_de_verb(word_list: Sequence[str], de_word: str, verbs: frozenset) -> bo
     n = len(word_list)
     for i, w in enumerate(word_list):
         if w == de_word:
-            if i + 2 < n and word_list[i + 2] in verbs:
+            if i + 2 < n and word_list[i + 1] != "|" and word_list[i + 2] in verbs:
                 return True
-            if i + 3 < n and word_list[i + 3] in verbs:
+            if (i + 3 < n and "|" not in word_list[i + 1:i + 3]
+                    and word_list[i + 3] in verbs):
                 return True
         if w in ("nhắn", "nhan"):
             for step in (1, 2, 3):
-                if i + step < n and word_list[i + step] == "sau":
+                if (i + step < n and "|" not in word_list[i + 1:i + step]
+                        and word_list[i + step] == "sau"):
                     return True
     return False
 
@@ -855,7 +896,7 @@ def defers(text: str) -> bool:
     p_bare = tokens.padded_bare(text)
     if tokens.has_phrase(p_acc, _DEFER_PHRASES_ACC) or tokens.has_phrase(p_bare, _DEFER_PHRASES_BARE):
         return True
-    ws_acc = tokens.words(text)
+    ws_acc = p_acc.split()
     ws_bare = p_bare.split()
     return (_has_de_verb(ws_acc, "để", _DEFER_VERBS_ACC)
             or _has_de_verb(ws_bare, "de", _DEFER_VERBS_BARE))
@@ -937,10 +978,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `app/agents/booking_graph/reply.py:1-490`
-- Test: `tests/test_reply_veto.py`, `tests/test_reply_classify.py`
+- Modify: `app/agents/booking_graph/confirm.py:328-335`
+- Test: `tests/test_reply_veto.py`, `tests/test_reply_classify.py`, `tests/test_confirm.py`
 
 **Interfaces:**
-- Consumes: `tokens.words`, `tokens.padded`, `tokens.padded_unaccented_only`, `tokens.has_phrase`, `tokens.split_clauses`, `tokens.scan_times`, `tokens.scan_day_offsets`, `tokens.scan_weekdays`, `tokens.has_next_week` (từ Task 1); `relatives.defers` (từ Task 3).
+- Consumes: `tokens.words`, `tokens.padded`, `tokens.padded_unaccented_only`, `tokens.has_phrase`, `tokens.split_clauses`, `tokens.scan_times`, `tokens.scan_day_offsets`, `tokens.scan_weekdays`, `tokens.has_next_week` (từ Task 1); `relatives.defers` (từ Task 3); `TurnAnalysis.mentioned_times`, `TurnAnalysis.aside` (từ Task 2).
 - Produces: Giữ nguyên toàn bộ hàm public trong `reply.py` (`mentions_other_time`, `other_time_veto`, `veto_reason`, `is_short_affirmation`, `is_go_ahead`, `classify_reply`, `decide`, `_describe`, `strip_diacritics`) với **0 regex (`re.compile` = 0)**.
 
 - [ ] **Step 1: Write the failing test**
@@ -953,6 +995,19 @@ def test_reply_module_uses_zero_regex():
     from app.agents.booking_graph import reply
     source = inspect.getsource(reply)
     assert "import re" not in source and "re.compile" not in source
+
+
+def test_mentions_other_time_also_checks_structured_mentioned_times():
+    from app.agents.booking_graph.analyzer import MentionedTime
+    # Kể cả khi text không chứa chữ số (vd viết bằng chữ), mentioned_times vẫn bắt được giờ lệch
+    assert mentions_other_time(
+        "dạ bốn giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=16, part_of_day="chieu")],
+    ) is True
+    assert mentions_other_time(
+        "dạ ba giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=15, part_of_day="chieu")],
+    ) is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -963,13 +1018,28 @@ Expected: FAIL (`AssertionError: assert 'import re' not in source`)
 - [ ] **Step 3: Write minimal implementation**
 
 Trong `app/agents/booking_graph/reply.py`:
-- Xoá `import re` và toàn bộ 14 `re.compile` (`_words`, `_NEG_BY_KIND`, `_DEFERRAL`, `_DEFERRAL_BARE`, `_ASKING`, `_ASKING_BARE`, `_NOT_ASKING`, `_TIME`, `_TIME_BARE`, `_MINUTE_AFTER`, `_COLON_TIME`, `_HALF_PAST`, `_DAY`, `_DAY_BARE`, `_WEEKDAY`, `_WEEKDAY_BARE`, `_NEXT_WEEK`, `_CLAUSE_SPLIT`).
-- Thay bằng các hàm từ `tokens.py` và `relatives.defers`:
+- Xoá `import re`, xoá `_DAY_OFFSETS, _TIME_PATTERN` khỏi dòng import `timeparse`, và xoá toàn bộ 14 `re.compile` (`_words`, `_NEG_BY_KIND`, `_DEFERRAL`, `_DEFERRAL_BARE`, `_ASKING`, `_ASKING_BARE`, `_NOT_ASKING`, `_unaccented_only`, `_TIME`, `_TIME_BARE`, `_MINUTE_AFTER`, `_COLON_TIME`, `_HALF_PAST`, `_DAY`, `_DAY_BARE`, `_WEEKDAY`, `_WEEKDAY_BARE`, `_NEXT_WEEK`, `_CLAUSE_SPLIT`).
+- Thay phần đầu và các hàm kiểm tra phủ quyết trong `app/agents/booking_graph/reply.py` bằng:
 
 ```python
+import asyncio
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, Sequence
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
+
 from app.agents.booking_graph import tokens
+from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.prompts import (CLASSIFY_GO_AHEAD, CLASSIFY_KIND,
+                                              CLASSIFY_PROMPT, CLASSIFY_QUEUE)
 from app.agents.booking_graph.timeparse import _to_24h
+from app.agents.llm import build_chat_model
+from app.core.clock import to_local
+from app.core.logging import get_logger
 from app.core.text import strip_diacritics  # noqa: F401 (re-export)
+
+logger = get_logger(__name__)
 
 _NEG = ("không", "ko", "k", "hông", "hổng", "hong", "chưa", "thôi", "khỏi", "khoan", "khác")
 _NEG_BARE = ("khong", "ko", "k", "hong", "chua", "thoi", "khoi", "khoan", "khac")
@@ -986,6 +1056,18 @@ _ASK_ENDINGS = {"không", "hả", "chưa", "sao", "nào"}
 _ASK_ENDINGS_BARE = {"khong", "ha", "chua", "sao", "nao"}
 _ADDRESS_PARTICLES = {"ạ", "a", "à", "em", "chị", "chi", "anh", "ơi", "oi"}
 _SOFT_PARTICLES = {"nha", "nhé", "nhe", "nghen", "đi", "di"}
+_PERIOD_FROM_BARE = {"sang": "sáng", "trua": "trưa", "chieu": "chiều", "toi": "tối"}
+
+
+def _as_datetime(value: Any) -> datetime:
+    return value if isinstance(value, datetime) else datetime.fromisoformat(value)
+
+
+def _hour_differs(raw_hour: int, period: Optional[str], start_hour: int) -> bool:
+    hour = _to_24h(raw_hour, period) if period else None
+    if hour is not None:
+        return hour != start_hour
+    return raw_hour % 12 != start_hour % 12
 
 
 def _has_negation(text: str, kind: Optional[str]) -> bool:
@@ -999,7 +1081,30 @@ def _has_deferral(text: str) -> bool:
     return defers(text)
 
 
-def mentions_other_time(text: str, start: datetime, now: datetime) -> bool:
+def _structured_time_differs(item: Any, local_start: datetime, local_now: datetime) -> bool:
+    get = item.get if isinstance(item, Mapping) else lambda k: getattr(item, k, None)
+    hour, minute, part = get("hour"), get("minute"), get("part_of_day")
+    weekday, day, month, offset = get("weekday"), get("day"), get("month"), get("day_offset")
+    period = _PERIOD_FROM_BARE.get(part) if part else None
+    if hour is not None and _hour_differs(hour, period, local_start.hour):
+        return True
+    if minute is not None and minute != local_start.minute:
+        return True
+    if offset is not None:
+        if offset == -1 or local_now.date().toordinal() + offset != local_start.date().toordinal():
+            return True
+    if weekday is not None and weekday != local_start.weekday():
+        return True
+    if day is not None and day != local_start.day:
+        return True
+    if month is not None and month != local_start.month:
+        return True
+    return False
+
+
+def mentions_other_time(text: str, start: datetime, now: datetime,
+                        *, mentioned_times: Optional[Sequence[Any]] = None) -> bool:
+    """Khách nhắc một giờ, một ngày hay một thứ KHÁC với đề xuất."""
     local_start, local_now = to_local(start), to_local(now)
     for hour, period, minute in tokens.scan_times(text):
         if _hour_differs(hour, period, local_start.hour):
@@ -1014,6 +1119,9 @@ def mentions_other_time(text: str, start: datetime, now: datetime) -> bool:
             return True
     if tokens.has_next_week(text) and (local_start.date() - local_now.date()).days < 7:
         return True
+    for item in mentioned_times or ():
+        if _structured_time_differs(item, local_start, local_now):
+            return True
     return False
 
 
@@ -1024,11 +1132,11 @@ def _is_question(text: str) -> bool:
     p_unacc = tokens.padded_unaccented_only(text).replace(" co gi ", " ")
     if tokens.has_phrase(p_acc, _ASKING_ACC) or tokens.has_phrase(p_unacc, _ASKING_BARE):
         return True
-    unacc_list = p_unacc.split()
+    unacc_list = [t for t in p_unacc.split() if t != "|"]
     for i in range(len(unacc_list) - 1):
         if unacc_list[i] == "may" and unacc_list[i + 1] in _MAY_UNITS_BARE:
             return True
-    toks = p_acc.split()
+    toks = [t for t in p_acc.split() if t != "|"]
     while toks and toks[-1] in _ADDRESS_PARTICLES:
         toks.pop()
     if toks and toks[-1] in ("vậy", "vay"):
@@ -1039,6 +1147,60 @@ def _is_question(text: str) -> bool:
         return False
     last = toks[-1]
     return last in _ASK_ENDINGS or (strip_diacritics(last) == last and last in _ASK_ENDINGS_BARE)
+```
+
+Và cập nhật `is_short_affirmation`, `is_go_ahead`, `other_time_veto`, `veto_reason`, `_has_time`, `_without_queued_clauses` trong `app/agents/booking_graph/reply.py`:
+
+```python
+def is_short_affirmation(text: str) -> bool:
+    """Câu NGẮN, chỉ gồm từ đồng ý + tiểu từ đệm, không nói giờ/ngày khác,
+    không có chữ phủ định — dùng để định tuyến, không dùng để duyệt lịch."""
+    ws = tokens.words(text)
+    if not ws or len(ws) > _AFFIRM_MAX_TOKENS:
+        return False
+    if not any(_is_affirm_yes(t) for t in ws):
+        return False
+    if not all(_is_affirm_yes(t) or _is_affirm_filler(t) for t in ws):
+        return False
+    if _has_negation(text, "book") or _has_time(text):
+        return False
+    return True
+
+
+def is_go_ahead(text: str, kind: Optional[str]) -> bool:
+    """Câu chỉ giục làm đúng việc dời/hủy đang chốt (code quyết, không model)."""
+    verbs = _GO_VERBS.get(kind or "")
+    if verbs is None:
+        return False
+    ws = tokens.words(text)
+    if not any(_in_set(t, verbs) for t in ws):
+        return False
+    return all(_in_set(t, verbs) or _in_set(t, _GO_AGREE) or _in_set(t, _GO_FILLER)
+               for t in ws)
+
+
+def other_time_veto(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
+    """Chỉ phần "giờ/ngày/thứ khác" của lưới — TÁCH khỏi phủ định/hoãn/hỏi."""
+    lowered = (text or "").strip().lower()
+    start = _as_datetime(proposal["start_at"])
+    lowered = _without_queued_clauses(lowered, start, proposal.get("queued"), now)
+    return mentions_other_time(lowered, start, now)
+
+
+def veto_reason(text: str, proposal: Mapping[str, Any], now: datetime) -> Optional[str]:
+    """Lý do chắc chắn KHÔNG phải đồng ý, hoặc None (lưới không có ý kiến)."""
+    lowered = (text or "").strip().lower()
+    if _has_negation(lowered, proposal.get("kind")):
+        return "negation"
+    if _has_deferral(lowered):
+        return "deferral"
+    start = _as_datetime(proposal["start_at"])
+    lowered = _without_queued_clauses(lowered, start, proposal.get("queued"), now)
+    if _is_question(lowered):
+        return "question"
+    if mentions_other_time(lowered, start, now):
+        return "other_time"
+    return None
 
 
 def _has_time(text: str) -> bool:
@@ -1046,6 +1208,7 @@ def _has_time(text: str) -> bool:
 
 
 def _without_queued_clauses(lowered: str, start: datetime, queued, now: datetime) -> str:
+    """Bỏ những mệnh đề chỉ nói về một lịch ĐANG CHỜ (lỗi live B2 #2)."""
     if not queued:
         return lowered
     waiting = [_as_datetime(q) for q in queued]
@@ -1060,17 +1223,32 @@ def _without_queued_clauses(lowered: str, start: datetime, queued, now: datetime
     return remainder if remainder else lowered
 ```
 
-Trong `is_short_affirmation` và `is_go_ahead`, thay `re.findall(r"\w+", lowered)` bằng `tokens.words(text)`, thay `negation.search` bằng `_has_negation(text, "book")`, và thay `_TIME.search` bằng `_has_time(text)`.
+Trong `app/agents/booking_graph/confirm.py:328-333`, bổ sung hậu kiểm trên `analysis.aside` và `analysis.mentioned_times` bên trong `label_fn`:
+
+```python
+        async def label_fn(proposal_facts, bot_question, customer_text):
+            analysis = await analyzer.analyze_turn(
+                [], customer_text, proposal_facts, bot_question=bot_question)
+            captured["analysis"] = analysis.model_dump()
+            if analysis.aside in ("defer_only", "defer_with_request"):
+                return "reject"
+            if (analysis.mentioned_times
+                    and not proposal_facts.get("queued")
+                    and reply.mentions_other_time("", proposal.start_at, now_utc(),
+                                                  mentioned_times=analysis.mentioned_times)):
+                return "change"
+            return analysis.reply_to_proposal or "unclear"
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_reply_veto.py tests/test_reply_classify.py tests/test_confirm_flow.py`
+Run: `PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_reply_veto.py tests/test_reply_classify.py tests/test_confirm.py tests/test_confirm_flow.py`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/henryb1/Desktop/HenryB1/data/salona-booking-harness-b add app/agents/booking_graph/reply.py tests/test_reply_veto.py
+git -C /home/henryb1/Desktop/HenryB1/data/salona-booking-harness-b add app/agents/booking_graph/reply.py app/agents/booking_graph/confirm.py tests/test_reply_veto.py
 git -C /home/henryb1/Desktop/HenryB1/data/salona-booking-harness-b commit -m "refactor: remove all 14 regexes from reply.py
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1127,13 +1305,10 @@ Trong `app/agents/booking_graph/tools.py`:
 def _is_date_only(value: Optional[str]) -> bool:
     """Chuỗi chỉ chứa ngày `YYYY-MM-DD`, không có giờ."""
     s = (value or "").strip()
-    if len(s) != 10 or "T" in s or " " in s:
-        return False
-    try:
-        date.fromisoformat(s)
-        return True
-    except ValueError:
-        return False
+    parts = s.split("-")
+    return (len(s) == 10 and len(parts) == 3
+            and [len(p) for p in parts] == [4, 2, 2]
+            and all(p.isascii() and p.isdigit() for p in parts))
 ```
 - Thay 2 chỗ `_DATE_ONLY.match(...)` (ở `_queued_item` và `propose_appointment`) bằng `_is_date_only(...)`.
 
@@ -1193,10 +1368,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/agents/booking_graph/guard.py:1-576`
 - Create: `tests/test_regex_budget.py`
-- Test: `tests/test_guard.py`, `tests/test_mw_guard.py`, `tests/test_regex_budget.py`
+- Test: `tests/test_guard.py`, `tests/test_mw_guard.py`, `tests/test_mw_phrase.py`, `tests/test_regex_budget.py`
 
 **Interfaces:**
-- Consumes: `tokens.words`, `tokens.cased_words`, `tokens.padded`, `tokens.has_phrase`, `tokens.digits_in`, `tokens.split_sentences`, `tokens.split_clauses`, `tokens.scan_spoken_clocks`, `tokens.has_slash_date` (từ Task 1).
+- Consumes: `tokens.words`, `tokens.cased_words`, `tokens.padded`, `tokens.has_phrase`, `tokens.digits_in`, `tokens.split_sentences`, `tokens.split_clauses`, `tokens.scan_spoken_clocks` (từ Task 1).
 - Produces:
   - Giữ nguyên toàn bộ hàm public trong `guard.py` (`strip_tool_names`, `unclaim`, `clock_keys`, `claim_facts`, `false_claim`, `has_false_claim`, `drop_false_claims`, `announce_queue`, `normalize`, `sentences`, `repeats`, `customer_asked_to_repeat`, `check_pronoun`, `asks_yes_no_about_a_clock`, `check_clock`, `content_kept`, `find_violations`, `apply_guard`).
   - Trong `guard.py` chỉ còn đúng **2 `re.compile`**: `_TOOL_GROUP` và `_TOOL_BARE`.
@@ -1239,91 +1414,325 @@ Expected: FAIL (`AssertionError: Vượt ngân sách regex tầng agent: {'guard
 
 - [ ] **Step 3: Write minimal implementation (`app/agents/booking_graph/guard.py`)**
 
-Trong `app/agents/booking_graph/guard.py`, thay thế 19 regex bằng các hàm từ `tokens.py`:
-1. **`strip_tool_names`**: giữ `_TOOL_GROUP` và `_TOOL_BARE`; thay `_MULTI_SPACE`, `_SPACE_BEFORE_PUNCT` và `re.sub(r",(?:\s*,)+", ...)` bằng hàm thuần Python `_tidy_spaces(text: str)`:
-   ```python
-   def _tidy_line(line: str) -> str:
-       collapsed = " ".join(line.split())
-       out: List[str] = []
-       for ch in collapsed:
-           if ch in ".,!?…;:" and out and out[-1] == " ":
-               out.pop()
-           if ch == "," and out and out[-1] == ",":
-               continue
-           out.append(ch)
-       return "".join(out).strip()
-   ```
-2. **`normalize`, `sentences`, `_digits`**:
-   ```python
-   def normalize(text: str) -> str:
-       return " ".join(tokens.words(text))
+Trong `app/agents/booking_graph/guard.py`, thêm `from app.agents.booking_graph import tokens`, xoá toàn bộ 19 `re.compile` ngoài `_TOOL_GROUP` và `_TOOL_BARE` (`_PUNCT`, `_SENTENCE_END`, `_REGISTER_BEFORE_NAME`, `_CON_AS_SUBJECT`, `_CLOCK_COLON`, `_CLOCK_WORDS`, `_HONORIFIC_BEFORE`, `_MULTI_SPACE`, `_SPACE_BEFORE_PUNCT`, `_CLAIM`, `_RỒI_AFTER`, `_CLAIMED`, `_CLAIM_NEGATED`, `_CLAUSE_SPLIT`, `_SPOKEN_CLOCK`, `_QUESTION_AFTER_COMMA`, `_DATETIME`, `_NUMBER`, `_YES_NO_PARTICLE`), và thay các hàm tương ứng bằng code thuần Python sau:
 
-   def sentences(text: str) -> List[str]:
-       return [p.rstrip(".!?…").strip() for p in tokens.split_sentences(text)
-               if p.rstrip(".!?…").strip()]
+```python
+from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
+from app.agents.booking_graph import tokens
 
-   def _digits(text: str) -> set:
-       return set(tokens.digits_in(text))
-   ```
-3. **`clock_keys` & `asks_yes_no_about_a_clock`**:
-   ```python
-   def clock_keys(text: str) -> List[tuple]:
-       return tokens.scan_spoken_clocks(text)
+_FORBIDDEN_REGISTER = {"Cô", "Chú", "Bác"}
+_LEADING_PARTICLES = {"dạ", "vâng", "ừ", "à", "ờ"}
+_CON_VERBS = ("xem", "giúp", "đặt", "hỏi", "kiểm", "giữ")
+_CON_SUBJECT_PHRASES = tuple(
+    f"{prefix} {verb}"
+    for prefix in ("con", "để con", "giúp con")
+    for verb in _CON_VERBS
+)
+_NUMBER_WORDS_SET = frozenset({
+    "một", "hai", "ba", "bốn", "lăm", "năm", "sáu", "bảy", "tám", "chín", "mười", "mươi", "mốt",
+})
+_HONORIFICS_SET = frozenset({"anh", "chị", "em", "cô", "chú", "bác", "ông", "bà"})
 
-   def asks_yes_no_about_a_clock(draft: str) -> bool:
-       parts = tokens.split_sentences(draft)
-       last = parts[-1] if parts else ""
-       if not last.rstrip().endswith("?"):
-           return False
-       return (tokens.has_phrase(tokens.padded(last), ("được không", "nhé", "nha"))
-               and bool(clock_keys(draft)))
-   ```
-4. **`unclaim`**:
-   Xử lý từng câu tách bởi `tokens.split_sentences(draft)`:
-   ```python
-   _UNCLAIM_PREFIXES = (
-       ("Dạ, em đã ", "Dạ, em "),
-       ("Dạ, em vừa ", "Dạ, em "),
-       ("Dạ em đã ", "Dạ em "),
-       ("Dạ em vừa ", "Dạ em "),
-       ("dạ, em đã ", "dạ, em "),
-       ("Em đã ", "Em "),
-       ("Em vừa ", "Em "),
-       ("em đã ", "em "),
-       ("em vừa ", "em "),
-       ("Dạ, đã ", "Dạ, em "),
-       ("Dạ, vừa ", "Dạ, em "),
-       ("Đã ", "Em "),
-       ("Vừa ", "Em "),
-   )
-   ```
-   Tìm mẫu trong câu (hoặc sau `", em đã "` / `", em vừa "`):
-   - Nếu theo sau là `"ghi nhận"` hoặc `"ghi lại"` → giữ nguyên.
-   - Nếu theo sau là `"đặt"`/`"chốt"`/`"ghi"` (+ tuỳ chọn `" lịch"`/`" chỗ"`/`" hẹn"` + tuỳ chọn `" xong"`) → thay bằng `"{lead}giữ chỗ"`.
-   - Nếu theo sau là `"dời"`/`"đổi"`/`"hủy"`/`"huỷ"` (+ tuỳ chọn `" lịch"`/`" chỗ"`/`" hẹn"` + tuỳ chọn `" xong"`) → thay bằng `"{lead}sẽ {'dời' if verb in ('dời', 'đổi') else 'hủy'}{obj}"` và xoá cụm `" rồi"` đứng ngay trước `" ạ"` hoặc dấu kết câu cuối mệnh đề đó.
-5. **`false_claim`, `has_false_claim`, `drop_false_claims`**:
-   - Tách câu bằng `tokens.split_sentences`, tách mệnh đề bằng `tokens.split_clauses(s, break_words=("còn",))`.
-   - Mệnh đề là `claimed` khi:
-     - Không có từ phủ định `tokens.has_phrase(p, ("chưa", "không", "ko"))`, và
-     - Không phải `"ghi nhận"` / `"ghi lại"`, và
-     - Có cụm `("đã giữ", "đã đặt", "đã ghi", "đã chốt", "vừa giữ", "vừa đặt", "vừa ghi", "vừa chốt", "đang giữ", "đang đặt", "đã được giữ", "đã được đặt")` hoặc có động từ `{"giữ", "đặt", "ghi", "chốt"}` đứng trước từ `"rồi"` trong `tokens.words(clause)`.
-6. **`announce_queue`**:
-   - Dùng `tokens.split_sentences(text)`.
-   - Khi tách câu hỏi cuối tại dấu phẩy: tìm vị trí dấu phẩy đầu tiên `idx` trong `question` sao cho phần sau dấu phẩy không bắt đầu bằng chữ số (`not _comma_before_digit`) và không còn dấu phẩy nào khác phía sau.
-7. **`check_pronoun`**:
-   - Duyệt `cw = tokens.cased_words(draft)`:
-     - Nếu `cw[i].lower() in {"cô", "chú", "bác"}` và `i + 1 < len(cw)` mà `cw[i + 1][:1].isupper() and cw[i + 1][1:].islower()` → `True`.
-   - Kiểm tra `"con"` làm chủ ngữ qua `tokens.has_phrase(tokens.padded(draft), _CON_SUBJECT_PHRASES)` với `_CON_SUBJECT_PHRASES = tuple(f"{p} {v}" for p in ("con", "để con", "giúp con") for v in ("xem", "giúp", "đặt", "hỏi", "kiểm", "giữ"))`.
-   - Kiểm tra đại từ sai đứng trước tên khách: `name and any(f" {w} {name.lower()} " in tokens.padded(draft) for w in wrong)`.
-8. **`check_clock` & `content_kept`**:
-   - `check_clock`:
-     - Kiểm tra giờ hai chấm `HH:MM`: duyệt `draft.split()`, bỏ dấu câu hai đầu, nếu chứa `":"` mà hai bên là chữ số (`1 <= len(h) <= 2` và `len(m) == 2`) → `True`.
-     - Kiểm tra số viết bằng chữ: duyệt `cw = tokens.cased_words(draft)`: với tập từ số chữ thường `_SINGLE_NUM_WORDS = {"một", "hai", "ba", "bốn", "lăm", "năm", "sáu", "bảy", "tám", "chín", "mười", "mươi", "mốt"}`:
-       - Nếu `cw[i]` là chữ thường hoàn toàn và thuộc `_SINGLE_NUM_WORDS`:
-         - Nếu `i + 1 < len(cw)` và `cw[i + 1].lower() in ("giờ", "tháng")`: kiểm tra từ đứng đầu cụm số không có danh xưng `{"anh", "chị", "em", "cô", "chú", "bác", "ông", "bà"}` ngay trước → `True`.
-         - Nếu `i > 0` và `cw[i - 1].lower() == "ngày"` → `True`.
-   - `content_kept(original, rewritten)`:
-     - Mọi `clock_keys(original)` phải có mặt trong `clock_keys(rewritten)`, và mọi cụm chữ số `tokens.digits_in(original)` phải có mặt trong `tokens.digits_in(rewritten)`.
+TOOL_NAMES = ("parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
+              "cancel_appointment", "get_shop_hours", "get_shop_status")
+_TOOL_ALT = "|".join(TOOL_NAMES)
+_SNAKE_IDENT = r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+"
+_TOOL_GROUP = re.compile(
+    rf"[ \t]*[(\[][^()\[\]]*?\b(?:{_TOOL_ALT}|{_SNAKE_IDENT})\b[^()\[\]]*[)\]]")
+_BARE_NAME = rf"`?\b(?:{_TOOL_ALT})\b(?:\(\))?`?"
+_TOOL_BARE = re.compile(rf"{_BARE_NAME}(?:[ \t]*(?:,|và|and)[ \t]*{_BARE_NAME})*")
+
+RewriteOnce = Callable[[str, List[str], Sequence[str], str], Awaitable[Optional[str]]]
+
+
+def _tidy_line(line: str) -> str:
+    collapsed = " ".join(line.split())
+    out: List[str] = []
+    for ch in collapsed:
+        if ch in ".,!?…;:" and out and out[-1] == " ":
+            out.pop()
+        if ch == "," and out and out[-1] == ",":
+            continue
+        out.append(ch)
+    return "".join(out).strip()
+
+
+def strip_tool_names(text: str) -> str:
+    if not text:
+        return text
+    cleaned = _TOOL_BARE.sub("", _TOOL_GROUP.sub("", text))
+    if cleaned == text:
+        return text
+    return "\n".join(_tidy_line(line) for line in cleaned.split("\n")).strip()
+
+
+_UNCLAIM_LEADS = (
+    ("Dạ, em đã ", "Dạ, em "),
+    ("Dạ, em vừa ", "Dạ, em "),
+    ("Dạ em đã ", "Dạ em "),
+    ("Dạ em vừa ", "Dạ em "),
+    ("dạ, em đã ", "dạ, em "),
+    ("dạ, em vừa ", "dạ, em "),
+    ("Dạ, đã ", "Dạ, em "),
+    ("Dạ, vừa ", "Dạ, em "),
+    ("Dạ đã ", "Dạ em "),
+    ("Dạ vừa ", "Dạ em "),
+    ("dạ, đã ", "dạ, em "),
+    ("Em đã ", "Em "),
+    ("Em vừa ", "Em "),
+    ("em đã ", "em "),
+    ("em vừa ", "em "),
+    ("Đã ", "Em "),
+    ("Vừa ", "Em "),
+)
+_MID_LEADS = (
+    ("Em đã ", "Em "),
+    ("Em vừa ", "Em "),
+    ("em đã ", "em "),
+    ("em vừa ", "em "),
+)
+_CLAIM_VERBS = ("đặt", "chốt", "ghi", "dời", "đổi", "hủy", "huỷ")
+_CLAIM_OBJS = (" lịch", " chỗ", " hẹn")
+
+
+def _strip_first_roi(seg: str) -> str:
+    for suffix in (" rồi ạ", " rồi,", " rồi.", " rồi!", " rồi?", " rồi…"):
+        idx = seg.find(suffix)
+        if idx != -1:
+            return seg[:idx] + seg[idx + 4:]
+    if seg.endswith(" rồi"):
+        return seg[:-4]
+    return seg
+
+
+def _unclaim_sentence(sent: str) -> str:
+    candidates: List[Tuple[int, str, str]] = []
+    for raw_lead, repl_lead in _UNCLAIM_LEADS:
+        if sent.startswith(raw_lead):
+            candidates.append((0, raw_lead, repl_lead))
+            break
+    if not candidates:
+        for raw_lead, repl_lead in _MID_LEADS:
+            pos = sent.find(raw_lead)
+            if pos > 0 and not sent[pos - 1].isalnum():
+                candidates.append((pos, raw_lead, repl_lead))
+                break
+    if not candidates:
+        return sent
+    pos, raw_lead, repl_lead = candidates[0]
+    rest = sent[pos + len(raw_lead):]
+    matched_verb = None
+    for v in _CLAIM_VERBS:
+        if rest.startswith(v) and (len(rest) == len(v) or not rest[len(v)].isalnum()):
+            matched_verb = v
+            break
+    if not matched_verb:
+        return sent
+    after_verb = rest[len(matched_verb):]
+    if matched_verb == "ghi" and (after_verb.startswith(" nhận") or after_verb.startswith(" lại")):
+        return sent
+    obj = ""
+    for o in _CLAIM_OBJS:
+        if after_verb.startswith(o) and (len(after_verb) == len(o) or not after_verb[len(o)].isalnum()):
+            obj = o
+            after_verb = after_verb[len(o):]
+            break
+    if after_verb.startswith(" xong") and (len(after_verb) == 5 or not after_verb[5].isalnum()):
+        after_verb = after_verb[5:]
+    if matched_verb in ("đặt", "chốt", "ghi"):
+        return f"{sent[:pos]}{repl_lead}giữ chỗ{after_verb}"
+    action = "dời" if matched_verb in ("dời", "đổi") else "hủy"
+    cleaned_tail = _strip_first_roi(after_verb)
+    return f"{sent[:pos]}{repl_lead}sẽ {action}{obj}{cleaned_tail}"
+
+
+def unclaim(draft: str) -> str:
+    """"em đã đặt" → "em giữ chỗ"; "em đã dời/hủy … rồi" → "em sẽ dời/hủy …"."""
+    sents = tokens.split_sentences(draft)
+    if not sents:
+        return draft
+    rewritten = [_unclaim_sentence(s) for s in sents]
+    if rewritten == sents:
+        return draft
+    return " ".join(rewritten)
+
+
+def clock_keys(text: str) -> List[tuple]:
+    """(giờ đọc, phút, buổi|None) cho mọi giờ đọc kiểu "9 giờ sáng" trong câu."""
+    return tokens.scan_spoken_clocks(text)
+
+
+_CLAIM_PHRASES = (
+    "đã giữ", "đã đặt", "đã ghi", "đã chốt",
+    "vừa giữ", "vừa đặt", "vừa ghi", "vừa chốt",
+    "đang giữ", "đang đặt", "đang ghi", "đang chốt",
+    "đã được giữ", "đã được đặt", "đã được ghi", "đã được chốt",
+    "vừa được giữ", "vừa được đặt",
+    "đang được giữ", "đang được đặt",
+)
+_CLAIM_HOLD_VERBS = frozenset({"giữ", "đặt", "ghi", "chốt"})
+
+
+def _is_claimed_clause(clause: str) -> bool:
+    p = tokens.padded(clause)
+    if tokens.has_phrase(p, ("chưa", "không", "ko")):
+        return False
+    p_clean = p.replace(" ghi nhận ", " ").replace(" ghi lại ", " ")
+    if tokens.has_phrase(p_clean, _CLAIM_PHRASES):
+        return True
+    ws = [t for t in p_clean.split() if t != "|"]
+    for i, w in enumerate(ws):
+        if w in _CLAIM_HOLD_VERBS and "rồi" in ws[i + 1:]:
+            return True
+    return False
+
+
+def _clauses(sentence: str) -> List[str]:
+    return tokens.split_clauses(sentence, break_words=("còn",), preserve_date_comma=True)
+
+
+def false_claim(clause: str, facts: dict) -> bool:
+    if facts.get("unknown") or not _is_claimed_clause(clause):
+        return False
+    said = clock_keys(clause)
+    if not said:
+        return not facts["any"]
+    return any(not any(_same_clock(s, k) for k in facts["clocks"]) for s in said)
+
+
+def has_false_claim(text: str, facts: Optional[dict]) -> bool:
+    if not facts:
+        return False
+    return any(false_claim(c, facts) for s in tokens.split_sentences(text or "") for c in _clauses(s))
+
+
+def drop_false_claims(text: str, facts: dict) -> str:
+    """Bỏ nguyên câu có mệnh đề nhận vơ — lưới cuối khi rewrite không sửa được."""
+    kept = [s for s in tokens.split_sentences((text or "").strip())
+            if not any(false_claim(c, facts) for c in _clauses(s))]
+    out = " ".join(s for s in kept if s.strip()).strip()
+    if out.startswith(("Dạ ", "Dạ, ")) or not out:
+        return out
+    return out[:1].upper() + out[1:]
+```
+
+Trong `announce_queue`, thay `_SENTENCE_END.split(text)` và `_QUESTION_AFTER_COMMA.split(question, maxsplit=1)` bằng:
+
+```python
+    text = answer.strip()
+    body = [p for p in tokens.split_sentences(text) if p.strip()]
+    question = None
+    if body and body[-1].rstrip().endswith("?"):
+        question = body.pop().strip()
+        last_comma = question.rfind(",")
+        if last_comma != -1:
+            after = question[last_comma + 1:].lstrip()
+            if after and not after[0].isdigit():
+                body.append(question[:last_comma].rstrip() + ".")
+                question = after[:1].upper() + after[1:]
+```
+
+Và thay `normalize`, `sentences`, `_digits`, `_leading_content_tokens`, `check_pronoun`, `asks_yes_no_about_a_clock`, `check_clock`, `content_kept` bằng:
+
+```python
+def normalize(text: str) -> str:
+    return " ".join(tokens.words(text))
+
+
+def sentences(text: str) -> List[str]:
+    return [p.rstrip(".!?…").strip() for p in tokens.split_sentences(text)
+            if p.rstrip(".!?…").strip()]
+
+
+def _digits(text: str) -> set:
+    return set(tokens.digits_in(text))
+
+
+def _leading_content_tokens(sentence: str) -> List[str]:
+    toks = tokens.cased_words(sentence)
+    i = 0
+    while i < len(toks) and toks[i].lower() in _LEADING_PARTICLES:
+        i += 1
+    return toks[i:]
+
+
+def _has_register_before_name(draft: str) -> bool:
+    cw = tokens.cased_words(draft)
+    for i in range(len(cw) - 1):
+        if cw[i].lower() in ("cô", "chú", "bác"):
+            nxt = cw[i + 1]
+            if len(nxt) >= 2 and nxt[0].isupper() and nxt[1:].islower():
+                return True
+    return False
+
+
+def check_pronoun(draft: str, address: str, name: str) -> bool:
+    p = tokens.padded(draft)
+    if _has_register_before_name(draft) or tokens.has_phrase(p, _CON_SUBJECT_PHRASES):
+        return True
+    _, wrong = _pronouns(address)
+    for sent in sentences(draft):
+        toks = _leading_content_tokens(sent)
+        if not toks:
+            continue
+        if toks[0] in _FORBIDDEN_REGISTER:
+            return True
+        first = toks[0].lower()
+        nxt = toks[1].lower() if len(toks) > 1 else ""
+        if first in wrong and nxt != "chủ":
+            if first == "anh" and nxt == "chị":
+                continue
+            return True
+    if not wrong:
+        return False
+    if name and any(f" {w} {name.lower()} " in p for w in wrong):
+        return True
+    return False
+
+
+def asks_yes_no_about_a_clock(draft: str) -> bool:
+    parts = tokens.split_sentences(draft)
+    last = parts[-1] if parts else ""
+    if not last.rstrip().endswith("?"):
+        return False
+    return (tokens.has_phrase(tokens.padded(last), ("được không", "nhé", "nha"))
+            and bool(clock_keys(draft)))
+
+
+def check_clock(draft: str) -> bool:
+    for raw in (draft or "").split():
+        cleaned = raw.strip(".,!?;:()[]\"'«»")
+        if ":" in cleaned:
+            left, sep, right = cleaned.partition(":")
+            if (sep and left.isascii() and right.isascii()
+                    and left.isdigit() and right.isdigit()
+                    and 1 <= len(left) <= 2 and len(right) == 2):
+                return True
+    cw = tokens.cased_words(draft)
+    n = len(cw)
+    for i, w in enumerate(cw):
+        if w.islower() and w in _NUMBER_WORDS_SET:
+            if i + 1 < n and cw[i + 1].lower() in ("giờ", "tháng"):
+                start = i
+                while start > 0 and cw[start - 1].islower() and cw[start - 1] in _NUMBER_WORDS_SET:
+                    start -= 1
+                if start > 0 and cw[start - 1].lower() in _HONORIFICS_SET:
+                    continue
+                return True
+            if i > 0 and cw[i - 1].lower() == "ngày":
+                return True
+    return False
+
+
+def content_kept(original: str, rewritten: str) -> bool:
+    """Bản viết lại phải còn mọi mốc ngày-giờ và mọi con số của bản gốc."""
+    orig_clocks = clock_keys(original)
+    rew_clocks = clock_keys(rewritten)
+    if any(c not in rew_clocks for c in orig_clocks):
+        return False
+    rew_digits = set(tokens.digits_in(rewritten))
+    return all(d in rew_digits for d in tokens.digits_in(original))
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1343,3 +1752,4 @@ git -C /home/henryb1/Desktop/HenryB1/data/salona-booking-harness-b commit -m "re
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+
