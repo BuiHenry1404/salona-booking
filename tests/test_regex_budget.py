@@ -17,10 +17,23 @@ EXPECTED_BUDGET = {
 
 
 def test_agent_regex_budget_is_at_most_three():
+    import ast
     actual = {}
+    re_importers = set()
     for path in sorted(ROOT.rglob("*.py")):
         rel = str(path.relative_to(ROOT))
-        count = len(re.findall(r"re\.compile\(", path.read_text(encoding="utf-8")))
+        src = path.read_text(encoding="utf-8")
+        count = len(re.findall(r"re\.compile\(", src))
         if count:
             actual[rel] = count
+        tree = ast.parse(src, filename=rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(a.name == "re" for a in node.names):
+                re_importers.add(rel)
+            elif isinstance(node, ast.ImportFrom) and node.module == "re":
+                re_importers.add(rel)
     assert actual == EXPECTED_BUDGET, f"Vượt ngân sách regex tầng agent: {actual}"
+    assert re_importers == set(EXPECTED_BUDGET.keys()), (
+        f"Module ngoài ngân sách import re: {re_importers}"
+    )
+

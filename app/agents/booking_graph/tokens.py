@@ -404,7 +404,7 @@ def names_a_day(text: str) -> bool:
         if w in _DAY_MARKER_WORDS:
             return True
         if w == "mot":
-            # "mot" đứng ngay trước "gio"/"h"/"g" là "1 giờ", vẫn tính như regex cũ
+            # "mot" (dù là "mốt" hay "một" trong "một giờ") luôn được tính là có nhắc ngày để tương thích với regex cũ
             return True
         if w == "chu" and i + 1 < len(ws_bare) and ws_bare[i + 1] == "nhat":
             return True

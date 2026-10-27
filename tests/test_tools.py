@@ -891,7 +891,7 @@ async def test_propose_without_queue_has_no_queue_key(test_db):
     assert "queued" not in out
 
 
-def test_tools_module_uses_zero_regex():
+async def test_tools_module_uses_zero_regex():
     import inspect
     from app.agents.booking_graph import tools
     source = inspect.getsource(tools)
