@@ -102,3 +102,19 @@ def test_two_deferrals_in_a_row_get_different_words():
     second = deferral_reply(TURN5, "anh Hùng", [first])
     third = deferral_reply(TURN5, "anh Hùng", [first, second])
     assert len({first, second, third}) == 3
+
+
+def test_relatives_module_uses_zero_regex():
+    import inspect
+    from app.agents.booking_graph import relatives
+    source = inspect.getsource(relatives)
+    assert "import re" not in source and "re.compile" not in source
+
+
+def test_aside_line_and_deferral_reply_honour_analyzer_aside():
+    assert "[relative]" in aside_line("câu bất kỳ", analysis={"aside": "relative_free"})
+    assert "[deferral]" in aside_line("câu bất kỳ", analysis={"aside": "defer_only"})
+    reply = deferral_reply("câu bất kỳ", "anh Hùng", [], analysis={"aside": "defer_only"})
+    assert reply and "anh Hùng" in reply
+    assert deferral_reply("câu bất kỳ", "anh Hùng", [], analysis={"aside": "defer_with_request"}) is None
+

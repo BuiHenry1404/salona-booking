@@ -174,7 +174,8 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
             said = [str(m.content) for m in (state.get("messages") or [])
                     if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
             code = deferral_reply(state.get("customer_text") or "", address_phrase(user),
-                                  [*said, *(state.get("previous_replies") or [])])
+                                  [*said, *(state.get("previous_replies") or [])],
+                                  analysis=state.get("analysis"))
             if code:
                 logger.info("deferral_code_reply")
                 result = {"draft": code, "answer": code, "answer_source": "code",
@@ -187,7 +188,8 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
             # + câu khách nhắc người nhà / hẹn nhắn lại (lỗi live B3 #2).
             "context_block": with_line(with_line(state.get("context_block", ""),
                                                  queued_line(queue)),
-                                       aside_line(state.get("customer_text") or "")),
+                                       aside_line(state.get("customer_text") or "",
+                                                  analysis=state.get("analysis"))),
             "queued": queue,
             "summary": state.get("summary") or "",
             "slots": state.get("slots"),

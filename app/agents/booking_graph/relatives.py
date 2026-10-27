@@ -1,89 +1,43 @@
-"""Khách nhắc NGƯỜI NHÀ / người quen — lỗi live B3 #2.
+"""Khách nhắc NGƯỜI NHÀ / người quen — lỗi live B3 #2, B4 #2 (0 regex).
 
-"khoan da, de chu hoi lai no co ranh khong" từng được trả lời bằng
-get_shop_status ("chủ tiệm đang rảnh"): BOOKING_PROMPT rule 1 bảo dùng tool tiệm
-cho câu hỏi chủ tiệm bận hay rảnh, và model đọc "nó có rảnh không" thành câu đó.
-"ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi nhan lai em sau
-nha" thì ra câu từ chối quyền riêng tư (rule 4 — "hỏi về người khác").
-
-Code nhận ra hai ca (không LLM, so cả có dấu lẫn không dấu):
-- `asks_if_relative_free`: một người khách nhắc tới (nó, thằng/con, cháu, ông
-  xã, bà nhà, vợ, chồng…) + "rảnh";
-- `defers`: khách sẽ hỏi lại / tính lại rồi nhắn sau (dùng lại mẫu hoãn của
-  `reply.py`).
-Rồi: supervisor đưa vào booking không gọi model, và agent đọc MỘT dòng code
-viết trong khối bối cảnh (`aside_line`, tag `[relative]`/`[deferral]` — tên
-mà BOOKING_PROMPT rule 1/4 trỏ tới).
+Nhận diện qua `TurnAnalysis.aside` (nếu đã có bản phân tích đầu lượt) kết hợp
+kiểm tra từ/cụm từ thuần Python qua `tokens.py` cho lối tắt trước LLM ở
+`supervisor.py` và `make_agent_node`.
 """
-import re
+from typing import Any, Mapping, Optional, Sequence
 
-from app.agents.booking_graph.guard import repeats
-from app.agents.booking_graph.reply import _DEFERRAL, _DEFERRAL_BARE, _has_time, _unaccented_only
-from app.core.text import strip_diacritics
+from app.agents.booking_graph import guard, tokens
 
-# "con" chỉ tính khi gõ CÓ dấu ở chỗ khác — bản không dấu "con ranh" là "còn
-# rảnh" (hỏi giờ trống). "vo" không dấu cũng là "vô" — bỏ.
-_PERSON = r"(?:nó|thằng|cháu|con|ông xã|bà xã|ông nhà|bà nhà|vợ|chồng|bố|mẹ)"
-_PERSON_BARE = r"(?:no|thang|chau|ong xa|ba xa|ong nha|ba nha|chong)"
-_GAP = r"(?:\s+\S+){0,3}?\s+"
-_RELATIVE_FREE = re.compile(rf"\b{_PERSON}\b{_GAP}rảnh\b", re.IGNORECASE)
-_RELATIVE_FREE_BARE = re.compile(rf"\b{_PERSON_BARE}\b{_GAP}ranh\b", re.IGNORECASE)
-# Người của TIỆM đứng ngay trước: "chủ tiệm", "chị chủ" — không phải người nhà.
-_SHOP_PERSON = re.compile(r"\b(?:chủ|chu|tiệm|tiem)\b", re.IGNORECASE)
+_PERSONS_ACC = (
+    "nó", "thằng", "cháu", "con", "ông xã", "bà xã", "ông nhà", "bà nhà", "vợ", "chồng", "bố", "mẹ",
+)
+# Không dấu: bỏ "con" ("con ranh" = "còn rảnh") và "vo" ("vô").
+_PERSONS_BARE = (
+    "no", "thang", "chau", "ong xa", "ba xa", "ong nha", "ba nha", "chong",
+)
+_SHOP_WORDS = frozenset({"chủ", "chu", "tiệm", "tiem"})
 
-_MESSAGE_LATER = re.compile(r"\bnhắn\s+(?:lại\s+)?(?:\w+\s+)?sau\b|\bnhan\s+(?:lai\s+)?(?:\w+\s+)?sau\b",
-                            re.IGNORECASE)
+_DEFER_VERBS_ACC = frozenset({"hỏi", "xem", "gọi", "tính", "nghĩ", "bàn"})
+_DEFER_VERBS_BARE = frozenset({"hoi", "xem", "goi", "tinh", "nghi", "ban"})
+_DEFER_PHRASES_ACC = ("xem lại", "hỏi lại", "suy nghĩ", "tính sau")
+_DEFER_PHRASES_BARE = ("xem lai", "hoi lai", "suy nghi", "tinh sau")
 
-
-def asks_if_relative_free(text: str) -> bool:
-    """Khách hỏi một người KHÁCH nhắc tới có rảnh không (không phải chủ tiệm)."""
-    lowered = (text or "").lower()
-    bare = _unaccented_only(lowered)
-    for pattern, source in ((_RELATIVE_FREE, lowered), (_RELATIVE_FREE_BARE, bare)):
-        for m in pattern.finditer(source):
-            if not _SHOP_PERSON.search(m.group(0)):
-                return True
-    return False
-
-
-def defers(text: str) -> bool:
-    """Khách sẽ hỏi ai đó / tính lại rồi nhắn sau."""
-    lowered = (text or "").lower()
-    bare = strip_diacritics(lowered)
-    return bool(_DEFERRAL.search(lowered) or _DEFERRAL_BARE.search(bare)
-                or _MESSAGE_LATER.search(lowered) or _MESSAGE_LATER.search(bare))
-
+_REQUEST_PHRASES_ACC = (
+    "đặt", "giữ", "dời", "đổi", "hủy", "huỷ", "book", "mấy giờ", "giờ nào",
+    "đóng cửa", "mở cửa", "giá", "bao nhiêu", "bao lâu", "còn chỗ", "còn trống",
+)
+_REQUEST_VERBS_BARE = frozenset({"dat", "giu", "doi", "huy"})
+_REQUEST_OBJS_BARE = frozenset({
+    "lich", "cho", "hen", "luon", "giup", "gium", "dum", "lai", "qua", "sang", "truoc", "di", "cai",
+})
+_REQUEST_PHRASES_BARE = (
+    "book", "may gio", "gio nao", "dong cua", "mo cua", "bao nhieu", "bao lau", "con cho", "con trong",
+)
 
 RELATIVE_LINE = ("Khách vừa hỏi NGƯỜI NHÀ/NGƯỜI QUEN của khách có rảnh không — không phải "
                  "hỏi chủ tiệm bận hay rảnh, không phải hỏi lịch của khách khác. [relative]")
 DEFERRAL_LINE = ("Khách nói sẽ hỏi lại/tính lại rồi nhắn em sau — đây là chuyện lịch của "
                  "chính khách; chỉ đáp một câu ngắn, mời khách nhắn lại. [deferral]")
-
-
-def aside_line(text: str) -> str:
-    """Dòng code viết cho khối bối cảnh; rỗng khi câu khách không thuộc hai ca."""
-    lines = [line for hit, line in ((asks_if_relative_free(text), RELATIVE_LINE),
-                                    (defers(text), DEFERRAL_LINE)) if hit]
-    return "\n".join(lines)
-
-
-# --- câu đáp CODE viết cho câu hoãn (lỗi live B4 #2) ---------------------------
-# Live B4 lượt 5 ("ko, chu hoi thang chau co ranh khong a. thoi de chu hoi no roi
-# nhan lai em sau nha"): supervisor route bằng code, khối bối cảnh có đủ dòng
-# [relative]/[deferral], vậy mà model vẫn đáp câu từ chối của rule 4 ("em chỉ
-# xem và đặt lịch của anh Hùng thôi"). Rule 4 viết HOA, đứng trước vế loại
-# trừ — prompt thua. Câu hoãn KHÔNG kèm yêu cầu nào thì không cần model: code
-# đáp một câu ngắn mời khách nhắn lại. Kèm yêu cầu (có giờ, đặt/giữ/dời/hủy,
-# hỏi tiệm) → vẫn để model lo.
-_REQUEST = re.compile(
-    r"\b(?:đặt|giữ|dời|đổi|hủy|huỷ|book|mấy giờ|giờ nào|đóng cửa|mở cửa|giá|bao nhiêu"
-    r"|bao lâu|còn chỗ|còn trống)\b", re.IGNORECASE)
-# Không dấu: động từ phải có bổ ngữ quen ("huy lich", "dat luon") — "huy" trần
-# là tên (thằng Huy), "doi" trần còn là "đợi".
-_REQUEST_BARE = re.compile(
-    r"\b(?:(?:dat|giu|doi|huy)\s+(?:lich|cho|hen|luon|giup|gium|dum|lai|qua|sang|truoc|di|cai)"
-    r"|book|may gio|gio nao|dong cua|mo cua|bao nhieu|bao lau|con cho|con trong)\b",
-    re.IGNORECASE)
 
 _DEFERRAL_REPLIES = (
     "Dạ vâng, {address} cứ thong thả, xong thì nhắn em nhé.",
@@ -92,18 +46,104 @@ _DEFERRAL_REPLIES = (
 )
 
 
+def _person_near_free(word_list: Sequence[str], persons: Sequence[str], free_word: str) -> bool:
+    """Tìm từ chỉ người trong `persons` đứng trước `free_word` trong phạm vi ≤ 3 từ giữa,
+    mà khoảng giữa không vượt dấu câu (`|`) và không chứa từ chỉ chủ tiệm (`chủ`, `tiệm`)."""
+    n = len(word_list)
+    for phrase in persons:
+        p_tokens = phrase.split()
+        plen = len(p_tokens)
+        for i in range(n - plen):
+            if list(word_list[i:i + plen]) != p_tokens:
+                continue
+            start = i + plen
+            for j in range(start, min(n, start + 4)):
+                if word_list[j] == "|":
+                    break
+                if word_list[j] == free_word:
+                    between = word_list[i:j + 1]
+                    if not any(w in _SHOP_WORDS for w in between):
+                        return True
+    return False
+
+
+def asks_if_relative_free(text: str) -> bool:
+    """Khách hỏi một người KHÁCH nhắc tới có rảnh không (không phải chủ tiệm)."""
+    ws = tokens.padded(text).split()
+    if _person_near_free(ws, _PERSONS_ACC, "rảnh"):
+        return True
+    ws_unacc = tokens.padded_unaccented_only(text).split()
+    return _person_near_free(ws_unacc, _PERSONS_BARE, "ranh")
+
+
+def _has_de_verb(word_list: Sequence[str], de_word: str, verbs: frozenset) -> bool:
+    """Khớp `'để <1..2 từ> (hỏi|xem|gọi|tính|nghĩ|bàn)'` hoặc `'nhắn [lại] [<1 từ>] sau'`."""
+    n = len(word_list)
+    for i, w in enumerate(word_list):
+        if w == de_word:
+            if i + 2 < n and word_list[i + 1] != "|" and word_list[i + 2] in verbs:
+                return True
+            if (i + 3 < n and "|" not in word_list[i + 1:i + 3]
+                    and word_list[i + 3] in verbs):
+                return True
+        if w in ("nhắn", "nhan"):
+            for step in (1, 2, 3):
+                if (i + step < n and "|" not in word_list[i + 1:i + step]
+                        and word_list[i + step] == "sau"):
+                    return True
+    return False
+
+
+def defers(text: str) -> bool:
+    """Khách sẽ hỏi ai đó / tính lại rồi nhắn sau."""
+    if not text:
+        return False
+    p_acc = tokens.padded(text)
+    p_bare = tokens.padded_bare(text)
+    if tokens.has_phrase(p_acc, _DEFER_PHRASES_ACC) or tokens.has_phrase(p_bare, _DEFER_PHRASES_BARE):
+        return True
+    ws_acc = p_acc.split()
+    ws_bare = p_bare.split()
+    return (_has_de_verb(ws_acc, "để", _DEFER_VERBS_ACC)
+            or _has_de_verb(ws_bare, "de", _DEFER_VERBS_BARE))
+
+
 def has_request(text: str) -> bool:
     """Câu khách có kèm một yêu cầu cần model (giờ, đặt/giữ/dời/hủy, hỏi tiệm)."""
-    lowered = (text or "").lower()
-    return bool(_REQUEST.search(lowered) or _REQUEST_BARE.search(_unaccented_only(lowered))
-                or _has_time(text or ""))
+    if not text:
+        return False
+    p_acc = tokens.padded(text)
+    if tokens.has_phrase(p_acc, _REQUEST_PHRASES_ACC):
+        return True
+    p_unacc = tokens.padded_unaccented_only(text)
+    if tokens.has_phrase(p_unacc, _REQUEST_PHRASES_BARE):
+        return True
+    ws_unacc = tokens.unaccented_words(text)
+    for i in range(len(ws_unacc) - 1):
+        if ws_unacc[i] in _REQUEST_VERBS_BARE and ws_unacc[i + 1] in _REQUEST_OBJS_BARE:
+            return True
+    return tokens.names_a_clock(text)
 
 
-def deferral_reply(text: str, address: str, previous_replies) -> "str | None":
-    """Câu đáp code viết khi khách chỉ hoãn ("để chú hỏi nó rồi nhắn lại em sau");
-    None khi không phải câu hoãn hoặc câu có kèm yêu cầu. Không lặp câu vừa nói."""
-    if not defers(text) or has_request(text):
+def aside_line(text: str, analysis: Optional[Mapping[str, Any]] = None) -> str:
+    """Dòng code viết cho khối bối cảnh; rỗng khi câu khách không thuộc hai ca."""
+    aside = (analysis or {}).get("aside") if isinstance(analysis, Mapping) else getattr(analysis, "aside", None)
+    rel = asks_if_relative_free(text) or aside == "relative_free"
+    dfd = defers(text) or aside in ("defer_only", "defer_with_request")
+    lines = [line for hit, line in ((rel, RELATIVE_LINE), (dfd, DEFERRAL_LINE)) if hit]
+    return "\n".join(lines)
+
+
+def deferral_reply(text: str, address: str, previous_replies,
+                   analysis: Optional[Mapping[str, Any]] = None) -> Optional[str]:
+    """Câu đáp code viết khi khách chỉ hoãn; None khi không phải câu hoãn hoặc
+    câu có kèm yêu cầu."""
+    aside = (analysis or {}).get("aside") if isinstance(analysis, Mapping) else getattr(analysis, "aside", None)
+    if aside == "defer_with_request":
+        return None
+    is_plain_defer = (aside == "defer_only") or (defers(text) and not has_request(text))
+    if not is_plain_defer or has_request(text):
         return None
     options = [r.format(address=address) for r in _DEFERRAL_REPLIES]
     previous = [p for p in previous_replies or [] if p]
-    return next((o for o in options if o not in previous and not repeats(o, previous)), options[-1])
+    return next((o for o in options if o not in previous and not guard.repeats(o, previous)), options[-1])
