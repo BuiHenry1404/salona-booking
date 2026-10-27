@@ -38,7 +38,7 @@ _PERIOD_MAP = {
 _SPOKEN_PERIODS = frozenset({"sáng", "trưa", "chiều", "tối", "đêm"})
 
 _DAY_MARKER_WORDS = frozenset({
-    "nay", "mai", "kia", "hom", "bua", "thu", "cn", "tuan", "thang", "ngay",
+    "nay", "mai", "kia", "bua", "thu", "cn", "tuan", "thang",
 })
 
 
@@ -405,6 +405,10 @@ def names_a_day(text: str) -> bool:
             return True
         if w == "mot":
             # "mot" (dù là "mốt" hay "một" trong "một giờ") luôn được tính là có nhắc ngày để tương thích với regex cũ
+            return True
+        if w in ("ngay", "mung") and i + 1 < len(ws_bare) and ws_bare[i + 1].isdigit():
+            return True
+        if w == "hom" and i + 1 < len(ws_bare) and ws_bare[i + 1] == "qua":
             return True
         if w == "chu" and i + 1 < len(ws_bare) and ws_bare[i + 1] == "nhat":
             return True

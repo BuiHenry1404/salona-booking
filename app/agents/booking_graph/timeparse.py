@@ -67,12 +67,6 @@ class ParsedTime(BaseModel):
     )
     partial_minute: int = Field(default=0, description="Phút, mặc định 0")
     source: Literal["regex", "llm"] = "llm"
-    has_explicit_day: bool = Field(
-        default=False, description="True khi câu khách tự nêu ngày, thứ, hôm nay/mai/mốt hoặc tuần"
-    )
-    has_explicit_clock: bool = Field(
-        default=False, description="True khi câu khách nêu một mốc giờ đồng hồ bằng số"
-    )
 
     @model_validator(mode="after")
     def _a_known_day_is_never_asked_again(self):
@@ -323,17 +317,15 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
 # --- neo thắng khi câu không nêu ngày (lỗi live 5) ---------------------------
 # KHÔNG phải mẫu parser (bẫy #11: `_match_regex` giữ nguyên, không nới):
 # chỉ quyết có ĐƯA NGÀY CỦA NEO vào kết quả LLM hay không. Dùng scanner tokens thuần.
-def anchor_day_applies(text: str, candidate: Optional[ParsedTime] = None) -> bool:
-    """Câu nêu một giờ cụ thể mà KHÔNG nêu ngày nào."""
-    if candidate is not None and candidate.has_explicit_day:
-        return False
+def anchor_day_applies(text: str) -> bool:
+    """Câu nêu một giờ cụ thể mà KHÔNG nêu ngày mới."""
     return tokens.names_a_clock(text or "") and not tokens.names_a_day(text or "")
 
 
 def put_on_anchor_day(candidate: ParsedTime, anchor: Optional[datetime],
                       text: str) -> ParsedTime:
     start = candidate.start_at
-    if anchor is None or start is None or not anchor_day_applies(text, candidate):
+    if anchor is None or start is None or not anchor_day_applies(text):
         return candidate
     local = start.astimezone(TZ) if start.tzinfo else start.replace(tzinfo=TZ)
     day = anchor.astimezone(TZ).date()
