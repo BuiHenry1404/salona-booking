@@ -57,27 +57,27 @@ def install(monkeypatch, outcome):
 
 async def test_veto_short_circuits_the_model(monkeypatch):
     built = install(monkeypatch, AssertionError("model must not be called"))
-    assert await decide("dạ ko em", PROPOSAL, QUESTION, NOW) == "reject"
+    assert await decide("dạ ko em", PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "reject"
     assert "model" not in built
 
 
 async def test_veto_wins_even_when_the_model_would_approve(monkeypatch):
     built = install(monkeypatch, ReplyDecision(decision="approve"))
     sentence = "Mà làm móng bột mất bao lâu hả chị, việc gì cũng phải tính trước cho chắc"
-    assert await decide(sentence, PROPOSAL, QUESTION, NOW) == "reject"
+    assert await decide(sentence, PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "reject"
     assert "model" not in built
 
 
 async def test_model_approve_passes_through_when_no_veto(monkeypatch):
     built = install(monkeypatch, ReplyDecision(decision="approve"))
-    assert await decide("ừ", PROPOSAL, QUESTION, NOW) == "approve"
+    assert await decide("ừ", PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "approve"
     assert built["model"].schema is ReplyDecision
 
 
 @pytest.mark.parametrize("label", ["reject", "change", "unclear"])
 async def test_other_labels_pass_through(monkeypatch, label):
     install(monkeypatch, ReplyDecision(decision=label))
-    assert await decide("cho cô dùng thử", PROPOSAL, QUESTION, NOW) == label
+    assert await decide("cho cô dùng thử", PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == label
 
 
 async def test_timeout_is_unclear(monkeypatch):
@@ -114,7 +114,8 @@ async def test_classifier_model_is_tagged_classify_and_not_streaming(monkeypatch
     assert built["tags"] == ["classify"]
     assert "respond" not in built["tags"]
     assert built["streaming"] is False
-    assert built["temperature"] == 0.0
+    assert built["reasoning_effort"] == "low"
+    assert "temperature" not in built
 
 
 async def test_the_model_sees_proposal_question_and_reply(monkeypatch):
@@ -227,7 +228,7 @@ def test_go_ahead_never_applies_to_a_new_booking(text):
                          + [(CANCEL, t) for t in GO_AHEAD_CANCEL])
 async def test_go_ahead_approves_without_calling_the_classifier(monkeypatch, proposal, text):
     built = install(monkeypatch, AssertionError("model must not be called"))
-    assert await decide(text, proposal, QUESTION, NOW) == "approve", text
+    assert await decide(text, proposal, QUESTION, NOW, label_fn=classify_reply) == "approve", text
     assert "model" not in built
 
 
@@ -237,7 +238,7 @@ async def test_go_ahead_approves_without_calling_the_classifier(monkeypatch, pro
 ])
 async def test_negative_go_ahead_lookalikes_are_still_vetoed(monkeypatch, proposal, text):
     built = install(monkeypatch, ReplyDecision(decision="approve"))
-    assert await decide(text, proposal, QUESTION, NOW) == "reject", text
+    assert await decide(text, proposal, QUESTION, NOW, label_fn=classify_reply) == "reject", text
     assert "model" not in built
 
 
@@ -249,3 +250,38 @@ def test_describe_tells_the_classifier_about_the_queue():
     assert "waiting" in text and two.isoformat() in text
     assert "does not change this proposal" in text
     assert "waiting" not in reply._describe(PROPOSAL)
+
+
+# --- Task 12b: nhãn cuối của `decide` đến từ `label_fn` (bộ phân tích) --------
+
+def label_fn_returning(label, calls=None):
+    async def fn(proposal, bot_question, customer_text):
+        if calls is not None:
+            calls.append((proposal, bot_question, customer_text))
+        if isinstance(label, Exception):
+            raise label
+        return label
+    return fn
+
+
+async def test_typed_reply_uses_label_fn_after_the_veto_grid(monkeypatch):
+    """Lưới phủ quyết và go-ahead vẫn chạy TRƯỚC, cùng thứ tự; chỉ câu lọt qua
+    cả hai mới tới `label_fn` — và `classify_reply` không bị gọi nữa."""
+    install(monkeypatch, AssertionError("classify_reply must not be called"))
+    calls = []
+    fn = label_fn_returning("approve", calls)
+
+    assert await decide("dạ ko em", PROPOSAL, QUESTION, NOW, label_fn=fn) == "reject"
+    assert calls == []                                    # veto thắng, không hỏi nhãn
+    assert await decide("u doi di em", MOVE, QUESTION, NOW, label_fn=fn) == "approve"
+    assert calls == []                                    # go-ahead, không hỏi nhãn
+
+    assert await decide("ừ", PROPOSAL, QUESTION, NOW, label_fn=fn) == "approve"
+    assert calls == [(PROPOSAL, QUESTION, "ừ")]
+
+
+@pytest.mark.parametrize("bad", [RuntimeError("azure"), None, "yes", "APPROVE"])
+async def test_label_fn_failure_or_junk_is_unclear(bad):
+    """`label_fn` nổ hay trả nhãn lạ → "unclear": không bao giờ suy ra approve."""
+    assert await decide("ừ", PROPOSAL, QUESTION, NOW,
+                        label_fn=label_fn_returning(bad)) == "unclear"

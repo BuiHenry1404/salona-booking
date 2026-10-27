@@ -478,7 +478,8 @@ class TestAnchorDayWinsWhenTheTextNamesNoDay:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("text", ["4 giờ chiều", "dời qua 4 giờ chiều giùm cô nha",
-                                      "doi qua 4 gio chieu nha em", "16h"])
+                                      "doi qua 4 gio chieu nha em", "16h",
+                                      "2 giờ chiều cùng ngày", "dời qua 4 giờ chiều ngày đó"])
     async def test_anchor_day_wins_when_text_names_no_day(self, monkeypatch, text):
         self.install(monkeypatch, at(7, 16))                  # LLM: hôm nay 4 giờ chiều
         result = await parse_vi_time(text, NOW, anchor=self.ANCHOR)
@@ -506,3 +507,11 @@ class TestAnchorDayWinsWhenTheTextNamesNoDay:
     async def test_no_anchor_changes_nothing(self, monkeypatch):
         self.install(monkeypatch, at(7, 16))
         assert (await parse_vi_time("4 giờ chiều", NOW)).start_at == at(7, 16)
+
+
+def test_timeparse_only_compiles_the_single_fast_path_regex():
+    import inspect, re
+    from app.agents.booking_graph import timeparse
+    source = inspect.getsource(timeparse)
+    assert len(re.findall(r"re\.compile\(", source)) == 1
+

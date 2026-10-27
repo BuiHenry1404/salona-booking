@@ -17,11 +17,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from app.agents.booking_graph import reply
+from app.agents.booking_graph import analyzer, reply
 from app.agents.booking_graph.confirm import (PROPOSAL_MAX_AGE_MINUTES,
                                               _sentence_start, clarify_question,
                                               execute_proposal, make_confirm_node)
-from app.agents.booking_graph.context import format_vi_datetime
+from app.agents.booking_graph.context import RECENT_VISITS_HEADER, format_vi_datetime
 from app.agents.booking_graph.state import GraphState
 from app.agents.booking_graph.tools import make_booking_tools
 from app.core.clock import TZ, now_utc
@@ -82,8 +82,106 @@ async def test_confirm_returns_fact_and_fallback_not_answer(test_db):
     out = await execute_proposal(test_db, user, await book_proposal(test_db, user), turn_at=later())
     assert "answer" not in out
     assert out["confirm_fact"] == {"kind": "booked", "when": format_vi_datetime(tomorrow_at(15)),
-                                   "note": "làm tóc", "address": "chị Lan", "error": None}
+                                   "note": "làm tóc", "address": "chị Lan", "error": None,
+                                   "context": "first_time"}
     assert out["fallback"].startswith("Xong rồi ạ")
+
+
+async def test_fact_context_is_changed_time_after_a_superseded_proposal_with_a_different_time(test_db):
+    """Task 15 review: `changed_time` suy từ ĐỀ XUẤT đã đóng cùng ngày với GIỜ
+    KHÁC đề xuất vừa duyệt (đề xuất cũ bị `superseded` khi khách xin giờ khác),
+    KHÔNG từ chữ trong khối bối cảnh."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    await service.create(user, "book", tomorrow_at(15), "làm tóc")   # bị superseded ngay dưới
+    second = str((await service.create(user, "book", tomorrow_at(16), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, second, turn_at=later())
+
+    assert out["confirm_fact"]["context"] == "changed_time"
+
+
+async def test_fact_context_is_first_time_without_any_signal(test_db):
+    user = await a_user(test_db)
+    out = await execute_proposal(test_db, user, await book_proposal(test_db, user), turn_at=later())
+    assert out["confirm_fact"]["context"] == "first_time"
+
+
+async def test_fact_context_is_after_decline_when_an_earlier_proposal_was_rejected_at_the_same_time(test_db):
+    """Task 15 review: khách từ chối rồi quay lại chốt Y NGUYÊN giờ đó cùng
+    ngày — đề xuất cũ `rejected` có CÙNG `start_at` với đề xuất vừa duyệt →
+    `after_decline`, không phải `changed_time`."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    first = await service.create(user, "book", tomorrow_at(15), "làm tóc")
+    await service.reject(user, str(first.id))
+    second = str((await service.create(user, "book", tomorrow_at(15), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, second, turn_at=later())
+
+    assert out["confirm_fact"]["context"] == "after_decline"
+
+
+async def test_fact_context_is_returning_when_context_block_lists_recent_visits(test_db):
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    block = f"Hôm nay: Thứ Hai 19/10.\n{RECENT_VISITS_HEADER}\n  - 1/10"
+    out = await execute_proposal(test_db, user, pid, turn_at=later(), context_block=block)
+    assert out["confirm_fact"]["context"] == "returning"
+
+
+async def test_fact_context_priority_changed_time_wins_over_after_decline_and_returning(test_db):
+    """Ruling: changed_time > after_decline > returning > first_time — một
+    đề xuất cũ đã đóng CÙNG GIỜ (after_decline) với một đề xuất cũ đã đóng GIỜ
+    KHÁC (changed_time) trong cùng ngày, cộng cả dấu hiệu `returning`:
+    changed_time vẫn thắng."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    same_time = await service.create(user, "book", tomorrow_at(15), "làm tóc")
+    await service.reject(user, str(same_time.id))
+    other_time = await service.create(user, "book", tomorrow_at(16), "làm tóc")
+    await service.reject(user, str(other_time.id))
+    third = str((await service.create(user, "book", tomorrow_at(15), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, third, turn_at=later(),
+                                 context_block=f"{RECENT_VISITS_HEADER}\n  - 1/10")
+
+    assert out["confirm_fact"]["context"] == "changed_time"
+
+
+async def test_fact_context_ignores_a_closed_proposal_from_yesterday(test_db):
+    """Task 15 review: đề xuất đóng TỪ HÔM QUA không tính — chỉ nhìn CÙNG NGÀY
+    giờ VN với đề xuất vừa duyệt."""
+    user = await a_user(test_db)
+    service = ProposalService(test_db)
+    stale = await service.create(user, "book", tomorrow_at(15), "làm tóc")
+    await service.reject(user, str(stale.id))
+    # Đẩy `created_at` của đề xuất đã đóng về hôm qua trực tiếp trong DB —
+    # không có service API nào giả lập "hôm qua" hợp lệ hơn thế.
+    yesterday = now_utc() - timedelta(days=1)
+    await test_db["proposals"].update_one({"_id": stale.id}, {"$set": {"created_at": yesterday}})
+    second = str((await service.create(user, "book", tomorrow_at(15), "làm tóc")).id)
+
+    out = await execute_proposal(test_db, user, second, turn_at=later())
+
+    assert out["confirm_fact"]["context"] == "first_time"
+
+
+async def test_fact_context_falls_back_to_first_time_when_the_lookup_raises(test_db, monkeypatch):
+    """Task 15 review (upgraded finding #5): lỗi tra cứu context KHÔNG được
+    làm hỏng một lượt ĐÃ GHI LỊCH THÀNH CÔNG — về "first_time" + log, vẫn ghi
+    lịch và trả câu chốt bình thường."""
+    async def boom(self, user_id, before):
+        raise RuntimeError("mongo chập chờn")
+    monkeypatch.setattr(proposal_module.ProposalRepository, "closed_earlier_today", boom)
+    user = await a_user(test_db)
+
+    out = await execute_proposal(test_db, user, await book_proposal(test_db, user), turn_at=later())
+
+    assert out["confirm_fact"]["kind"] == "booked"
+    assert out["confirm_fact"]["context"] == "first_time"
+    booked = await AppointmentService(test_db).upcoming_for(user)
+    assert len(booked) == 1
 
 
 async def test_taken_slot_produces_a_friendly_message_not_a_crash(test_db):
@@ -238,15 +336,23 @@ CFG = {"configurable": {"thread_id": "t1"}}
 
 @pytest.fixture
 def classifier(monkeypatch):
-    """Bộ phân loại giả: trả nhãn đặt sẵn, đếm số lần được gọi."""
+    """Bộ phân tích giả (Task 12b — nhãn cuối của câu gõ chữ đến từ
+    `analyze_turn`, không còn từ `classify_reply`): trả nhãn đặt sẵn, đếm số
+    lần được gọi. `classify_reply` bị gài nổ: đường chính không được gọi nó."""
     state = {"label": "approve", "calls": 0}
 
-    async def fake(proposal, bot_question, customer_text):
+    async def fake(messages, customer_text, pending, bot_question=""):
+        assert pending is not None, "confirm luôn đưa đề xuất cho bộ phân tích"
         state["calls"] += 1
         state["question"] = bot_question
-        return state["label"]
+        return analyzer.sanitize_analysis(
+            analyzer.TurnAnalysis(reply_to_proposal=state["label"]), customer_text, True)
 
-    monkeypatch.setattr(reply, "classify_reply", fake)
+    async def classify_must_not_run(*a, **kw):
+        raise AssertionError("classify_reply không còn nằm trên đường chính")
+
+    monkeypatch.setattr(analyzer, "analyze_turn", fake)
+    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     return state
 
 
@@ -304,6 +410,40 @@ async def test_resume_with_approve_writes_once(test_db, classifier):
     assert classifier["question"] == QUESTION           # model thấy đúng câu bot vừa hỏi
     assert await test_db["appointments"].count_documents({}) == 1
     assert await status_of(test_db, pid) == "approved"
+
+
+async def test_resume_stores_the_analysis_in_state(test_db, classifier):
+    """Task 12b: phân tích của câu gõ chữ nằm lại trong state (`analysis`) để
+    `events` ghi `stated`/`asked` vào slots sau `complete`."""
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "ừ em")
+
+    assert classifier["calls"] == 1
+    assert values["analysis"]["reply_to_proposal"] == "approve"
+
+
+async def test_analyzer_label_none_is_unclear_and_never_books(test_db, classifier, monkeypatch):
+    """Bộ phân tích trả `reply_to_proposal=None` (kể cả khi lọt sanitize):
+    confirm coi là "unclear" — hỏi lại, không ghi."""
+    async def no_label(messages, customer_text, pending, bot_question=""):
+        classifier["calls"] += 1
+        return analyzer.TurnAnalysis(reply_to_proposal=None)
+    monkeypatch.setattr(analyzer, "analyze_turn", no_label)
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "ừ em")
+
+    assert classifier["calls"] == 1
+    assert values["confirm_fact"]["kind"] == "clarify"
+    assert await test_db["appointments"].count_documents({}) == 0
+    assert await status_of(test_db, pid) == "pending"
 
 
 @pytest.mark.parametrize("text", ["dạ ko em", "da ko em", "dạ khoan", "để chị hỏi thằng Huy đã",

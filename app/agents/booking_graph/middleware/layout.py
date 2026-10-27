@@ -16,21 +16,19 @@ from langchain.agents.middleware import AgentMiddleware, AgentState, ModelReques
 from langchain_core.messages import AnyMessage, HumanMessage
 from typing_extensions import NotRequired
 
-from app.agents.booking_graph.context import render_slots
-
-# Tiêu đề cố định do code sinh — tiếng Việt vì là DỮ LIỆU, cùng lối với khối
-# bối cảnh, không phải chỉ dẫn. `agents.py` re-export lại tên này.
-STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
+# `STATE_HEADER` giờ sống ở context.py (nơi dựng mọi khối tóm tắt); re-export
+# ở đây để `agents.py`/`phrase.py` không phải sửa chỗ import.
+from app.agents.booking_graph.context import STATE_HEADER, render_slots  # noqa: F401 (re-export)
 
 
 class LayoutState(AgentState):
     context_block: NotRequired[str]
-    summary: NotRequired[List[str]]
+    summary: NotRequired[str]
     slots: NotRequired[Any]
 
 
 def layout_messages(
-    messages: List[AnyMessage], *, context_block: str, summary: List[str], slots
+    messages: List[AnyMessage], *, context_block: str, summary: str, slots
 ) -> List[AnyMessage]:
     """Xếp lại `messages` (không kèm system) theo thứ tự bẫy #9.
 
@@ -49,11 +47,13 @@ def layout_messages(
 
     # Khối trạng thái đứng NGAY SAU system: đổi vài lượt một lần, ổn định hơn
     # khối bối cảnh (đổi mỗi lượt) nên đặt trước để tiền tố cache sống lâu.
-    # Summary và slots đi CHUNG một message — tách đôi là thêm một ranh giới
-    # nữa cho thứ tự bẫy #9 có thể trượt.
+    # `summary` giờ là CHUỖI ĐÃ DỰNG SẴN (digest 5 mục + câu gốc khách, hay
+    # fallback tài liệu cũ — xem `context.render_state_block`), không còn
+    # List[str] để middleware tự ghép tiêu đề. Summary và slots đi CHUNG một
+    # message — tách đôi là thêm một ranh giới nữa cho thứ tự bẫy #9 có thể trượt.
     parts = []
     if summary:
-        parts.append(STATE_HEADER + "\n" + "\n".join(f"- {s}" for s in summary))
+        parts.append(summary)
     rendered = render_slots(slots)
     if rendered:
         parts.append(rendered)
@@ -77,6 +77,6 @@ class MessageLayoutMiddleware(AgentMiddleware):
         return await handler(request.override(messages=layout_messages(
             request.messages,
             context_block=state.get("context_block", ""),
-            summary=state.get("summary") or [],
+            summary=state.get("summary") or "",
             slots=state.get("slots"),
         )))

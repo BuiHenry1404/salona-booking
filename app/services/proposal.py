@@ -17,7 +17,7 @@ treo quá 60 giây (tiến trình chết giữa chừng) đọc ra là `failed`.
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -189,6 +189,12 @@ class ProposalService:
         """Đề xuất mới nhất của khách — trạng thái thô trong DB (không chuẩn hoá
         hạn như `get`): khối bối cảnh chỉ cần biết nó đã bị từ chối hay chưa."""
         return await self.repo.latest_for_user(str(user.id))
+
+    async def closed_earlier_today(self, user: User, before: datetime) -> List[Proposal]:
+        """Task 15 review: đề xuất của khách, CÙNG NGÀY giờ VN, TẠO TRƯỚC
+        `before`, đã đóng mà khách KHÔNG chốt (rejected/superseded/expired) —
+        `confirm.py` suy `confirm_fact["context"]` từ danh sách này."""
+        return await self.repo.closed_earlier_today(str(user.id), before)
 
     async def reject(self, user: User, proposal_id: str) -> bool:
         return await self._close(user, proposal_id, "rejected")

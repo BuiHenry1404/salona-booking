@@ -1,8 +1,8 @@
 from datetime import date, datetime, timezone
 
-from app.models.conversation import Conversation, ConversationSlots, ConversationState
-from app.services.conversation_state import (BULLET_MAX_CHARS, MAX_BULLETS,
-                                 StateOutput)
+from app.models.conversation import (Conversation, ConversationSlots, ConversationState,
+                                     StateDigest)
+from app.services.conversation_state import StateOutput
 
 
 def test_conversation_without_state_field_loads():
@@ -19,25 +19,43 @@ def test_state_round_trips_through_model_dump():
     assert d.failures == 0
 
 
-class TestStateOutputCoerces:
-    """Ép, không từ chối: lớp dưới fail-soft, validator nghiêm là cách đắt
-    nhất để vứt dữ liệu tốt (bài học ParsedTime)."""
+def test_state_digest_defaults_to_empty_lists():
+    digest = StateDigest()
+    assert digest.wants == [] and digest.settled == [] and digest.declined == []
+    assert digest.constraints == [] and digest.open == []
 
-    def test_too_many_lines_are_cut_to_max(self):
-        out = StateOutput(summary=[f"dòng {i}" for i in range(20)])
-        assert len(out.summary) == MAX_BULLETS
 
-    def test_long_lines_are_flattened_and_cut(self):
-        out = StateOutput(summary=["a\nb " + "x" * 500])
-        assert "\n" not in out.summary[0]
-        assert len(out.summary[0]) <= BULLET_MAX_CHARS
+def test_conversation_state_digest_and_quotes_default_to_empty():
+    """Tài liệu MỚI (sau Task 12c) mặc định chưa có digest — chỉ `_compact`
+    điền vào. `customer_quotes` mặc định rỗng."""
+    state = ConversationState(day=date(2026, 10, 26),
+                              covers_until=datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc))
+    assert state.digest is None
+    assert state.customer_quotes == []
 
-    def test_empty_and_whitespace_lines_are_dropped(self):
-        assert StateOutput(summary=["", "  ", "còn một"]).summary == ["còn một"]
 
-    def test_leading_dash_is_stripped(self):
-        """Model hay tự thêm '- ' dù đã bảo trả danh sách."""
-        assert StateOutput(summary=["- Khách muốn làm nail."]).summary == ["Khách muốn làm nail."]
+def test_state_round_trips_with_digest_and_quotes():
+    digest = StateDigest(wants=["làm tóc"], constraints=["chỉ rảnh cuối tuần"])
+    d = ConversationState(day=date(2026, 9, 14),
+               covers_until=datetime(2026, 9, 14, 3, 0, tzinfo=timezone.utc),
+               digest=digest, customer_quotes=["em muốn làm tóc"],
+               updated_at=datetime.now(timezone.utc))
+    restored = ConversationState(**d.model_dump())
+    assert restored.digest.wants == ["làm tóc"]
+    assert restored.customer_quotes == ["em muốn làm tóc"]
+
+
+class TestStateOutputCarriesADigest:
+    """`StateOutput` giờ chỉ là THÙNG CHỨA THÔ (như `ConversationSlots`) —
+    lọc/cắt nằm ở `sanitize_digest` (conversation_state.py), không ở đây."""
+
+    def test_digest_defaults_to_empty_when_not_given(self):
+        out = StateOutput()
+        assert out.digest == StateDigest()
+
+    def test_digest_round_trips_as_given(self):
+        out = StateOutput(digest=StateDigest(wants=["làm nail"]))
+        assert out.digest.wants == ["làm nail"]
 
 
 def test_slots_defaults_to_none_on_an_old_document():

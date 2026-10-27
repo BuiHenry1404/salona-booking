@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { acquireSocket, releaseSocket } from "../lib/socket";
 import type { Socket } from "../lib/socket";
+import { newMessageId } from "../lib/id";
 import { toolLabel } from "../lib/toolLabels";
 
 export type Phase = "idle" | "thinking" | "tool" | "answering";
@@ -18,6 +19,23 @@ export interface ToolStep {
   label: string;
   done: boolean;
   ok: boolean;
+}
+
+/** Đề xuất đang chờ khách bấm Đồng ý / Không — chỉ MỘT cái tại một thời điểm,
+ * luôn là đề xuất MỚI NHẤT (complete sau thay complete trước, không cộng dồn). */
+export interface Proposal {
+  id: string;
+  kind: "book" | "move" | "cancel";
+  expiresAt: string;
+  whenSpoken: string;
+}
+
+/** Hình dạng `proposal` do backend gửi trong sự kiện `complete` (snake_case). */
+interface RawProposal {
+  id: string;
+  kind: "book" | "move" | "cancel";
+  expires_at: string;
+  when_spoken: string;
 }
 
 let counter = 0;
@@ -41,6 +59,8 @@ export function useAgentStream() {
   // Lượt vừa rồi AI trả lời không được. Màn hình dựa vào cờ này để hiện nút
   // gọi điện cho tiệm — khách vẫn đặt được lịch bằng cách nói chuyện với người.
   const [failed, setFailed] = useState(false);
+  // Đề xuất GẦN NHẤT còn hiệu lực — null nghĩa là không có gì để Đồng ý/Không.
+  const [proposal, setProposal] = useState<Proposal | null>(null);
   const socketRef = useRef<Socket | null>(null);
   // id của bong bóng bot đang được stream. Dùng ref chứ không dùng state vì
   // handler socket đóng gói giá trị cũ nếu đọc từ state.
@@ -50,7 +70,7 @@ export function useAgentStream() {
   const completed = useRef(false);
   // Hàng đợi câu gõ lúc mất mạng. Ref chứ không state: `onConnect` đọc nó và
   // sẽ thấy mảng cũ nếu để trong state.
-  const queue = useRef<Array<{ id: string; message: string }>>([]);
+  const queue = useRef<Array<{ id: string; message: string; messageId: string }>>([]);
 
   useEffect(() => {
     const socket = acquireSocket();
@@ -73,7 +93,9 @@ export function useAgentStream() {
       const waiting = queue.current;
       queue.current = [];
       if (waiting.length === 0) return;
-      waiting.forEach(({ message }) => socket.emit("send_message", { message }));
+      waiting.forEach(({ message, messageId }) =>
+        socket.emit("send_message", { message, message_id: messageId }),
+      );
       setMessages((prev) => prev.map((m) => (m.pending ? { ...m, pending: false } : m)));
       setPhase("thinking");
     };
@@ -136,11 +158,24 @@ export function useAgentStream() {
       setMessages((prev) => [...prev, { id, role: "bot" as const, text: data.text }]);
     };
 
-    const onComplete = (data: { answer?: string }) => {
+    const onComplete = (data: { answer?: string; proposal?: RawProposal | null }) => {
       if (completed.current) return; // complete kép của cùng turn không xử lý
       completed.current = true;
 
       const answer = data?.answer ?? "";
+      // Mỗi complete THAY HẲN đề xuất cũ — kể cả bằng null. Không bao giờ
+      // cộng dồn: chỉ đề xuất MỚI NHẤT mới được phép có nút Đồng ý/Không.
+      const rawProposal = data?.proposal ?? null;
+      setProposal(
+        rawProposal
+          ? {
+              id: rawProposal.id,
+              kind: rawProposal.kind,
+              expiresAt: rawProposal.expires_at,
+              whenSpoken: rawProposal.when_spoken,
+            }
+          : null,
+      );
       // Capture TRƯỚC setState: updater có thể chạy sau dòng dưới, đọc ref
       // lúc đó là null và rơi nhầm sang nhánh tạo bubble mới.
       const streamId = streamingId.current;
@@ -207,22 +242,57 @@ export function useAgentStream() {
     const message = text.trim();
     if (!message) return;
     const id = nextId();
+    const messageId = newMessageId();
     const socket = socketRef.current;
     const live = socket?.connected ?? false;
 
     // Bong bóng của khách hiện NGAY dù có mạng hay không. Chữ vừa gõ mà biến
     // mất là cảm giác "máy nuốt mất câu của mình".
     setMessages((prev) => [...prev, { id, role: "user", text: message, pending: !live }]);
+    // Khách gõ câu mới coi như thay cho đề xuất đang treo — server sẽ tự
+    // supersede, phía này không chờ complete mới để xoá nút.
+    setProposal(null);
 
     if (!live) {
-      queue.current.push({ id, message });
+      queue.current.push({ id, message, messageId });
       return;
     }
     completed.current = false; // turn mới bắt đầu từ câu này
     setFailed(false);
     setPhase("thinking");
-    socket!.emit("send_message", { message });
+    socket!.emit("send_message", { message, message_id: messageId });
   }, []);
 
-  return { messages, steps, phase, connected, offline, failed, send };
+  // Bấm Đồng ý/Không cho đề xuất GẦN NHẤT. Xoá `proposal` NGAY (trước khi
+  // socket trả lời) để lỡ bấm đúp không gửi lại hai lần.
+  //
+  // KHÔNG xếp hàng đợi như `send()` khi mất mạng: xác nhận đặt/huỷ lịch mà
+  // gửi trễ, khách sẽ tưởng đã xong trong khi máy chưa nhận được gì — màn
+  // hình phải để khách tự bấm lại lúc có mạng, không âm thầm "giữ hộ".
+  // UI (ChatScreen) đã disable nút khi mất mạng; đây là phòng vệ ở tầng dưới.
+  const confirm = useCallback(
+    (decision: "yes" | "no") => {
+      if (!proposal) return;
+      const socket = socketRef.current;
+      const live = socket?.connected ?? false;
+      if (!live) return; // không emit, không thêm bong bóng, proposal giữ nguyên
+
+      const id = nextId();
+      const text = decision === "yes" ? "Đồng ý" : "Không";
+
+      setMessages((prev) => [...prev, { id, role: "user", text }]);
+      setProposal(null);
+      completed.current = false;
+      setFailed(false);
+      setPhase("thinking");
+      socket!.emit("confirm_proposal", {
+        proposal_id: proposal.id,
+        decision,
+        message_id: newMessageId(),
+      });
+    },
+    [proposal],
+  );
+
+  return { messages, steps, phase, connected, offline, failed, proposal, send, confirm };
 }

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_db, require_admin
-from app.api.v1.schemas import MonthlyCustomerStatsResponse
+from app.api.v1.schemas import MonthlyCustomerStatsResponse, SetStaffNoteRequest
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.services.stats import StatsService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -19,3 +20,18 @@ async def customers_by_month(
     booked" chứ không phải "khách đã đến tiệm" — đừng đọc thành doanh thu.
     """
     return MonthlyCustomerStatsResponse(months=await StatsService(db).customers_by_month())
+
+
+@router.patch("/users/{user_id}/note", status_code=status.HTTP_204_NO_CONTENT)
+async def set_staff_note(
+    user_id: str,
+    payload: SetStaffNoteRequest,
+    _: User = Depends(require_admin),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Ghi chú riêng của tiệm về khách (Task 13) — hiện trong khối bối cảnh
+    là "Ghi chú tiệm: …", chỉ admin thấy và sửa được, chưa từng từ khách.
+    """
+    ok = await UserRepository(db).set_staff_note(user_id, payload.staff_note)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Không tìm thấy khách")

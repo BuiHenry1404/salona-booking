@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph.phrase import write_phrase
+from app.agents.booking_graph.phrase import code_phrase, write_phrase
 
 FACT = {"kind": "booked", "when": "Thứ Ba 15/9, 9 giờ sáng", "note": "cắt tóc", "address": "anh Tám", "error": None}
 FALLBACK = "Xong rồi ạ. Hẹn gặp anh Tám Thứ Ba 15/9, 9 giờ sáng nhé."
@@ -60,8 +60,9 @@ class TestWritePhrase:
     async def test_state_is_sent_right_after_the_system_message(self, patch_model):
         """F8: `phrase` phải mang state như `agents.py` — không thì lịch sử bị
         tóm tắt (state thay chỗ) mất tích trong đúng lượt chốt lịch."""
+        # `summary` giờ là chuỗi đã dựng sẵn (Task 12c), không còn List[str].
         model = patch_model("Dạ anh Tám, em dời xong rồi nhé.")
-        await write_phrase(a_state(summary=["Khách muốn cắt tóc."]))
+        await write_phrase(a_state(summary="Khách muốn cắt tóc."))
         second = model.calls[0][1]
         assert "Khách muốn cắt tóc." in second.content
 
@@ -97,3 +98,73 @@ class TestWritePhrase:
         model = patch_model("Dạ anh Tám, em ghi xong rồi ạ.")
         await write_phrase(a_state())
         assert "NOT held" not in model.calls[0][0].content
+
+    async def test_phrase_prompt_mentions_context_and_last_reply(self, patch_model):
+        """Task 15: prompt phải đọc `fact["context"]` (gợi ý giọng theo mạch)
+        và câu đáp LLM gần nhất (`previous_replies[-1]`) — để không lặp khung
+        câu cũ. Cả hai nằm trong SYSTEM, không thêm message mới (xem test
+        `test_no_state_leaves_the_message_order_unchanged` — số message không đổi)."""
+        model = patch_model("Dạ anh Tám, lần này em đặt vào Thứ Ba 15/9, 9 giờ sáng rồi ạ.")
+        fact = {**FACT, "context": "returning"}
+        previous = ["Dạ anh Tám, em ghi xong lịch cho anh rồi ạ."]
+        await write_phrase(a_state(confirm_fact=fact, previous_replies=previous))
+        system = model.calls[0][0].content
+        assert "returning customer" in system
+        # Task 15 review: bọc «» giống hệt dòng "Câu em vừa trả lời ở lượt
+        # trước" trong khối bối cảnh (`context.py`), không chèn trần.
+        assert f"«{previous[0]}»" in system
+
+    async def test_phrase_prompt_last_reply_with_newlines_becomes_one_line_in_guillemets(self, patch_model):
+        """Task 15 review: câu đáp cũ có xuống dòng (vd. do rewrite cũ) không
+        được chèn nguyên văn vào SYSTEM — `single_line` ép về một dòng trước,
+        giống dòng "Câu em vừa trả lời ở lượt trước" của khối bối cảnh."""
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        previous = ["Dạ anh Tám,\nem ghi xong   lịch\ncho anh rồi ạ."]
+        await write_phrase(a_state(previous_replies=previous))
+        system = model.calls[0][0].content
+        assert "\n" not in system.split("«", 1)[1].split("»", 1)[0]
+        assert "«Dạ anh Tám, em ghi xong lịch cho anh rồi ạ.»" in system
+
+    async def test_phrase_prompt_without_a_previous_reply_has_no_last_reply_rule(self, patch_model):
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        await write_phrase(a_state())  # previous_replies=[] mặc định ở a_state()
+        system = model.calls[0][0].content
+        assert "last reply" not in system
+
+    async def test_phrase_prompt_defaults_missing_context_to_first_time(self, patch_model):
+        model = patch_model("Dạ anh Tám, em dời xong rồi ạ.")
+        fact = {k: v for k, v in FACT.items() if k != "context"}
+        await write_phrase(a_state(confirm_fact=fact))
+        system = model.calls[0][0].content
+        assert "returning customer" not in system
+        assert "changed their mind" not in system
+
+
+class TestCodePhrase:
+    """`code_phrase`: câu chốt đường nút, viết bằng CODE — không gọi LLM."""
+
+    def test_code_phrase_avoids_a_template_already_used(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan",
+                "context": "first_time"}
+        first = code_phrase(fact, [])
+        second = code_phrase(fact, [first])
+        assert first != second and "3 giờ chiều" in second and "chị Lan" in second
+
+    def test_code_phrase_failed_uses_fallback(self):
+        assert code_phrase({"kind": "failed", "fallback": "X"}, []) == "X"
+
+    def test_code_phrase_defaults_missing_context_to_first_time(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan"}
+        with_context = code_phrase({**fact, "context": "first_time"}, [])
+        without_context = code_phrase(fact, [])
+        assert without_context == with_context
+
+    def test_code_phrase_runs_out_of_templates_falls_back_to_first(self):
+        fact = {"kind": "booked", "when": "Thứ Tư 21/10, 3 giờ chiều", "address": "chị Lan",
+                "context": "first_time"}
+        first = code_phrase(fact, [])
+        second = code_phrase(fact, [first])
+        third = code_phrase(fact, [first, second])
+        # Cả 3 mẫu đều đã "dùng" (coi như trùng) — hết mẫu rơi về mẫu đầu.
+        exhausted = code_phrase(fact, [first, second, third])
+        assert exhausted == first

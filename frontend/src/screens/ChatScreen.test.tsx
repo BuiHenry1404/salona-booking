@@ -19,7 +19,14 @@ const stream = {
   connected: true,
   offline: false,
   failed: false,
+  proposal: null as {
+    id: string;
+    kind: "book" | "move" | "cancel";
+    expiresAt: string;
+    whenSpoken: string;
+  } | null,
   send: vi.fn<(text: string) => void>(),
+  confirm: vi.fn<(decision: "yes" | "no") => void>(),
 };
 
 const shop = {
@@ -69,7 +76,9 @@ beforeEach(() => {
   stream.phase = "idle";
   stream.offline = false;
   stream.failed = false;
+  stream.proposal = null;
   stream.send = vi.fn<(text: string) => void>();
+  stream.confirm = vi.fn<(decision: "yes" | "no") => void>();
   shop.status = { is_busy: false, busy_until: null, minutes_left: null };
   shop.loading = false;
   speech.supported = true;
@@ -386,5 +395,83 @@ describe("ChatScreen", () => {
     renderChat();
     const link = screen.getByRole("link", { name: /xem các cuộc trò chuyện trước/i });
     expect(link).toHaveAttribute("href", "/lich-su");
+  });
+
+  it("36. có proposal + phase idle: hiện nút Đồng ý/Không", () => {
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    renderChat();
+    expect(screen.getByRole("button", { name: "Đồng ý" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Không" })).toBeInTheDocument();
+  });
+
+  it("37. KHÔNG có proposal: không render nút Đồng ý/Không", () => {
+    renderChat();
+    expect(screen.queryByRole("button", { name: "Đồng ý" })).not.toBeInTheDocument();
+  });
+
+  it("38. có proposal nhưng đang có lượt chạy (phase khác idle): KHÔNG hiện nút", () => {
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    stream.phase = "thinking";
+    renderChat();
+    expect(screen.queryByRole("button", { name: "Đồng ý" })).not.toBeInTheDocument();
+  });
+
+  it("39. bấm Đồng ý: gọi confirm('yes') của hook", async () => {
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    renderChat();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Đồng ý" }));
+    expect(stream.confirm).toHaveBeenCalledWith("yes");
+  });
+
+  it("40. đề xuất hết hạn: nút mờ đi SAU 15 giây mà không cần sự kiện mới từ server", () => {
+    const start = Date.now();
+    vi.useFakeTimers({ now: start });
+    // Còn hiệu lực 5 giây nữa lúc render — chưa hết hạn.
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: new Date(start + 5000).toISOString(),
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    renderChat();
+    expect(screen.getByRole("button", { name: "Đồng ý" })).not.toBeDisabled();
+
+    // Tick đồng hồ nội bộ (mỗi 15s) — KHÔNG có complete/turn_started mới nào
+    // từ server, nút phải tự mờ đi.
+    act(() => {
+      vi.advanceTimersByTime(15000);
+    });
+
+    expect(screen.getByRole("button", { name: "Đồng ý" })).toBeDisabled();
+    vi.useRealTimers();
+  });
+
+  it("41. mất mạng + có proposal: nút Đồng ý/Không bị disable", () => {
+    stream.proposal = {
+      id: "p1",
+      kind: "book",
+      expiresAt: "2030-01-01T00:00:00+07:00",
+      whenSpoken: "Đặt lịch 3 giờ chiều mai",
+    };
+    stream.offline = true;
+    renderChat();
+    expect(screen.getByRole("button", { name: "Đồng ý" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Không" })).toBeDisabled();
   });
 });

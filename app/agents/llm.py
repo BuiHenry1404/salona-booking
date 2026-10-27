@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
@@ -23,12 +23,26 @@ def _limits(timeout: float, max_retries: Optional[int]) -> dict:
     return limits
 
 
+def model_kwargs(temperature: float, streaming: bool, timeout: float,
+                 max_retries: Optional[int],
+                 reasoning_effort: Optional[Literal["none", "low", "medium", "high"]]) -> dict:
+    """Kwargs chung cho mọi provider. Bật `reasoning_effort` thì BỎ `temperature`:
+    deployment gpt-5.4-mini trả 400 nếu gửi cả hai cùng lúc."""
+    kwargs: dict = {"streaming": streaming, **_limits(timeout, max_retries)}
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+    else:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def build_chat_model(
     tags: Optional[List[str]] = None,
     temperature: float = 0.0,
     streaming: bool = True,
     timeout: float = LLM_TIMEOUT_SECONDS,
     max_retries: Optional[int] = None,
+    reasoning_effort: Optional[Literal["none", "low", "medium", "high"]] = None,
 ):
     """Model cho một node cụ thể, theo `LLM_PROVIDER` trong .env.
 
@@ -46,10 +60,15 @@ def build_chat_model(
     `ModelRetryMiddleware` thử lại đúng một lần — SDK thử thêm nữa là nhân số
     lần gọi lên và vượt trần thời gian lượt (F11).
 
+    `reasoning_effort` bật reasoning cho deployment gpt-5.4-mini (các bộ phân
+    loại: supervisor, classify_reply, timeparse). Có giá trị thì KHÔNG gửi
+    `temperature` — Azure trả 400 nếu gửi cả hai.
+
     Thiếu cấu hình thì ném lỗi nêu đúng TÊN BIẾN còn thiếu — không bao giờ kèm
     giá trị secret.
     """
     provider = settings.llm_provider
+    kw = model_kwargs(temperature, streaming, timeout, max_retries, reasoning_effort)
 
     if provider == "azure":
         missing = [
@@ -66,10 +85,8 @@ def build_chat_model(
             api_key=settings.azure_openai_api_key.get_secret_value(),
             azure_deployment=settings.azure_openai_deployment or settings.azure_openai_model,
             api_version=settings.azure_openai_api_version,
-            temperature=temperature,
             tags=tags or [],
-            streaming=streaming,
-            **_limits(timeout, max_retries),
+            **kw,
         )
 
     if provider in ("openai_compatible", "openai"):
@@ -99,10 +116,8 @@ def build_chat_model(
             model=model,
             api_key=api_key.get_secret_value(),
             base_url=base_url,
-            temperature=temperature,
             tags=tags or [],
-            streaming=streaming,
-            **_limits(timeout, max_retries),
+            **kw,
         )
 
     raise RuntimeError(

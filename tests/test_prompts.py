@@ -9,7 +9,7 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
-from app.agents.booking_graph.prompts import (BOOKING_PROMPT, REWRITE_PROMPT,
+from app.agents.booking_graph.prompts import (BOOKING_PROMPT, DIGEST_PROMPT, REWRITE_PROMPT,
                                               SHOP_PROMPT, SOCIAL_PROMPT,
                                               SUPERVISOR_PROMPT)
 
@@ -419,8 +419,11 @@ class TestBookingPromptSlimmed:
         # Lỗi #2: rule 10 đặt nhiều lịch lần lượt + hàng chờ [queued …] — đo
         # được 8614 — mốc lên 8700. Chat tay B3 (2026-10-20, lỗi #2): người
         # nhà rảnh không ≠ chủ tiệm (rule 1) và vế [relative]/[deferral] ở
-        # rule 4 — đo được 8869 — mốc lên 8900.
-        assert len(BOOKING_PROMPT) < 8900
+        # rule 4 — đo được 8869 — mốc lên 8900. LLM-02 (2026-10-20): rule 1
+        # cấm hỏi có/không về giờ chưa propose_appointment — đo được 9057 —
+        # mốc lên 9100. Task 12 (2026-10-26): rule 11 mới, đọc khối trạng
+        # thái mở rộng (asked/stated/told) — đo được 9327 — mốc lên 9400.
+        assert len(BOOKING_PROMPT) < 9400
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
@@ -630,3 +633,84 @@ class TestLiveChatB2:
         rule4 = BOOKING_PROMPT.split("4. NEVER ACT")[1].split("\n5. ")[0]
         assert "asking whether that person is free" in rule4
         assert "[relative]" in rule4 and "[deferral]" in rule4
+
+
+class TestNoYesNoQuestionWithoutAProposal:
+    """LLM-02: bot hỏi "được không?" về một giờ chưa hề gọi propose_appointment —
+    khách "ok" thì không có gì để confirm (guard chặn ở `ask_without_proposal`)."""
+
+    def test_the_rule_is_stated(self):
+        assert "propose_appointment" in BOOKING_PROMPT and "before asking" in BOOKING_PROMPT
+
+
+class TestAnalyzePrompt:
+    """Task 12: bộ phân tích đầu lượt thay cả supervisor lẫn classify_reply.
+    Cùng luật bẫy #15/#16: không câu ví dụ tiếng Việt. "chị"/"anh" là NHÃN
+    thật của trường self_address, cùng vai với đại từ trong khối VOICE."""
+
+    def test_analyze_prompt_has_no_vietnamese_sample_sentences(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        import re
+        body = ANALYZE_PROMPT
+        for word in ('"chị"', '"anh"'):
+            body = body.replace(word, "")
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(body), vi.search(body).group()
+
+    def test_analyze_prompt_defines_route_and_reply_to_proposal(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        for label in ("booking", "shop", "social"):
+            assert f'"{label}"' in ANALYZE_PROMPT
+        for label in ("approve", "reject", "change", "unclear"):
+            assert f'"{label}"' in ANALYZE_PROMPT
+
+    def test_analyze_prompt_mentions_every_output_field(self):
+        from app.agents.booking_graph.prompts import ANALYZE_PROMPT
+        for field in ("route", "reply_to_proposal", "aside", "mentioned_times",
+                     "service", "time_text", "self_address", "stated", "answers_question"):
+            assert f"{field}:" in ANALYZE_PROMPT
+
+
+# --- Task 12c: DIGEST_PROMPT (nén cuốn chiếu 5 mục) ------------------------
+
+class TestDigestPromptIsEnglishWithNoVietnameseSamples:
+    """Spec mục 3 "Nén giữ lại, đổi cách tóm": prompt nén viết bằng tiếng Anh,
+    không câu mẫu tiếng Việt (bẫy #15/#16) — nội dung tiếng Việt chỉ nằm
+    trong dữ kiện mà model/khách tạo ra lúc chạy thật, không trong luật."""
+
+    def test_no_vietnamese_diacritics_anywhere(self):
+        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+        assert not vi.search(DIGEST_PROMPT), vi.search(DIGEST_PROMPT).group()
+
+    def test_today_is_stated_on_the_first_line(self):
+        """CONTEXT.md bẫy #6: model không có mốc nào thì neo vào ngày huấn
+        luyện — `day` gần như không bao giờ sống sót."""
+        assert DIGEST_PROMPT.splitlines()[0].startswith("Today is {today}")
+
+    def test_mentions_all_five_sections(self):
+        for section in ("wants", "settled", "declined", "constraints", "open"):
+            assert f"- {section}" in DIGEST_PROMPT or f"{section}:" in DIGEST_PROMPT
+
+    def test_previous_digest_is_rolled_forward(self):
+        """Cuốn chiếu: prompt phải mang bản digest CŨ vào, và nói rõ cập
+        nhật tiếp chứ không viết lại từ đầu."""
+        assert "PREVIOUS DIGEST" in DIGEST_PROMPT
+        assert "{prev_wants}" in DIGEST_PROMPT and "{prev_constraints}" in DIGEST_PROMPT
+
+    def test_wants_and_constraints_are_kept_unless_contradicted(self):
+        assert "wants" in DIGEST_PROMPT.split("constraints")[0]
+        assert "UNLESS the new messages clearly contradict it" in DIGEST_PROMPT
+
+    def test_asks_for_the_same_slots_as_before(self):
+        assert "slots" in DIGEST_PROMPT.lower()
+        assert "YYYY-MM-DD" in DIGEST_PROMPT
+
+    def test_withdrawal_rule_forbids_signalling_by_an_empty_list(self):
+        """Review finding: `merge_digest`'s empty-means-keep (plan-mandated)
+        means an empty `wants`/`constraints` from the model can never mean
+        "the customer withdrew it" — the prompt must say so explicitly and
+        tell the model to record the withdrawal as a positive item instead."""
+        assert "WITHDRAWAL" in DIGEST_PROMPT
+        assert "no longer wants" in DIGEST_PROMPT
+        assert "no longer applies" in DIGEST_PROMPT
+        assert "never simply leave wants empty" in DIGEST_PROMPT

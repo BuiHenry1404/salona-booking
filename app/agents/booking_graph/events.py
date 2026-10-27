@@ -8,22 +8,29 @@ from langgraph.types import Command
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.booking_graph.agents import RESPOND_TAG
+from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking_graph.confirm import BUTTON_STALE_REPLY
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.agents.booking_graph.graph import build_graph
 from app.agents.booking_graph.history import stamp, stamped_at
 from app.core.clock import now_ms, to_local
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
+from app.core.text import detect_self_address
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.services.conversation import ConversationService, session_cutoff
 from app.services.conversation_state import ConversationStateService
+from app.services.proposal import ProposalService
 
 logger = get_logger(__name__)
 
 # Trần thời gian của MỘT lượt (A-04): Azure treo thì khách nhận câu lỗi như A
 # thay vì chờ mãi. Phải lớn hơn TỔNG ngân sách xấu nhất trên một đường của
-# lượt, không chỉ phần agent: bước phân loại (supervisor 8 giây ở tin mới, bộ
-# phân loại 8 giây ở resume) + một lần gọi model agent kèm thử lại (20 giây ×
-# (1 + 1) + 0,5 giây) + rewrite của guard (8 giây) ≈ 56,5 giây. Có test chặn
+# lượt, không chỉ phần agent: bước phân loại (bộ phân tích 8 giây, ở supervisor
+# với tin mới HOẶC ở confirm khi resume — tối đa một lần mỗi lượt) + một lần
+# gọi model agent kèm thử lại (20 giây × (1 + 1) + 0,5 giây) + rewrite của
+# guard (8 giây) ≈ 56,5 giây. Có test chặn
 # (`test_worst_case_llm_budget_of_one_turn_fits_under_the_turn_cap`): một lần
 # gọi treo phải xuống cấp (fallback, thử lại), không ăn hết trần.
 TURN_TIMEOUT_SECONDS = 60
@@ -109,6 +116,58 @@ async def pick_thread(graph, user_id: str, now: datetime) -> str:
     return today
 
 
+def bot_text_before_turn(messages) -> str:
+    """Câu bot mà câu khách CỦA LƯỢT NÀY đang trả lời — để `apply_turn_analysis`
+    ghi/tăng `asked`. Chỉ khi nó đứng NGAY trước câu khách lượt này (tin
+    HumanMessage cuối): hai tin khách liền nhau (lượt trước bị thay/lỗi, không
+    có câu bot ở giữa) thì câu bot cũ đã thuộc về lượt trước → "" để không
+    tăng `asked.times` lần hai cho cùng một câu hỏi."""
+    messages = list(messages or [])
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            before = messages[i - 1] if i > 0 else None
+            if isinstance(before, AIMessage):
+                return str(before.content or "")
+            return ""
+    return ""
+
+
+async def apply_analysis(db: AsyncIOMotorDatabase, user: User, values: dict) -> None:
+    """Ghi kết quả bộ phân tích của lượt vào slots (Task 12b), rồi — nếu khách
+    CHƯA có `self_address` — seed nó (Task 13). Sau `complete`, dưới `shield`
+    (lượt mới thay giữa chừng không được cắt đôi lần ghi). KHÔNG BAO GIỜ ném:
+    lỗi ở đây chỉ đáng mất dữ kiện slots/self_address của một lượt.
+
+    `self_address` lấy từ `analysis` (đã qua `sanitize_analysis`, tức là
+    KHỚP với `detect_self_address` trên câu khách) khi lượt có chạy bộ phân
+    tích; lượt đi lối tắt code (không có `analysis`, VD hàng chờ/"ok" ngắn)
+    thì dùng thẳng `detect_self_address(customer_text)` một mình — vẫn cùng
+    một hàm, chỉ thiếu vế analyzer đồng thuận.
+    """
+    from app.agents.booking_graph.analyzer import TurnAnalysis
+
+    user_id = str(user.id)
+    analysis = values.get("analysis")
+    try:
+        if analysis:
+            await asyncio.shield(asyncio.ensure_future(
+                ConversationStateService(db).apply_turn_analysis(
+                    user_id, TurnAnalysis(**analysis),
+                    last_bot_text=bot_text_before_turn(values.get("messages")))))
+        if user.self_address is None:
+            self_address = (analysis.get("self_address") if analysis
+                           else detect_self_address(values.get("customer_text") or ""))
+            if self_address:
+                await asyncio.shield(asyncio.ensure_future(
+                    UserRepository(db).set_self_address(user_id, self_address)))
+    except Exception as exc:
+        # CancelledError là BaseException: lượt bị thay vẫn huỷ như thường
+        # (phần ghi đã shield chạy nốt).
+        logger.warning("turn_analysis_apply_failed", extra={
+            "user_id": user_id, "error": str(exc)[:200], "error_type": type(exc).__name__,
+        })
+
+
 def fresh_turn_fields(context: dict, question: str) -> dict:
     """Mọi khoá một lượt sinh ra, đặt lại cho lượt mới.
 
@@ -129,8 +188,15 @@ def fresh_turn_fields(context: dict, question: str) -> dict:
         "gate_next": "",
         "fallback": None,
         "confirm_fact": None,
+        # Mặc định gõ chữ; chỉ nút bấm (UI) tự đặt lại "button" trên chính
+        # lượt nó duyệt — không reset ở đây thì một lượt gõ chữ SAU một lượt
+        # bấm nút sẽ mang nhầm "button" sang (khoá cũ không có trong input này).
+        "confirm_source": "text",
+        # Phân tích là của MỘT lượt: để lại thì supervisor lượt sau tưởng đã
+        # phân tích rồi (bỏ qua model), và events ghi slots lần hai.
+        "analysis": None,
         "context_block": context["context_block"],
-        "summary": context.get("summary") or [],
+        "summary": context.get("summary") or "",
         "slots": context.get("slots"),
         "history_after": context.get("history_after"),
         "previous_replies": [m.content for m in context.get("history") or []
@@ -160,10 +226,55 @@ async def _supersede(user_id: str, me: asyncio.Task,
         await asyncio.wait({previous}, timeout=SUPERSEDE_WAIT_SECONDS)
 
 
+async def pending_proposal_payload(
+    db: AsyncIOMotorDatabase, user: User, snapshot
+) -> Optional[dict]:
+    """Khối "đề xuất đang chờ" đính kèm `complete` cho nút Đồng ý/Không (Task 6).
+
+    Khác `None` CHỈ khi lượt vừa xong dừng ở `interrupt()` của node `confirm`
+    (snapshot.interrupts khác rỗng) VÀ `proposal_id` còn trong state — đúng
+    điều kiện khiến lượt SAU bị coi là đang chờ (xem `waiting` trong
+    `_run_turn`). Đọc lại từ `ProposalService` (không tin thẳng state đồ hoạ)
+    vì nó tự chuẩn hoá đề xuất đã hết hạn/treo quá lâu lúc đọc — hết hạn thì
+    không còn gì để hỏi khách nữa.
+
+    `ProposalService.get` có thể GHI (tự chuyển expired/stale-approving) nên
+    có thể nổ (Mongo chập chờn, timeout): câu đáp đã `persist` xong TRƯỚC khi
+    hàm này chạy, nổ ở đây mà không bắt thì lượt rơi vào `except` ngoài của
+    `_run_turn` và trả `error` dù khách đã nghe/đã lưu câu đáp — khách thấy cả
+    câu đáp lẫn câu lỗi cho cùng một lượt. Lỗi ở đây chỉ đáng làm mất NÚT bấm
+    (`proposal: None`), không đáng làm mất cả lượt.
+    """
+    values = getattr(snapshot, "values", None) or {}
+    proposal_id = values.get("proposal_id")
+    if not getattr(snapshot, "interrupts", ()) or not proposal_id:
+        return None
+    try:
+        proposal = await ProposalService(db).get(user, proposal_id)
+    except Exception as exc:
+        logger.warning("pending_proposal_payload_failed", extra={
+            "proposal_id": proposal_id, "error": str(exc), "error_type": type(exc).__name__,
+        })
+        return None
+    if proposal is None or proposal.status != "pending":
+        return None
+    return {
+        "id": str(proposal.id),
+        "kind": proposal.kind,
+        "expires_at": to_local(proposal.expires_at).isoformat(),
+        "when_spoken": format_vi_datetime(proposal.start_at),
+    }
+
+
 async def run_turn(
-    db: AsyncIOMotorDatabase, user: User, question: str
+    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
 ) -> AsyncIterator[AgentEvent]:
     """Chạy một lượt chat và phát sự kiện theo thứ tự thời gian thực.
+
+    `question` là câu khách gõ, HOẶC `ButtonReply` (Task 5 — khách bấm
+    Đồng ý/Không thay vì gõ chữ): `label` của nó đóng vai câu khách
+    (`customer_text`, ghi vào `conversations` và thread), `decision`/
+    `proposal_id` resume thẳng vào node `confirm` qua `Command(resume={...})`.
 
     `token` chỉ là nháp: model thử lại giữa stream thì token stream lại từ đầu.
     Mỗi lượt kết thúc bằng ĐÚNG một `complete` (câu cuối, client THAY bubble
@@ -196,12 +307,16 @@ async def run_turn(
 
 
 async def _run_turn(
-    db: AsyncIOMotorDatabase, user: User, question: str
+    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
 ) -> AsyncIterator[AgentEvent]:
     from app.agents.booking_graph.context import load_context
 
     user_id = str(user.id)
     conversations = ConversationService(db)
+    button = question if isinstance(question, ButtonReply) else None
+    # Nút bấm KHÔNG gõ chữ — "label" ("Đồng ý"/"Không") đóng vai câu khách ở
+    # mọi nơi dùng `question` làm văn bản (bối cảnh, thread, `conversations`).
+    question_text = button.label if button is not None else question
 
     yield AgentEvent("turn_started")
 
@@ -219,7 +334,7 @@ async def _run_turn(
         # Một mốc cho câu khách ở CẢ HAI nơi (thread và conversations):
         # covers_until đọc từ conversations phải khớp đúng tin bên thread.
         asked_at = now_ms()
-        context = await bounded(load_context(db, user, question))
+        context = await bounded(load_context(db, user, question_text))
         graph = build_graph(db, user)
         thread_id = await bounded(pick_thread(graph, user_id, asked_at))
 
@@ -232,8 +347,8 @@ async def _run_turn(
             "metadata": get_trace_metadata(user_id=user_id, conversation_id=user_id),
         }
         fields = {
-            "messages": [stamp(HumanMessage(content=question), asked_at)],
-            **fresh_turn_fields(context, question),
+            "messages": [stamp(HumanMessage(content=question_text), asked_at)],
+            **fresh_turn_fields(context, question_text),
             # Mốc "bây giờ" của cả lượt cho cửa sổ lịch sử — như A, tính một lần
             # lúc nạp bối cảnh, không tính lại ở từng lần gọi model.
             "asked_at": asked_at,
@@ -249,6 +364,25 @@ async def _run_turn(
         waiting = bool(getattr(snapshot, "interrupts", ())) or (
             "confirm" in (getattr(snapshot, "next", None) or ())
             and bool(values.get("proposal_id")))
+
+        if button is not None and not waiting:
+            # Controller ruling (Task 5): nút bấm tới khi KHÔNG có gì đang chờ
+            # (đề xuất đã hết hạn, hay bấm trùng) — không chạm graph (idempotent
+            # phía `confirm` chỉ áp dụng trong lượt resume thật, không phải ở
+            # đây). Vẫn ghi cả câu khách bấm lẫn câu đáp vào `conversations` để
+            # lịch sử cho khách thấy đã bấm gì, dù không có gì để chạy.
+            stale_answer = BUTTON_STALE_REPLY.replace(
+                "anh chị", address_phrase(user))
+
+            async def persist_stale():
+                await conversations.append(user_id, "user", question_text, created_at=asked_at)
+                await conversations.append(user_id, "assistant", stale_answer,
+                                           source="code", created_at=now_ms())
+
+            await asyncio.shield(asyncio.ensure_future(persist_stale()))
+            yield AgentEvent("complete", {"answer": stale_answer, "proposal": None})
+            return
+
         if waiting:
             # Thread đang chờ khách trả lời đề xuất (node confirm interrupt ở
             # lượt trước): câu khách là câu trả lời. Các khoá lượt mới ghi
@@ -264,7 +398,13 @@ async def _run_turn(
             #
             # KHÔNG đặt lại `proposal_id` — đó chính là thứ đang chờ duyệt.
             await bounded(graph.aupdate_state(config, fields, as_node="record"))
-            turn_input = Command(resume=question)
+            if button is not None:
+                # Node `confirm` (`_handle_button`) đọc đúng cặp khoá này —
+                # CODE quyết thẳng, không qua `reply.decide`.
+                turn_input = Command(resume={"button": button.decision,
+                                             "proposal_id": button.proposal_id})
+            else:
+                turn_input = Command(resume=question)
         else:
             # Tin mới: chạy từ START. Đề xuất cũ (nếu còn trong checkpoint,
             # vd. lượt trước lỗi giữa chừng) không bao giờ được mang sang.
@@ -279,14 +419,15 @@ async def _run_turn(
             for event in translate_langchain_event(raw):
                 yield event
 
-        values = (await bounded(graph.aget_state(config))).values or {}
+        snapshot = await bounded(graph.aget_state(config))
+        values = snapshot.values or {}
         answer = values.get("answer", "")
         if answer:
             last = (values.get("messages") or [None])[-1]
             answered_at = stamped_at(last) if isinstance(last, AIMessage) else None
 
             async def persist():
-                await conversations.append(user_id, "user", question, created_at=asked_at)
+                await conversations.append(user_id, "user", question_text, created_at=asked_at)
                 await conversations.append(user_id, "assistant", answer,
                                            source=values.get("answer_source", "llm"),
                                            created_at=answered_at or now_ms())
@@ -296,7 +437,13 @@ async def _run_turn(
             # khách lẻ — shield để cặp ghi xong dù lượt này đã bị huỷ.
             await asyncio.shield(asyncio.ensure_future(persist()))
 
-        yield AgentEvent("complete", {"answer": answer})
+        proposal = await pending_proposal_payload(db, user, snapshot)
+        yield AgentEvent("complete", {"answer": answer, "proposal": proposal})
+
+        # Sau complete, cạnh `persist`: dữ kiện bộ phân tích vào slots NGAY
+        # lượt này (lượt sau thấy `stated` mà không chờ nén nền). Ghi TRƯỚC khi
+        # lên lịch nén để hai lần ghi không chạy chồng ngay từ đầu.
+        await apply_analysis(db, user, values)
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không

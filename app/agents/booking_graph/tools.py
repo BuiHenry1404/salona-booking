@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -26,7 +25,13 @@ WHOLE_DAY = 200
 # Chỉ có ngày, không có giờ: `fromisoformat("2026-10-20")` đọc ra NỬA ĐÊM, và
 # nửa đêm thì không có trong danh sách trống → từng thành `slot_unavailable`
 # kèm 8 giờ sáng… và model nói "3 giờ đã kín" (lỗi live 2).
-_DATE_ONLY = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*$")
+def _is_date_only(value: Optional[str]) -> bool:
+    """Chuỗi chỉ chứa ngày `YYYY-MM-DD`, không có giờ."""
+    s = (value or "").strip()
+    parts = s.split("-")
+    return (len(s) == 10 and len(parts) == 3
+            and [len(p) for p in parts] == [4, 2, 2]
+            and all(p.isascii() and p.isdigit() for p in parts))
 
 logger = get_logger(__name__)
 
@@ -191,7 +196,7 @@ def _queued_item(request) -> Optional[dict]:
     """Một mục hàng chờ đã kiểm: giờ đọc được, có giờ cụ thể, chưa qua."""
     if isinstance(request, dict):
         request = QueuedRequest(**request)
-    if _DATE_ONLY.match(request.start_at or ""):
+    if _is_date_only(request.start_at):
         return None
     try:
         start = _parse_local(request.start_at)
@@ -314,7 +319,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # (`proposals`) — đường này không đi qua `Appointment`, nên cap ở
         # `Appointment._clean_note` không tự áp dụng. Lọc lại ở đây.
         note = single_line(note, NOTE_MAX)
-        if _DATE_ONLY.match(start_at or ""):
+        if _is_date_only(start_at):
             return json.dumps({"error": "missing_time"})
         try:
             start = _parse_local(start_at)

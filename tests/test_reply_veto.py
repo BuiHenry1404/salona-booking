@@ -12,7 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from app.agents.booking_graph.reply import (mentions_other_time,
+from app.agents.booking_graph.reply import (is_short_affirmation,
+                                            mentions_other_time,
                                             strip_diacritics, veto_reason)
 from app.core.clock import TZ
 
@@ -249,3 +250,155 @@ def test_the_g_table_is_unchanged_with_an_unrelated_queue(text):
     far = {"kind": "book", "start_at": START.isoformat(),
            "queued": [datetime(2026, 10, 30, 11, 0, tzinfo=TZ).isoformat()]}
     assert veto_reason(text, far, NOW) is not None, text
+
+
+# --- is_short_affirmation (lỗi LLM-02: định tuyến "Ok em" sau lượt booking) ---
+
+@pytest.mark.parametrize("text", ["Ok em", "dạ được", "ừ nha", "oke", "Dc",
+                                  "um", "ok a", "duoc roi"])
+def test_short_affirmations_are_recognised(text):
+    assert is_short_affirmation(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "ok mà 4 giờ được không",       # đổi giờ, không phải đồng ý suông
+    "dạ không",                      # có từ phủ định
+    "chào em",                       # không có từ đồng ý nào
+    "ok em cảm ơn nhiều nha chị",    # quá 4 từ / có từ ngoài lưới
+    "",
+])
+def test_short_affirmations_rejects_everything_else(text):
+    assert not is_short_affirmation(text), text
+
+
+# --- `CONFIRM_VETO_MODE` (Task 15): "time_only" chỉ giữ "other_time" ----------
+
+from app.agents.booking_graph.reply import decide  # noqa: E402
+
+QUESTION = "Dạ em giữ chỗ Thứ Ba 20/10, 3 giờ chiều cho chị Lan, chị chốt giúp em nhé?"
+
+
+async def test_time_only_mode_lets_negation_reach_the_classifier():
+    """"dạ hông" ở chế độ "full" bị lưới chặn thẳng (xem bảng G ở trên);
+    "time_only" phải để nó đi tới `label_fn` — lưới không còn ý kiến về
+    phủ định/hoãn/hỏi, chỉ "giờ khác" mới bị chặn thẳng."""
+    calls = []
+
+    async def label_fn(proposal, bot_question, customer_text):
+        calls.append(customer_text)
+        return "reject"
+
+    result = await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                          veto_mode="time_only")
+    assert calls == ["dạ hông"]
+    assert result == "reject"
+
+
+async def test_time_only_mode_still_vetoes_a_different_time():
+    """"other_time" vẫn bị lưới chặn thẳng ở "time_only" — code so giờ/ngày
+    chắc chắn hơn model, giữ nguyên bất kể chế độ."""
+    async def label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called for other_time")
+
+    result = await decide("dạ 4 giờ nha em", P_BOOK, QUESTION, NOW,
+                          label_fn=label_fn, veto_mode="time_only")
+    assert result == "reject"
+
+
+async def test_default_veto_mode_is_full_and_still_vetoes_negation():
+    """An toàn: không truyền `veto_mode` thì vẫn là "full" — không đổi hành vi
+    hiện có khi cờ chưa bật."""
+    async def label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called in full mode")
+
+    assert await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn) == "reject"
+
+
+async def test_time_only_mode_with_an_unclear_classifier_label_never_approves():
+    """An toàn (yêu cầu bắt buộc của task): gõ "dạ hông" ở "time_only" đi tới
+    bộ phân tích; bộ phân tích không chắc ("unclear") thì KHÔNG được ghi lịch."""
+    async def label_fn(proposal, bot_question, customer_text):
+        return "unclear"
+
+    result = await decide("dạ hông", P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                          veto_mode="time_only")
+    assert result == "unclear"
+
+
+# --- review (finding #1): "time_only" phải bắt "giờ khác" ĐỘC LẬP, không để
+# negation/deferral/question (lý do ĐẦU TIÊN của `veto_reason`) che mất nó ----
+
+TIME_ONLY_STILL_OTHER_TIME = [
+    "4 giờ được không em?",    # veto_reason() = "negation" (từ "không") che "4 giờ"
+    "không, 4 giờ nha",        # idem
+    "thôi để 5 giờ đi",        # veto_reason() = "negation" ("thôi") che "5 giờ"
+    "ok mai 4 giờ được ko",    # veto_reason() = "negation" ("ko") che "4 giờ"
+]
+
+
+@pytest.mark.parametrize("text", TIME_ONLY_STILL_OTHER_TIME)
+async def test_time_only_mode_still_vetoes_other_time_hidden_behind_a_veto_word(text):
+    """Review finding #1: bốn câu trên đều có TỪ PHỦ ĐỊNH đứng trước giờ khác
+    — `veto_reason` chỉ trả lý do ĐẦU TIÊN ("negation"), và luật cũ coi đó là
+    "không phải other_time" nên bỏ qua ở "time_only", cho approve lọt qua.
+    Đúng phải là: "time_only" tự hỏi `other_time_veto` ĐỘC LẬP và luôn reject,
+    bất kể `label_fn` nói gì (kể cả khi nó nổ — không bao giờ được gọi)."""
+    async def approving_label_fn(proposal, bot_question, customer_text):
+        return "approve"
+
+    async def raising_label_fn(proposal, bot_question, customer_text):
+        raise AssertionError("label_fn must not be called when other_time vetoes")
+
+    for label_fn in (approving_label_fn, raising_label_fn):
+        result = await decide(text, P_BOOK, QUESTION, NOW, label_fn=label_fn,
+                              veto_mode="time_only")
+        assert result == "reject", (text, label_fn)
+
+
+# --- review (finding #2): "time_only" không được để `is_go_ahead` tự approve
+# một câu mà đề bài ĐẦY ĐỦ (full veto_reason) vẫn còn một lý do khác --------
+
+TIME_ONLY_GO_AHEAD_WORDS_BUT_A_QUESTION = [
+    ("cancel", "huy a?"),
+    ("cancel", "hủy đi nha?"),
+    ("move", "doi a?"),
+    ("move", "dời đi nha?"),
+]
+
+
+@pytest.mark.parametrize("kind,text", TIME_ONLY_GO_AHEAD_WORDS_BUT_A_QUESTION)
+async def test_time_only_mode_sends_a_disguised_question_to_the_classifier_not_go_ahead(kind, text):
+    """Review finding #2: những câu này toàn CHỮ GIỤC ("hủy"/"dời" + tiểu từ)
+    nên `is_go_ahead` trả True — nhưng chúng mang dấu "?" nên `veto_reason`
+    ĐẦY ĐỦ (full) báo "question". "time_only" không phủ quyết "question" nữa,
+    nhưng KHÔNG ĐƯỢC vì vậy mà chạy `is_go_ahead` (nó không biết về dấu hỏi) —
+    phải đi tới `label_fn` như một câu chưa rõ ý."""
+    proposal = {"kind": kind, "start_at": START.isoformat()}
+
+    async def unclear_label_fn(proposal, bot_question, customer_text):
+        return "unclear"
+
+    result = await decide(text, proposal, QUESTION, NOW, label_fn=unclear_label_fn,
+                          veto_mode="time_only")
+    assert result == "unclear"
+
+
+def test_reply_module_uses_zero_regex():
+    import inspect
+    from app.agents.booking_graph import reply
+    source = inspect.getsource(reply)
+    assert "import re" not in source and "re.compile" not in source
+
+
+def test_mentions_other_time_also_checks_structured_mentioned_times():
+    from app.agents.booking_graph.analyzer import MentionedTime
+    # Kể cả khi text không chứa chữ số (vd viết bằng chữ), mentioned_times vẫn bắt được giờ lệch
+    assert mentions_other_time(
+        "dạ bốn giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=16, part_of_day="chieu")],
+    ) is True
+    assert mentions_other_time(
+        "dạ ba giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=15, part_of_day="chieu")],
+    ) is False
+

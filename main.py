@@ -40,6 +40,18 @@ async def lifespan(app: FastAPI):
         from app.infrastructure.database import ensure_indexes
         await ensure_indexes(app.state.db)
 
+        # Migration một lần, idempotent (Task 13): tiền tố admin gõ sẵn trong
+        # full_name ("Cô Lan") là thông tin ĐÃ BIẾT → seed self_address cho
+        # khách chưa có giá trị, để address_phrase không phải đợi khách tự
+        # xưng lại từ đầu. Không fail-hard: thiếu seed chỉ làm bot gọi "anh
+        # chị" một lúc, không đáng sập cả app vì nó.
+        try:
+            from app.repositories.user import UserRepository
+            seeded = await UserRepository(app.state.db).seed_self_address_from_names()
+            logger.info("self_address_seed_done", seeded=seeded)
+        except Exception as e:
+            logger.warning("self_address_seed_failed", error=str(e))
+
         # Checkpointer (lịch sử model theo thread) — cùng DB, cùng fail-hard:
         # thiếu nó thì mọi lượt chat đều hỏng, chạy tiếp chỉ giấu lỗi.
         from app.agents.checkpoint import make_checkpointer, set_checkpointer
@@ -47,11 +59,21 @@ async def lifespan(app: FastAPI):
         set_checkpointer(app.state.checkpointer)
 
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
-        
+
     except Exception as e:
         logger.error("Failed to initialize database", error=str(e))
         raise
-    
+
+    # Redis tuỳ chọn (Task 10, dedupe tin nhắn) — KHÔNG fail-hard như Mongo.
+    # Không cấu hình REDIS_URL thì bỏ qua hẳn; cấu hình mà ping lỗi thì chỉ
+    # warning, app chạy tiếp bằng Mongo fallback (MessageDedupe tự xử lý).
+    from app.infrastructure.redis import ping_redis
+    if settings.redis_url:
+        if await ping_redis():
+            logger.info("Redis connected", url=settings.redis_url)
+        else:
+            logger.warning("Redis unavailable at startup, falling back to Mongo dedupe")
+
     # Initialize Socket.IO service (cũng không fail-hard, cùng lý do)
     app.state.socketio_service = None
     try:

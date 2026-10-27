@@ -131,7 +131,9 @@ async def test_load_context_returns_the_state_summary(test_db):
         day=to_local(now_utc()).date(), covers_until=cut, summary=["Khách chào."]))
 
     context = await load_context(test_db, user, "x")
-    assert context["summary"] == ["Khách chào."]
+    # Task 12c: `summary` giờ là chuỗi đã dựng sẵn (tài liệu này chỉ có
+    # `summary` cũ, chưa có `digest` → fallback render gạch đầu dòng).
+    assert "- Khách chào." in context["summary"]
     assert [m.content for m in context["history"]] == ["mới"]
 
 
@@ -285,7 +287,7 @@ async def test_supervisor_model_never_carries_the_respond_tag(monkeypatch):
     """F10: token JSON định tuyến của supervisor không bao giờ được lên màn hình."""
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from app.agents.booking_graph import supervisor
+    from app.agents.booking_graph import analyzer, supervisor
     from tests.fakes import scripted
     seen = []
 
@@ -293,7 +295,7 @@ async def test_supervisor_model_never_carries_the_respond_tag(monkeypatch):
         seen.append(kw.get("tags"))
         return scripted([AIMessage("booking")], tags=kw.get("tags") or ())
 
-    monkeypatch.setattr(supervisor, "build_chat_model", fake_build)
+    monkeypatch.setattr(analyzer, "build_chat_model", fake_build)
     await supervisor.supervise({"messages": [HumanMessage("mai 3 giờ")]})
     assert seen and all(RESPOND_TAG not in (tags or []) for tags in seen)
 

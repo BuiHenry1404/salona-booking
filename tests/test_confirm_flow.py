@@ -12,11 +12,13 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
+from langgraph.types import Command
 
 from app.agents import checkpoint
-from app.agents.booking_graph import agents, events, phrase, reply, rewrite, supervisor
-from app.agents.booking_graph.context import format_vi_datetime
-from app.core.clock import TZ, now_utc
+from app.agents.booking_graph import agents, analyzer, events, phrase, reply, rewrite
+from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
+from app.agents.booking_graph.context import address_phrase, format_vi_datetime
+from app.core.clock import TZ, now_utc, to_local
 from app.services import proposal as proposal_module
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -39,27 +41,61 @@ async def user(test_db):
 
 @pytest.fixture
 def models(monkeypatch):
+    """Task 12b: một bộ phân tích (`analyzer.analyze_turn`) thay cả supervisor
+    model lẫn `classify_reply`. Bọc nó để tách hai đường cho dễ khẳng định:
+
+    - tin mới (`pending=None`, từ supervisor): chạy `analyze_turn` THẬT trên
+      model giả `sup` (đếm `sup.calls` như trước);
+    - câu trả lời đề xuất (`pending` khác None, từ confirm): "bộ phân loại"
+      giả — trả `classifier["label"]` (hoặc `classifier["fn"]`), đếm
+      `classifier["calls"]`.
+
+    `analyzer_calls` đếm MỌI lời gọi (mỗi lượt tối đa một). `classify_reply`
+    bị gài nổ: đường chính không được gọi nó nữa."""
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
     phrase_model = scripted([])
-    classifier = {"label": "approve", "calls": 0}
+    classifier = {"label": "approve", "calls": 0, "fn": None}
+    analyzer_calls = []
+    real_analyze = analyzer.analyze_turn
 
-    async def fake_classify(proposal, bot_question, customer_text):
+    async def fake_analyze(messages, customer_text, pending, bot_question=""):
+        analyzer_calls.append({"pending": pending, "customer_text": customer_text,
+                               "bot_question": bot_question})
+        if pending is None:
+            return await real_analyze(messages, customer_text, pending, bot_question=bot_question)
         classifier["calls"] += 1
-        return classifier["label"]
+        label = (classifier["label"] if classifier["fn"] is None
+                 else await classifier["fn"](pending, bot_question, customer_text))
+        return analyzer.sanitize_analysis(
+            analyzer.TurnAnalysis(reply_to_proposal=label), customer_text, True)
 
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    async def classify_must_not_run(*a, **kw):
+        raise AssertionError("classify_reply không còn nằm trên đường chính")
+
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "analyze_turn", fake_analyze)
     monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
     monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: phrase_model)
     monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
-    monkeypatch.setattr(reply, "classify_reply", fake_classify)
+    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
     monkeypatch.setattr(events, "get_callbacks", lambda: [])
-    return SimpleNamespace(sup=sup, agent=agent, phrase=phrase_model, classifier=classifier)
+    return SimpleNamespace(sup=sup, agent=agent, phrase=phrase_model, classifier=classifier,
+                           analyzer_calls=analyzer_calls)
 
 
 async def turn(test_db, user, text):
     return [(e.type, e.data) async for e in events.run_turn(test_db, user, text)]
+
+
+async def expected_proposal(test_db, user):
+    """Payload `proposal` mong đợi trong `complete`, dựng từ ĐÚNG đề xuất đang
+    pending của khách trong DB — tránh lặp lại logic của `pending_proposal_payload`."""
+    doc = await pending(test_db, user)
+    return {"id": str(doc["_id"]), "kind": doc["kind"],
+           "expires_at": to_local(doc["expires_at"]).isoformat(),
+           "when_spoken": format_vi_datetime(doc["start_at"])}
 
 
 async def propose_turn(test_db, user, models, hour=15):
@@ -70,13 +106,55 @@ async def propose_turn(test_db, user, models, hour=15):
         AIMessage(QUESTION),
     ]
     out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
-    assert out[-1] == ("complete", {"answer": QUESTION})
+    proposal = await expected_proposal(test_db, user)
+    assert out[-1] == ("complete", {"answer": QUESTION, "proposal": proposal})
     assert ("token", {"text": QUESTION}) in out          # câu hỏi xác nhận stream như thường
     return out
 
 
 async def appointments(db):
     return await db["appointments"].count_documents({"status": "booked"})
+
+
+async def test_complete_carries_the_pending_proposal(test_db, user, models):
+    """Task 4: `complete` mang theo đề xuất đang chờ, để Task 6 (frontend) vẽ
+    nút Đồng ý/Không — lượt không đề xuất gì thì `proposal` phải là `None`."""
+    models.sup.replies += [AIMessage("social")]
+    models.agent.replies += [AIMessage("Dạ chào chị ạ")]
+    chit_chat = await turn(test_db, user, "chào em")
+    assert chit_chat[-1] == ("complete", {"answer": "Dạ chào chị ạ", "proposal": None})
+
+    out = await propose_turn(test_db, user, models)
+    latest = await ProposalService(test_db).latest(user)
+    proposal = out[-1][1]["proposal"]
+    assert proposal == {
+        "id": str(latest.id),
+        "kind": "book",
+        "expires_at": to_local(latest.expires_at).isoformat(),
+        "when_spoken": format_vi_datetime(latest.start_at),
+    }
+
+
+async def test_pending_proposal_lookup_failure_still_completes_the_turn(
+        test_db, user, models, monkeypatch):
+    """Review Task 4: `ProposalService.get` có thể GHI (tự chuyển expired/
+    stale-approving) nên có thể nổ (Mongo chập chờn). Câu đáp đã lưu vào
+    `conversations` TRƯỚC khi `pending_proposal_payload` chạy — nổ ở đó không
+    được làm mất cả lượt (`error` thay vì `complete`), chỉ đáng mất nút bấm."""
+    async def boom(self, user, proposal_id):
+        raise RuntimeError("mongo chập chờn")
+    monkeypatch.setattr(ProposalService, "get", boom)
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+
+    assert out[-1] == ("complete", {"answer": QUESTION, "proposal": None})
+    doc = await test_db["conversations"].find_one({"user_id": str(user.id)})
+    assert doc["messages"][-1]["content"] == QUESTION      # câu đáp vẫn được ghi
 
 
 async def test_proposal_turn_ends_waiting_on_an_interrupt(test_db, user, models):
@@ -99,7 +177,26 @@ async def test_g01_ko_em_never_books(test_db, user, models):
     assert len(models.agent.calls) == agent_calls + 1     # lượt 2 đi vào booking
     assert len(models.sup.calls) == 1                     # không qua supervisor
     assert models.classifier["calls"] == 0                # lưới chặn trước model
-    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?",
+                                    "proposal": None})
+
+
+async def test_decline_resolved_by_confirm_marks_last_route_booking(test_db, user, models):
+    """Nối lỗi LLM-02: lượt resume vào `confirm` bằng câu gõ (lưới code từ
+    chối, KHÔNG qua `supervise`) để lại `route=""` (fresh_turn_fields) — nếu
+    `record` cứ chép nguyên `route` thì `last_route` thành "" và "Ok em" sau
+    lượt NÀY lại lọt supervisor như chưa hề có lượt booking nào. `record`
+    phải tự hiểu route rỗng ở đây nghĩa là "booking" (ruling task 8)."""
+    from app.agents.booking_graph.graph import build_graph
+
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+
+    await turn(test_db, user, "dạ ko em")
+
+    config = {"configurable": {"thread_id": events.thread_id_for(str(user.id), now_utc())}}
+    snap = await build_graph(test_db, user).aget_state(config)
+    assert snap.values["last_route"] == "booking"
 
 
 async def test_tan_gau_with_phai_never_books(test_db, user, models):
@@ -123,7 +220,8 @@ async def test_approve_books_and_phrase_streams(test_db, user, models):
     booked = await AppointmentService(test_db).upcoming_for(user)
     assert len(booked) == 1 and booked[0].start_at.astimezone(TZ) == tomorrow_at(15)
     assert any(t == "token" for t, _ in out)
-    assert out[-1] == ("complete", {"answer": f"Dạ xong rồi chị Lan, hẹn chị {when} nhé."})
+    assert out[-1] == ("complete", {"answer": f"Dạ xong rồi chị Lan, hẹn chị {when} nhé.",
+                                    "proposal": None})
 
 
 async def test_g07_after_tool_loop_da_vang_de_chi_goi_never_books(test_db, user, models):
@@ -193,7 +291,9 @@ async def test_unclear_asks_once_then_approve_books(test_db, user, models):
     second = await turn(test_db, user, "cho cô dùng thử")
 
     when = format_vi_datetime(tomorrow_at(15))
-    assert second[-1] == ("complete", {"answer": f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?"})
+    proposal = await expected_proposal(test_db, user)        # vẫn pending, hỏi lại một câu
+    assert second[-1] == ("complete", {"answer": f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?",
+                                       "proposal": proposal})
     assert await appointments(test_db) == 0
 
     models.classifier["label"] = "approve"
@@ -212,7 +312,7 @@ async def test_unclear_twice_drops_the_proposal_and_goes_to_booking(test_db, use
 
     out = await turn(test_db, user, "ờ thì để coi")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị cần em giúp gì thêm ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ chị cần em giúp gì thêm ạ?", "proposal": None})
     assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
     assert await appointments(test_db) == 0
 
@@ -227,7 +327,7 @@ async def test_approved_proposal_does_not_carry_over(test_db, user, models):
 
     out = await turn(test_db, user, "ừ cảm ơn em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert out[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     assert len(models.sup.calls) == 2                       # về supervisor
     assert await appointments(test_db) == 1
 
@@ -236,14 +336,70 @@ async def test_expired_proposal_is_a_new_message(test_db, user, models, monkeypa
     await propose_turn(test_db, user, models)
     future = now_utc() + timedelta(minutes=PROPOSAL_MAX_AGE_MINUTES + 1)
     monkeypatch.setattr(proposal_module, "now_utc", lambda: future)
-    models.sup.replies += [AIMessage("booking")]
     models.agent.replies += [AIMessage("Dạ chị muốn đặt lại giờ nào ạ?")]
 
     out = await turn(test_db, user, "ừ")
 
-    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt lại giờ nào ạ?"})
-    assert len(models.sup.calls) == 2
+    assert out[-1] == ("complete", {"answer": "Dạ chị muốn đặt lại giờ nào ạ?", "proposal": None})
+    # Lỗi LLM-02 (Task 8): "ừ" là khẳng định ngắn SAU một lượt booking
+    # (`last_route` của propose_turn) → supervisor về thẳng "booking" bằng
+    # code, không còn gọi model lần hai.
+    assert len(models.sup.calls) == 1
     assert await appointments(test_db) == 0
+
+
+async def test_fact_context_changed_time_through_the_real_flow(test_db, user, models):
+    """Task 15 review (finding #3), đầu-cuối: khách đổi giờ NGAY TRONG PHIÊN
+    (lưới code phủ quyết "dạ 4 giờ nha em" bằng "other_time", KHÔNG qua model
+    phân loại) → đề xuất 3 giờ bị `rejected`, agent đề xuất lại 4 giờ, khách
+    "ừ" → chốt — câu chốt phải mang `context = "changed_time"` (đọc qua prompt
+    LLM mà `write_phrase` gửi, vì `complete` không trả `confirm_fact` thô)."""
+    await propose_turn(test_db, user, models)
+    question2 = "Dạ em giữ chỗ 4 giờ chiều mai cho chị Lan, chị chốt giúp em nhé?"
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(question2),
+    ]
+
+    vetoed = await turn(test_db, user, "dạ 4 giờ nha em")
+
+    assert vetoed[-1][1]["answer"] == question2
+    assert models.classifier["calls"] == 0          # lưới code chặn trước model (full mode)
+    assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
+    assert await appointments(test_db) == 0
+
+    models.phrase.replies += [AIMessage("")]        # lỗi → fallback, không cần đúng chữ
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 1
+    booked = await AppointmentService(test_db).upcoming_for(user)
+    assert booked[0].start_at.astimezone(TZ) == tomorrow_at(16)
+    system = models.phrase.calls[-1][0].content
+    assert "changed their mind" in system           # PHRASE_CONTEXT_RULES["changed_time"]
+
+
+async def test_fact_context_after_decline_through_the_real_flow(test_db, user, models):
+    """Task 15 review (finding #3), đầu-cuối: khách nói "không" rồi quay lại
+    chốt Y NGUYÊN giờ cũ — đề xuất đầu bị `rejected` (phủ định, lưới code),
+    đề xuất thứ hai CÙNG GIỜ được duyệt → `context = "after_decline"`."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+
+    declined = await turn(test_db, user, "không")
+
+    assert models.classifier["calls"] == 0
+    assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
+    assert await appointments(test_db) == 0
+
+    models.phrase.replies += [AIMessage("")]
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 1
+    system = models.phrase.calls[-1][0].content
+    assert "fresh booking" in system                # PHRASE_CONTEXT_RULES["after_decline"]
 
 
 async def test_missing_checkpoint_never_approves_a_stale_proposal(test_db, user, models):
@@ -370,7 +526,7 @@ async def test_resume_cancelled_while_classifying_then_yes_books_once(test_db, u
         if calls["n"] == 1:
             await asyncio.sleep(5)
         return "approve"
-    monkeypatch.setattr(reply, "classify_reply", slow_then_approve)
+    models.classifier["fn"] = slow_then_approve
 
     second = asyncio.create_task(turn(test_db, user, "ừ"))
     await asyncio.sleep(0.2)
@@ -409,7 +565,7 @@ async def test_new_message_after_cut_before_confirm_without_proposal(test_db, us
     models.agent.replies += [AIMessage("Dạ sơn gel 150 nghìn ạ")]
     out = await turn(test_db, user, "sơn gel bao nhiêu em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ sơn gel 150 nghìn ạ"})
+    assert out[-1] == ("complete", {"answer": "Dạ sơn gel 150 nghìn ạ", "proposal": None})
     assert len(models.sup.calls) == 2
     doc = await test_db["conversations"].find_one({"user_id": str(user.id)})
     assert doc["messages"][-1]["content"] == "Dạ sơn gel 150 nghìn ạ"
@@ -433,7 +589,7 @@ async def test_proposal_set_but_not_yet_interrupted_treats_next_message_as_the_r
     models.agent.replies += [AIMessage("Dạ vâng, chị muốn giờ nào ạ?")]
     out = await turn(test_db, user, "dạ ko em")
 
-    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?"})
+    assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn giờ nào ạ?", "proposal": None})
     assert await appointments(test_db) == 0
     assert len(models.sup.calls) == 1                   # trả lời đề xuất, không về START
 
@@ -542,8 +698,10 @@ async def test_live_b2_claim_while_only_holding_is_rewritten_end_to_end(test_db,
         AIMessage(f"Dạ, em đã đặt lịch cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"),
     ]
     out = await turn(test_db, user, "mai 3 giờ chiều chị làm tóc")
+    proposal = await expected_proposal(test_db, user)
     assert out[-1] == ("complete", {"answer":
-                       f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?"})
+                       f"Dạ, em giữ chỗ cho chị Lan vào {when} rồi ạ, chị xác nhận giúp em nhé?",
+                       "proposal": proposal})
     assert await appointments(test_db) == 0
 
 
@@ -644,7 +802,7 @@ async def test_live_b2_two_bookings_in_one_message_are_booked_one_at_a_time(test
     async def classify(proposal, bot_question, customer_text):
         seen_by_classifier.append(proposal)
         return "approve"
-    monkeypatch.setattr(reply, "classify_reply", classify)
+    models.classifier["fn"] = classify
     models.phrase.replies += [AIMessage(f"Dạ xong rồi anh Hùng, hẹn anh {when9} nhé.")]
     out = await turn(test_db, hung, "dc em, 9h la cua chu. con 2h chieu cho thang chau thi sao")
     assert seen_by_classifier and seen_by_classifier[0]["queued"] == [two.isoformat()]
@@ -781,10 +939,11 @@ async def test_live_b3_first_proposal_announces_the_queued_booking(test_db, hung
     từ hàng chờ, chèn trước câu hỏi xác nhận)."""
     when9 = format_vi_datetime(in_two_days(9))
     out = await hung_first_turn(test_db, hung, models)
+    proposal = await expected_proposal(test_db, hung)
     assert out[-1] == ("complete", {"answer": (
         f"Em đang giữ lịch cắt tóc cho anh Hùng vào {when9}. Em giữ lịch này trước, xong em "
         "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
-        "giúp em nhé?")})
+        "giúp em nhé?"), "proposal": proposal})
 
 
 async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_queued_time(
@@ -795,8 +954,286 @@ async def test_live_b4_first_proposal_announces_even_when_the_model_names_the_qu
     out = await hung_first_turn(test_db, hung, models, agent_reply=(
         f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Lịch cho thằng cháu là {when2}. "
         "Anh Hùng xác nhận giúp em nhé?"))
+    proposal = await expected_proposal(test_db, hung)
     assert out[-1] == ("complete", {"answer": (
         f"Em đang giữ cho anh Hùng lịch cắt tóc vào {when9}. Em giữ lịch này trước, xong em "
         "giữ tiếp lịch 2 giờ chiều cắt tóc cho cháu nhé. Anh Hùng xác nhận lịch 9 giờ sáng "
-        "giúp em nhé?")})
+        "giúp em nhé?"), "proposal": proposal})
     assert await test_db["proposals"].count_documents({"status": "pending"}) == 1
+
+
+# --- Task 2: resume dạng nút bấm (UI, Task 5/6 nối Socket.IO) -----------------
+# Resume không còn là câu gõ chữ mà là dict {"button": "yes"|"no", "proposal_id"}:
+# CODE quyết thẳng trên `ProposalService.approve`/`reject`, bộ phân loại
+# KHÔNG chạy. Gọi thẳng graph đã dựng (như `graph_values`) thay vì `run_turn`,
+# để kiểm node `confirm` tách biệt khỏi tầng chuyển tải — `run_turn` nhận
+# `ButtonReply` có bài test riêng ở cuối phần này (Task 5).
+
+
+async def button(test_db, user, decision, proposal_id):
+    """Resume đúng node `confirm` đang `interrupt()` bằng dict nút bấm."""
+    from app.agents.booking_graph.graph import build_graph
+    graph = build_graph(test_db, user)
+    config = {"configurable": {"thread_id": events.thread_id_for(str(user.id), now_utc())}}
+    await graph.ainvoke(Command(resume={"button": decision, "proposal_id": proposal_id}), config)
+    return (await graph.aget_state(config)).values
+
+
+async def test_button_yes_books_without_classifier(test_db, user, models):
+    """Task 3: nút "Đồng ý" không gọi model phrase nữa — câu chốt do CODE viết
+    (`code_phrase`), nên `models.phrase` KHÔNG được gọi dù có kịch bản sẵn."""
+    await propose_turn(test_db, user, models)
+    when = format_vi_datetime(tomorrow_at(15))
+    proposal = await pending(test_db, user)
+
+    values = await button(test_db, user, "yes", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 1
+    assert values["answer"] == f"Dạ, em đặt lịch cho chị Lan vào {when} rồi ạ."
+    assert values["confirm_source"] == "button"
+    assert models.classifier["calls"] == 0
+    assert models.phrase.calls == []
+
+
+async def test_button_no_rejects_and_asks_what_to_change(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+    address = address_phrase(user)
+
+    values = await button(test_db, user, "no", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_NO_REPLY.replace("anh chị", address)
+    updated = await test_db["proposals"].find_one({"_id": proposal["_id"]})
+    assert updated["status"] == "rejected"
+    assert models.classifier["calls"] == 0
+
+
+async def test_button_no_also_marks_last_route_booking(test_db, user, models):
+    """Nối lỗi LLM-02: bấm "Không" cũng là resume vào `confirm`, không qua
+    `supervise` — cùng lưới với lượt gõ chữ ở trên, chỉ khác đường vào."""
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+
+    values = await button(test_db, user, "no", str(proposal["_id"]))
+
+    assert values["last_route"] == "booking"
+
+
+async def test_short_ok_after_a_resumed_decline_still_skips_the_supervisor_model(
+    test_db, user, models
+):
+    """Chốt lỗi LLM-02 (vòng 2): sau lượt resume bị từ chối (gõ chữ "dạ ko
+    em"), "Ok em" là tin MỚI (không còn gì đang chờ) và phải về thẳng booking
+    bằng code — không riêng gì lượt booking ĐẦU TIÊN mới được bảo vệ."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+    await turn(test_db, user, "dạ ko em")
+    sup_calls = len(models.sup.calls)
+
+    models.agent.replies += [AIMessage("Dạ chị chốt giờ nào ạ?")]
+    out = await turn(test_db, user, "Ok em")
+
+    assert len(models.sup.calls) == sup_calls          # supervisor model không chạy thêm
+    assert out[-1] == ("complete", {"answer": "Dạ chị chốt giờ nào ạ?", "proposal": None})
+
+
+async def test_second_button_press_is_idempotent(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+    pid = str(proposal["_id"])
+
+    await button(test_db, user, "yes", pid)
+    assert await appointments(test_db) == 1
+
+    # Nút thứ hai (vd. khách bấm lại, hay lượt resume cũ hồi sinh): graph đã
+    # xong lượt đầu (không còn interrupt nào để resume), nên "bấm lại" ở đây
+    # chính là cổng ghi được gọi lại trực tiếp — vẫn phải idempotent.
+    result = await ProposalService(test_db).approve(user, pid, turn_at=now_utc())
+    assert result.outcome == "approved"
+    assert await appointments(test_db) == 1
+
+
+async def test_button_on_foreign_or_expired_proposal_writes_nothing(test_db, user, models, hung):
+    address = address_phrase(user)
+
+    # pid của hung gửi bởi lan: không khớp đề xuất đang chờ của chính lượt này.
+    await propose_turn(test_db, user, models)
+    hung_proposal = await ProposalService(test_db).create(hung, "book", tomorrow_at(17), None)
+
+    values = await button(test_db, user, "yes", str(hung_proposal.id))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_STALE_REPLY.replace("anh chị", address)
+
+    # Một đề xuất khác của CHÍNH khách, nhưng đã hết hạn trước khi bấm nút.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    await turn(test_db, user, "mai 4 giờ chiều chị làm tóc")
+    own = await pending(test_db, user)
+    await test_db["proposals"].update_one(
+        {"_id": own["_id"]}, {"$set": {"expires_at": now_utc() - timedelta(minutes=1)}})
+
+    values = await button(test_db, user, "yes", str(own["_id"]))
+
+    assert await appointments(test_db) == 0
+    assert values["answer"] == BUTTON_STALE_REPLY.replace("anh chị", address)
+
+
+async def test_confirm_source_resets_to_text_after_a_button_approval(test_db, user, models):
+    """`fresh_turn_fields` phải đặt lại `confirm_source` mỗi lượt gõ chữ — thiếu
+    thì một lượt bấm nút để lại "button" cho mọi lượt gõ chữ sau đó trên cùng
+    thread (Task 3 đọc khoá này để quyết cách viết câu chốt)."""
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+
+    await button(test_db, user, "yes", str(proposal["_id"]))
+    assert (await graph_values(test_db, user))["confirm_source"] == "button"
+
+    # Lượt mới, gõ chữ: đề xuất khác, chốt bằng "ừ" như mọi khi.
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {"start_at": tomorrow_at(16).isoformat(), "note": "làm tóc"}),
+        AIMessage(QUESTION),
+    ]
+    await turn(test_db, user, "mai 4 giờ chiều chị làm tóc")
+    when16 = format_vi_datetime(tomorrow_at(16))
+    models.phrase.replies += [AIMessage(f"Dạ xong rồi chị Lan, hẹn chị {when16} nhé.")]
+    await turn(test_db, user, "ừ")
+
+    assert await appointments(test_db) == 2
+    assert (await graph_values(test_db, user))["confirm_source"] == "text"
+
+
+async def test_button_yes_also_offers_the_queued_booking(test_db, hung, models):
+    """Controller M3-task2: nút "có" phải mời lịch kế trong hàng chờ y hệt câu
+    gõ chữ "ừ" (xem `test_live_b2_two_bookings_in_one_message_are_booked_one_at_a_time`)."""
+    nine, two = in_two_days(9), in_two_days(14)
+    when9, when2 = format_vi_datetime(nine), format_vi_datetime(two)
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [
+        tool_call("propose_appointment", {
+            "start_at": nine.isoformat(), "note": "cắt tóc cho chú",
+            "queued": [{"start_at": two.isoformat(), "note": "cắt tóc cho thằng cháu"}]}),
+        AIMessage(f"Dạ em đặt lần lượt từng lịch nhé. Em giữ chỗ {when9} cắt tóc cho anh Hùng, "
+                  "anh xác nhận giúp em nhé?"),
+    ]
+    await turn(test_db, hung, "thu 4 nay chu muon cat toc luc 9h sang voi 2h chieu cho thang chau nua")
+    proposal = await pending(test_db, hung)
+
+    values = await button(test_db, hung, "yes", str(proposal["_id"]))
+
+    booked = await AppointmentService(test_db).upcoming_for(hung)
+    assert [(b.start_at.astimezone(TZ), b.note) for b in booked] == [(nine, "cắt tóc cho chú")]
+    assert values["confirm_fact"]["then"]                 # mời lịch kế, không bỏ qua
+    answer = values["answer"]
+    assert when2 in answer and "cắt tóc cho thằng cháu" in answer
+    assert models.classifier["calls"] == 0
+
+
+async def test_run_turn_resumes_a_button_reply_end_to_end(test_db, user, models):
+    """Task 5: `run_turn` nhận `ButtonReply` (không phải câu gõ chữ) và resume
+    đúng node `confirm` qua `Command(resume={"button", "proposal_id"})` — cả
+    tầng chuyển tải (Socket.IO → `run_turn`) lẫn node đều được kiểm cùng lúc,
+    khác bài test `button()` ở trên vốn gọi thẳng graph."""
+    from app.agents.booking_graph.button import ButtonReply
+
+    await propose_turn(test_db, user, models)
+    proposal = await pending(test_db, user)
+    when = format_vi_datetime(tomorrow_at(15))
+
+    out = await turn(test_db, user, ButtonReply("yes", str(proposal["_id"]), "Đồng ý"))
+
+    assert out[-1] == ("complete", {
+        "answer": f"Dạ, em đặt lịch cho chị Lan vào {when} rồi ạ.", "proposal": None})
+    assert await appointments(test_db) == 1
+    assert models.classifier["calls"] == 0
+    assert models.phrase.calls == []
+
+    stored = (await test_db["conversations"].find_one({"user_id": str(user.id)}))["messages"]
+    assert stored[-2]["content"] == "Đồng ý"               # lịch sử cho thấy khách đã bấm gì
+
+
+# --- Task 12b: bộ phân tích trên đường chính ------------------------------------
+
+async def test_typed_reply_uses_analyzer_label_after_veto_grid(test_db, user, models):
+    """Veto vẫn thắng: "dạ ko em" + bộ phân tích "approve" → không ghi, và bộ
+    phân tích KHÔNG được gọi (lưới chặn trước)."""
+    await propose_turn(test_db, user, models)
+    models.classifier["label"] = "approve"
+    models.agent.replies += [AIMessage("Dạ vâng, chị muốn đổi sang giờ nào ạ?")]
+    before = len(models.analyzer_calls)
+
+    await turn(test_db, user, "dạ ko em")
+
+    assert await appointments(test_db) == 0
+    assert models.classifier["calls"] == 0
+    assert len(models.analyzer_calls) == before
+
+    # Câu lọt lưới: nhãn cuối là của bộ phân tích, có đề xuất đi kèm.
+    await propose_turn(test_db, user, models)
+    models.phrase.replies += [AIMessage("")]
+    await turn(test_db, user, "ừ được đó em")
+    assert models.classifier["calls"] == 1
+    assert models.analyzer_calls[-1]["pending"]["kind"] == "book"
+    assert models.analyzer_calls[-1]["bot_question"] == QUESTION
+    assert await appointments(test_db) == 1
+
+
+async def test_analyzer_failure_on_typed_reply_never_books(test_db, user, models, monkeypatch):
+    """Bộ phân tích THẬT, model nổ → bản lùi "unclear": hỏi lại, không ghi."""
+    await propose_turn(test_db, user, models)
+    monkeypatch.setattr(analyzer, "analyze_turn", _REAL_ANALYZE)
+
+    def boom(**kw):
+        raise RuntimeError("azure 500")
+    monkeypatch.setattr(analyzer, "build_chat_model", boom)
+    models.phrase.replies += [AIMessage("")]
+
+    out = await turn(test_db, user, "ừ được đó em")
+
+    assert await appointments(test_db) == 0
+    assert (await pending(test_db, user)) is not None          # đề xuất còn chờ
+    assert "chốt giúp em" in out[-1][1]["answer"]             # câu hỏi lại của code
+
+
+# `analyze_turn` gốc — fixture `models` bọc nó, test cần bản thật thì lấy ở đây.
+_REAL_ANALYZE = analyzer.analyze_turn
+
+
+async def test_button_turn_never_calls_analyzer(test_db, user, models):
+    await propose_turn(test_db, user, models)
+    before = len(models.analyzer_calls)
+    proposal = await pending(test_db, user)
+
+    await button(test_db, user, "yes", str(proposal["_id"]))
+
+    assert await appointments(test_db) == 1
+    assert len(models.analyzer_calls) == before
+    assert models.classifier["calls"] == 0
+
+
+async def test_analyzer_runs_at_most_once_per_turn(test_db, user, models, monkeypatch):
+    """Tin mới: một lời gọi (supervisor). Trả lời đề xuất bằng chữ mà đề xuất
+    không duyệt được (approve → not_approvable → về supervisor): vẫn MỘT lời
+    gọi — supervisor dùng lại phân tích của confirm."""
+    models.agent.replies += [AIMessage("Dạ chào chị ạ")]
+    await turn(test_db, user, "chào em")
+    assert len(models.analyzer_calls) == 1
+
+    await propose_turn(test_db, user, models)
+    assert len(models.analyzer_calls) == 2
+
+    async def not_approvable(self, user, proposal_id, *, turn_at):
+        return proposal_module.ApprovalResult(outcome="not_approvable")
+    monkeypatch.setattr(ProposalService, "approve", not_approvable)
+    models.agent.replies += [AIMessage("Dạ chị muốn đặt giờ nào ạ?")]
+
+    await turn(test_db, user, "ừ được đó em")
+
+    assert len(models.analyzer_calls) == 3
+    assert await appointments(test_db) == 0

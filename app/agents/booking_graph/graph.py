@@ -34,7 +34,22 @@ async def record(state: GraphState) -> dict:
     vết lượt hỏng, `model_history` bỏ nó như A.
     """
     answer = state.get("answer") or ""
-    return {"messages": [stamp(AIMessage(content=answer), now_ms())]} if answer else {}
+    # `last_route` ghi ở MỌI lượt (kể cả không sinh câu đáp) — lượt sau cần
+    # biết lượt này đi node nào, không chỉ khi có câu đáp (lỗi LLM-02).
+    #
+    # `route` RỖNG CHỈ xảy ra ở lượt resume vào `confirm` (gõ chữ trả lời đề
+    # xuất trước hết hạn, hay bấm nút): `fresh_turn_fields` đặt `route=""` và
+    # lượt đó không chạy qua `supervise` nên không ai ghi đè. Nhánh resume
+    # luôn thuộc flow booking (đang chờ duyệt MỘT đề xuất của booking) — nhánh
+    # `gate_next="supervisor"` (đề xuất hết hạn) lại CHẠY LẠI `supervise`, nên
+    # `route` ở đó đã được ghi đè trước khi tới đây. Không coi `route` rỗng là
+    # "không phải booking" thì "ok em" ngắn SAU một lượt resume (ví dụ khách
+    # gõ "không" để đổi giờ, hay bấm "Không") sẽ không được lưới ở supervisor
+    # nhận ra là đang nối booking — lỗi LLM-02 chỉ được vá cho LƯỢT ĐẦU.
+    fields = {"last_route": state.get("route") or "booking"}
+    if answer:
+        fields["messages"] = [stamp(AIMessage(content=answer), now_ms())]
+    return fields
 
 
 def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):

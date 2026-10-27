@@ -86,6 +86,15 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # Mỗi khách đúng một document hội thoại.
     await db["conversations"].create_index("user_id", unique=True)
 
+    # Bản nén theo NGÀY (Task 14, "Lần trước") — 1 doc/khách/ngày, khác hẳn
+    # `conversations.state` (chỉ giữ hôm nay, bị ghi đè khi sang ngày mới).
+    # Unique chặn hai lượt nén cùng ngày tạo hai bản; TTL 30 ngày dọn rác —
+    # quá hạn đó thì "Lần trước" (chỉ nhìn 7 ngày) không còn cần tới nữa.
+    await db["conversation_sessions"].create_index(
+        [("user_id", 1), ("day", 1)], unique=True
+    )
+    await db["conversation_sessions"].create_index("expires_at", expireAfterSeconds=0)
+
     # Đề xuất chờ khách đồng ý (ProposalService). KHÔNG có TTL: đề xuất đã
     # duyệt/từ chối là dấu vết vì sao một lịch được ghi; hết hạn tính bằng
     # `expires_at` lúc đọc, không phải bằng việc xoá document.
@@ -93,6 +102,15 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
 
     await db["rate_limits"].create_index("expires_at", expireAfterSeconds=0)
     await db["rate_limits"].create_index([("key", 1), ("created_at", 1)])
+
+    # Dedupe tin nhắn (Task 10, fallback Mongo khi không có Redis). Unique theo
+    # cặp để một message_id lặp lại của CÙNG khách mới bị chặn — khách khác
+    # dùng trùng uuid (không nên xảy ra, nhưng không loại trừ) không đụng nhau.
+    # TTL 24h dọn rác, không phải cơ chế chống trùng (đó là unique index).
+    await db["message_inbox"].create_index(
+        [("user_id", 1), ("message_id", 1)], unique=True
+    )
+    await db["message_inbox"].create_index("expires_at", expireAfterSeconds=0)
 
 
 async def create_mongodb_connection(uri: str = None, db_name: str = None) -> MongoDatabase:

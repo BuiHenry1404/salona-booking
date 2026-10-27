@@ -12,7 +12,7 @@ model, và agent đọc một dòng code viết trong khối bối cảnh.
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph import supervisor
+from app.agents.booking_graph import analyzer, supervisor
 from app.agents.booking_graph.relatives import aside_line, asks_if_relative_free, defers
 from tests.fakes import scripted
 
@@ -65,7 +65,7 @@ async def test_supervisor_sends_them_to_booking_without_the_model(monkeypatch, t
     """Model giả trả "shop" (đúng lỗi lượt 4): code phải đi trước, không hỏi model.
     (Model ném lỗi thì supervisor cũng ra booking — không chứng minh được gì.)"""
     sup = scripted([AIMessage("shop")], tags=("supervisor",))
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
     assert await supervisor.supervise({"messages": [HumanMessage(text)]}) == {"route": "booking"}
     assert sup.calls == []
 
@@ -102,3 +102,19 @@ def test_two_deferrals_in_a_row_get_different_words():
     second = deferral_reply(TURN5, "anh Hùng", [first])
     third = deferral_reply(TURN5, "anh Hùng", [first, second])
     assert len({first, second, third}) == 3
+
+
+def test_relatives_module_uses_zero_regex():
+    import inspect
+    from app.agents.booking_graph import relatives
+    source = inspect.getsource(relatives)
+    assert "import re" not in source and "re.compile" not in source
+
+
+def test_aside_line_and_deferral_reply_honour_analyzer_aside():
+    assert "[relative]" in aside_line("câu bất kỳ", analysis={"aside": "relative_free"})
+    assert "[deferral]" in aside_line("câu bất kỳ", analysis={"aside": "defer_only"})
+    reply = deferral_reply("câu bất kỳ", "anh Hùng", [], analysis={"aside": "defer_only"})
+    assert reply and "anh Hùng" in reply
+    assert deferral_reply("câu bất kỳ", "anh Hùng", [], analysis={"aside": "defer_with_request"}) is None
+

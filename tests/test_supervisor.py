@@ -4,7 +4,7 @@ from app.agents.booking_graph.supervisor import supervise
 
 
 class FakeModel:
-    """Giả `with_structured_output`: trả `schema(route=reply)`, không gọi mạng.
+    """Giả `with_structured_output` (của bộ phân tích, Task 12b): trả `schema(route=reply)`, không gọi mạng.
 
     Nhãn ngoài `Literal` của schema thì pydantic ném ValidationError — đúng
     điều Azure json_schema làm với output lạ, nên nhánh rơi về booking được
@@ -31,7 +31,7 @@ def patch_model(monkeypatch):
     def _install(reply):
         model = FakeModel(reply)
         monkeypatch.setattr(
-            "app.agents.booking_graph.supervisor.build_chat_model", lambda **kw: model
+            "app.agents.booking_graph.analyzer.build_chat_model", lambda **kw: model
         )
         return model
     return _install
@@ -99,17 +99,18 @@ async def test_supervisor_routes_through_structured_output(patch_model):
 async def test_supervisor_model_does_not_stream(monkeypatch):
     """Token định tuyến không bao giờ là thứ để hiện dần: `streaming=False`
     như mọi bộ phân loại khác, không chỉ trông vào lọc tag."""
-    import app.agents.booking_graph.supervisor as sup
+    import app.agents.booking_graph.analyzer as an
     seen = []
 
     def build(**kw):
         seen.append(kw)
         return FakeModel("booking")
 
-    monkeypatch.setattr(sup, "build_chat_model", build)
+    monkeypatch.setattr(an, "build_chat_model", build)
     await supervise(a_state())
     assert seen[0]["streaming"] is False
-    assert seen[0]["tags"] == ["supervisor"]
+    assert seen[0]["tags"] == ["analyze"]
+    assert seen[0]["reasoning_effort"] == "low"
 
 
 @pytest.mark.asyncio
@@ -151,42 +152,123 @@ async def test_supervisor_stall_falls_back_to_booking(monkeypatch):
     """Supervisor treo thì KHÔNG được ăn hết trần lượt: hết ngân sách riêng
     (wait_for) là rơi về booking — nhãn hoà đã ghi trong prompt."""
     import asyncio
-    import app.agents.booking_graph.supervisor as sup
+    import app.agents.booking_graph.analyzer as an
     model = HangingModel()
-    monkeypatch.setattr(sup, "build_chat_model", lambda **kw: model)
-    monkeypatch.setattr(sup, "SUPERVISOR_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(an, "build_chat_model", lambda **kw: model)
+    monkeypatch.setattr(an, "ANALYZE_TIMEOUT_SECONDS", 0.1)
     logged = []
-    monkeypatch.setattr(sup.logger, "warning", lambda msg, **kw: logged.append(msg))
+    monkeypatch.setattr(an.logger, "warning", lambda msg, **kw: logged.append(msg))
 
     started = asyncio.get_running_loop().time()
     out = await supervise(a_state())
 
-    assert out == {"route": "booking"}
+    assert out["route"] == "booking"
     assert asyncio.get_running_loop().time() - started < 2
-    assert logged == ["supervisor_failed"]
+    assert logged == ["analyze_failed"]
 
 
 @pytest.mark.asyncio
 async def test_supervisor_error_falls_back_to_booking(monkeypatch):
-    import app.agents.booking_graph.supervisor as sup
-    monkeypatch.setattr(sup, "build_chat_model", lambda **kw: FailingModel())
+    import app.agents.booking_graph.analyzer as an
+    monkeypatch.setattr(an, "build_chat_model", lambda **kw: FailingModel())
     logged = []
-    monkeypatch.setattr(sup.logger, "warning", lambda msg, **kw: logged.append(msg))
-    assert await supervise(a_state()) == {"route": "booking"}
-    assert logged == ["supervisor_failed"]
+    monkeypatch.setattr(an.logger, "warning", lambda msg, **kw: logged.append(msg))
+    assert (await supervise(a_state()))["route"] == "booking"
+    assert logged == ["analyze_failed"]
 
 
 @pytest.mark.asyncio
 async def test_supervisor_model_has_its_own_short_budget(monkeypatch):
     """Tối đa 1 lần thử lại của SDK, timeout mỗi lần = ngân sách cả bước."""
-    import app.agents.booking_graph.supervisor as sup
+    import app.agents.booking_graph.analyzer as an
     seen = []
 
     def build(**kw):
         seen.append(kw)
         return FakeModel("booking")
 
-    monkeypatch.setattr(sup, "build_chat_model", build)
+    monkeypatch.setattr(an, "build_chat_model", build)
     await supervise(a_state())
-    assert seen[0]["max_retries"] == sup.SUPERVISOR_MAX_RETRIES == 1
-    assert seen[0]["timeout"] == sup.SUPERVISOR_TIMEOUT_SECONDS == 8
+    assert seen[0]["max_retries"] == an.ANALYZE_MAX_RETRIES == 1
+    assert seen[0]["timeout"] == an.ANALYZE_TIMEOUT_SECONDS == 8
+
+
+@pytest.mark.asyncio
+async def test_short_ok_after_a_booking_turn_routes_to_booking_without_llm(monkeypatch):
+    """Lỗi LLM-02: agent hỏi "giữ 2 giờ chiều được không?" KHÔNG qua đề xuất
+    → lượt sau không "đang chờ", vào thẳng supervisor. "Ok em" phải về booking
+    mà không cần hỏi model (model giả không được gọi)."""
+    calls = []
+    monkeypatch.setattr(
+        "app.agents.booking_graph.analyzer.build_chat_model",
+        lambda **kw: calls.append(kw) or FakeModel("social"))
+    out = await supervise(a_state("Ok em", last_route="booking"))
+    assert out["route"] == "booking"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_short_ok_after_social_turn_still_asks_the_model(patch_model):
+    """`last_route` khác "booking" thì "Ok em" vẫn đi qua model như trước."""
+    model = patch_model("social")
+    assert (await supervise(a_state("Ok em", last_route="social")))["route"] == "social"
+    assert model.seen_messages is not None
+
+
+# --- Task 12b: supervisor định tuyến bằng bộ phân tích --------------------------
+
+@pytest.fixture
+def analyzer_spy(monkeypatch):
+    """Thay `analyzer.analyze_turn`: đếm lời gọi, ghi đối số, trả nhãn đặt sẵn."""
+    from app.agents.booking_graph import analyzer
+    spy = {"calls": [], "route": "shop"}
+
+    async def fake(messages, customer_text, pending, bot_question=""):
+        spy["calls"].append({"messages": list(messages), "customer_text": customer_text,
+                             "pending": pending, "bot_question": bot_question})
+        return analyzer.TurnAnalysis(route=spy["route"], stated=["muốn làm móng gel"])
+
+    monkeypatch.setattr(analyzer, "analyze_turn", fake)
+    return spy
+
+
+@pytest.mark.asyncio
+async def test_new_message_calls_analyzer_once_and_routes_by_it(analyzer_spy):
+    from langchain_core.messages import AIMessage, HumanMessage
+    state = a_state()
+    state["messages"] = [HumanMessage("chào em"), AIMessage("Dạ chị cần gì ạ?"),
+                         HumanMessage("tiệm mở cửa mấy giờ")]
+    out = await supervise(state)
+
+    assert out["route"] == "shop"
+    assert len(analyzer_spy["calls"]) == 1
+    call = analyzer_spy["calls"][0]
+    assert call["pending"] is None
+    assert call["customer_text"] == "tiệm mở cửa mấy giờ"
+    assert call["bot_question"] == "Dạ chị cần gì ạ?"
+    # Câu khách đi riêng (analyze_turn tự gói vào HumanMessage cuối) — không lặp.
+    assert [m.content for m in call["messages"]] == ["chào em", "Dạ chị cần gì ạ?"]
+    assert out["analysis"]["route"] == "shop"
+    assert out["analysis"]["stated"] == ["muốn làm móng gel"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra,text", [
+    ({"queued": [{"start_at": "2099-01-01T09:00:00+07:00", "note": "cắt tóc cho cháu"}]}, "ừ"),
+    ({}, "để chị hỏi lại thằng cháu rồi nhắn em"),
+    ({"last_route": "booking"}, "Ok em"),
+])
+async def test_code_shortcuts_skip_the_analyzer(analyzer_spy, extra, text):
+    """Hàng chờ, người nhà/hoãn, "ok" ngắn sau booking: code quyết, 0 lời gọi."""
+    out = await supervise(a_state(text, **extra))
+    assert out == {"route": "booking"}
+    assert analyzer_spy["calls"] == []
+
+
+@pytest.mark.asyncio
+async def test_supervisor_reuses_an_analysis_made_earlier_this_turn(analyzer_spy):
+    """Confirm đã phân tích câu này (đề xuất hết hiệu lực giữa chừng → về
+    supervisor): KHÔNG gọi lần hai — mỗi lượt tối đa một lời gọi."""
+    out = await supervise(a_state("thôi để mai", analysis={"route": "social"}))
+    assert out["route"] == "social"
+    assert analyzer_spy["calls"] == []

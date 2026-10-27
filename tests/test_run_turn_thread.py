@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking_graph import agents, events, rewrite, supervisor
+from app.agents.booking_graph import agents, analyzer, events, rewrite
 from app.core.clock import TZ, now_ms
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
@@ -25,11 +25,11 @@ async def user(test_db):
 
 @pytest.fixture
 def models(monkeypatch):
-    """Một model giả cho supervisor, một cho cả ba agent (chỉ agent được định
+    """Một model giả cho bộ phân tích (supervisor), một cho cả ba agent (chỉ agent được định
     tuyến chạy). Nén nền tắt — nó gọi LLM thật."""
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
-    monkeypatch.setattr(supervisor, "build_chat_model", lambda **kw: sup)
+    monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
     monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
     monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
     monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
@@ -67,7 +67,7 @@ async def test_second_turn_sees_the_first_turn_from_the_thread(test_db, user, mo
     await test_db["conversations"].update_one({}, {"$set": {"messages": []}})
 
     assert (await turn(test_db, user, "cảm ơn em"))[-1] == (
-        "complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+        "complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     batch = contents(models.agent.calls[-1])
     assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
     assert batch[-1] == "cảm ơn em"
@@ -103,7 +103,7 @@ async def test_answer_of_previous_turn_never_leaks_into_this_turn(test_db, user,
 
     models.agent.replies[:] = [AIMessage("Dạ chị Lan nhắn lại giúp em nhé.")]
     third = await turn(test_db, user, "alo")
-    assert third[-1] == ("complete", {"answer": "Dạ chị Lan nhắn lại giúp em nhé."})
+    assert third[-1] == ("complete", {"answer": "Dạ chị Lan nhắn lại giúp em nhé.", "proposal": None})
     batch = contents(models.agent.calls[-1])
     assert "đặt lịch" not in batch
     assert batch[1:3] == ["chào em", "Dạ em chào chị Lan ạ."]
@@ -153,10 +153,42 @@ def test_fresh_turn_fields_reset_everything_a_turn_produces():
     # Lượt resume dùng chung hàm này: đề xuất đang chờ KHÔNG được đặt lại ở đây.
     assert "proposal_id" not in fields and "pending_confirmation" not in fields
     for key, empty in {"answer": "", "draft": "", "violations": [], "route": "",
-                       "gate_next": "", "fallback": None, "confirm_fact": None}.items():
+                       "gate_next": "", "fallback": None, "confirm_fact": None,
+                       "analysis": None}.items():
         assert fields[key] == empty, key
     assert fields["customer_text"] == "q" and fields["user_id"] == "u1"
     assert "messages" not in fields
+
+
+def test_last_route_survives_a_fresh_turn():
+    """`last_route` (lỗi LLM-02) là route của LƯỢT TRƯỚC — phải sống qua
+    checkpointer sang lượt sau, không bị `fresh_turn_fields` xoá như các khoá
+    một-lượt khác."""
+    fields = events.fresh_turn_fields(
+        {"context_block": "CTX", "summary": ["s"], "slots": None, "history_after": None,
+         "history": [], "user_id": "u1"}, "q")
+    assert "last_route" not in fields
+
+
+async def test_button_turn_when_nothing_is_waiting_replies_stale(test_db, user, models):
+    """Khách bấm nút nhưng thread không đang chờ (đề xuất đã hết hạn, hay bấm
+    trùng): không chạy graph, chỉ trả câu "hết hạn" — nhưng vẫn ghi cả câu
+    khách bấm (label) lẫn câu đáp vào `conversations`, để lịch sử cho thấy
+    khách đã bấm gì (controller ruling, Task 5)."""
+    from app.agents.booking_graph.button import ButtonReply
+    from app.agents.booking_graph.confirm import BUTTON_STALE_REPLY
+    from app.agents.booking_graph.context import address_phrase
+
+    reply = ButtonReply("yes", "p1", "Đồng ý")
+    result = [(e.type, e.data) async for e in events.run_turn(test_db, user, reply)]
+
+    expected = BUTTON_STALE_REPLY.replace("anh chị", address_phrase(user))
+    assert [t for t, _ in result] == ["turn_started", "complete"]
+    assert result[-1] == ("complete", {"answer": expected, "proposal": None})
+    assert not models.agent.calls and not models.sup.calls      # graph không chạy
+
+    stored = await ConversationService(test_db)._all_messages(str(user.id))
+    assert contents(stored) == ["Đồng ý", expected]
 
 
 async def test_langfuse_session_is_the_user_not_the_thread(test_db, user, monkeypatch):
@@ -292,7 +324,7 @@ async def test_a_new_turn_supersedes_a_hung_turn(test_db, user, models):
     await _wait_until(lambda: len(models.agent.calls) == 1)          # lượt 1 đang treo
 
     second = await asyncio.wait_for(turn(test_db, user, "em ơi"), timeout=5)
-    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert second[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     await asyncio.wait({first}, timeout=1)
     assert first.cancelled()
 
@@ -341,7 +373,7 @@ async def test_three_quick_turns_only_the_newest_runs_and_the_old_ones_log(
 
     done = await asyncio.wait_for(t3, timeout=5)
     await asyncio.wait({t1, t2}, timeout=1)
-    assert done[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé."})
+    assert done[-1] == ("complete", {"answer": "Dạ chị Lan cần gì cứ nhắn em nhé.", "proposal": None})
     assert t1.cancelled() and t2.cancelled()
     assert logged.count("turn_superseded") == 2
     stored = await ConversationService(test_db)._all_messages(str(user.id))
@@ -390,3 +422,63 @@ async def test_window_now_is_the_turn_time_not_each_model_call():
                                        extra_middleware=[HistoryWindowMiddleware()]))
     await node({"messages": msgs, "context_block": "CTX", "asked_at": asked})
     assert contents(model.calls[0]) == ["p", "23h50", "đáp 23h50", "CTX", "q"]
+
+
+
+# --- Task 12b: kết quả bộ phân tích vào slots NGAY trong lượt -----------------
+
+@pytest.fixture
+def analysis_script(monkeypatch):
+    """`analyze_turn` giả: trả lần lượt các TurnAnalysis dựng sẵn."""
+    script = []
+
+    async def fake(messages, customer_text, pending, bot_question=""):
+        return script.pop(0)
+
+    monkeypatch.setattr(analyzer, "analyze_turn", fake)
+    return script
+
+
+async def test_slots_updated_in_the_same_turn(test_db, user, models, analysis_script):
+    """Lượt 2 thấy `stated` của lượt 1 trong khối slots — nén nền (tắt trong
+    fixture) không hề chạy."""
+    analysis_script += [
+        analyzer.TurnAnalysis(route="booking", stated=["muốn làm móng gel"]),
+        analyzer.TurnAnalysis(route="booking"),
+    ]
+    models.agent.replies += [AIMessage("Dạ chị muốn làm ngày nào ạ?"),
+                             AIMessage("Dạ chị chọn giờ nào ạ?")]
+    await turn(test_db, user, "chị muốn làm móng gel")
+    await turn(test_db, user, "mai nha em")
+
+    batch = "\n".join(str(c) for c in contents(models.agent.calls[-1]))
+    assert "Khách đã nói rõ: muốn làm móng gel" in batch
+    state = await ConversationService(test_db).get_state(str(user.id))
+    assert state.slots.stated == ["muốn làm móng gel"]
+    assert state.covers_until.year == 1970                 # nén chưa từng chạy
+
+
+async def test_bot_question_is_counted_once_per_answer(test_db, user, models, analysis_script):
+    """`asked.times` chỉ tăng khi câu bot là MỚI với lượt này: lượt 2 trả lời
+    câu hỏi của lượt 1 → times = 1; lượt 3 trả lời câu hỏi KHÁC."""
+    analysis_script += [analyzer.TurnAnalysis(route="booking")] * 3
+    models.agent.replies += [AIMessage("Dạ chị cần làm gì ạ?"),
+                             AIMessage("Dạ chị muốn ngày nào ạ?"),
+                             AIMessage("Dạ vâng ạ.")]
+    await turn(test_db, user, "chào em")
+    await turn(test_db, user, "làm móng")
+    await turn(test_db, user, "mai")
+
+    state = await ConversationService(test_db).get_state(str(user.id))
+    asked = {item.question: item.times for item in state.slots.asked}
+    assert asked == {"Dạ chị cần làm gì ạ?": 1, "Dạ chị muốn ngày nào ạ?": 1}
+
+
+def test_bot_text_is_new_only_when_it_directly_precedes_this_turn():
+    """Hai tin khách liền nhau (không có câu bot ở giữa): câu bot cũ đã được
+    tính ở lượt trước — trả "" để không tăng `asked.times` lần hai."""
+    h, a = HumanMessage, AIMessage
+    assert events.bot_text_before_turn([h("1"), a("Hỏi?"), h("2"), a("Đáp.")]) == "Hỏi?"
+    assert events.bot_text_before_turn([h("1"), a("Hỏi?"), h("2"), h("3"), a("Đáp.")]) == ""
+    assert events.bot_text_before_turn([h("1"), a("Đáp.")]) == ""
+    assert events.bot_text_before_turn([]) == ""

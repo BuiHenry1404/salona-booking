@@ -36,6 +36,12 @@ services:
         soft: 64000
         hard: 64000
 
+  # Dedupe tin nhắn (Task 10) — tuỳ chọn. Không publish cổng ra host: chỉ app
+  # trong cùng network compose gọi tới qua REDIS_URL=redis://redis:6379/0.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
   # CHỈ dùng ở dev: cổng 8081, user/pass admin/admin, ai vào cũng sửa được dữ
   # liệu khách. Không có `restart:` để nó không tự sống lại sau reboot. Phải bỏ
   # hẳn khỏi file compose của prod.

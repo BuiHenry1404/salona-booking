@@ -8,18 +8,19 @@ bối cảnh. Ở đây phát hiện tất định; LLM chỉ dùng để viết
 `language` bỏ 2026-09-14 — chưa quan sát thấy với model này, prompt đã ghim
 sẵn ngôn ngữ đầu ra.
 """
+from datetime import datetime
+from difflib import SequenceMatcher
 import json
 import re
-from difflib import SequenceMatcher
-from typing import Awaitable, Callable, List, Optional, Sequence
+from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
 
-from datetime import datetime
-
+from app.agents.booking_graph import tokens
 from app.agents.booking_graph.context import (_clock_phrase, address_phrase, derive_address,
                                               format_vi_datetime, live_queue)
 from app.core.clock import to_local
-from app.core.text import single_line
+from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.text import single_line
 from app.models.user import User
 
 logger = get_logger(__name__)
@@ -32,61 +33,44 @@ REPEAT_LOOKBACK = 8         # đo trên transcript chạy thật 2026-09-19: 6 �
 REWRITE_TIMEOUT_SECONDS = 8
 PHRASE_TIMEOUT_SECONDS = 8
 
-_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
-
 # Khách xin nhắc lại thì lặp là đúng — cùng vế miễn trừ của _NO_REPEAT.
 _REPEAT_REQUESTS = ("nhắc lại", "nói lại", "lặp lại", "quên rồi", "quên mất")
 
-# Đại từ trái giọng "em — anh/chị". "con" chỉ bắt khi làm chủ ngữ của một
-# động từ lễ tân, để "con gái", "con nít" không bị oan.
-#
-# Sentence-start register (cô/chú/bác làm CHỦ NGỮ, VD "Cô muốn...") được kiểm
-# bằng token đầu câu trong check_pronoun, không phải regex riêng — cùng một
-# vòng lặp bỏ tiểu từ mở đầu ("Dạ") với phần đại từ sai giới. Chỉ tính honorific
-# VIẾT HOA đúng kiểu câu Việt (đầu câu viết hoa): "cô gái đó" chữ thường không
-# tính, "Cô muốn đặt giờ nào ạ?" thì tính.
 _FORBIDDEN_REGISTER = {"Cô", "Chú", "Bác"}
-# Tiểu từ mở đầu câu theo văn phong lễ tân — đứng trước đại từ/register thật sự
-# nên phải bỏ qua trước khi soi token đầu câu, không thì "Dạ chị ..." lọt lưới.
 _LEADING_PARTICLES = {"dạ", "vâng", "ừ", "à", "ờ"}
-# `re.I` trên CẢ pattern làm [A-ZĐ] khớp cả chữ thường — "bác sĩ", "cô gái",
-# "chú chó" bị coi là gọi khách sai giọng dù chỉ là danh từ thường. Chỉ có
-# honorific mới không phân biệt hoa thường; tên đi sau PHẢI viết hoa mới tính.
-_REGISTER_BEFORE_NAME = re.compile(r"\b(?i:cô|chú|bác)\s+[A-ZĐ][a-zà-ỹ]+")
-# "cho con chị" (đặt hộ con của khách) không phải xưng hô sai — chỉ bắt "con"
-# khi nó là CHỦ NGỮ của một động từ lễ tân ("con xem/đặt/...", "để/giúp con xem/...").
-_CON_AS_SUBJECT = re.compile(r"\bcon\s+(xem|giúp|đặt|hỏi|kiểm|giữ)\b|\b(để|giúp)\s+con\s+(xem|đặt|kiểm|giữ|hỏi)\b", re.I)
+_CON_VERBS = ("xem", "giúp", "đặt", "hỏi", "kiểm", "giữ")
+_CON_SUBJECT_PHRASES = tuple(
+    f"{prefix} {verb}"
+    for prefix in ("con", "để con", "giúp con")
+    for verb in _CON_VERBS
+)
+_NUMBER_WORDS_SET = frozenset({
+    "một", "hai", "ba", "bốn", "lăm", "năm", "sáu", "bảy", "tám", "chín", "mười", "mươi", "mốt",
+})
+_HONORIFICS_SET = frozenset({"anh", "chị", "em", "cô", "chú", "bác", "ông", "bà"})
 
-_NUMBER_WORD = (r"(?:mười\s+(?:một|hai|ba|bốn|lăm|sáu|bảy|tám|chín)|"
-                r"(?:hai|ba)\s+mươi(?:\s+(?:mốt|hai|ba|bốn|lăm|sáu|bảy|tám|chín))?|"
-                r"mười|một|hai|ba|bốn|năm|sáu|bảy|tám|chín)")
-_CLOCK_COLON = re.compile(r"\b\d{1,2}:\d{2}\b")
-# KHÔNG `re.I`: chữ số viết bằng chữ trong câu đúng luật luôn là chữ THƯỜNG
-# ("chín giờ sáng"); tên khách viết hoa ("Tám", "Ba", ...) không phải ca này.
-_CLOCK_WORDS = re.compile(rf"\b{_NUMBER_WORD}\s+(?:giờ|tháng)\b|\bngày\s+{_NUMBER_WORD}\b")
-# Alternation trong lookbehind của Python phải cùng độ dài — "anh", "em", "ông"
-# khác số ký tự nhau, nên chặn tên khách sau xưng hô bằng cách soi phần văn
-# bản đứng trước khớp, không dùng lookbehind biến thiên độ dài.
-_HONORIFIC_BEFORE = re.compile(r"\b(?:anh|chị|em|cô|chú|bác|ông|bà)\s+$")
-
-# Tên tool của agent booking/shop. Khách không bao giờ được thấy (UI "Không hiện
-# tên tool"); A chưa lộ lần nào — luật này là PHÒNG NGỪA, xoá tất định bằng code,
-# không gọi LLM thêm.
 TOOL_NAMES = ("parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
               "cancel_appointment", "get_shop_hours", "get_shop_status")
 _TOOL_ALT = "|".join(TOOL_NAMES)
 _SNAKE_IDENT = r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+"
-# Nhóm ngoặc chứa tên tool hoặc định danh snake_case: "(parse_time, find_free_slots)".
 _TOOL_GROUP = re.compile(
     rf"[ \t]*[(\[][^()\[\]]*?\b(?:{_TOOL_ALT}|{_SNAKE_IDENT})\b[^()\[\]]*[)\]]")
-# Tên trần (có thể kèm backtick, "()" hoặc cả một danh sách nối bằng dấu phẩy/"và").
 _BARE_NAME = rf"`?\b(?:{_TOOL_ALT})\b(?:\(\))?`?"
 _TOOL_BARE = re.compile(rf"{_BARE_NAME}(?:[ \t]*(?:,|và|and)[ \t]*{_BARE_NAME})*")
-_MULTI_SPACE = re.compile(r"[ \t]{2,}")
-_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([.,!?…;:])")
 
 RewriteOnce = Callable[[str, List[str], Sequence[str], str], Awaitable[Optional[str]]]
+
+
+def _tidy_line(line: str) -> str:
+    collapsed = " ".join(line.split())
+    out: List[str] = []
+    for ch in collapsed:
+        if ch in ".,!?…;:" and out and out[-1] == " ":
+            out.pop()
+        if ch == "," and out and out[-1] == ",":
+            continue
+        out.append(ch)
+    return "".join(out).strip()
 
 
 def strip_tool_names(text: str) -> str:
@@ -100,78 +84,103 @@ def strip_tool_names(text: str) -> str:
     cleaned = _TOOL_BARE.sub("", _TOOL_GROUP.sub("", text))
     if cleaned == text:
         return text
-    cleaned = _SPACE_BEFORE_PUNCT.sub(r"\1", _MULTI_SPACE.sub(" ", cleaned))
-    # Dấu phẩy mồ côi ở đầu câu/sau dấu phẩy khác ("em dùng , để xem").
-    cleaned = re.sub(r",(?:\s*,)+", ",", cleaned)
-    return "\n".join(line.strip() for line in cleaned.split("\n")).strip()
+    return "\n".join(_tidy_line(line) for line in cleaned.split("\n")).strip()
 
 
-# --- nhận vơ "đã đặt/dời/hủy" khi chưa ghi gì (lỗi live B2 #4) -----------------
-# Lượt có đề xuất MỚI (proposal_id do tool vừa tạo) là lượt chỉ GIỮ chỗ; ghi chỉ
-# xảy ra ở lượt sau qua confirm. Model vẫn có lúc viết "em đã đặt lịch … rồi ạ,
-# chị xác nhận giúp em nhé?". Sửa TẤT ĐỊNH (không gọi LLM): chỉ khi chủ ngữ là
-# "em" hoặc câu không chủ ngữ ngay sau "Dạ," / đầu câu — "chị đã đặt lịch…"
-# (`already_yours`) là sự thật về khách, không đụng. Lượt KHÔNG có đề xuất mới
-# thì không sửa: "em đã hủy rồi ạ" có thể đúng về một lượt trước.
-_CLAIM = re.compile(
-    r"(?P<lead>(?:^|(?<=[.!?…]\s)|(?<=\bDạ,\s)|(?<=\bDạ\s)|(?<=\bdạ,\s))(?:[Ee]m\s+)?|\b[Ee]m\s+)"
-    r"(?:đã|vừa)\s+(?P<verb>đặt|chốt|ghi(?!\s+(?:nhận|lại))|dời|đổi|hủy|huỷ)"
-    r"(?P<obj>\s+(?:lịch|chỗ|hẹn))?(?:\s+xong)?")
-_RỒI_AFTER = re.compile(r"\s+rồi(?=\s*(?:ạ\b|[,.!?…]|$))")
+_UNCLAIM_LEADS = (
+    ("Dạ, em đã ", "Dạ, em "),
+    ("Dạ, em vừa ", "Dạ, em "),
+    ("Dạ em đã ", "Dạ em "),
+    ("Dạ em vừa ", "Dạ em "),
+    ("dạ, em đã ", "dạ, em "),
+    ("dạ, em vừa ", "dạ, em "),
+    ("Dạ, đã ", "Dạ, em "),
+    ("Dạ, vừa ", "Dạ, em "),
+    ("Dạ đã ", "Dạ em "),
+    ("Dạ vừa ", "Dạ em "),
+    ("dạ, đã ", "dạ, em "),
+    ("Em đã ", "Em "),
+    ("Em vừa ", "Em "),
+    ("em đã ", "em "),
+    ("em vừa ", "em "),
+    ("Đã ", "Em "),
+    ("Vừa ", "Em "),
+)
+_MID_LEADS = (
+    ("Em đã ", "Em "),
+    ("Em vừa ", "Em "),
+    ("em đã ", "em "),
+    ("em vừa ", "em "),
+)
+_CLAIM_VERBS = ("đặt", "chốt", "ghi", "dời", "đổi", "hủy", "huỷ")
+_CLAIM_OBJS = (" lịch", " chỗ", " hẹn")
+
+
+def _strip_first_roi(seg: str) -> str:
+    for suffix in (" rồi ạ", " rồi,", " rồi.", " rồi!", " rồi?", " rồi…"):
+        idx = seg.find(suffix)
+        if idx != -1:
+            return seg[:idx] + seg[idx + 4:]
+    if seg.endswith(" rồi"):
+        return seg[:-4]
+    return seg
+
+
+def _unclaim_sentence(sent: str) -> str:
+    candidates: List[Tuple[int, str, str]] = []
+    for raw_lead, repl_lead in _UNCLAIM_LEADS:
+        if sent.startswith(raw_lead):
+            candidates.append((0, raw_lead, repl_lead))
+            break
+    if not candidates:
+        for raw_lead, repl_lead in _MID_LEADS:
+            pos = sent.find(raw_lead)
+            if pos > 0 and not sent[pos - 1].isalnum():
+                candidates.append((pos, raw_lead, repl_lead))
+                break
+    if not candidates:
+        return sent
+    pos, raw_lead, repl_lead = candidates[0]
+    rest = sent[pos + len(raw_lead):]
+    matched_verb = None
+    for v in _CLAIM_VERBS:
+        if rest.startswith(v) and (len(rest) == len(v) or not rest[len(v)].isalnum()):
+            matched_verb = v
+            break
+    if not matched_verb:
+        return sent
+    after_verb = rest[len(matched_verb):]
+    if matched_verb == "ghi" and (after_verb.startswith(" nhận") or after_verb.startswith(" lại")):
+        return sent
+    obj = ""
+    for o in _CLAIM_OBJS:
+        if after_verb.startswith(o) and (len(after_verb) == len(o) or not after_verb[len(o)].isalnum()):
+            obj = o
+            after_verb = after_verb[len(o):]
+            break
+    if after_verb.startswith(" xong") and (len(after_verb) == 5 or not after_verb[5].isalnum()):
+        after_verb = after_verb[5:]
+    if matched_verb in ("đặt", "chốt", "ghi"):
+        return f"{sent[:pos]}{repl_lead}giữ chỗ{after_verb}"
+    action = "dời" if matched_verb in ("dời", "đổi") else "hủy"
+    cleaned_tail = _strip_first_roi(after_verb)
+    return f"{sent[:pos]}{repl_lead}sẽ {action}{obj}{cleaned_tail}"
 
 
 def unclaim(draft: str) -> str:
     """"em đã đặt" → "em giữ chỗ"; "em đã dời/hủy … rồi" → "em sẽ dời/hủy …"."""
-    out, pos = [], 0
-    for m in _CLAIM.finditer(draft):
-        lead = m.group("lead")
-        subject = "Em" if lead.strip().startswith("E") or (not lead.strip() and m.start() == 0) else "em"
-        verb = m.group("verb")
-        out.append(draft[pos:m.start()])
-        prefix = lead[:len(lead) - len(lead.lstrip())] if lead.strip() else lead
-        if verb in ("đặt", "chốt", "ghi"):
-            out.append(f"{prefix}{subject} giữ chỗ")
-            pos = m.end()
-            continue
-        action = "dời" if verb in ("dời", "đổi") else "hủy"
-        out.append(f"{prefix}{subject} sẽ {action}{m.group('obj') or ''}")
-        # "rồi" cuối mệnh đề đi với "sẽ" là sai ngữ pháp: bỏ cái đầu tiên trong câu.
-        end = re.search(r"[.!?…]", draft[m.end():])
-        stop = m.end() + (end.start() if end else len(draft) - m.end())
-        sentence = _RỒI_AFTER.sub("", draft[m.end():stop], count=1)
-        out.append(sentence)
-        pos = stop
-    out.append(draft[pos:])
-    return "".join(out)
-
-
-# --- lời nhận "đã giữ/đã đặt" phải khớp DB của lượt này (lỗi live B3 #1) ------
-# Câu chốt bịa "Còn 2 giờ chiều em cũng đã giữ cho cháu rồi ạ" khi 2 giờ chỉ
-# đang CHỜ (hàng chờ), và lượt không gọi tool vẫn có thể bịa "em đã đặt". Mọi
-# lượt: mệnh đề nhận ĐÃ giữ/đặt/ghi/chốt (hoặc "đang giữ", "giữ … rồi") chỉ
-# được nói về giờ có thật — lịch sắp tới trong khối bối cảnh (dòng `[id: …]`),
-# đề xuất lượt này (kết quả tool), giờ code vừa ghi (`confirm_fact.when`).
-# Dời/hủy không nằm ở đây: giờ đã hủy không còn trong lịch sắp tới mà câu vẫn
-# đúng — phần đó là `unclaim` ở lượt đề xuất. "ghi nhận"/"ghi lại" không phải
-# ghi lịch.
-_CLAIM_VERB = r"(?:giữ|đặt|ghi(?!\s+(?:nhận|lại))|chốt)"
-_CLAIMED = re.compile(rf"\b(?:đã|vừa|đang)\s+(?:được\s+)?{_CLAIM_VERB}\b"
-                      rf"|\b{_CLAIM_VERB}\b[^.!?…]*?\brồi\b", re.I)
-_CLAIM_NEGATED = re.compile(r"\b(?:chưa|không|ko)\b", re.I)
-# Mệnh đề: tách ở ";", ở "còn" mở vế mới, và ở dấu phẩy KHÔNG đứng trước số
-# ("Thứ Tư 21/10, 9 giờ sáng" là một mốc, không phải hai vế).
-_CLAUSE_SPLIT = re.compile(r";|,(?!\s*\d)|\s+(?=[Cc]òn\s)")
-_SPOKEN_CLOCK = re.compile(r"\b(\d{1,2})\s+giờ(?:\s+(rưỡi|\d{2}))?"
-                           r"(?:\s+(sáng|trưa|chiều|tối|đêm))?", re.I)
+    sents = tokens.split_sentences(draft)
+    if not sents:
+        return draft
+    rewritten = [_unclaim_sentence(s) for s in sents]
+    if rewritten == sents:
+        return draft
+    return " ".join(rewritten)
 
 
 def clock_keys(text: str) -> List[tuple]:
     """(giờ đọc, phút, buổi|None) cho mọi giờ đọc kiểu "9 giờ sáng" trong câu."""
-    out = []
-    for m in _SPOKEN_CLOCK.finditer(text or ""):
-        minute = 30 if (m.group(2) or "").lower() == "rưỡi" else int(m.group(2) or 0)
-        out.append((int(m.group(1)), minute, (m.group(3) or "").lower() or None))
-    return out
+    return tokens.scan_spoken_clocks(text)
 
 
 def _same_clock(said: tuple, known: tuple) -> bool:
@@ -204,12 +213,37 @@ def claim_facts(state) -> dict:
             "unknown": held_unknown}
 
 
+_CLAIM_PHRASES = (
+    "đã giữ", "đã đặt", "đã ghi", "đã chốt",
+    "vừa giữ", "vừa đặt", "vừa ghi", "vừa chốt",
+    "đang giữ", "đang đặt", "đang ghi", "đang chốt",
+    "đã được giữ", "đã được đặt", "đã được ghi", "đã được chốt",
+    "vừa được giữ", "vừa được đặt",
+    "đang được giữ", "đang được đặt",
+)
+_CLAIM_HOLD_VERBS = frozenset({"giữ", "đặt", "ghi", "chốt"})
+
+
+def _is_claimed_clause(clause: str) -> bool:
+    p = tokens.padded(clause)
+    if tokens.has_phrase(p, ("chưa", "không", "ko")):
+        return False
+    p_clean = p.replace(" ghi nhận ", " ").replace(" ghi lại ", " ")
+    if tokens.has_phrase(p_clean, _CLAIM_PHRASES):
+        return True
+    ws = [t for t in p_clean.split() if t != "|"]
+    for i, w in enumerate(ws):
+        if w in _CLAIM_HOLD_VERBS and "rồi" in ws[i + 1:]:
+            return True
+    return False
+
+
 def _clauses(sentence: str) -> List[str]:
-    return [c for c in _CLAUSE_SPLIT.split(sentence) if c and c.strip()]
+    return tokens.split_clauses(sentence, break_words=("còn",), preserve_date_comma=True)
 
 
 def false_claim(clause: str, facts: dict) -> bool:
-    if facts.get("unknown") or not _CLAIMED.search(clause) or _CLAIM_NEGATED.search(clause):
+    if facts.get("unknown") or not _is_claimed_clause(clause):
         return False
     said = clock_keys(clause)
     if not said:
@@ -220,30 +254,17 @@ def false_claim(clause: str, facts: dict) -> bool:
 def has_false_claim(text: str, facts: Optional[dict]) -> bool:
     if not facts:
         return False
-    return any(false_claim(c, facts) for s in _SENTENCE_END.split(text or "") for c in _clauses(s))
+    return any(false_claim(c, facts) for s in tokens.split_sentences(text or "") for c in _clauses(s))
 
 
 def drop_false_claims(text: str, facts: dict) -> str:
     """Bỏ nguyên câu có mệnh đề nhận vơ — lưới cuối khi rewrite không sửa được."""
-    kept = [s for s in _SENTENCE_END.split((text or "").strip())
+    kept = [s for s in tokens.split_sentences((text or "").strip())
             if not any(false_claim(c, facts) for c in _clauses(s))]
     out = " ".join(s for s in kept if s.strip()).strip()
     if out.startswith(("Dạ ", "Dạ, ")) or not out:
         return out
     return out[:1].upper() + out[1:]
-
-
-# --- báo trước "đặt từng lịch một" (lỗi live B3 #3, B4 #1) --------------------
-# Khách xin nhiều lịch một câu: lượt đề xuất lịch đầu phải nói rõ các lịch kia
-# sẽ được giữ NGAY SAU. Prompt rule 10 có dặn, model vẫn quên — câu này do CODE
-# viết từ hàng chờ (`queued`) và giờ vừa giữ (kết quả tool), chèn trước câu hỏi
-# xác nhận.
-# B4 #1: model tự viết "Lịch cho thằng cháu là Thứ Tư 21/10, 2 giờ chiều." rồi
-# "xác nhận giúp em nhé?" — đọc như chốt CẢ HAI lịch; bản cũ thấy câu đã nhắc
-# giờ chờ nên bỏ luôn câu báo. Giờ: câu nào của model nhắc giờ đang chờ thì bỏ
-# (câu code thay), câu báo LUÔN có, và câu hỏi xác nhận phải gọi đúng giờ đang
-# giữ, không nhắc giờ chờ — sai thì code viết câu hỏi.
-_QUESTION_AFTER_COMMA = re.compile(r",\s+(?!\d)(?=[^,]*\?$)")
 
 
 def _held_iso(state) -> Optional[str]:
@@ -280,14 +301,16 @@ def announce_queue(answer: str, state, address: str = "anh chị") -> str:
         items.append(f"lịch {when} {note}".strip())
 
     text = answer.strip()
-    body = [p for p in _SENTENCE_END.split(text) if p.strip()]
+    body = [p for p in tokens.split_sentences(text) if p.strip()]
     question = None
     if body and body[-1].rstrip().endswith("?"):
         question = body.pop().strip()
-        split = _QUESTION_AFTER_COMMA.split(question, maxsplit=1)
-        if len(split) == 2:
-            body.append(split[0].rstrip() + ".")
-            question = split[1][:1].upper() + split[1][1:]
+        last_comma = question.rfind(",")
+        if last_comma != -1:
+            after = question[last_comma + 1:].lstrip()
+            if after and not after[0].isdigit():
+                body.append(question[:last_comma].rstrip() + ".")
+                question = after[:1].upper() + after[1:]
     body = [s.strip() for s in body if not _mentions(s, queued_keys)]
     if question is None or _mentions(question, queued_keys) or not _mentions(question, held_keys):
         question = f"{address[:1].upper()}{address[1:]} xác nhận lịch {held_clock} giúp em nhé?"
@@ -297,21 +320,17 @@ def announce_queue(answer: str, state, address: str = "anh chị") -> str:
     return " ".join([*body, line, question])
 
 
-_DATETIME = re.compile(r"Thứ\s+\w+\s+\d{1,2}/\d{1,2}|Chủ\s+Nhật\s+\d{1,2}/\d{1,2}|\d{1,2}\s+giờ(?:\s+rưỡi|\s+\d{2})?(?:\s+(?:sáng|chiều|tối))?")
-_NUMBER = re.compile(r"\d+")
-
-
 def normalize(text: str) -> str:
-    return " ".join(_PUNCT.sub(" ", (text or "").lower()).split())
+    return " ".join(tokens.words(text))
 
 
 def sentences(text: str) -> List[str]:
-    parts = [p.strip().rstrip(".!?…").strip() for p in _SENTENCE_END.split((text or "").strip())]
-    return [p for p in parts if p]
+    return [p.rstrip(".!?…").strip() for p in tokens.split_sentences(text)
+            if p.rstrip(".!?…").strip()]
 
 
 def _digits(text: str) -> set:
-    return set(re.findall(r"\d+", text or ""))
+    return set(tokens.digits_in(text))
 
 
 def repeats(draft: str, previous_replies: Sequence[str],
@@ -367,73 +386,110 @@ def _pronouns(address: str) -> tuple:
 
 
 def _leading_content_tokens(sentence: str) -> List[str]:
-    """Token của câu, đã bỏ dấu câu dính từng từ (",", "?", ...) và bỏ các
-    tiểu từ mở đầu ("Dạ", "Vâng", ...) — cả hai đều từng che mất token thật sự
-    cần soi ở đầu câu."""
-    tokens = [t for t in (_PUNCT.sub("", tok) for tok in sentence.split()) if t]
+    toks = tokens.cased_words(sentence)
     i = 0
-    while i < len(tokens) and tokens[i].lower() in _LEADING_PARTICLES:
+    while i < len(toks) and toks[i].lower() in _LEADING_PARTICLES:
         i += 1
-    return tokens[i:]
+    return toks[i:]
+
+
+def _has_register_before_name(draft: str) -> bool:
+    cw = tokens.cased_words(draft)
+    for i in range(len(cw) - 1):
+        if cw[i].lower() in ("cô", "chú", "bác"):
+            nxt = cw[i + 1]
+            if len(nxt) >= 2 and nxt[0].isupper() and nxt[1:].islower():
+                return True
+    return False
 
 
 def check_pronoun(draft: str, address: str, name: str) -> bool:
-    """Gộp hai lỗi đại từ vào một bảng: giọng cô/chú/bác (tuyệt đối cấm) và
-    đại từ sai giới so với `address` (VD "anh Tám" mà gọi "chị")."""
-    if _REGISTER_BEFORE_NAME.search(draft) or _CON_AS_SUBJECT.search(draft):
+    p = tokens.padded(draft)
+    if _has_register_before_name(draft) or tokens.has_phrase(p, _CON_SUBJECT_PHRASES):
         return True
     _, wrong = _pronouns(address)
-    # Đầu câu (sau khi bỏ tiểu từ mở đầu), trừ khi nói về chủ tiệm ("Chị chủ ...").
     for sent in sentences(draft):
-        tokens = _leading_content_tokens(sent)
-        if not tokens:
+        toks = _leading_content_tokens(sent)
+        if not toks:
             continue
-        if tokens[0] in _FORBIDDEN_REGISTER:
+        if toks[0] in _FORBIDDEN_REGISTER:
             return True
-        first = tokens[0].lower()
-        nxt = tokens[1].lower() if len(tokens) > 1 else ""
+        first = toks[0].lower()
+        nxt = toks[1].lower() if len(toks) > 1 else ""
         if first in wrong and nxt != "chủ":
-            # "anh chị" nguyên cụm CHÍNH LÀ cách gọi đã chốt, không phải đoán giới.
             if first == "anh" and nxt == "chị":
                 continue
             return True
     if not wrong:
         return False
-    # Ngay trước tên khách.
-    if name and any(re.search(rf"\b{w}\s+{re.escape(name)}\b", draft, re.I) for w in wrong):
+    if name and any(f" {w} {name.lower()} " in p for w in wrong):
         return True
     return False
 
 
+def asks_yes_no_about_a_clock(draft: str) -> bool:
+    parts = tokens.split_sentences(draft)
+    last = parts[-1] if parts else ""
+    if not last.rstrip().endswith("?"):
+        return False
+    return (tokens.has_phrase(tokens.padded(last), ("được không", "nhé", "nha"))
+            and bool(clock_keys(draft)))
+
+
 def check_clock(draft: str) -> bool:
-    if _CLOCK_COLON.search(draft):
-        return True
-    for m in _CLOCK_WORDS.finditer(draft):
-        if _HONORIFIC_BEFORE.search(draft, 0, m.start()):
-            continue
-        return True
+    for raw in (draft or "").split():
+        cleaned = raw.strip(".,!?;:()[]\"'«»")
+        if ":" in cleaned:
+            left, sep, right = cleaned.partition(":")
+            if (sep and left.isascii() and right.isascii()
+                    and left.isdigit() and right.isdigit()
+                    and 1 <= len(left) <= 2 and len(right) == 2):
+                return True
+    cw = tokens.cased_words(draft)
+    n = len(cw)
+    for i, w in enumerate(cw):
+        if w.islower() and w in _NUMBER_WORDS_SET:
+            if i + 1 < n and cw[i + 1].lower() in ("giờ", "tháng"):
+                start = i
+                while start > 0 and cw[start - 1].islower() and cw[start - 1] in _NUMBER_WORDS_SET:
+                    start -= 1
+                if start > 0 and cw[start - 1].lower() in _HONORIFICS_SET:
+                    continue
+                return True
+            if i > 0 and cw[i - 1].lower() == "ngày":
+                return True
     return False
 
 
 def content_kept(original: str, rewritten: str) -> bool:
     """Bản viết lại phải còn mọi mốc ngày-giờ và mọi con số của bản gốc."""
-    for m in _DATETIME.findall(original):
-        if m not in rewritten:
-            return False
-    return all(n in _NUMBER.findall(rewritten) for n in _NUMBER.findall(original))
+    orig_clocks = clock_keys(original)
+    rew_clocks = clock_keys(rewritten)
+    if any(c not in rew_clocks for c in orig_clocks):
+        return False
+    rew_digits = set(tokens.digits_in(rewritten))
+    return all(d in rew_digits for d in tokens.digits_in(original))
 
 
 def find_violations(draft: str, *, previous_replies: Sequence[str], address: str, name: str,
-                    customer_text: str, claims: Optional[dict] = None) -> List[str]:
+                    customer_text: str, claims: Optional[dict] = None,
+                    has_proposal: bool = True, voice_rules: bool = True) -> List[str]:
+    """`voice_rules=False` (cờ `GUARD_VOICE_RULES`, Task 15): bỏ ba phép kiểm
+    GIỌNG (`repeat`/`pronoun`/`clock`) để đo ảnh hưởng tới điểm "tự nhiên" của
+    judge — benchmark trước khi đổi mặc định. `claim` (nói sai sự thật) và
+    `ask_without_proposal` (Task 9, lỗi LLM-02) không phải chuyện giọng, luôn
+    chạy; tên tool cũng luôn bị xoá, ở `apply_guard`, không ở đây."""
     codes: List[str] = []
     if has_false_claim(draft, claims):
         codes.append("claim")
-    if not customer_asked_to_repeat(customer_text) and repeats(draft, previous_replies):
+    if voice_rules and not customer_asked_to_repeat(customer_text) and repeats(draft, previous_replies):
         codes.append("repeat")
-    if check_pronoun(draft, address, name):
+    if voice_rules and check_pronoun(draft, address, name):
         codes.append("pronoun")
-    if check_clock(draft):
+    if voice_rules and check_clock(draft):
         codes.append("clock")
+    if not has_proposal and asks_yes_no_about_a_clock(draft):
+        codes.append("ask_without_proposal")
     return codes
 
 
@@ -473,7 +529,7 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     Tên tool bị xoá (tất định, không gọi LLM) khỏi draft TRƯỚC mọi phép kiểm và
     khỏi mọi câu đi ra — kể cả bản viết lại và câu cứng.
     """
-    address = address_phrase(user.full_name)
+    address = address_phrase(user)
     _, name = derive_address(user.full_name)
     raw = state.get("draft") or ""
     draft = strip_tool_names(raw)
@@ -498,8 +554,11 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     previous = state.get("previous_replies") or []
     customer_text = state.get("customer_text") or ""
     claims = claim_facts(state)
+    has_proposal = bool(state.get("proposal_id"))
+    voice_rules = settings.guard_voice_rules
     codes = find_violations(draft, previous_replies=previous, address=address, name=name,
-                            customer_text=customer_text, claims=claims)
+                            customer_text=customer_text, claims=claims,
+                            has_proposal=has_proposal, voice_rules=voice_rules)
     if not codes:
         return {"answer": announce_queue(draft, state, address), "answer_source": "llm", "violations": []}
 
@@ -507,7 +566,8 @@ async def apply_guard(state, user: User, rewrite_once: RewriteOnce) -> dict:
     new = await rewrite_once(draft, codes, previous, state.get("context_block") or "")
     rewritten = strip_tool_names(new) if new else draft
     second = find_violations(rewritten, previous_replies=previous, address=address, name=name,
-                             customer_text=customer_text, claims=claims)
+                             customer_text=customer_text, claims=claims,
+                             has_proposal=has_proposal, voice_rules=voice_rules)
     if not content_kept(draft, rewritten) and "claim" not in codes:
         second.append("content")
     out = _after_rewrite(draft, rewritten, codes=second, rewrite_ran=rewritten != draft)

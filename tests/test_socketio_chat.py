@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.agents.booking_graph.events import AgentEvent
@@ -253,3 +255,218 @@ class TestTooFastWording:
         from app.services.socketio_service import SocketIOService
 
         assert "12 phút" in SocketIOService._too_fast_message(720)
+
+
+class TestConfirmProposalEvent:
+    """Nút Đồng ý/Không: đường riêng, không qua trần chat (Task 5)."""
+
+    async def test_confirm_proposal_runs_a_button_turn_without_rate_limit(
+        self, service, test_db, monkeypatch
+    ):
+        from app.agents.booking_graph.button import ButtonReply
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        received = {}
+
+        async def fake_turn(db, u, reply):
+            received["reply"] = reply
+            yield AgentEvent("complete", {"answer": "Dạ xong rồi ạ", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        rate_limit_calls = []
+        monkeypatch.setattr(
+            service.rate_limit, "check_and_hit",
+            lambda *a, **kw: rate_limit_calls.append((a, kw)),
+        )
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": "yes"})
+
+        assert received["reply"] == ButtonReply("yes", "p1", "Đồng ý")
+        assert rate_limit_calls == []
+        assert ("complete", {"answer": "Dạ xong rồi ạ", "proposal": None}, "s1") in service.sio.sent
+
+    async def test_confirm_proposal_rejects_bad_payload(
+        self, service, test_db, monkeypatch
+    ):
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": "maybe"})
+
+        assert called == []
+        assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
+
+    async def test_confirm_proposal_rejects_an_unhashable_decision(
+        self, service, test_db, monkeypatch
+    ):
+        """`decision` sai kiểu nặng (dict/list, không chỉ chuỗi lạ) không được
+        làm nổ `.get()` trước khi kịp trả `error`."""
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": "p1", "decision": ["yes"]})
+
+        assert called == []
+        assert service.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
+
+    async def test_registered_confirm_proposal_event_rejects_a_non_dict_payload(
+        self, test_db, monkeypatch
+    ):
+        """Đi qua đúng handler ĐÃ ĐĂNG KÝ `confirm_proposal` (không phải
+        `handle_button` trực tiếp): payload không phải dict (vd. client gửi
+        nhầm một mảng) không được làm nổ `.get()` trước khi tới nhánh `error`
+        — review finding sau Task 5 (lấy handler từ `AsyncServer` thật TRƯỚC
+        khi thay `sio` bằng `Recorder`, vì đăng ký xảy ra trong `__init__`)."""
+        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+
+        svc = SocketIOService(test_db)
+        handler = svc.sio.handlers["/"]["confirm_proposal"]
+        svc.sio = Recorder()
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        svc.sid_to_user["s1"] = str(user.id)
+        called = []
+
+        async def fake_turn(db, u, reply):
+            called.append(reply)
+            yield AgentEvent("complete", {"answer": "x", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await handler("s1", ["x"])
+
+        assert called == []
+        assert svc.sio.sent == [("error", {"message": TURN_ERROR_MESSAGE}, "s1")]
+
+
+class TestMessageDedupe:
+    """Task 10 — Socket.IO có thể gửi lại cùng tin (client retry/reconnect);
+    server chỉ chạy MỘT lượt cho mỗi `(user_id, message_id)`."""
+
+    async def test_duplicate_message_id_replays_complete_without_running_a_turn(
+        self, service, test_db, monkeypatch
+    ):
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        calls = []
+
+        async def fake_turn(db, u, question):
+            calls.append(question)
+            yield AgentEvent("complete", {"answer": "Dạ được ạ", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_message(sid="s1", user=user, message="mai 3h",
+                                     message_id="m1")
+        await service.handle_message(sid="s1", user=user, message="mai 3h",
+                                     message_id="m1")
+
+        # Lượt THỨ HAI không chạm agent — chỉ phát lại đúng payload đã lưu.
+        assert calls == ["mai 3h"]
+        completes = [d for e, d, _ in service.sio.sent if e == "complete"]
+        assert completes == [
+            {"answer": "Dạ được ạ", "proposal": None},
+            {"answer": "Dạ được ạ", "proposal": None},
+        ]
+
+    async def test_different_message_id_still_supersedes(
+        self, service, test_db, monkeypatch
+    ):
+        """Khác `message_id` không bao giờ bị dedupe chặn, kể cả khi lượt
+        trước (cùng khách) còn đang "treo" chưa xong."""
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        calls = []
+        gate = asyncio.Event()
+
+        async def fake_turn(db, u, question):
+            calls.append(question)
+            await gate.wait()
+            yield AgentEvent("complete", {"answer": "xong", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        first = asyncio.create_task(
+            service.handle_message(sid="s1", user=user, message="a", message_id="m1")
+        )
+        await asyncio.sleep(0)  # để lượt đầu chạy tới gate.wait() và còn treo
+
+        second = asyncio.create_task(
+            service.handle_message(sid="s1", user=user, message="b", message_id="m2")
+        )
+        await asyncio.sleep(0)
+
+        gate.set()
+        await asyncio.gather(first, second)
+
+        assert calls == ["a", "b"]
+
+    async def test_duplicate_while_running_is_ignored_not_rerun(
+        self, service, test_db, monkeypatch
+    ):
+        """Cùng `message_id` TRONG LÚC lượt đầu còn chạy — bỏ qua, không chạy
+        agent lần hai, không gửi gì cho client (client vẫn đang chờ lượt đầu)."""
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+        calls = []
+        gate = asyncio.Event()
+
+        async def fake_turn(db, u, question):
+            calls.append(question)
+            await gate.wait()
+            yield AgentEvent("complete", {"answer": "xong", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        first = asyncio.create_task(
+            service.handle_message(sid="s1", user=user, message="a", message_id="m1")
+        )
+        await asyncio.sleep(0)
+
+        await service.handle_message(sid="s1", user=user, message="a", message_id="m1")
+
+        gate.set()
+        await first
+
+        assert calls == ["a"]
+        assert service.sio.events().count("complete") == 1
+
+    async def test_a_duplicate_does_not_consume_a_rate_limit_hit(
+        self, service, test_db, monkeypatch
+    ):
+        """Dedupe phải được kiểm TRƯỚC `check_and_hit` — tin gửi lại không
+        được tính thêm một dấu hạn mức."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "chat_max_per_hour", 1)
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+
+        async def fake_turn(db, u, question):
+            yield AgentEvent("complete", {"answer": "dạ", "proposal": None})
+
+        monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
+
+        await service.handle_message(sid="s1", user=user, message="a", message_id="m1")
+        # Gửi lại CÙNG message_id nhiều lần — không được đụng trần 1 tin/giờ.
+        for _ in range(5):
+            await service.handle_message(sid="s1", user=user, message="a",
+                                         message_id="m1")
+
+        assert "error" not in service.sio.events()

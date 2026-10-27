@@ -1,11 +1,13 @@
 """Tầng gác là code tất định — mỗi phép kiểm có ca dương và ca âm."""
 import pytest
 
+from app.agents.booking_graph.context import address_phrase
 from app.agents.booking_graph.guard import (REPEAT_LOOKBACK, check_clock, check_pronoun,
                                             content_kept,
                                             customer_asked_to_repeat,
                                             find_violations, normalize,
                                             repeats, sentences)
+from app.models.user import User
 
 
 class TestNormalizeAndSentences:
@@ -156,6 +158,28 @@ class TestPronoun:
     def test_owner_exemption_survives_the_leading_particle(self):
         assert check_pronoun("Dạ chị chủ sẽ báo giá ạ.", "anh Tám", "Tám") is False
 
+    def test_pronoun_check_accepts_chi_lan_when_self_address_is_chi(self):
+        """Task 13: khách tên "Lan" (không tiền tố cho biết giới) nhưng đã TỰ
+        xưng "chị" — `address_phrase` phải đọc `self_address` đó (không còn
+        "anh chị" mơ hồ), và guard phải cho qua "chị Lan"."""
+        user = User(phone="0912345678", hashed_password="x",
+                   full_name="Lan", self_address="chị")
+        address = address_phrase(user)
+        assert address == "chị Lan"
+        assert check_pronoun("Dạ chị Lan, mai 9 giờ sáng ạ.", address, "Lan") is False
+        assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", address, "Lan") is True
+
+    def test_pronoun_check_accepts_the_live_prefix_before_migration_runs(self):
+        """Review (2026-10-26): admin tạo tài khoản mới ("Cô Mai") giữa lúc
+        app đang chạy — `self_address` chưa có (migration lúc khởi động chỉ
+        chạy MỘT lần lúc boot), nhưng `address_phrase` vẫn phải suy đúng từ
+        tiền tố NGAY, không đợi tới lần khởi động kế."""
+        user = User(phone="0912345678", hashed_password="x", full_name="Cô Mai")
+        address = address_phrase(user)
+        assert address == "chị Mai"
+        assert check_pronoun("Dạ chị Mai, mai 9 giờ sáng ạ.", address, "Mai") is False
+        assert check_pronoun("Anh Mai muốn đặt giờ nào ạ?", address, "Mai") is True
+
 
 class TestClock:
     @pytest.mark.parametrize("draft", ["Hẹn anh 15:00 nhé.", "Em giữ chỗ chín giờ sáng ạ.",
@@ -210,3 +234,83 @@ class TestFindViolations:
     def test_clean_draft_has_no_violations(self):
         assert find_violations("Dạ anh Tám, mai 9 giờ sáng ạ.", previous_replies=[],
                                address="anh Tám", name="Tám", customer_text="mai mấy giờ") == []
+
+    def test_yes_no_question_about_a_time_without_proposal_is_flagged(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=False)
+        assert "ask_without_proposal" in codes
+
+    def test_same_question_with_a_proposal_is_fine(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=True)
+        assert "ask_without_proposal" not in codes
+
+    def test_yes_no_question_without_a_clock_is_not_flagged(self):
+        codes = find_violations("Anh chị còn cần gì nữa không ạ?", previous_replies=[],
+                                address="anh chị", name="", customer_text="ok",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes
+
+    def test_a_non_yes_no_question_naming_a_time_is_not_flagged(self):
+        codes = find_violations("Anh chị muốn 2 giờ hay 3 giờ chiều ạ?", previous_replies=[],
+                                address="anh chị", name="", customer_text="2 hay 3 giờ chiều",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes
+
+    def test_clock_in_an_earlier_sentence_than_the_yes_no_question_is_flagged(self):
+        """Hình dạng LLM-02 thật: giờ nêu ở câu trước, câu cuối mới hỏi có/không
+        — "ừ" của khách không rõ đang đồng ý giờ nào. `clock_keys` phải quét cả
+        draft, không chỉ câu cuối."""
+        codes = find_violations("Dạ 3 giờ chiều mai còn trống. Giữ chỗ nhé?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="3 giờ chiều mai còn trống không em",
+                                has_proposal=False)
+        assert "ask_without_proposal" in codes
+
+    def test_a_plain_co_khong_question_after_a_clock_sentence_is_not_flagged(self):
+        """Câu cuối "...không ạ?" là câu hỏi có/không về MỘT CHUYỆN KHÁC (mời
+        thêm dịch vụ), không chứa đúng cụm "được không"/"nhé"/"nha" mà luật
+        quét ("có muốn ... không" không khớp "được không" — thiếu chữ "được"
+        ngay trước). Mở rộng `clock_keys` ra cả draft (thay vì chỉ câu cuối)
+        chỉ đổi nơi TÌM GIỜ, không đổi tập cụm có/không được công nhận — nên
+        câu này vẫn không bị gắn `ask_without_proposal`, đúng với luật đã cài:
+        nó không phải dạng LLM-02 (hỏi có/không về CHÍNH giờ vừa nêu)."""
+        codes = find_violations("Dạ 3 giờ chiều mai còn trống ạ. Anh chị có muốn làm "
+                                "thêm sơn gel không ạ?", previous_replies=[],
+                                address="anh chị", name="",
+                                customer_text="3 giờ chiều mai còn trống không em",
+                                has_proposal=False)
+        assert "ask_without_proposal" not in codes
+
+    def test_voice_rules_off_keeps_claim_and_tool_name_only(self):
+        """Task 15 (`GUARD_VOICE_RULES=false`): bỏ ba phép kiểm GIỌNG
+        (`repeat`/`pronoun`/`clock`) — `claim` (nói sai sự thật) và
+        `ask_without_proposal` (Task 9) không phải chuyện giọng, vẫn chạy.
+        Tên tool luôn bị xoá ở `apply_guard`, trước mọi phép kiểm — không
+        thuộc `find_violations`, nên không kiểm lại ở đây."""
+        draft = "Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé. Em đã giữ chỗ rồi."
+        claims = {"clocks": [], "any": False, "unknown": False}
+        full = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
+                               customer_text="giá bao nhiêu", claims=claims)
+        assert full == ["claim", "pronoun", "clock"]
+
+        off = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
+                              customer_text="giá bao nhiêu", claims=claims, voice_rules=False)
+        assert off == ["claim"]
+
+    def test_voice_rules_off_still_flags_ask_without_proposal(self):
+        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
+                                previous_replies=[], address="anh chị", name="",
+                                customer_text="2 giờ chiều mai nhé", has_proposal=False,
+                                voice_rules=False)
+        assert "ask_without_proposal" in codes
+
+    def test_voice_rules_default_is_on(self):
+        """An toàn: không truyền `voice_rules` thì vẫn kiểm đủ ba luật giọng —
+        không đổi hành vi hiện có khi cờ chưa bật."""
+        codes = find_violations("Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé.",
+                                previous_replies=[], address="anh Tám", name="Tám",
+                                customer_text="giá bao nhiêu")
+        assert codes == ["pronoun", "clock"]

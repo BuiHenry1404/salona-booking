@@ -74,6 +74,25 @@ tests/                   pytest; markers: llm (real Azure), slow, integration
 docs/superpowers/        specs + 4 plans; start at specs/2026-08-06-booking-nail-toc/README.md
 ```
 
+## Socket.IO protocol
+
+Client → server events (`app/services/socketio_service.py`):
+
+- `send_message {"message": str}` — a typed turn; rate-limited
+  (`chat:user:<id>`, `settings.chat_max_per_hour`/hour).
+- `confirm_proposal {"proposal_id": str, "decision": "yes"|"no", "message_id": str?}` —
+  the Đồng ý/Không buttons on a pending proposal. **Not** rate-limited (the LLM cost
+  was already spent proposing it); bad `decision`/missing `proposal_id` → `error`.
+  `message_id` is accepted and ignored for now (dedupe lands in a later task).
+
+Server → client events, both paths funnel through `run_turn` and emit the same
+stream: `turn_started`, `tool_started`/`tool_finished`, `token` (only `respond`-tagged
+tokens — see Hard constraints), then exactly one `complete {"answer": str,
+"proposal": {"id", "kind", "expires_at", "when_spoken"} | None}` or `error {"message"}`.
+`proposal` is non-`None` only when the turn ends on the `confirm` node's `interrupt()` —
+the client should render the buttons then and clear them once `complete`/`error`
+arrives without one.
+
 ## Gotchas
 
 - LLM failure at startup is a **warning**, not an error — app runs, chat returns `error`
