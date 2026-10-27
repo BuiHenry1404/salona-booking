@@ -1,0 +1,22 @@
+id: g10-doi-khong-ro
+title: 'G-10: dời lịch 9 giờ sáng mai sang 2 giờ chiều phải xoá lịch 9 giờ cũ'
+kind: scripted
+tags:
+- edge
+- G-10
+setup:
+  own:
+  - day: tomorrow
+    time: 09:00
+turns:
+- say: chuyển giùm cô qua 2 giờ chiều nha
+- intent: agree
+  requires_asked:
+    day: tomorrow
+    time: '14:00'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '14:00'
+  others_unchanged: true

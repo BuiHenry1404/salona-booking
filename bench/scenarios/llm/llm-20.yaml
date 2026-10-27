@@ -1,0 +1,15 @@
+id: LLM-20
+title: Yêu cầu huỷ lịch khi chưa có lịch nào
+kind: simulated
+tags:
+- llm
+- LLM-20
+setup: {}
+turns: []
+sim:
+  goal: Yêu cầu huỷ lịch dù chưa có lịch nào.
+  persona: Nói 'Huỷ lịch mai của chị đi'.
+  max_turns: 3
+expect:
+  others_unchanged: true
+  booked: []

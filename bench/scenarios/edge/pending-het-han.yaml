@@ -1,0 +1,18 @@
+id: pending-het-han
+title: 'LLM-33: pending quá hạn 10 phút không được tự chốt lịch khi khách trả lời muộn'
+kind: scripted
+tags:
+- edge
+- LLM-33
+- slow
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm tóc
+- say: ừ được em
+  wait_s: 660
+sim: null
+expect:
+  booked: []
+  others_unchanged: true
+  answer_must_not_include:
+  - Xong rồi

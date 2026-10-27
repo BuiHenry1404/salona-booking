@@ -1,0 +1,20 @@
+id: LLM-05
+title: Biến thể câu đồng ý chốt lịch thường gặp
+kind: simulated
+tags:
+- llm
+- LLM-05
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai lúc 3 giờ chiều, xác nhận bằng một câu đồng ý kiểu khẩu
+    ngữ.
+  persona: Khách nói 'Mai 3 giờ chiều làm tóc nha em' rồi khi được hỏi xác nhận thì trả lời
+    bằng một trong các cách nói đồng ý thông dụng không phải 'ừ' chuẩn mực, ví dụ 'được đó
+    em', 'chuẩn rồi', 'ok chị chốt', 'dạ đúng'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '15:00'

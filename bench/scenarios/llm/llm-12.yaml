@@ -1,0 +1,18 @@
+id: LLM-12
+title: Khách đặt ngoài giờ mở cửa
+kind: simulated
+tags:
+- llm
+- LLM-12
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc mai lúc 6 giờ sáng, ngoài giờ mở cửa 8h-19h.
+  persona: Nói 'Mai 6 giờ sáng chị qua làm tóc sớm đi đám cưới'; nếu bị từ chối vì ngoài giờ
+    mở cửa thì không ép, chỉ hỏi lại giờ mở cửa sớm nhất.
+  max_turns: 4
+expect:
+  others_unchanged: true
+  # Không kiểm lịch: persona được phép tự chọn giờ mở cửa sớm nhất rồi chốt
+  # (khách đồng ý rõ ràng thì ghi lịch là đúng). Từng đặt `[]` ở I7 là sai.
+  booked: null

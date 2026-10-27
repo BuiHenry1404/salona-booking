@@ -1,0 +1,16 @@
+id: azure-cham
+title: 'LLM-34: Azure phản hồi chậm/treo — lượt bị treo cho phép timeout, lượt sau vẫn chạy
+  được'
+kind: scripted
+tags:
+- fault
+- azure-cham
+setup: {}
+turns:
+- say: mai 3 giờ chiều làm tóc
+  fault: hang
+- say: mai 3 giờ chiều làm tóc
+sim: null
+expect:
+  booked: []
+  others_unchanged: true

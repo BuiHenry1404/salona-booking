@@ -1,0 +1,24 @@
+id: LLM-11
+title: Khung giờ đã có người đặt — gợi ý 2 giờ trống kế tiếp
+kind: simulated
+tags:
+- llm
+- LLM-11
+setup:
+  others:
+  - day: tomorrow
+    time: '10:00'
+turns: []
+sim:
+  goal: Đặt lịch gội đầu mai 10 giờ sáng; giờ này đã có khách khác nên chọn giờ bot gợi ý
+    tiếp theo.
+  # 11:00 (không phải 10:30): lịch 60 phút trên lưới 15 phút, lịch 10:00 của
+  # khách khác chiếm tới 10:59 — 11:00 là giờ trống kế tiếp (I4, review cuối).
+  persona: Nói 'Mai 10h sáng gội đầu nha em'; khi nghe báo hết chỗ thì chọn giờ trống kế
+    tiếp sau 10 giờ được gợi ý (11 giờ), xác nhận bằng 'Ừ'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '11:00'

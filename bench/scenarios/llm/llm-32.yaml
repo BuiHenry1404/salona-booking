@@ -1,0 +1,22 @@
+id: LLM-32
+title: Chuyển giao phiên nửa đêm 00:00 (buffer 30 phút)
+kind: simulated
+tags:
+- llm
+- LLM-32
+- slow
+- clock
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai 3 giờ chiều và xác nhận ngay lập tức, không trì hoãn giữa
+    hai lượt — để nếu lượt hỏi và lượt xác nhận tình cờ rơi vào hai bên ranh giới nửa đêm,
+    bộ nạp lịch sử (buffer 30 phút qua nửa đêm) vẫn phải nhận diện đúng pending vừa tạo.
+  persona: Nói 'Mai 3h chiều làm tóc nha em' rồi xác nhận ngay bằng 'Ừ' ngay khi được hỏi
+    lại, không chat thêm gì ở giữa.
+  max_turns: 4
+expect:
+  others_unchanged: true
+  # Thời điểm benchmark chạy không kiểm soát được (không đảm bảo rơi đúng quanh
+  # 00:00 giờ VN), nên không chốt được kết quả chắc chắn ở đây — xem tag `clock`.
+  booked: null

@@ -1,0 +1,19 @@
+id: LLM-04
+title: Đặt combo nhiều dịch vụ (tóc + móng)
+kind: simulated
+tags:
+- llm
+- LLM-04
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch sáng mai 9 giờ làm cả tóc và móng trong một lượt.
+  persona: Nói 'Sáng mai 9 giờ chị qua vừa làm tóc vừa cắt da làm móng luôn', xác nhận bằng
+    'Chuẩn rồi em'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: 09:00
+    note_contains: tóc

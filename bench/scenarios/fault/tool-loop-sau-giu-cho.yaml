@@ -1,0 +1,17 @@
+id: tool-loop-sau-giu-cho
+title: 'G-07: hết vòng tool sau khi đã giữ chỗ — câu ''dạ vâng'' kế tiếp không được tự ghi
+  lịch'
+kind: scripted
+tags:
+- fault
+- G-07
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm tóc
+- say: à mà giờ đó còn chỗ không em
+  fault: tool_loop:4
+- say: dạ vâng để chị gọi
+sim: null
+expect:
+  booked: []
+  others_unchanged: true

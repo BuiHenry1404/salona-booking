@@ -1,0 +1,22 @@
+id: g02-ten-huy
+title: 'G-02: câu ''để chị hỏi thằng Huy đã'' khi đang chờ chốt hủy không phải đồng ý'
+kind: scripted
+tags:
+- edge
+- G-02
+setup:
+  own:
+  - day: tomorrow
+    time: '17:00'
+turns:
+- say: hủy giùm chị lịch mai
+- say: để chị hỏi thằng Huy đã
+  requires_asked:
+    day: tomorrow
+    time: '17:00'
+sim: null
+expect:
+  booked:
+  - day: tomorrow
+    time: '17:00'
+  others_unchanged: true

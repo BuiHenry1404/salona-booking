@@ -1,0 +1,18 @@
+id: LLM-06
+title: Khách nói thiếu giờ cụ thể
+kind: simulated
+tags:
+- llm
+- LLM-06
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc sáng mai; ban đầu không nói giờ, khi được hỏi lại mới nói 9 giờ.
+  persona: Nói 'Sáng mai làm tóc được không em' trước, đợi được hỏi giờ cụ thể mới trả lời
+    '9 giờ', rồi xác nhận 'Ừ' khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: 09:00

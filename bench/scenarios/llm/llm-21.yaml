@@ -1,0 +1,16 @@
+id: LLM-21
+title: Khách từ chối sau khi AI nhắc lại xác nhận
+kind: simulated
+tags:
+- llm
+- LLM-21
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm tóc ngày mai 3 giờ chiều rồi đổi ý từ chối ngay khi được hỏi xác nhận.
+  persona: Nói 'Mai 3h chiều làm tóc nha em', khi được hỏi xác nhận thì nói 'Thôi khỏi em
+    ơi, mai chị đi ăn giỗ quên mất'.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked: []

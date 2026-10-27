@@ -1,0 +1,18 @@
+id: azure-500
+title: 'Azure trả 500 lúc đặt lịch: lượt sau phải trả lời bình thường, không lộ lỗi kỹ thuật'
+kind: scripted
+tags:
+- fault
+- azure-500
+setup: {}
+turns:
+- say: mai 3 giờ chiều làm tóc
+  fault: http500:3
+- say: mai 3 giờ chiều làm tóc
+sim: null
+expect:
+  booked: []
+  others_unchanged: true
+  answer_must_not_include:
+  - Model call
+  - Traceback

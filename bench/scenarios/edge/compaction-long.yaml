@@ -1,0 +1,28 @@
+id: compaction-long
+title: Hội thoại dài kích hoạt nén ConversationState (slots phải sống sót qua compaction)
+# Kịch bản nghiệm thu riêng của dự án (ConversationState compaction, CONTEXT.md
+# bẫy #20/#22 và NOTE.md "ĐỪNG RÚT NGẮN KỊCH BẢN NÀY") — KHÔNG phải một mục
+# trong docs/test-scenarios/02-llm-chat-scenarios.md, nên không mang tag `llm`
+# và không tính vào bộ đếm 32 kịch bản LLM.
+kind: simulated
+tags:
+- slow
+- compaction
+setup: {}
+turns: []
+sim:
+  goal: 'Trò chuyện dài trước khi chốt lịch làm móng bột ngày mai 4 giờ chiều: hỏi nhiều câu
+    dài dòng về giá/giờ mở cửa/nhuộm tóc, từ chối 2-3 khung giờ đầu bot đề nghị trước khi
+    chốt, rồi yêu cầu bot nhắc lại dịch vụ đã chọn và TẤT CẢ các giờ đã từ chối.'
+  persona: Khách nói rất dài dòng, mỗi tin nhắn (trên 40 từ) kể lể chi tiết không liên quan
+    (gia đình, công việc, đường xá) trước khi vào ý chính, để đủ kích hoạt ngưỡng nén hội
+    thoại; hỏi nhiều câu về giá/giờ mở cửa/nhuộm tóc trước khi chốt làm móng bột; từ chối
+    ít nhất 2 khung giờ đầu tiên được đề nghị; cuối cùng hỏi bot nhắc lại dịch vụ đã chọn
+    và tất cả các giờ đã từ chối để kiểm tra trí nhớ sau khi hội thoại đã bị nén.
+  max_turns: 20
+expect:
+  others_unchanged: true
+  booked:
+  - day: tomorrow
+    time: '16:00'
+    note_contains: móng

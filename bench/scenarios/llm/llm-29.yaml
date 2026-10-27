@@ -1,0 +1,16 @@
+id: LLM-29
+title: Khẩu ngữ miền Nam
+kind: simulated
+tags:
+- llm
+- LLM-29
+setup: {}
+turns: []
+sim:
+  goal: Đặt lịch làm móng ngày kia (mốt) lúc tầm trưa, dùng khẩu ngữ miền Nam.
+  persona: Nói 'Mốt độ trưa trưa ghé mần móng nha bay'; khi được hỏi giờ cụ thể thì chọn '12
+    giờ trưa', xác nhận khi được hỏi lại.
+  max_turns: 8
+expect:
+  others_unchanged: true
+  booked: null  # doc cho phép 11 giờ 30 hoặc 12 giờ trưa, không chốt một mốc duy nhất

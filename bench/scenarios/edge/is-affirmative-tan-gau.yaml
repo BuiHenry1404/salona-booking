@@ -1,0 +1,19 @@
+id: is-affirmative-tan-gau
+title: Câu tán gẫu chứa 'phải' không được hiểu là đồng ý chốt lịch
+kind: scripted
+tags:
+- edge
+- is_affirmative
+setup: {}
+turns:
+- say: mai 3 giờ chiều chị làm tóc
+- say: Mà làm móng bột mất bao lâu hả chị, việc gì cũng phải tính trước cho chắc
+  requires_asked:
+    day: tomorrow
+    time: '15:00'
+sim: null
+expect:
+  booked: []
+  others_unchanged: true
+  answer_must_not_include:
+  - Xong rồi

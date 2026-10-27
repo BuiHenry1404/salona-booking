@@ -1,0 +1,15 @@
+id: LLM-03
+title: Đặt lịch ghé qua ngay bây giờ
+kind: simulated
+tags:
+- llm
+- LLM-03
+setup: {}
+turns: []
+sim:
+  goal: Hỏi ghé tiệm gội đầu ngay bây giờ, không tự nêu giờ cụ thể.
+  persona: Khách vãng lai, nói 'Giờ chị qua gội đầu được không em', không tự đưa ra mốc giờ,
+    đồng ý ngay với giờ mà bot đề nghị.
+  max_turns: 8
+expect:
+  others_unchanged: true

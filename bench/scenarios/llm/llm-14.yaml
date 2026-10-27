@@ -1,0 +1,21 @@
+id: LLM-14
+title: Tiệm đang bận — báo mốc giờ xong tuyệt đối
+kind: simulated
+tags:
+- llm
+- LLM-14
+setup:
+  owner_busy_minutes: 60
+turns: []
+sim:
+  goal: Hỏi chủ tiệm có đang rảnh không.
+  persona: Hỏi 'Chủ tiệm có rảnh không em ơi', không có ý định đặt lịch.
+  max_turns: 3
+expect:
+  others_unchanged: true
+  booked: []  # persona không có ý định đặt lịch (I7)
+  answer_must_not_include:
+  - còn 30 phút
+  - còn 1 tiếng
+  - còn một tiếng
+  - còn nửa tiếng
