@@ -1,28 +1,30 @@
-# Kiến trúc Prompt Caching 2 Lớp (Two-Tier Prompt Caching) — Thiết kế
+# Kiến trúc Prompt Caching 2 Lớp cho Azure OpenAI (`gpt-5.4-mini`) — Thiết kế
 
 Ngày: 2026-10-27.
 
 ## 1. Vì sao
 
-Hệ thống chatbot đặt lịch hiện tại xử lý toàn bộ hội thoại thông qua đồ thị LangGraph với nhiều lượt gọi LLM (`supervisor`, `booking`, `shop`, `social`, `timeparse`, `phrase`, `rewrite`). 
+Hệ thống chatbot đặt lịch chạy trên **Azure OpenAI** với model **`gpt-5.4-mini`**. Mỗi lượt hội thoại đi qua đồ thị LangGraph với nhiều lượt gọi model (`supervisor`, `booking`, `shop`, `timeparse`, `phrase`, `rewrite`).
 
-Qua rà soát tại commit `f5b59ff`, hệ thống đã có **thiết kế bố cục prompt tối ưu hóa cho Provider Prefix Caching** (Bẫy #9 trong `CONTEXT.md`: tách `context_block` động ra cuối để giữ `SystemMessage` tĩnh trên đầu). Tuy nhiên, vẫn còn các khoảng trống kỹ thuật lớn:
+Cơ chế **Automatic Prompt Caching** của Azure OpenAI hoạt động hoàn toàn tự động ở phía server với 2 đặc tính cốt lõi:
+1. **Cửa sổ lưu đệm tính bằng PHÚT (5 – 10 phút):** Cache tồn tại trên GPU của Azure trong khoảng 5–10 phút kể từ lượt gọi gần nhất có cùng tiền tố. Mỗi lượt gọi trúng cache sẽ gia hạn thêm thời gian sống.
+2. **Ngưỡng kích hoạt tối thiểu 1.024 tokens:** Azure OpenAI chỉ lưu cache khi toàn bộ prompt đạt từ **1.024 tokens** trở lên và có tiền tố khớp chính xác theo từng khối 128 tokens.
 
-1. **Các node ngắn không chạm ngưỡng cache của Provider:**
-   - OpenAI và Azure OpenAI chỉ kích hoạt Automatic Prompt Caching với prompt từ **1.024 tokens** trở lên.
-   - Node `supervisor` (~500 tokens) và `timeparse` (~300 tokens) ngắn hơn ngưỡng này nên 100% lượt gọi đều bị tính phí đầy đủ và chịu độ trễ mạng trọn vẹn (1–2 giây/lượt).
-   - `timeparse.py` còn nhúng trực tiếp chuỗi giờ phút `{hour:02d}:{minute:02d}` vào `_PROMPT`, làm vỡ tiền tố mỗi phút một lần.
-2. **Các câu hỏi lặp lại chịu chi phí token không đáng có:**
-   - Khách thường xuyên gửi các câu chào hỏi ("chào em", "alo", "tiệm ơi"), câu hỏi giờ cố định ("tiệm mở mấy giờ"), hoặc câu chỉ thời gian phổ biến ("sáng mai 9h", "chiều nay 3h").
-   - Dù câu hỏi giống hệt nhau, hệ thống vẫn phải kích hoạt toàn bộ đồ thị LLM từ `supervisor` trở đi vì chưa có bộ đệm tầng ứng dụng.
-3. **Chưa hỗ trợ Explicit Prompt Caching cho Provider mở rộng:**
-   - Khi cấu hình dùng Anthropic Claude (`claude-3-5-sonnet`), API yêu cầu cờ đánh dấu tường minh `cache_control: {"type": "ephemeral"}` ở các khối tin nhắn hoặc tool tĩnh. Code hiện tại trong `app/agents/llm.py` chưa hỗ trợ provider này và chưa gắn cờ cache.
+### Hiện trạng và Khoảng trống kỹ thuật
 
-Bản thiết kế này giải quyết triệt để 3 vấn đề trên bằng **Kiến trúc Caching 2 Lớp (Two-Tier Cache)**.
+| Node trong hệ thống | Kích thước Prompt | Trạng thái Cache trên Azure | Vấn đề / Khoảng trống |
+|---|---|---|---|
+| **Subagents (`booking`, `shop`)** | ~1.200 – 1.600 tokens (System + 7 tools) | **ĐÃ ĐƯỢC CACHE** trong phiên 5–10 phút | Tiền tố tĩnh đã được đưa lên đầu nhờ Bẫy #9 (`CONTEXT.md`). |
+| **`supervisor`** | ~500 tokens | **KHÔNG THỂ CACHE** | Dưới 1.024 tokens $\rightarrow$ Azure tính phí đầy đủ và mất ~1–2s mạng mỗi lượt. |
+| **`timeparse`** | ~300 tokens | **KHÔNG THỂ CACHE** | Dưới 1.024 tokens, và chuỗi giờ:phút đổi mỗi 60 giây làm vỡ tiền tố. |
+
+Các câu chào hỏi ("chào em", "alo"), câu hỏi lặp lại hoặc câu thời gian thông dụng ("sáng mai 9h", "chiều nay 3h") trong cùng một phiên chat vẫn buộc hệ thống phải gửi request mạng ra Azure OpenAI cho `supervisor` và `timeparse`.
+
+Bản thiết kế này tập trung 100% vào **Azure OpenAI (`gpt-5.4-mini`)**, kết hợp tối ưu tiền tố và bộ đệm Redis tầng ứng dụng với TTL theo phút.
 
 ---
 
-## 2. Kiến trúc Tổng thể (Overview)
+## 2. Kiến trúc 2 Lớp (Two-Tier Architecture)
 
 ```
                        [ Khách gửi tin nhắn ]
@@ -30,76 +32,64 @@ Bản thiết kế này giải quyết triệt để 3 vấn đề trên bằng 
                                  ▼
                    ┌───────────────────────────┐
                    │ Tầng 2: Redis Cache (App) │ ──── (Hit: < 2ms, 0 Token) ────┐
+                   │ TTL: 10 – 15 Phút         │                                 │
                    │ (Supervisor / Timeparse)  │                                 │
                    └───────────────────────────┘                                 │
                                  │ (Miss)                                        │
                                  ▼                                               │
                    ┌───────────────────────────┐                                 │
-                   │ Tầng 1: Provider Cache    │                                 │
-                   │ Azure / OpenAI (Prefix)   │                                 │
-                   │ Anthropic (cache_control) │                                 │
+                   │ Tầng 1: Azure Prompt      │                                 │
+                   │ Caching (gpt-5.4-mini)    │                                 │
+                   │ Subagents (> 1.024 tokens)│                                 │
                    └───────────────────────────┘                                 │
                                  │                                               │
                                  ▼                                               ▼
                    [ Xử lý / Sinh câu trả lời ] ◄────────────────────────────────┘
 ```
 
-*   **Tầng 1 (Provider Prompt Caching):** Tối ưu hóa các lượt gọi bắt buộc phải tới LLM. Đảm bảo tiền tố `SystemMessage` tĩnh 100%, chuẩn hóa prompt `timeparse`, và gắn thẻ `cache_control` cho Anthropic.
-*   **Tầng 2 (Application-level Redis Cache):** Chặn các câu hỏi/cụm từ lặp lại ngay tại tầng ứng dụng bằng Exact-match trên chuỗi đã chuẩn hóa. Phản hồi tức thì (< 2ms) và tốn **0 token**.
+*   **Tầng 1 (Azure OpenAI Automatic Prefix Caching):** Tối ưu hóa các node lớn (`booking`, `shop`) có prompt $\ge 1.024$ tokens để tối đa hóa tỷ lệ trúng cache 5–10 phút của Azure.
+*   **Tầng 2 (Application-level Redis Cache):** Bù đắp cho giới hạn 1.024 tokens của Azure bằng cách lưu đệm kết quả của các node ngắn (`supervisor`, `timeparse`) trong **10 – 15 phút** (đúng bằng vòng đời 1 phiên chat của khách).
 
 ---
 
-## 3. Tầng 1: Tối ưu Provider-level Prompt Caching
+## 3. Tầng 1: Tối ưu Azure OpenAI Prefix Caching
 
-### 3.1. Hỗ trợ Anthropic với Explicit Cache Control (`app/agents/llm.py`)
+### 3.1. Bảo toàn bố cục phân tầng cho Subagents (`agents.py`)
+Tiếp tục duy trì nghiêm ngặt thứ tự tin nhắn đã được chốt trong [`CONTEXT.md#L138`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/CONTEXT.md#L138) (Bẫy #9):
+```
+1. [SystemMessage]  Hướng dẫn tĩnh + Schema 7 Tools (BẤT BIẾN -> Azure cache 100%)
+2. [HumanMessage]   Diễn biến cuộc trò chuyện (summary + slots)
+3. [History]        Lịch sử chat (chỉ nối thêm đuôi)
+4. [HumanMessage]   Khối bối cảnh (context_block - chứa ngày giờ động nhích từng phút)
+5. [HumanMessage]   Lời nhắn mới nhất của khách
+```
+Khi khách chat liên tục trong phiên (cách nhau dưới 5–10 phút), Azure OpenAI tự động nhận diện tiền tố tĩnh ở mục (1), giảm 50% chi phí token input và giảm thời gian phản hồi (TTFT) xuống còn ~300ms.
 
-Anthropic hỗ trợ prompt caching bằng cách lưu trữ các khối prompt có đánh dấu `cache_control: {"type": "ephemeral"}` với thời gian sống 5 phút (tự động gia hạn mỗi khi trúng cache).
+### 3.2. Chuẩn hóa System Prompt cho `timeparse` (`timeparse.py`)
 
-1. **Bổ sung provider `anthropic` vào `SUPPORTED_CHAT_PROVIDERS`**:
-   - Khởi tạo `ChatAnthropic` từ `langchain-anthropic` khi `LLM_PROVIDER=anthropic`.
-   - Kiểm tra `ANTHROPIC_API_KEY` và `ANTHROPIC_MODEL`.
-2. **Cấu trúc đánh dấu Cache:**
-   - Với các subagent (`booking`, `shop`, `social`):
-     Gắn `cache_control` vào `SystemMessage` tĩnh dài:
-     ```python
-     SystemMessage(
-         content=[
-             {
-                 "type": "text",
-                 "text": prompt,
-                 "cache_control": {"type": "ephemeral"},
-             }
-         ]
-     )
-     ```
-   - Với Tool definitions: Tool cuối cùng trong danh sách bind tools được đánh dấu `cache_control` để toàn bộ schema của 7 tools được cache trọn vẹn.
-3. **Hiệu quả:**
-   - Trong một phiên hội thoại thông thường (5–15 tin nhắn), lượt thứ 2 trở đi tiết kiệm tới **90% chi phí input token** và giảm thời gian phản hồi (TTFT) từ ~1.8s xuống ~300ms.
-
-### 3.2. Chuẩn hóa System Prompt cho `timeparse` (`app/agents/booking_graph/timeparse.py`)
-
-**Thay đổi:**
-- Tách `_PROMPT` hiện tại thành `TIMEPARSE_SYSTEM_PROMPT` **hoàn toàn tĩnh**: chứa quy tắc ngôn ngữ, quy ước các buổi, định dạng ISO +07:00, và danh sách enum `missing`.
-- Đưa các thông số thời gian thực (`weekday`, `day`, `month`, `year`, `hour`, `minute`, `today`) và câu nói của khách vào `HumanMessage` động phía sau:
-  ```python
-  messages = [
-      SystemMessage(content=TIMEPARSE_SYSTEM_PROMPT),
-      HumanMessage(
-          content=(
-              f"Bây giờ là {weekday} {day}/{month}/{year}, {hour:02d}:{minute:02d} (hôm nay là {today}).\n"
-              f"Câu của khách: {text}"
-          )
-      ),
-  ]
-  ```
-- **Ưu tiên quy tắc cứng:** Đường dẫn regex (`_match_regex`) và neo thời gian (`apply_anchor`) luôn được thực thi trước. Chỉ khi các bước này không xác định được đầy đủ mới chuyển tiếp sang `_ask_model`.
+*   **Vấn đề hiện tại:** `_ask_model` nhúng trực tiếp `{hour:02d}:{minute:02d}` vào `_PROMPT` ở dòng 207, khiến prompt thay đổi mỗi 60 giây.
+*   **Cấu trúc lại:**
+    *   Tách riêng `TIMEPARSE_SYSTEM_PROMPT` tĩnh: chứa toàn bộ quy tắc ngôn ngữ tiếng Việt, quy ước các buổi sáng/trưa/chiều/tối, định dạng ISO +07:00 và enum `missing`.
+    *   Chuyển mốc thời gian động sang `HumanMessage`:
+        ```python
+        messages = [
+            SystemMessage(content=TIMEPARSE_SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
+                    f"Bây giờ là {weekday} {day}/{month}/{year}, {hour:02d}:{minute:02d} (hôm nay là {today}).\n"
+                    f"Câu của khách: {text}"
+                )
+            ),
+        ]
+        ```
+    *   **Ưu tiên quy tắc cứng (Regex + Anchor):** Luôn thử `_match_regex` và `apply_anchor` trước. Nếu giải quyết được thì trả về ngay với **0 lượt gọi model**.
 
 ---
 
-## 4. Tầng 2: Application-level Redis Cache
+## 4. Tầng 2: Application-level Redis Cache (TTL theo Phút)
 
 ### 4.1. Hạ tầng & Cấu hình
-*   **Docker Compose (`docker-compose.yml`)**:
+*   **Dịch vụ Redis (`docker-compose.yml`)**:
     ```yaml
     redis:
       image: redis:7-alpine
@@ -111,17 +101,18 @@ Anthropic hỗ trợ prompt caching bằng cách lưu trữ các khối prompt c
         - redis_data:/data
     ```
 *   **Cấu hình (`app/core/config.py`)**:
-    - `redis_uri: Optional[str] = None` (ví dụ `redis://localhost:6379/0`).
-    - `cache_enabled: bool = True`.
-    - Biến cấu hình chỉ nạp từ `.env`, tuân thủ nguyên tắc không đọc shell environment.
+    *   `redis_uri: Optional[str] = None` (mặc định `redis://localhost:6379/0`).
+    *   `cache_enabled: bool = True`.
+    *   `cache_supervisor_ttl_seconds: int = 900` (15 phút).
+    *   `cache_timeparse_ttl_seconds: int = 600` (10 phút).
+    *   Chỉ nạp từ file `.env` (tuân thủ nguyên tắc không đọc shell env).
 
 ### 4.2. Chuẩn hóa Khóa Cache (Key Normalization)
-Để Exact-match đạt hiệu quả cao mà không bị phân mảnh bởi ký tự thừa, câu nói của khách được chuẩn hóa trước khi tạo hash:
+Chuẩn hóa câu khách để các biến thể gõ câu hỏi đều ánh xạ về cùng một khóa:
 ```python
 def normalize_text(text: str) -> str:
-    """Chuẩn hóa câu khách để làm khóa cache:
-    1. Chuyển chữ thường và strip khoảng trắng hai đầu.
-    2. Bỏ dấu câu đầu và đuôi (., !, ?, ~, ,, ...).
+    """1. Chuyển chữ thường, strip khoảng trắng.
+    2. Bỏ dấu câu đầu/cuối (., !, ?, ~, ,, ...).
     3. Gộp nhiều khoảng trắng liền nhau thành 1 khoảng trắng duy nhất.
     """
     text = text.lower().strip()
@@ -129,73 +120,66 @@ def normalize_text(text: str) -> str:
     return re.sub(r'\s+', ' ', text)
 ```
 
-### 4.3. Các Vùng Cache và Thời gian sống (TTL)
+### 4.3. Các Vùng Cache và TTL theo Phút
 
 #### A. Supervisor Route Cache
-*   **Chức năng:** Cache kết quả phân loại ý định (`booking`, `shop`, `social`).
+*   **Chức năng:** Bỏ qua lượt gọi `gpt-5.4-mini` cho các câu chào hỏi, hỏi giờ thông dụng.
 *   **Khóa:** `cache:sup:{sha256(normalized_text)[:16]}`
-*   **Giá trị:** Chuỗi nhãn tuyến (`booking`, `shop`, `social`).
-*   **TTL:** **86.400 giây (24 giờ)**.
-*   **Phạm vi an toàn:** Áp dụng cho tin nhắn đầu cuộc hội thoại hoặc các câu hỏi độc lập (chiếm hơn 70% các lượt phân loại định tuyến). Khi khách có `pending_confirmation`, nhánh rẽ `route_from_state` đã xử lý bằng 0 lượt LLM trước đó.
+*   **Giá trị:** `"booking"` | `"shop"` | `"social"`.
+*   **TTL:** **15 phút (900 giây)** — vừa trọn vòng đời một phiên chat của khách.
+*   **Phạm vi an toàn:** Áp dụng cho các câu hỏi độc lập hoặc tin mở đầu phiên chat.
 
 #### B. Timeparse Result Cache
-*   **Chức năng:** Cache kết quả phân tích ngày/giờ của các cụm từ tương đối nhưng cố định trong ngày ("sáng mai 9h", "chiều mai lúc 3 giờ", "thứ Hai tuần sau 10h sáng").
+*   **Chức năng:** Lưu kết quả phân tích thời gian cho các câu nói lặp lại trong phiên.
 *   **Khóa:** `cache:tp:{today_iso}:{sha256(normalized_text)[:16]}`
-*   **Giá trị:** JSON của `ParsedTime` (`start_at`, `missing`, `partial_date`, `partial_hour`, `partial_minute`).
-*   **TTL:** **43.200 giây (12 giờ)** — cô lập theo ngày `today_iso`.
-*   **Hàng rào an toàn (`_guard` Gate):**
-    *   Mọi kết quả đọc ra từ Cache **bắt buộc phải chạy qua hàm `_guard(candidate, now)`** trước khi trả về cho caller.
-    *   *Ngăn chặn đặt lịch quá khứ:* Nếu câu `"10 giờ sáng"` được cache lúc 9h sáng, đến 14h chiều cùng ngày khách khác hỏi lại `"10 giờ sáng"`, cache trả về 10:00 nhưng `_guard` đối chiếu `10:00 <= 14:00` và tự động gán `start_at = None`, `missing = ["ngày khác — giờ đó qua mất rồi"]`. An toàn tuyệt đối 100%.
+*   **Giá trị:** JSON chuỗi của `ParsedTime`.
+*   **TTL:** **10 phút (600 giây)**.
+*   **Hàng rào an toàn kép (`_guard` Gate):**
+    *   Dữ liệu lấy từ cache **bắt buộc vẫn chạy qua `_guard(candidate, now)`**.
+    *   Nếu một câu nói chỉ giờ quá khứ so với thời điểm hiện tại, `_guard` lập tức phát hiện và chuyển thành `missing: ["ngày khác — giờ đó qua mất rồi"]`. An toàn tuyệt đối 100%.
 
 ### 4.4. Cơ chế Fail-Soft
-*   Tất cả thao tác với Redis trong `CacheService` đều được cài đặt `socket_timeout = 0.05` (50ms) và bọc trong khối `try...except Exception`.
-*   Nếu Redis down, nghẽn mạng hoặc lỗi kết nối:
-    - Ghi log: `logger.warning("cache_error_bypass", extra={"error": str(exc)})`.
-    - Trả về `None` (coi như Cache Miss).
-    - Toàn bộ luồng chat tiếp tục đi qua LLM bình thường mà không làm gián đoạn khách hàng.
+*   Tất cả thao tác Redis có `socket_timeout = 0.05` (50ms).
+*   Nếu Redis gặp sự cố hoặc timeout: ghi log `logger.warning("cache_error_bypass")`, trả về `None` (Cache Miss) và chuyển tiếp cho `gpt-5.4-mini` xử lý. Khách hàng không bao giờ bị đứt quãng cuộc trò chuyện.
 
 ---
 
 ## 5. Tích hợp LangGraph & Dữ liệu
 
 1. **Tại `app/agents/booking_graph/supervisor.py`**:
-   - Trước khi gọi `model.ainvoke`: kiểm tra `CacheService.get_supervisor_route(text)`.
-   - Nếu trúng: trả về `{"route": cached_route}` (bỏ qua LLM).
-   - Nếu trượt: gọi model, lưu kết quả hợp lệ vào cache và trả về.
+   - Trước khi gọi LLM: kiểm tra `CacheService.get_supervisor_route(text)`.
+   - Hit: Trả về `{"route": cached_route}` (tiết kiệm ~500 tokens, 0ms LLM).
+   - Miss: Gọi Azure OpenAI `gpt-5.4-mini`, lưu cache và trả về.
 2. **Tại `app/agents/booking_graph/timeparse.py`**:
-   - Thứ tự ưu tiên:
-     1. `_match_regex(text, now)` (Quy tắc regex)
-     2. `CacheService.get_parsed_time(text, today_iso)` (Redis cache)
-     3. `_ask_model(text, now)` (Gọi LLM)
-     4. Chạy qua `_guard(candidate, now)` và `apply_anchor(...)`.
-     5. Lưu vào cache nếu kết quả từ LLM hợp lệ.
+   - Thứ tự xử lý:
+     1. Thử `_match_regex(text, now)` (Regex nhanh)
+     2. Đọc `CacheService.get_parsed_time(text, today_iso)` (Redis 10 phút)
+     3. Gọi `_ask_model(text, now)` (Azure OpenAI `gpt-5.4-mini`)
+     4. Áp dụng `_guard(candidate, now)` và `apply_anchor(...)`
+     5. Lưu cache nếu kết quả hợp lệ.
 
 ---
 
 ## 6. Chiến lược Kiểm thử (Testing Strategy)
 
-Đảm bảo bộ test suite của hệ thống tiếp tục xanh 100% mà không bắt buộc phải có Redis thật chạy ngầm:
-
-1. **Fixture `fake_redis` (`tests/conftest.py`)**:
-   - Sử dụng `fakeredis.aioredis.FakeRedis` hoặc Mock Cache Service cho môi trường test.
-   - Tự động xóa sạch dữ liệu cache sau mỗi hàm test (tương tự việc wipe DB test).
-2. **Ca kiểm thử bắt buộc**:
-   - `test_normalize_text`: Kiểm tra tính tương đương của các câu có dấu câu, chữ hoa, khoảng trắng thừa.
-   - `test_supervisor_cache_hit_skips_llm`: Khẳng định lần gọi thứ hai lấy kết quả từ cache và LLM được gọi đúng 0 lần.
-   - `test_timeparse_cache_and_guard_safety`: Kiểm tra việc `_guard` vẫn chặn thành công giờ quá khứ dù dữ liệu đọc ra từ cache.
-   - `test_redis_down_fails_soft`: Giả lập Redis ném lỗi kết nối, khẳng định luồng xử lý vẫn hoàn thành mượt mà qua LLM và ghi đúng log warning.
-   - `test_anthropic_cache_control_headers`: Kiểm tra định dạng payload của `SystemMessage` khi dùng provider `anthropic`.
+*   **Fixture `fake_redis` (`tests/conftest.py`)**: Sử dụng `fakeredis.aioredis.FakeRedis`, tự động dọn sạch cache sau mỗi test, đảm bảo test suite chạy độc lập không cần bật container Redis thật.
+*   **Các bài test cốt lõi**:
+    1.  `test_normalize_text`: Kiểm tra khử dấu câu (`!`, `?`), khoảng trắng thừa, chữ hoa/thường.
+    2.  `test_supervisor_cache_hit_skips_llm`: Lần 1 gọi LLM, lần 2 gọi câu tương tự $\rightarrow$ khẳng định LLM được gọi **0 lần**.
+    3.  `test_timeparse_cache_and_guard_safety`: Kiểm tra câu nói lấy từ cache nhưng giờ đã qua $\rightarrow$ `_guard` vẫn chặn chuẩn xác.
+    4.  `test_redis_down_fails_soft`: Tắt Redis giả lập $\rightarrow$ hệ thống tự động fallback gọi `gpt-5.4-mini` bình thường.
+    5.  `test_timeparse_prompt_structure`: Kiểm tra `TIMEPARSE_SYSTEM_PROMPT` không chứa giờ phút động.
 
 ---
 
 ## 7. Kế hoạch triển khai (Phasing)
 
-*   **Pha 1 (Provider Prompt Caching & Timeparse Refactor):**
-    1. Chuẩn hóa `TIMEPARSE_SYSTEM_PROMPT` tĩnh trong `timeparse.py`.
-    2. Bổ sung provider `anthropic` kèm `cache_control` vào `app/agents/llm.py`.
-    3. Viết unit tests kiểm chứng cấu trúc prompt và tính bất biến của tiền tố cache.
-*   **Pha 2 (Application-level Redis Cache):**
+*   **Pha 1 (Tối ưu Prompt Timeparse & Azure Prefix Caching):**
+    1. Tách `TIMEPARSE_SYSTEM_PROMPT` tĩnh trong `timeparse.py`.
+    2. Đưa giờ phút vào `HumanMessage` động.
+    3. Kiểm thử đảm bảo 14 test của `test_timeparse.py` và các test liên quan tiếp tục xanh.
+*   **Pha 2 (Tích hợp Redis Cache 10–15 phút):**
     1. Thêm cấu hình Redis vào `docker-compose.yml`, `config.py`, `.env.example`.
-    2. Xây dựng `CacheService` với chuẩn hóa khóa và cơ chế fail-soft.
-    3. Tích hợp cache vào `supervisor.py` và `timeparse.py`.
-    4. Viết unit tests kiểm thử cache hit, TTL, fail-soft và an toàn thời gian với `_guard`.
+    2. Xây dựng `app/services/cache.py` (chuẩn hóa khóa, TTL theo phút, fail-soft).
+    3. Tích hợp vào `supervisor.py` và `timeparse.py`.
+    4. Viết bộ unit tests với `fakeredis`.
