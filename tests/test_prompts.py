@@ -666,8 +666,8 @@ class TestAnalyzePrompt:
 
     def test_analyze_prompt_mentions_every_output_field(self):
         from app.agents.booking_graph.prompts import ANALYZE_PROMPT
-        for field in ("route", "reply_to_proposal", "service", "time_text",
-                     "self_address", "stated", "answers_question"):
+        for field in ("route", "reply_to_proposal", "aside", "mentioned_times",
+                     "service", "time_text", "self_address", "stated", "answers_question"):
             assert f"{field}:" in ANALYZE_PROMPT
 
 

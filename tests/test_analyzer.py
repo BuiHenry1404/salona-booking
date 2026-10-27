@@ -164,3 +164,22 @@ class TestSanitizeAnalysisDirect:
         a = TurnAnalysis(route="booking", answers_question=True)
         result = sanitize_analysis(a, "làm nail", has_pending=False)
         assert result.answers_question is True
+
+
+def test_turn_analysis_sanitizes_aside_and_mentioned_times():
+    from app.agents.booking_graph.analyzer import MentionedTime, TurnAnalysis, sanitize_analysis
+
+    raw = TurnAnalysis(
+        route="booking",
+        aside="defer_only",
+        mentioned_times=[
+            MentionedTime(hour=15, minute=30, part_of_day="chieu", weekday=3, day_offset=1),
+            MentionedTime(hour=99, minute=70),  # ngoài khoảng hợp lệ -> bị loại
+        ],
+    )
+    cleaned = sanitize_analysis(raw, "để chú hỏi lại, mai 3h30 chiều", has_pending=False)
+    assert cleaned.aside == "defer_only"
+    assert len(cleaned.mentioned_times) == 1
+    assert cleaned.mentioned_times[0].hour == 15
+    assert cleaned.mentioned_times[0].minute == 30
+

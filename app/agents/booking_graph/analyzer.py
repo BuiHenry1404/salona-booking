@@ -34,6 +34,22 @@ ANALYZE_MAX_RETRIES = 1
 Route = Literal["booking", "shop", "social"]
 ReplyLabel = Literal["approve", "reject", "change", "unclear"]
 SelfAddress = Literal["anh", "chị"]
+AsideKind = Literal["relative_free", "defer_only", "defer_with_request"]
+PartOfDay = Literal["sang", "trua", "chieu", "toi"]
+_VALID_ASIDES = frozenset({"relative_free", "defer_only", "defer_with_request"})
+_VALID_PARTS = frozenset({"sang", "trua", "chieu", "toi"})
+
+
+class MentionedTime(BaseModel):
+    """Một mốc thời gian có cấu trúc khách nhắc tới trong tin nhắn hiện tại."""
+
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    part_of_day: Optional[PartOfDay] = None
+    weekday: Optional[int] = None
+    day: Optional[int] = None
+    month: Optional[int] = None
+    day_offset: Optional[int] = None
 
 
 class TurnAnalysis(BaseModel):
@@ -42,6 +58,8 @@ class TurnAnalysis(BaseModel):
 
     route: Route = "booking"
     reply_to_proposal: Optional[ReplyLabel] = None
+    aside: Optional[AsideKind] = None
+    mentioned_times: List[MentionedTime] = Field(default_factory=list)
     service: Optional[str] = None
     time_text: Optional[str] = None
     self_address: Optional[SelfAddress] = None
@@ -102,12 +120,30 @@ async def analyze_turn(messages: Sequence[BaseMessage], customer_text: str,
     return sanitize_analysis(result, customer_text, has_pending)
 
 
+def _clean_mentioned_time(item: MentionedTime) -> Optional[MentionedTime]:
+    if not isinstance(item, MentionedTime):
+        return None
+    hour = item.hour if (item.hour is not None and 0 <= item.hour <= 23) else None
+    minute = item.minute if (item.minute is not None and 0 <= item.minute <= 59) else None
+    part = item.part_of_day if item.part_of_day in _VALID_PARTS else None
+    weekday = item.weekday if (item.weekday is not None and 0 <= item.weekday <= 6) else None
+    day = item.day if (item.day is not None and 1 <= item.day <= 31) else None
+    month = item.month if (item.month is not None and 1 <= item.month <= 12) else None
+    offset = item.day_offset if (item.day_offset is not None and -1 <= item.day_offset <= 90) else None
+    if all(v is None for v in (hour, minute, part, weekday, day, month, offset)):
+        return None
+    return MentionedTime(hour=hour, minute=minute, part_of_day=part,
+                         weekday=weekday, day=day, month=month, day_offset=offset)
+
+
 def sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) -> TurnAnalysis:
     """Lọc kết quả bộ phân tích — KHÔNG tin model, giống `sanitize_slots`.
 
     - `reply_to_proposal`: None khi không có đề xuất đang chờ (nhãn vô nghĩa);
       có đề xuất mà model trả None/thiếu thì ép "unclear" (không bao giờ tự
       suy ra approve).
+    - `aside`: chỉ giữ 1 trong 3 giá trị hợp lệ.
+    - `mentioned_times`: chỉ giữ tối đa 4 mục hợp lệ, lọc các giá trị ngoài khoảng.
     - `time_text`: phải là CHUỖI CON của câu khách (bỏ dấu, hạ chữ thường) —
       model không được bịa cụm giờ khách chưa từng nói.
     - `self_address`: chỉ giữ khi khớp với `detect_self_address` (regex) trên
@@ -120,6 +156,12 @@ def sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) ->
         reply_to_proposal = None
     else:
         reply_to_proposal = a.reply_to_proposal or "unclear"
+
+    aside = a.aside if a.aside in _VALID_ASIDES else None
+    mentioned_times = [
+        cleaned for item in (a.mentioned_times or [])[:4]
+        if (cleaned := _clean_mentioned_time(item)) is not None
+    ]
 
     time_text = a.time_text
     if time_text:
@@ -144,6 +186,8 @@ def sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) ->
     return TurnAnalysis(
         route=a.route if a.route in ("booking", "shop", "social") else "booking",
         reply_to_proposal=reply_to_proposal,
+        aside=aside,
+        mentioned_times=mentioned_times,
         service=service,
         time_text=time_text,
         self_address=self_address,

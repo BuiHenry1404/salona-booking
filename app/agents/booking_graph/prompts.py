@@ -520,6 +520,18 @@ Fields:
   including small talk, a different topic, or a reply whose meaning you
   cannot be sure of. Leave this field empty when there is no pending
   proposal described below.
+- aside: one of "relative_free", "defer_only", "defer_with_request", or leave
+  it empty. "relative_free" when the customer wonders whether a relative or
+  companion is free (never the salon owner). "defer_only" when they say they
+  will ask someone, check their schedule, or message back later without asking
+  to hold or change a slot right now. "defer_with_request" when they mention
+  asking someone or deciding later AND also ask for a slot, a change, a
+  cancellation or salon info in the same message.
+- mentioned_times: every clock time, part of day ("sang", "trua", "chieu",
+  "toi"), weekday (0 = Monday .. 6 = Sunday), calendar day/month, or relative
+  day offset (0 = today, 1 = tomorrow, 2 = day after tomorrow, -1 = another
+  unspecified day or next week) named in THIS message. Leave it empty when no
+  time or day is mentioned.
 - service: the service the customer names in THIS message, in Vietnamese, at
   most 60 characters. Leave it empty when they did not name one this turn.
 - time_text: the exact phrase the customer used for a time or a day in THIS
