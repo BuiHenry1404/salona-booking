@@ -381,3 +381,24 @@ async def test_time_only_mode_sends_a_disguised_question_to_the_classifier_not_g
     result = await decide(text, proposal, QUESTION, NOW, label_fn=unclear_label_fn,
                           veto_mode="time_only")
     assert result == "unclear"
+
+
+def test_reply_module_uses_zero_regex():
+    import inspect
+    from app.agents.booking_graph import reply
+    source = inspect.getsource(reply)
+    assert "import re" not in source and "re.compile" not in source
+
+
+def test_mentions_other_time_also_checks_structured_mentioned_times():
+    from app.agents.booking_graph.analyzer import MentionedTime
+    # Kể cả khi text không chứa chữ số (vd viết bằng chữ), mentioned_times vẫn bắt được giờ lệch
+    assert mentions_other_time(
+        "dạ bốn giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=16, part_of_day="chieu")],
+    ) is True
+    assert mentions_other_time(
+        "dạ ba giờ chiều nha", P_BOOK["start_at"], NOW,
+        mentioned_times=[MentionedTime(hour=15, part_of_day="chieu")],
+    ) is False
+

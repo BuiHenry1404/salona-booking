@@ -329,6 +329,13 @@ def make_confirm_node(
             analysis = await analyzer.analyze_turn(
                 [], customer_text, proposal_facts, bot_question=bot_question)
             captured["analysis"] = analysis.model_dump()
+            if analysis.aside in ("defer_only", "defer_with_request"):
+                return "reject"
+            if (analysis.mentioned_times
+                    and not proposal_facts.get("queued")
+                    and reply.mentions_other_time("", proposal.start_at, now_utc(),
+                                                  mentioned_times=analysis.mentioned_times)):
+                return "change"
             return analysis.reply_to_proposal or "unclear"
 
         decision = await reply.decide(text, facts, bot_question=question, now=now_utc(),
