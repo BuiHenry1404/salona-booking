@@ -581,7 +581,7 @@ git commit -m "feat(booking_graph): pass updated slots across confirm and superv
   - `apply_session_day(candidate: ParsedTime, session_day: Optional[date]) -> ParsedTime`
   - `parse_vi_time(now: datetime, *, day: Optional[str] = None, hour: Optional[int] = None, minute: int = 0, period: Optional[str] = None, is_now: bool = False, ambiguous_week: bool = False, anchor: Optional[datetime] = None, session_day: Optional[date] = None, hours: Optional[ShopHours] = None) -> ParsedTime` (0 LLM calls, 0 regex)
 
-- [ ] **Step 1: Write the failing tests in `tests/test_regex_budget.py` and `tests/test_timeparse.py`**
+- [x] **Step 1: Write the failing tests in `tests/test_regex_budget.py` and `tests/test_timeparse.py`**
 
 Replace `tests/test_regex_budget.py` with:
 
@@ -980,12 +980,12 @@ def test_timeparse_uses_zero_regex_and_zero_llm():
     assert "build_chat_model" not in source
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_regex_budget.py tests/test_timeparse.py -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement pure-Python structured `app/agents/booking_graph/timeparse.py`**
+- [x] **Step 3: Implement pure-Python structured `app/agents/booking_graph/timeparse.py`**
 
 Replace `app/agents/booking_graph/timeparse.py` with:
 
@@ -1342,12 +1342,12 @@ async def parse_vi_time(
     return _guard(candidate, now)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_regex_budget.py tests/test_timeparse.py -v`
 Expected: PASS (100% green).
 
-- [ ] **Step 5: Commit Phase 4**
+- [x] **Step 5: Commit Phase 4**
 
 ```bash
 git add app/agents/booking_graph/timeparse.py tests/test_regex_budget.py tests/test_timeparse.py
