@@ -481,7 +481,7 @@ async def test_parse_time_returns_json_the_agent_can_hand_straight_on(test_db):
 
     user = await a_user(test_db)
     result = await by_name(make_booking_tools(test_db, user), "parse_time").ainvoke(
-        {"text": "mai 3h chiều"}
+        {"day": tomorrow_at(15).date().isoformat(), "hour": 3, "period": "chiều"}
     )
     payload = json.loads(result)
 
@@ -497,7 +497,7 @@ async def test_parse_time_says_what_is_missing_instead_of_guessing(test_db):
 
     user = await a_user(test_db)
     result = await by_name(make_booking_tools(test_db, user), "parse_time").ainvoke(
-        {"text": "sáng mai"}
+        {"day": tomorrow_at(9).date().isoformat(), "period": "sáng"}
     )
     payload = json.loads(result)
 
@@ -754,7 +754,8 @@ class TestParseTimeAnchor:
     async def test_bad_anchor_is_ignored_not_fatal(self, test_db):
         user = await a_user(test_db)
         out = await by_name(make_booking_tools(test_db, user), "parse_time").ainvoke(
-            {"text": "chuyển qua 10 giờ", "anchor": "không phải iso"})
+            {"hour": 10, "anchor": "không phải iso"}
+        )
         assert '"missing"' in out          # vẫn là JSON ParsedTime, không crash
 
     async def test_description_explains_the_anchor(self, test_db):
@@ -768,6 +769,65 @@ class TestParseTimeAnchor:
         out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment").ainvoke(
             {"start_at": start.isoformat(), "note": "làm tóc"}))
         assert out["held"]["iso"] == start.isoformat()
+
+    async def test_parse_time_remembers_day_across_turns_via_tool_day_and_flags_day_from_anchor(self, test_db):
+        """Lượt 1 khách nói 'sáng mai' (chưa có giờ) -> parse_time lưu partial_date
+        vào state.tool_day & state.slots.day. Lượt 2 khách chỉ nói '10 giờ 15 sáng'
+        mà agent quên truyền day/anchor -> parse_time tự nối với state.tool_day
+        và báo day_from='anchor'."""
+        user = await a_user(test_db)
+        tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        day_iso = tomorrow_at(9).date().isoformat()
+
+        out1 = json.loads(await tool.ainvoke({"day": day_iso, "period": "sáng"}))
+        assert out1["start_at"] is None
+        assert out1["partial_date"] == day_iso
+
+        out2 = json.loads(await tool.ainvoke({"hour": 10, "minute": 15, "period": "sáng"}))
+        assert out2["start_at"] is not None
+        assert out2["start_at"].startswith(day_iso)
+        assert "T10:15:00+07:00" in out2["start_at"]
+        assert out2["day_from"] == "anchor"
+
+    async def test_parse_time_never_uses_an_approved_proposal_as_auto_anchor(self, test_db):
+        """Đề xuất đã được duyệt (approved) là lịch đã chốt xong — sang câu mới
+        khách hỏi '10 giờ sáng' không kèm ngày thì PHẢI hỏi 'ngày nào', tuyệt đối
+        không tự neo vào đề xuất đã approved."""
+        from app.core.clock import now_utc
+        from app.services.proposal import ProposalService
+
+        user = await a_user(test_db)
+        proposals = ProposalService(test_db)
+        p = await proposals.create(user, "book", tomorrow_at(15), "làm tóc")
+        await proposals.approve(user, str(p.id), turn_at=now_utc() + timedelta(seconds=5))
+
+        tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        out = json.loads(await tool.ainvoke({"hour": 10, "period": "sáng"}))
+        assert out["start_at"] is None
+        assert out["missing"] == ["ngày nào"]
+
+    async def test_find_free_slots_and_propose_populate_working_memory(self, test_db):
+        from app.services.conversation import ConversationService
+
+        user = await a_user(test_db)
+        btools = make_booking_tools(test_db, user)
+        start = tomorrow_at(15)
+        day_iso = start.date().isoformat()
+
+        await by_name(btools, "find_free_slots").ainvoke({"day": day_iso, "part_of_day": "chiều"})
+        state1 = await ConversationService(test_db).get_state(str(user.id))
+        assert state1.slots.day == day_iso
+        assert state1.tool_day == day_iso
+        assert state1.slots.told == []
+
+        await by_name(btools, "propose_appointment").ainvoke(
+            {"start_at": start.isoformat(), "note": "làm móng bột"}
+        )
+        state2 = await ConversationService(test_db).get_state(str(user.id))
+        assert state2.slots.intent == "book"
+        assert state2.slots.day == day_iso
+        assert state2.slots.time == "15:00"
+        assert state2.slots.service == "làm móng bột"
 
 
 async def test_proposing_a_time_the_customer_already_booked_says_so(test_db):

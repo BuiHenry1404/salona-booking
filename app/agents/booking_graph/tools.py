@@ -1,14 +1,19 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
+from app.agents.booking_graph.context import (
+    DECLINED_MAX_AGE_MINUTES,
+    DECLINED_STATUSES,
+    format_vi_datetime,
+    format_vi_hhmm,
+)
 from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
-from app.core.clock import TZ, now_utc, to_local
+from app.core.clock import TZ, ensure_aware, now_utc, to_local
 from app.core.errors import AppError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
 from app.core.text import single_line, strip_diacritics
@@ -16,6 +21,7 @@ from app.models.appointment import NOTE_MAX
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.core.config import settings
+from app.services.conversation_state import ConversationStateService
 from app.services.proposal import ProposalService
 from app.services.shop import ShopService, fits_before_closing
 
@@ -215,41 +221,113 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
     """
     service = AppointmentService(db)
     proposals = ProposalService(db)
+    state_svc = ConversationStateService(db)
 
     @tool
-    async def parse_time(text: str, anchor: Optional[str] = None) -> str:
+    async def parse_time(
+        day: Optional[str] = None,
+        hour: Optional[int] = None,
+        minute: int = 0,
+        period: Optional[str] = None,
+        is_now: bool = False,
+        ambiguous_week: bool = False,
+        anchor: Optional[str] = None,
+    ) -> str:
         """Turn what the customer said about time into a concrete date and time.
         Call this BEFORE find_free_slots and propose_appointment, every time the
         customer mentions a time. Never compute a date yourself.
-        `text` must be the FULL phrase, joining what the customer said on
-        earlier turns: if they named a day one turn and an hour the next, pass
-        both together, not the hour alone. This tool reads only the string you
-        give it — it cannot see earlier turns.
-        `anchor`: pass it whenever the customer is changing or answering about a
-        time already on the table — the appointment being moved (its `iso:` in
-        the context block), the slot just proposed (`held.iso` in
-        propose_appointment's result), or the proposal the customer just
-        declined (the `iso` on the context block line tagged
-        [declined: ...]). The tool then fills a missing day or part of the
-        day from it, and keeps its day when the text names no day.
+        Extract the structured fields from the conversation and the 14-day
+        calendar in the context block:
+        - `day`: YYYY-MM-DD copied from the 14-day calendar in the context block
+          when a date is known (from this turn or an earlier turn). Leave None
+          if no date has been named yet.
+        - `ambiguous_week`: set True when the customer names a weekday without
+          specifying this week or next week. Leave `day` None in that case.
+        - `hour`: clock hour as an integer (1-12 when paired with `period` or
+          when the part of the day is unknown; 0-23 when in 24-hour format).
+        - `minute`: clock minute (0, 15, 30, 45; default 0).
+        - `period`: part of the day if stated ("sáng", "trưa", "chiều", "tối").
+        - `is_now`: set True when the customer asks to come right now / immediately.
+        - `anchor`: pass it whenever the customer is changing or answering about a
+          time already on the table — the appointment being moved (its `iso:` in
+          the context block), the slot just proposed (`held.iso` in
+          propose_appointment's result), or the proposal the customer just
+          declined (the `iso` on the context block line tagged
+          [declined: ...]). The tool then fills a missing day or part of the
+          day from it, and sets `day_from: "anchor"` so you state the full date
+          back to the customer.
         Result has `missing` -> ask the customer for exactly that ONE missing
         piece, one piece per turn, and nothing else. The value "sáng hay chiều"
         is quoted from the tool's own output, not an example: it means the hour
         is known but the part of the day is not."""
+        now = now_utc()
         anchor_dt = None
         if anchor:
             try:
                 anchor_dt = _parse_local(anchor)
             except ValueError:
-                # Neo bịa thì bỏ neo, không bỏ cả lượt.
                 logger.warning("anchor_ignored", extra={"anchor": anchor[:60]})
+
+        session_day: Optional[date] = None
+        if anchor_dt is None:
+            latest = await proposals.latest(user)
+            if latest is not None:
+                if latest.status == "pending":
+                    anchor_dt = to_local(latest.start_at)
+                elif (
+                    latest.status in DECLINED_STATUSES
+                    and now - ensure_aware(latest.updated_at)
+                    <= timedelta(minutes=DECLINED_MAX_AGE_MINUTES)
+                ):
+                    anchor_dt = to_local(latest.start_at)
+            state = await state_svc.conversations.get_state(str(user.id))
+            if state and state.tool_day:
+                try:
+                    session_day = date.fromisoformat(state.tool_day)
+                except ValueError:
+                    session_day = None
+
         hours = await service.shop.get_hours()
-        parsed: ParsedTime = await parse_vi_time(text, now_utc(), anchor=anchor_dt, hours=hours)
-        # Trả JSON gọn thay vì câu tiếng Việt: agent cần chuỗi ISO nguyên vẹn
-        # để chuyển thẳng sang propose_appointment, không được diễn giải lại.
-        return parsed.model_dump_json(
-            include={"start_at", "partial_date", "missing"}, exclude_none=False
+        parsed: ParsedTime = await parse_vi_time(
+            now,
+            day=day,
+            hour=hour,
+            minute=minute,
+            period=period,
+            is_now=is_now,
+            ambiguous_week=ambiguous_week,
+            anchor=anchor_dt,
+            session_day=session_day,
+            hours=hours,
         )
+
+        rec_day = (
+            to_local(parsed.start_at).date().isoformat()
+            if parsed.start_at is not None
+            else (parsed.partial_date.isoformat() if parsed.partial_date is not None else None)
+        )
+        rec_time = (
+            to_local(parsed.start_at).strftime("%H:%M")
+            if parsed.start_at is not None
+            else (
+                f"{parsed.partial_hour:02d}:{parsed.partial_minute:02d}"
+                if parsed.partial_hour is not None
+                and 0 <= parsed.partial_hour <= 23
+                and "sáng hay chiều" not in parsed.missing
+                else None
+            )
+        )
+        if rec_day or rec_time:
+            await state_svc.record_tool_facts(str(user.id), day=rec_day, time=rec_time)
+
+        payload = parsed.model_dump(
+            mode="json",
+            include={"start_at", "partial_date", "missing"},
+            exclude_none=False,
+        )
+        if parsed.day_from == "anchor":
+            payload["day_from"] = "anchor"
+        return json.dumps(payload, ensure_ascii=False)
 
     @tool
     async def find_free_slots(day: str, around: Optional[str] = None,
@@ -274,6 +352,7 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
             parsed_day = date.fromisoformat(day)
         except ValueError:
             return json.dumps({"error": "bad_day_format"})
+        await state_svc.record_tool_facts(str(user.id), day=parsed_day.isoformat())
         free = await service.find_free_slots(parsed_day, limit=WHOLE_DAY)
         part = strip_diacritics((part_of_day or "").strip().lower())
         if part in _PARTS_OF_DAY:
@@ -391,6 +470,14 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         # gỡ nó khỏi JSON trước khi model đọc) — node `confirm` duyệt bằng id.
         proposal = await proposals.create(user, "move" if old else "book", start, note,
                                           target=old)
+        local_start = to_local(start)
+        await state_svc.record_tool_facts(
+            str(user.id),
+            intent="reschedule" if old else "book",
+            day=local_start.date().isoformat(),
+            time=local_start.strftime("%H:%M"),
+            service=note,
+        )
 
         result = {"held": _moment(start), "note": note}
         if old:
@@ -436,6 +523,13 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         except AppError as exc:
             return json.dumps({"error": _error_code(exc)})
         proposal = await proposals.create(user, "cancel", appt.start_at, None, target=appt)
+        local_appt = to_local(appt.start_at)
+        await state_svc.record_tool_facts(
+            str(user.id),
+            intent="cancel",
+            day=local_appt.date().isoformat(),
+            time=local_appt.strftime("%H:%M"),
+        )
         return json.dumps({"will_cancel": {"id": str(appt.id),
                                            "at": _moment(appt.start_at)},
                            "proposal_id": str(proposal.id)},

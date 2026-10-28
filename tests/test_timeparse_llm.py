@@ -2,19 +2,66 @@
 `[tool.pytest.ini_options]` của pyproject.toml. Chạy tay bằng:
 pytest tests/test_timeparse_llm.py -m llm -v
 
-Đây là chỗ đo xem prompt có thật sự hiểu tiếng Việt hay không. Sửa prompt xong
-phải chạy lại file này trước khi tin là đã tốt hơn.
+Đo xem Booking Agent (với Lịch 14 ngày trong context_block) trích xuất tham số
+cho `parse_time` và giải ra `ParsedTime` có chính xác với tiếng Việt thật không.
 """
 from datetime import datetime
+from typing import Optional
 
 import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
 
-from app.agents.booking_graph.timeparse import parse_vi_time
+from app.agents.booking_graph.context import format_14_day_calendar, format_vi_datetime
+from app.agents.booking_graph.prompts import BOOKING_PROMPT
+from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
+from app.agents.llm import build_chat_model
 from app.core.clock import TZ
+from app.models.shop import ShopHours
 
 pytestmark = [pytest.mark.llm, pytest.mark.asyncio]
 
 NOW = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)   # Thứ Sáu 7/8/2026, 2:30 chiều
+HOURS = ShopHours(open_time="08:00", close_time="19:00")
+
+
+async def _llm_parse(text: str) -> ParsedTime:
+    @tool
+    async def parse_time(
+        day: Optional[str] = None,
+        hour: Optional[int] = None,
+        minute: int = 0,
+        period: Optional[str] = None,
+        is_now: bool = False,
+        ambiguous_week: bool = False,
+        anchor: Optional[str] = None,
+    ) -> str:
+        """Turn what the customer said about time into a concrete date and time."""
+        return "{}"
+
+    ctx = (
+        f"Bây giờ là {format_vi_datetime(NOW)} (hôm nay là {NOW.date().isoformat()}, giờ Việt Nam).\n"
+        f"{format_14_day_calendar(NOW.date())}\n"
+        "Bạn đang nói chuyện với: Lan.\nGọi khách là: chị Lan."
+    )
+    model = build_chat_model(tags=["timeparse"], streaming=False).bind_tools([parse_time])
+    ai = await model.ainvoke([
+        SystemMessage(content=BOOKING_PROMPT),
+        HumanMessage(content=f"{ctx}\n\nKhách nói: {text}"),
+    ])
+    if not ai.tool_calls:
+        return ParsedTime(missing=[])
+    args = ai.tool_calls[0]["args"]
+    return await parse_vi_time(
+        NOW,
+        day=args.get("day"),
+        hour=args.get("hour"),
+        minute=args.get("minute") or 0,
+        period=args.get("period"),
+        is_now=bool(args.get("is_now")),
+        ambiguous_week=bool(args.get("ambiguous_week")),
+        hours=HOURS,
+    )
 
 
 @pytest.mark.parametrize(
@@ -28,7 +75,7 @@ NOW = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)   # Thứ Sáu 7/8/2026, 2:30 chi�
     ],
 )
 async def test_understands_real_vietnamese(text, expected_iso):
-    result = await parse_vi_time(text, NOW, timeout=10.0)
+    result = await _llm_parse(text)
     assert result.start_at is not None, f"không đọc được: {text}"
     assert result.start_at.isoformat() == expected_iso
 
@@ -43,14 +90,13 @@ async def test_understands_real_vietnamese(text, expected_iso):
     ],
 )
 async def test_asks_back_instead_of_guessing(text, phai_hoi_lai):
-    """Đoán thay khách là kiểu hỏng tệ nhất: cụ già tới tiệm lúc đóng cửa."""
-    result = await parse_vi_time(text, NOW, timeout=10.0)
+    result = await _llm_parse(text)
     assert result.start_at is None, f"không được đoán với: {text}"
     assert result.missing, f"phải nói rõ thiếu gì ({phai_hoi_lai}) với: {text}"
 
 
 async def test_a_question_with_no_time_returns_nothing():
-    result = await parse_vi_time("chủ tiệm rảnh không con", NOW, timeout=10.0)
+    result = await _llm_parse("chủ tiệm rảnh không")
     assert result.start_at is None
 
 
@@ -58,17 +104,12 @@ async def test_a_question_with_no_time_returns_nothing():
     "text",
     [
         "bây giờ",
-        "giờ cô qua được không",
-        "cô qua liền được không con",
+        "giờ chị qua được không",
+        "chị qua liền được không",
         "giờ này qua được không",
     ],
 )
 async def test_right_now_resolves_to_the_next_slot(text):
-    """Khách tiệm vãng lai nói "qua liền" suốt. Trước đây prompt không có luật
-    nào cho "bây giờ" nên model trả null và lễ tân hỏi lại "mấy giờ ạ?" — câu
-    hỏi vô nghĩa với người vừa nói là muốn tới ngay."""
-    result = await parse_vi_time(text, NOW, timeout=10.0)
-
+    result = await _llm_parse(text)
     assert result.start_at is not None, f"vẫn hỏi lại thay vì hiểu: {text} ({result.missing})"
-    # NOW là 14:30:00 đúng mốc, nên mốc kế tiếp là 14:45.
     assert result.start_at.isoformat() == "2026-08-07T14:45:00+07:00"
