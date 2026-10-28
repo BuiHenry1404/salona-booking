@@ -16,8 +16,10 @@ Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-des
    - Hệ quả: Trong 95% cuộc hội thoại đặt lịch thông thường (dưới 15 lượt), `slots.day` và `slots.time` luôn bằng `None`.
 3. **Dòng `[declined: ...]` chỉ sống đúng 1 lượt duy nhất (`context.py:553-576`):**
    - Khi khách hoãn hoặc từ chối đề xuất ở Lượt 5, dòng `[declined: ...]` chỉ hiện ở Lượt 6. Nếu Lượt 6 khách hỏi chuyện phụ (vd. hỏi dịch vụ/giá) rồi Lượt 7 mới chốt giờ, dòng `[declined: ...]` biến mất trong khi `slots.day` vẫn là `None` $\rightarrow$ bot quên sạch ngày đang bàn.
-4. **Bộ phân tích đầu lượt (`analyzer.py`) bị "mù" bối cảnh (`supervisor.py:85`, `confirm.py:330`):**
-   - `analyze_turn` không được truyền `slots` (`Trạng thái cuộc trò chuyện`), và ở `confirm.py` thậm chí nhận lịch sử `messages=[]`.
+4. **Episodic Memory (`conversation_sessions` — dòng `"Lần trước"`) cũng bị khoá sau ngưỡng nén 800 tokens (`conversation_state.py:311`, `context.py:375-386`):**
+   - Hệ thống đã thiết kế Episodic Memory qua bảng `conversation_sessions` (TTL 30 ngày, hiển thị dòng `"Lần trước (hôm qua...)"` trong 7 ngày nếu phiên trước còn `slots.intent` dang dở mà chưa đặt lịch mới).
+   - **NHƯNG** lệnh `self.sessions.upsert(...)` hiện chỉ được gọi bên trong `_compact()` (khi hội thoại > 800 tokens)! Nếu khách chat 3–5 câu rồi hẹn mai nhắn lại, `_compact()` không chạy $\rightarrow$ `conversation_sessions` không có bản ghi nào $\rightarrow$ hôm sau khách quay lại bị mất sạch Episodic Memory!
+   - Hơn nữa, `render_last_session_line` (`context.py:382-385`) chỉ đọc `digest.wants + digest.open`; khi phiên trước ngắn (chưa có `digest`, chỉ có `slots`), dòng `"Lần trước"` bị rỗng nội dung.
 
 ### 1.2. Anti-pattern "LLM gọi Tool, Tool lại gọi Sub-LLM mù ngữ cảnh" trong `parse_time`
 - `Booking Agent` (vốn đã là một LLM có đầy đủ lịch sử hội thoại, `context_block` và `ConversationSlots`) khi gọi tool `parse_time(text)` chỉ truyền một mảnh chữ cắt rời.
@@ -73,12 +75,10 @@ flowchart TD
      - Khi **`confirm.py`** duyệt thành công (`execute_proposal` trả về `booked` / `moved` / `cancelled`):
        - Xoá `state.slots.intent = None`, `state.slots.day = None`, `state.slots.time = None` (`clear_active=True`, vì lịch đã chính thức nằm trong `Lịch sắp tới của khách:`).
 
-3. **Cập nhật `apply_turn_analysis` (`app/services/conversation_state.py`):**
-   - Ngoài `service`, `stated`, `asked`, nếu `TurnAnalysis.mentioned_times` có mốc ngày/giờ rõ ràng (ví dụ khách nói `"sáng thứ 4 tuần này"` rồi kèm `"để chị hỏi lại nó đã"` khiến lượt đó trả lời bằng `deferral_reply` mà chưa gọi tool), `apply_turn_analysis` cũng trích `day` và `time` lưu vào `state.slots.day` / `state.slots.time` nếu `current.day` / `current.time` đang trống.
-
-4. **Truyền Context vào `analyze_turn` (`analyzer.py`, `supervisor.py`, `confirm.py`):**
-   - Mở rộng chữ ký `analyze_turn(messages, customer_text, pending, bot_question="", state_summary="")`.
-   - Khi gọi từ `supervisor.py` và `confirm.py`, truyền `state_summary=render_slots(state.get("slots"))` và lịch sử gần nhất `recent` (kể cả trong `confirm.py`, thay vì `[]` như cũ) để `analyze_turn` luôn nắm được mạch hội thoại và trạng thái đặt lịch hiện tại.
+3. **Cập nhật `apply_turn_analysis` & Đồng bộ Episodic Memory (`conversation_sessions`) ngay trong lượt (`app/services/conversation_state.py`, `app/agents/booking_graph/context.py`):**
+   - Ngoài `service`, `stated`, `asked`, nếu `TurnAnalysis.mentioned_times` có mốc ngày/giờ rõ ràng (ví dụ khách nói `"sáng thứ 4 tuần này"` rồi kèm `"để chị hỏi lại nó đã"` khiến lượt đó trả lời bằng `deferral_reply` mà chưa gọi tool), `apply_turn_analysis` cũng trích `day`, `time` và `intent="book"` (khi `route == "booking"` hoặc có `service`/`day`) lưu vào `state.slots`.
+   - **Cập nhật Episodic Memory (`conversation_sessions`) mỗi khi `state.slots` thay đổi:** Trong `record_tool_facts` và `apply_turn_analysis`, khi `slots.intent` có giá trị, gọi luôn `self.sessions.upsert(user_id=user_id, day=today, digest=state.digest, slots=slots, expires_at=now + timedelta(days=SESSION_TTL_DAYS))` để khách chỉ chat 2–3 câu rồi rời đi thì ngày mai quay lại vẫn có Episodic Memory `"Lần trước (hôm qua)"` (không cần đợi 800 tokens).
+   - **Bổ sung fallback từ `slots` cho `render_last_session_line` (`context.py:375-386`):** Khi `session.digest` rỗng (do phiên trước ngắn dưới 800 tokens), `render_last_session_line` tự dựng tóm tắt từ `session.slots` (`service`, `day`, `time`, `stated`) để dòng `"Lần trước (...)"` luôn đầy đủ thông tin.
 
 ---
 

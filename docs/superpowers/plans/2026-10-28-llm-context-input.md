@@ -174,17 +174,21 @@ git commit -m "feat(timeparse): replace sub-LLM and regex with pure-python resol
 
 ---
 
-### Task 2: Working Memory Service (`ConversationStateService.record_tool_facts` & `apply_turn_analysis`)
+### Task 2: Working Memory & Episodic Memory Sync (`ConversationStateService.record_tool_facts`, `apply_turn_analysis`, `render_last_session_line`)
 
 **Files:**
 - Modify: `app/services/conversation_state.py`
+- Modify: `app/agents/booking_graph/context.py`
 - Modify: `tests/test_conversation_state_service.py`
 - Modify: `tests/test_conversation_slots.py`
+- Modify: `tests/test_context_block.py`
 
 **Interfaces:**
 - Produces in `app/services/conversation_state.py`:
-  - `ConversationStateService.record_tool_facts(self, user_id: str, *, intent: Optional[str] = None, day: Optional[str] = None, time: Optional[str] = None, service: Optional[str] = None, told: Optional[str] = None, declined_iso: Optional[str] = None, clear_active: bool = False) -> None`
-  - Enhances `ConversationStateService.apply_turn_analysis(self, user_id: str, a: TurnAnalysis, last_bot_text: str) -> None` to also extract `day` and `time` from `a.mentioned_times` when unambiguous and not yet set.
+  - `ConversationStateService.record_tool_facts(self, user_id: str, *, intent: Optional[str] = None, day: Optional[str] = None, time: Optional[str] = None, service: Optional[str] = None, told: Optional[str] = None, declined_iso: Optional[str] = None, clear_active: bool = False) -> None` (also upserts `conversation_sessions` Episodic Memory for today so short sessions < 800 tokens are never lost across days)
+  - Enhances `ConversationStateService.apply_turn_analysis(self, user_id: str, a: TurnAnalysis, last_bot_text: str) -> None` to also extract `day`/`time` from `a.mentioned_times` and sync `conversation_sessions`
+- Produces in `app/agents/booking_graph/context.py`:
+  - Enhances `render_last_session_line(session: ConversationSession, *, today: date) -> str` to fall back to `session.slots` (`service`, `day`, `time`, `stated`) when `session.digest` has no `wants`/`open` (short session from a previous day that didn't trigger 800-token compaction)
 
 - [ ] **Step 1: Write the failing tests in `tests/test_conversation_slots.py`**
 
@@ -499,3 +503,4 @@ Expected: PASS (all 720+ tests green, 0 failures).
 git add tests/test_confirm_flow.py
 git commit -m "test(confirm_flow): verify working memory persistence across multi-turn deferral"
 ```
+
