@@ -387,7 +387,7 @@ git commit -m "feat(state): add record_tool_facts, code-only tool_day, and sessi
   - In `app/agents/booking_graph/agents.py`:
     - `_merge_turn_analysis_slots(slots: Optional[ConversationSlots], analysis: Optional[dict]) -> Optional[ConversationSlots]` merges `service` and `stated` extracted by `supervisor` (`analyze_turn`) into the `slots` passed to `agent.ainvoke` in the **same turn**.
 
-- [ ] **Step 1: Write the failing tests in `tests/test_confirm.py` and `tests/test_subagents.py`**
+- [x] **Step 1: Write the failing tests in `tests/test_confirm.py` and `tests/test_subagents.py`**
 
 Add tests at the end of `tests/test_confirm.py`:
 
@@ -454,12 +454,12 @@ async def test_make_agent_node_merges_same_turn_supervisor_analysis_into_slots()
     assert "- Khách đã nói rõ: chỉ rảnh sau 5 giờ chiều" in sent
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_confirm.py -k "working_memory" tests/test_subagents.py -k "merges_same_turn" -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement Working Memory updates in `app/agents/booking_graph/confirm.py` and same-turn slot merge in `app/agents/booking_graph/agents.py`**
+- [x] **Step 3: Implement Working Memory updates in `app/agents/booking_graph/confirm.py` and same-turn slot merge in `app/agents/booking_graph/agents.py`**
 
 1. In `app/agents/booking_graph/confirm.py`:
    - Import `to_local` from `app.core.clock` and `ConversationStateService` from `app.services.conversation_state`.
@@ -554,12 +554,12 @@ Expected: FAIL.
              "slots": _merge_turn_analysis_slots(state.get("slots"), state.get("analysis")),
      ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_confirm.py tests/test_subagents.py tests/test_run_turn_thread.py -v`
 Expected: PASS (100% green).
 
-- [ ] **Step 5: Commit Phase 3**
+- [x] **Step 5: Commit Phase 3**
 
 ```bash
 git add app/agents/booking_graph/confirm.py app/agents/booking_graph/agents.py tests/test_confirm.py tests/test_subagents.py
