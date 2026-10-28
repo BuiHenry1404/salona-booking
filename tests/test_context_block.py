@@ -602,6 +602,24 @@ class TestRenderLastSessionLine:
         line = render_last_session_line(session, today=date(2026, 10, 26))
         assert line.startswith("Lần trước (hôm qua")
 
+    def test_empty_digest_falls_back_to_slots_summary(self):
+        session = ConversationSession(
+            user_id="u1",
+            day=date(2026, 10, 25),
+            digest=None,
+            slots=ConversationSlots(
+                intent="book",
+                service="làm móng bột",
+                day="2026-10-28",
+                time="15:00",
+            ),
+            expires_at=datetime(2026, 11, 25, tzinfo=timezone.utc),
+        )
+        line = render_last_session_line(session, today=date(2026, 10, 26))
+        assert "làm móng bột" in line
+        assert "Thứ Tư 28/10" in line
+        assert "3 giờ chiều" in line
+
 
 class TestBuildContextBlockWithTask14Lines:
     def test_recent_visits_absent_by_default(self):
@@ -638,3 +656,13 @@ class TestBuildContextBlockWithTask14Lines:
         closing_idx = block.index("Nếu có gì trong cuộc trò chuyện")
         assert block.index("Khách đã đến:") < closing_idx
         assert block.index("Lần trước") < closing_idx
+
+
+def test_block_includes_14_day_reference_calendar():
+    now = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], now=now)
+    assert "Lịch 14 ngày tới:" in block
+    assert "Thứ Sáu 7/8=2026-08-07" in block
+    assert "Thứ Bảy 8/8=2026-08-08" in block
+    assert "Thứ Năm 20/8=2026-08-20" in block
+
