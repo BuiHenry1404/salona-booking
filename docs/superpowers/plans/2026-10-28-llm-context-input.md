@@ -1757,7 +1757,7 @@ git commit -m "feat(tools): wire structured parse_time, safe auto-anchor, and to
 - Consumes: `make_booking_tools`, `parse_time`, `propose_appointment`, `confirm`, `agents`, and `ConversationStateService.record_tool_facts` from Phases 1–5.
 - Produces: End-to-end multi-turn and same-turn cross-agent regression tests in `tests/test_confirm_flow.py`.
 
-- [ ] **Step 1: Add end-to-end tests in `tests/test_confirm_flow.py`**
+- [x] **Step 1: Add end-to-end tests in `tests/test_confirm_flow.py`**
 
 Add `test_working_memory_preserves_day_and_declined_slot_across_multiple_turns` and `test_same_turn_confirm_decline_passes_updated_slots_to_booking_agent` at the end of `tests/test_confirm_flow.py`:
 
@@ -1805,12 +1805,12 @@ async def test_working_memory_preserves_day_and_declined_slot_across_multiple_tu
     assert "Đã chào mà khách không lấy:" in full_prompt
 ```
 
-- [ ] **Step 2: Run the new test and the full test suite**
+- [x] **Step 2: Run the new test and the full test suite**
 
 Run: `pytest tests/test_confirm_flow.py -k "test_working_memory_preserves_day" -v && pytest`
 Expected: PASS (all 725+ tests green, 0 failures).
 
-- [ ] **Step 3: Commit Phase 6**
+- [x] **Step 3: Commit Phase 6**
 
 ```bash
 git add tests/test_confirm_flow.py
