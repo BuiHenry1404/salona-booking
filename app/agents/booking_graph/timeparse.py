@@ -1,40 +1,22 @@
-import asyncio
-import re
 from datetime import date, datetime, timedelta
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents.booking_graph import tokens
-from app.agents.llm import build_chat_model
 from app.core.clock import TZ
-from app.core.slots import SLOT_MINUTES, next_slot_after
 from app.core.logging import get_logger
+from app.core.slots import SLOT_MINUTES, next_slot_after
 from app.models.shop import ShopHours
 from app.services.shop import is_within
 
 logger = get_logger(__name__)
 
-# Đo thật với Azure gpt-5.4-mini: một lượt parse mất 2,2–2,4 giây. Ngưỡng cũ là
-# 2.0 nên MỌI lượt đi qua LLM đều hết giờ và trả về "thiếu giờ cụ thể" — nhánh
-# LLM của parser coi như chết, chỉ còn regex sống, và khách nói "sáng mai 9 giờ"
-# bị hỏi lại đúng câu vừa hỏi. Fail-soft che mất lỗi nên log chỉ có warning.
-# 8 giây cho đủ biên: một lượt chat vốn đã mất 5–15 giây, thêm vài giây ở đây
-# không đổi cảm nhận của khách, còn hỏi lại thì đổi.
 PARSE_TIMEOUT_SECONDS = 8.0
 MAX_DAYS_AHEAD = 90
 
-
 # Bộ câu hỏi ĐÓNG mà lễ tân được phép hỏi lại khách.
-#
-# Schema này đi thẳng vào `with_structured_output`, tức nó là một phần của
-# prompt: để `List[str]` thì model viết gì cũng hợp lệ, và nó đã viết sai thật —
-# "thứ ba tuần sau" ra missing "thứ ba tuần sau là ngày nào cụ thể", tức hỏi
-# ngược lại chính cái ngày nó vừa tính được, trong khi "thứ năm tuần sau" cùng
-# lúc đó lại trả đúng. Đóng enum là biến "đừng làm vậy" thành "không làm được".
-#
-# Hai giá trị cuối do `_guard` sinh ra, không phải LLM — bỏ sót chúng là `_guard`
-# ném lỗi giữa lượt chat của khách.
+# Hai giá trị cuối do `_guard` sinh ra.
 MissingPiece = Literal[
     "giờ cụ thể",
     "sáng hay chiều",
@@ -66,20 +48,16 @@ class ParsedTime(BaseModel):
         description="Giờ đã nghe được. 0-23 nếu biết sáng/chiều; 1-12 nếu chưa biết buổi",
     )
     partial_minute: int = Field(default=0, description="Phút, mặc định 0")
-    source: Literal["regex", "llm"] = "llm"
+    day_from: Optional[Literal["explicit", "anchor"]] = Field(
+        default=None,
+        description="Nguồn gốc của ngày: 'explicit' (khách nêu) hay 'anchor' (lấy từ mốc neo đang bàn)",
+    )
+    source: Literal["code", "regex", "llm"] = "code"
 
     @model_validator(mode="after")
     def _a_known_day_is_never_asked_again(self):
-        """Biết ngày rồi mà vẫn hỏi lại ngày là tự mâu thuẫn — đó đúng là hình
-        dạng của lỗi "thứ ba tuần sau".
-
-        ÉP về dạng đúng chứ KHÔNG ném lỗi. Bản đầu tiên của luật này ném
-        ValueError, và đo thật cho thấy nó tệ hơn bệnh: `parse_vi_time` bắt mọi
-        Exception rồi rơi vào fail-soft, nên cả `partial_date` vừa giải được
-        cũng bị vứt — ca "thứ năm tuần sau" đang đúng thành sai.
-
-        Bỏ câu hỏi thừa mà vẫn còn thiếu giờ thì phải thay bằng câu hỏi giờ,
-        không thì `missing` rỗng và agent tưởng đã đủ thông tin để đặt lịch.
+        """Biết ngày rồi mà vẫn hỏi lại ngày là tự mâu thuẫn.
+        ÉP về dạng đúng chứ KHÔNG ném lỗi.
         """
         if not (self.partial_date and _DAY_QUESTIONS & set(self.missing)):
             return self
@@ -94,26 +72,17 @@ class ParsedTime(BaseModel):
 def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
     """Chỗ DUY NHẤT được phép nói một kết quả là dùng được.
 
-    Regex và LLM chỉ là hai nguồn đề xuất. Gộp kiểm tra về một chỗ nghĩa là
-    thêm nguồn thứ ba sau này cũng không phải nhân đôi luật.
-
     Cố ý KHÔNG kiểm giờ mở cửa: AppointmentService đã từ chối giờ ngoài
-    shop_hours và find_free_slots đã lọc. Kiểm ở đây nữa là giờ mở cửa nằm
-    hai chỗ, đổi một chỗ quên chỗ kia.
+    shop_hours và find_free_slots đã lọc.
     """
     start = candidate.start_at
     if start is None:
         return candidate
 
-    # LLM rất hay bỏ offset. Để nguyên thì mọi phép so sánh với now đều ném
-    # TypeError: can't compare offset-naive and offset-aware datetimes.
     if start.tzinfo is None:
         start = start.replace(tzinfo=TZ)
 
-    # "Bây giờ" là câu bình thường ở tiệm vãng lai, và LLM trả đúng lúc này —
-    # thứ không bao giờ lớn hơn `now`. Coi nó là quá khứ thì máy đáp "giờ đó qua
-    # mất rồi" cho chính giây phút khách đang nói (có thật trong log).
-    # Trong slot đang chạy thì hiểu là "tới ngay", giữ chỗ ở mốc kế tiếp.
+    # Trong slot đang chạy ("bây giờ", "qua liền") thì hiểu là tới ngay, giữ chỗ ở mốc kế tiếp.
     if now - timedelta(minutes=SLOT_MINUTES) < start <= now:
         return candidate.model_copy(update={"start_at": next_slot_after(now), "missing": []})
 
@@ -123,9 +92,7 @@ def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
             update={"start_at": None, "missing": ["ngày khác — giờ đó qua mất rồi"]}
         )
 
-    # Lưới bắt lỗi lệch năm. Model không chắc hôm nay là ngày nào thì nó suy từ
-    # mốc thời gian trong dữ liệu huấn luyện, và một ngày của năm ngoái vẫn là
-    # chuỗi ISO hợp lệ — không có gì khác trong hệ thống chặn được nó.
+    # Lưới bắt lỗi lệch năm hoặc quá xa (> 90 ngày).
     if start > now + timedelta(days=MAX_DAYS_AHEAD):
         logger.warning("timeparse_out_of_window", extra={"start_at": start.isoformat()})
         return candidate.model_copy(
@@ -135,118 +102,33 @@ def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
     return candidate.model_copy(update={"start_at": start})
 
 
-_DAY_OFFSETS = {
-    "hôm nay": 0,
-    "ngày mai": 1,
-    "mai": 1,
-    "ngày kia": 2,
-    "mốt": 2,
-}
-
-# Ngày phải đứng trước giờ trong câu, đúng cách người Việt nói.
-# \b hai đầu để "mai" không khớp vào giữa một từ khác — "email 3h chiều" mà
-# thành "mai 3h chiều" thì đặt nhầm hẳn một ngày.
-# Thứ tự trong alternation cũng quan trọng: "ngày mai" phải đứng trước "mai".
-_DAY_PATTERN = r"\b(hôm nay|ngày mai|ngày kia|mai|mốt)\b"
-# "giờ" phải đứng TRƯỚC "g" trong alternation: Python thử các nhánh theo thứ tự,
-# "g" khớp ngay chữ đầu của "giờ", phần "iờ" còn lại rơi ra ngoài và nhóm buổi
-# (vốn không bắt buộc) khớp rỗng — "mai 3 giờ chiều" thành 3 giờ không rõ buổi
-# rồi bị _to_24h trả None. Sai im lặng, không lỗi gì cả.
-_TIME_PATTERN = r"(\d{1,2})\s*(?:giờ|h|g)\s*(sáng|trưa|chiều|tối)?"
-
-_FULL = re.compile(_DAY_PATTERN + r".{0,20}?" + _TIME_PATTERN, re.IGNORECASE)
-
-
 def _to_24h(hour: int, period: Optional[str]) -> Optional[int]:
-    """Quy giờ nói kiểu Việt về giờ 24. Trả None nếu không chắc chắn."""
-    if period is None:
-        # Không có buổi thì chỉ chấp nhận dạng 24 giờ tường minh. "mai 3h" có
-        # thể là 3 sáng hoặc 3 chiều — đoán là đặt nhầm lịch cho một cụ 70 tuổi.
+    """Quy giờ nói kiểu Việt (hoặc giờ 24h kèm buổi do Agent truyền) về giờ 24 (0..23).
+    Trả None nếu không chắc chắn buổi (1..12 không kèm buổi)."""
+    norm = tokens._PERIOD_MAP.get((period or "").strip().lower()) if period else None
+    if norm is None:
+        if hour == 0:
+            return 0
         return hour if 13 <= hour <= 23 else None
-    if period == "sáng":
+    if norm == "sáng":
         return hour if 1 <= hour <= 11 else None
-    if period == "trưa":
-        return 12 if hour == 12 else (hour + 12 if hour == 1 else None)
-    if period == "chiều":
+    if norm == "trưa":
         if hour == 12:
             return 12
-        return hour + 12 if 1 <= hour <= 6 else None
-    if period == "tối":
-        return hour + 12 if 6 <= hour <= 11 else None
+        if hour == 1:
+            return 13
+        return hour if 11 <= hour <= 13 else None
+    if norm == "chiều":
+        if hour == 12:
+            return 12
+        if 1 <= hour <= 6:
+            return hour + 12
+        return hour if 13 <= hour <= 18 else None
+    if norm == "tối":
+        if 6 <= hour <= 11:
+            return hour + 12
+        return hour if 18 <= hour <= 23 else None
     return None
-
-
-def _match_regex(text: str, now: datetime) -> Optional[datetime]:
-    """Đường tắt cho những câu rõ ràng nhất, không tốn lượt LLM nào.
-
-    LUẬT: chỉ trả kết quả khi khớp TRỌN VẸN — có từ chỉ ngày VÀ có giờ xác
-    định. Khớp một phần coi như không khớp. Không đoán, không điền thiếu,
-    không trả missing. Thiếu bất cứ thứ gì thì trả None và nhường cho LLM.
-
-    Đừng nới luật này. Regex mà bắt đầu suy luận thì nó thành parser thứ hai
-    làm được một nửa: thêm mẫu bắt "thứ Năm", rồi mẫu đó nuốt luôn "thứ Năm
-    tuần sau" và trả sai ngày — mà LLM không bao giờ được gọi để sửa.
-    """
-    match = _FULL.search(text.lower())
-    if match is None:
-        return None
-
-    day_word, raw_hour, period = match.group(1), int(match.group(2)), match.group(3)
-    hour = _to_24h(raw_hour, period)
-    if hour is None:
-        return None
-
-    local_today = now.astimezone(TZ).date()
-    day = local_today + timedelta(days=_DAY_OFFSETS[day_word])
-    return datetime(day.year, day.month, day.day, hour, 0, tzinfo=TZ)
-
-
-_WEEKDAYS_VI = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-
-_PROMPT = """Bạn quy câu nói về thời gian của khách Việt Nam ra ngày giờ chuẩn.
-
-Bây giờ là {weekday} {day}/{month}/{year}, {hour:02d}:{minute:02d} (hôm nay là {today}).
-Tiệm mở cửa 8 giờ sáng đến 7 giờ tối.
-
-Quy tắc:
-- Mọi giờ đều là giờ Việt Nam, offset +07:00.
-- Đủ ngày và giờ thì điền start_at. Ví dụ: "thứ Năm tuần sau lúc 2 giờ chiều".
-- THIẾU thông tin thì để start_at null và chọn missing trong ĐÚNG bộ cho sẵn.
-  Xác định được ngày thì PHẢI điền partial_date, và khi đó không được
-  hỏi lại ngày nữa — chỉ hỏi giờ.
-  "sáng mai" → partial_date là ngày mai, missing là ["giờ cụ thể"].
-  "3 giờ" → missing là ["sáng hay chiều"].
-  "thứ Năm" → missing là ["tuần này hay tuần sau"].
-- Nghe được giờ mà chưa đủ để điền start_at thì PHẢI điền partial_hour (và
-  partial_minute): biết buổi thì ghi 0-23, chưa biết buổi thì ghi đúng số khách
-  nói (1-12). "10 giờ" → partial_hour 10, missing ["sáng hay chiều"].
-  "chiều mai 3 giờ" thiếu gì đó thì partial_hour 15.
-- TUYỆT ĐỐI không đoán thay khách. Đoán sai thì cụ già tới tiệm lúc không ai mở cửa.
-- "bây giờ", "giờ này", "qua liền", "qua ngay", "giờ em qua được không" đều nghĩa
-  là NGAY LÚC NÀY: điền start_at đúng {hour:02d}:{minute:02d} hôm nay, missing rỗng.
-  Tiệm nhận khách vãng lai nên đây là câu rất hay gặp, đừng hỏi lại "mấy giờ ạ".
-- Câu không nhắc gì tới thời gian thì để start_at null và missing rỗng.
-
-Câu của khách: {text}"""
-
-
-async def _ask_model(text: str, now: datetime) -> ParsedTime:
-    local = now.astimezone(TZ)
-    prompt = _PROMPT.format(
-        weekday=_WEEKDAYS_VI[local.weekday()],
-        day=local.day,
-        month=local.month,
-        year=local.year,
-        hour=local.hour,
-        minute=local.minute,
-        today=local.date().isoformat(),
-        text=text,
-    )
-    # tags KHÔNG chứa "respond": bộ phát sự kiện chỉ chuyển tiếp token mang tag
-    # đó ra màn hình khách, và JSON của parser mà lọt ra thì thành rác chạy ngang.
-    # streaming=False vì đây là JSON, không có gì để hiện dần.
-    model = build_chat_model(tags=["timeparse"], streaming=False, reasoning_effort="low")
-    return await model.with_structured_output(ParsedTime).ainvoke(prompt)
 
 
 def _period_candidates(hour: int) -> List[int]:
@@ -256,33 +138,18 @@ def _period_candidates(hour: int) -> List[int]:
     return sorted({hour, (hour + 12) % 24})
 
 
-def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
-                 hours: Optional[ShopHours]) -> ParsedTime:
-    """Điền phần thiếu từ mốc neo — bằng code, không hỏi lại khách.
-
-    Neo là mốc đang bàn (lịch cũ khi dời, giờ vừa đề nghị). Thiếu ngày → ngày
-    của neo. Thiếu buổi → buổi của neo nếu giờ ra nằm trong giờ mở cửa, không
-    thì buổi kia nếu hợp lệ; cả hai hợp lệ hay cả hai hỏng → vẫn hỏi như cũ.
-    Không đụng regex và không đổi enum MissingPiece.
-    """
+def apply_anchor(
+    candidate: ParsedTime, anchor: Optional[datetime], hours: Optional[ShopHours]
+) -> ParsedTime:
+    """Điền phần thiếu (ngày và/hoặc buổi) từ mốc neo — bằng code, không hỏi lại khách."""
     if anchor is None or candidate.start_at is not None or candidate.partial_hour is None:
         return candidate
     missing = set(candidate.missing)
     if "giờ cụ thể" in missing:
         return candidate
-    # Hàm này chỉ biết điền NGÀY (từ neo) và BUỔI (sáng/chiều). Bất cứ thứ gì
-    # khác — "tuần này hay tuần sau" là ca thật — không nằm trong năng lực của
-    # nó; đoán bừa qua neo là sai câu hỏi đang cần hỏi khách.
     if missing - {"ngày nào", "sáng hay chiều"}:
         return candidate
 
-    # LLM không bị ràng buộc kiểu bởi khoảng giá trị — partial_hour=25 hay
-    # partial_minute=70 vẫn qua được Pydantic (chỉ là int). datetime(...) bên
-    # dưới ném ValueError với giờ/phút ngoài khoảng, và hàm này chạy NGOÀI
-    # try/except của parse_vi_time (khối đó chỉ bọc _ask_model) nên lỗi sẽ lọt
-    # ra tận tool, biến "hỏi lại khách" thành "Tra cứu không được". Bỏ qua neo
-    # và trả nguyên candidate là đúng tinh thần fail-soft: khách vẫn được hỏi
-    # lại như khi chưa có bước này.
     if not (0 <= candidate.partial_hour <= 23) or not (0 <= candidate.partial_minute <= 59):
         logger.warning(
             "anchor_bad_hour",
@@ -291,6 +158,7 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
         return candidate
 
     local_anchor = anchor.astimezone(TZ)
+    day_came_from_anchor = candidate.partial_date is None
     day = candidate.partial_date or local_anchor.date()
     minute = candidate.partial_minute or 0
 
@@ -301,7 +169,11 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
         others = [h for h in options if (h < 12) != anchor_is_morning]
         ordered = preferred + others
         if hours is not None:
-            ordered = [h for h in ordered if is_within(hours, datetime(day.year, day.month, day.day, h, minute, tzinfo=TZ))]
+            ordered = [
+                h
+                for h in ordered
+                if is_within(hours, datetime(day.year, day.month, day.day, h, minute, tzinfo=TZ))
+            ]
             if len(ordered) == 2:          # cả hai đều mở — không đoán
                 return candidate
         if not ordered:
@@ -311,58 +183,168 @@ def apply_anchor(candidate: ParsedTime, anchor: Optional[datetime],
         hour = candidate.partial_hour
 
     start = datetime(day.year, day.month, day.day, hour, minute, tzinfo=TZ)
-    return candidate.model_copy(update={"start_at": start, "missing": [], "partial_date": day})
+    day_from = "anchor" if day_came_from_anchor else (candidate.day_from or "explicit")
+    return candidate.model_copy(
+        update={"start_at": start, "missing": [], "partial_date": day, "day_from": day_from}
+    )
 
 
-# --- neo thắng khi câu không nêu ngày (lỗi live 5) ---------------------------
-# KHÔNG phải mẫu parser (bẫy #11: `_match_regex` giữ nguyên, không nới):
-# chỉ quyết có ĐƯA NGÀY CỦA NEO vào kết quả LLM hay không. Dùng scanner tokens thuần.
-def anchor_day_applies(text: str) -> bool:
-    """Câu nêu một giờ cụ thể mà KHÔNG nêu ngày mới."""
-    return tokens.names_a_clock(text or "") and not tokens.names_a_day(text or "")
-
-
-def put_on_anchor_day(candidate: ParsedTime, anchor: Optional[datetime],
-                      text: str) -> ParsedTime:
-    start = candidate.start_at
-    if anchor is None or start is None or not anchor_day_applies(text):
+def apply_session_day(candidate: ParsedTime, session_day: Optional[date]) -> ParsedTime:
+    """Điền ngày từ `state.tool_day` (dữ kiện ngày đã xác thực trong phiên hôm nay)
+    khi chưa có đề xuất nào làm `anchor` đầy đủ."""
+    if session_day is None or candidate.start_at is not None or candidate.partial_date is not None:
         return candidate
-    local = start.astimezone(TZ) if start.tzinfo else start.replace(tzinfo=TZ)
-    day = anchor.astimezone(TZ).date()
-    if local.date() == day:
+    if "tuần này hay tuần sau" in candidate.missing:
         return candidate
-    moved = local.replace(year=day.year, month=day.month, day=day.day)
-    logger.info("timeparse_anchor_day", extra={"llm": local.isoformat(),
-                                                "moved": moved.isoformat()})
-    return candidate.model_copy(update={"start_at": moved, "partial_date": day})
+    if "ngày nào" not in candidate.missing or candidate.partial_hour is None:
+        return candidate
+    if not (0 <= candidate.partial_hour <= 23) or not (0 <= candidate.partial_minute <= 59):
+        return candidate
+
+    remaining = [m for m in candidate.missing if m != "ngày nào"]
+    if not remaining:
+        start = datetime(
+            session_day.year,
+            session_day.month,
+            session_day.day,
+            candidate.partial_hour,
+            candidate.partial_minute,
+            tzinfo=TZ,
+        )
+        return candidate.model_copy(
+            update={
+                "start_at": start,
+                "partial_date": session_day,
+                "missing": [],
+                "day_from": "anchor",
+            }
+        )
+    return candidate.model_copy(
+        update={
+            "partial_date": session_day,
+            "missing": remaining,
+            "day_from": "anchor",
+        }
+    )
 
 
 async def parse_vi_time(
-    text: str, now: datetime, timeout: float = PARSE_TIMEOUT_SECONDS,
-    anchor: Optional[datetime] = None, hours: Optional[ShopHours] = None,
+    now: datetime,
+    *,
+    day: Optional[str] = None,
+    hour: Optional[int] = None,
+    minute: int = 0,
+    period: Optional[str] = None,
+    is_now: bool = False,
+    ambiguous_week: bool = False,
+    anchor: Optional[datetime] = None,
+    session_day: Optional[date] = None,
+    hours: Optional[ShopHours] = None,
 ) -> ParsedTime:
-    """Quy câu nói về thời gian ra một thời điểm chuẩn.
+    """Quy tham số thời gian có cấu trúc ra `ParsedTime` chuẩn bằng Python thuần (0 LLM, 0 regex)."""
+    if is_now:
+        return _guard(
+            ParsedTime(
+                start_at=now,
+                partial_date=now.astimezone(TZ).date(),
+                day_from="explicit",
+                source="code",
+            ),
+            now,
+        )
 
-    Regex trước, LLM sau, và cả hai đều đi qua cùng một lớp chốt.
+    parsed_day: Optional[date] = None
+    if day:
+        try:
+            parsed_day = date.fromisoformat(day.strip())
+        except ValueError:
+            logger.warning("timeparse_bad_day", extra={"day": day[:40]})
 
-    Fail-soft: LLM lỗi hoặc chậm thì trả về "thiếu giờ cụ thể" để lễ tân hỏi
-    lại khách. Khách mất thêm một lượt hỏi đáp — chấp nhận được. Đặt nhầm giờ
-    thì không.
-    """
-    matched = _match_regex(text, now)
-    if matched is not None:
-        return _guard(ParsedTime(start_at=matched, source="regex"), now)
+    if minute is None:
+        minute = 0
 
-    try:
-        candidate = await asyncio.wait_for(_ask_model(text, now), timeout=timeout)
-    except asyncio.TimeoutError:
-        logger.warning("timeparse_timeout", extra={"text": text})
-        return ParsedTime(missing=["giờ cụ thể"], source="llm")
-    except Exception as exc:
-        logger.warning("timeparse_failed", extra={"text": text, "error": str(exc)})
-        return ParsedTime(missing=["giờ cụ thể"], source="llm")
+    if hour is not None and (not (0 <= hour <= 23) or not (0 <= minute <= 59)):
+        logger.warning("timeparse_bad_clock", extra={"hour": hour, "minute": minute})
+        return ParsedTime(
+            partial_date=parsed_day,
+            missing=["giờ cụ thể"],
+            day_from="explicit" if parsed_day else None,
+            source="code",
+        )
 
-    candidate = candidate.model_copy(update={"source": "llm"})
-    candidate = put_on_anchor_day(candidate, anchor, text)
+    norm_period = tokens._PERIOD_MAP.get((period or "").strip().lower()) if period else None
+    resolved_hour = _to_24h(hour, norm_period) if hour is not None else None
+
+    if parsed_day is not None:
+        if resolved_hour is not None:
+            start = datetime(
+                parsed_day.year, parsed_day.month, parsed_day.day, resolved_hour, minute, tzinfo=TZ
+            )
+            candidate = ParsedTime(
+                start_at=start,
+                partial_date=parsed_day,
+                partial_hour=resolved_hour,
+                partial_minute=minute,
+                missing=[],
+                day_from="explicit",
+                source="code",
+            )
+        elif hour is not None:
+            candidate = ParsedTime(
+                partial_date=parsed_day,
+                partial_hour=hour,
+                partial_minute=minute,
+                missing=["sáng hay chiều"],
+                day_from="explicit",
+                source="code",
+            )
+        else:
+            candidate = ParsedTime(
+                partial_date=parsed_day,
+                missing=["giờ cụ thể"],
+                day_from="explicit",
+                source="code",
+            )
+    elif ambiguous_week:
+        missing_list: List[MissingPiece] = ["tuần này hay tuần sau"]
+        if hour is not None and resolved_hour is None:
+            missing_list.append("sáng hay chiều")
+        candidate = ParsedTime(
+            partial_hour=resolved_hour if resolved_hour is not None else hour,
+            partial_minute=minute,
+            missing=missing_list,
+            source="code",
+        )
+    elif hour is not None:
+        if resolved_hour is not None:
+            candidate = ParsedTime(
+                partial_hour=resolved_hour,
+                partial_minute=minute,
+                missing=["ngày nào"],
+                source="code",
+            )
+        else:
+            candidate = ParsedTime(
+                partial_hour=hour,
+                partial_minute=minute,
+                missing=["ngày nào", "sáng hay chiều"],
+                source="code",
+            )
+    else:
+        if norm_period is not None:
+            fallback_day = anchor.astimezone(TZ).date() if anchor else session_day
+            if fallback_day is not None:
+                candidate = ParsedTime(
+                    partial_date=fallback_day,
+                    missing=["giờ cụ thể"],
+                    day_from="anchor",
+                    source="code",
+                )
+            else:
+                candidate = ParsedTime(missing=["ngày nào"], source="code")
+        else:
+            candidate = ParsedTime(missing=["giờ cụ thể"], source="code")
+
     candidate = apply_anchor(candidate, anchor, hours)
+    candidate = apply_session_day(candidate, session_day)
     return _guard(candidate, now)

@@ -1,23 +1,21 @@
 """Hàng rào số lượng regex (`re.compile`) trong tầng AI Agent (`app/agents/booking_graph/`).
 
-Spec `2026-10-27-regex-reduction-design.md`: cắt từ 45 xuống còn đúng 3 regex:
-- `timeparse.py`: 1 (`_FULL` theo bẫy #11 CONTEXT.md)
+Spec `2026-10-28-llm-context-input-design.md`: cắt xuống còn đúng 2 regex:
 - `guard.py`: 2 (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`)
-- Mọi module khác trong `app/agents/booking_graph/`: 0 regex.
+- Mọi module khác trong `app/agents/booking_graph/` (kể cả `timeparse.py`): 0 regex.
 """
+import ast
 import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "booking_graph"
 
 EXPECTED_BUDGET = {
-    "timeparse.py": 1,
     "guard.py": 2,
 }
 
 
-def test_agent_regex_budget_is_at_most_three():
-    import ast
+def test_agent_regex_budget_is_at_most_two():
     actual = {}
     re_importers = set()
     for path in sorted(ROOT.rglob("*.py")):
@@ -36,4 +34,3 @@ def test_agent_regex_budget_is_at_most_three():
     assert re_importers == set(EXPECTED_BUDGET.keys()), (
         f"Module ngoài ngân sách import re: {re_importers}"
     )
-
