@@ -263,6 +263,7 @@ Expected: FAIL (`AttributeError: 'ConversationStateService' object has no attrib
 ```
 
 2. In `app/services/conversation_state.py`:
+   - Move module-level constants `ALLOWED_INTENTS = {"book", "reschedule", "cancel"}`, `MAX_DECLINED = 6`, and `MAX_DAYS_AHEAD = 90` from line 322 to the top of the file right after `SESSION_TTL_DAYS = 30` (around line 46) so all service methods see them cleanly.
    - In `_set_today_fields` (`app/services/conversation_state.py:128-130`), include `"tool_day": None` in `fresh`:
      ```python
      fresh = {"day": day, "covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
@@ -325,11 +326,14 @@ Expected: FAIL (`AttributeError: 'ConversationStateService' object has no attrib
                      fields["state.slots.service"] = cleaned_service
 
              if declined_iso:
-                 merged_declined = list(current.declined) if current else []
-                 norm = to_local(ensure_aware(datetime.fromisoformat(declined_iso))).isoformat()
-                 if norm not in merged_declined:
-                     merged_declined.append(norm)
-                 fields["state.slots.declined"] = merged_declined[-MAX_DECLINED:]
+                 try:
+                     merged_declined = list(current.declined) if current else []
+                     norm = to_local(ensure_aware(datetime.fromisoformat(declined_iso))).isoformat()
+                     if norm not in merged_declined:
+                         merged_declined.append(norm)
+                     fields["state.slots.declined"] = merged_declined[-MAX_DECLINED:]
+                 except ValueError:
+                     pass
 
              if len(fields) > 1:
                  await self._set_today_fields(user_id, fields, now)
@@ -1695,10 +1699,10 @@ In `app/agents/booking_graph/tools.py`:
          if rec_day or rec_time:
              await state_svc.record_tool_facts(str(user.id), day=rec_day, time=rec_time)
 
-         payload = json.loads(
-             parsed.model_dump_json(
-                 include={"start_at", "partial_date", "missing"}, exclude_none=False
-             )
+         payload = parsed.model_dump(
+             mode="json",
+             include={"start_at", "partial_date", "missing"},
+             exclude_none=False,
          )
          if parsed.day_from == "anchor":
              payload["day_from"] = "anchor"
