@@ -263,3 +263,20 @@ async def test_recent_visits_lists_three_past_appointments_newest_first(test_db)
     gan_idx, giua_idx, xa_idx = (block.index(n) for n in ("gần nhất", "giữa", "xa nhất"))
     assert gan_idx < giua_idx < xa_idx
     assert "quá cũ" not in block
+
+
+async def test_short_session_without_compaction_still_saves_episodic_memory_preserving_digest(test_db):
+    """Phiên ngắn (< 800 tokens, chưa chạy _compact) khi gọi record_tool_facts
+    vẫn lưu bản conversation_sessions của hôm nay và không xoá digest đã có."""
+    repo = ConversationSessionRepository(test_db)
+    svc = ConversationStateService(test_db)
+
+    await svc.record_tool_facts("u1", intent="book", day="2026-10-29", service="nhuộm tóc")
+
+    today = to_local(now_utc()).date()
+    session = await repo.most_recent_before("u1", today + timedelta(days=1), within_days=1)
+    assert session is not None
+    assert session.slots.intent == "book"
+    assert session.slots.service == "nhuộm tóc"
+    assert session.slots.day == "2026-10-29"
+

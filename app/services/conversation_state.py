@@ -41,6 +41,14 @@ MAX_CUSTOMER_QUOTES = 3               # câu gốc khách, do code chọn (khôn
 # lượt nén ghi ra nó — đủ cho rule "trong 7 ngày gần đây" ở context.py, còn
 # dư nhiều để không xoá hụt.
 SESSION_TTL_DAYS = 30
+ALLOWED_INTENTS = {"book", "reschedule", "cancel"}
+MAX_DECLINED = 6
+# Trần trên cho `day`: hội thoại trong phiên chỉ nói về lịch sắp tới rất gần.
+# Không có trần thì "9999-12-31" đi qua sạch, mà _format_vi_day cố ý không in
+# năm nên prompt ghi "Thứ Sáu 31/12" trong khi khối bối cảnh ghi năm khác —
+# hai chỗ mâu thuẫn cả thứ trong tuần. 90 ngày rộng hơn mọi lịch tiệm từng
+# nhận, nhưng chặn được lệch năm do model neo sai mốc thời gian.
+MAX_DAYS_AHEAD = 90
 # "Lần trước" chỉ nhìn lại ngần này ngày — khớp SESSION_TTL_DAYS ở trên vì
 # context.py cũng dùng hằng số này (xem ConversationStateService.last_session).
 LAST_SESSION_WINDOW_DAYS = 7
@@ -127,7 +135,7 @@ class ConversationStateService:
         day = datetime(today.year, today.month, today.day)
         fresh = {"day": day, "covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
                  "summary": [], "digest": None, "customer_quotes": [],
-                 "updated_at": now, "failures": 0, "slots": {}}
+                 "updated_at": now, "failures": 0, "slots": {}, "tool_day": None}
         await self.conversations.collection.update_one(
             {"user_id": user_id},
             [
@@ -188,6 +196,89 @@ class ConversationStateService:
             "state.slots.asked": [item.model_dump() for item in asked],
             "state.updated_at": now,
         }, now)
+
+    async def record_tool_facts(
+        self,
+        user_id: str,
+        *,
+        intent: Optional[str] = None,
+        day: Optional[str] = None,
+        time: Optional[str] = None,
+        service: Optional[str] = None,
+        declined_iso: Optional[str] = None,
+        clear_active: bool = False,
+    ) -> Optional[ConversationSlots]:
+        """Ghi tức thì dữ kiện đã xác thực từ tool (`parse_time`, `find_free_slots`,
+        `propose_appointment`, `cancel_appointment`) và node `confirm` vào
+        Working Memory (`state.slots` + `state.tool_day`), đồng bộ ngay sang
+        Episodic Memory (`conversation_sessions`), và trả về `slots` mới nhất —
+        fail-soft, không bao giờ ném."""
+        if not user_id:
+            return None
+        try:
+            now = now_utc()
+            local_today = to_local(now).date()
+            state = await self.conversations.get_state(user_id)
+            current = state.slots if state and state.slots else None
+            fields: dict = {"state.updated_at": now}
+
+            if clear_active:
+                fields["state.slots.intent"] = None
+                fields["state.slots.day"] = None
+                fields["state.slots.time"] = None
+                fields["state.tool_day"] = None
+            else:
+                if intent in ALLOWED_INTENTS:
+                    fields["state.slots.intent"] = intent
+                if day:
+                    try:
+                        parsed_d = date.fromisoformat(day)
+                        if local_today <= parsed_d <= local_today + timedelta(days=MAX_DAYS_AHEAD):
+                            fields["state.slots.day"] = parsed_d.isoformat()
+                            fields["state.tool_day"] = parsed_d.isoformat()
+                    except ValueError:
+                        pass
+                if time:
+                    try:
+                        parsed_t = datetime.strptime(time, "%H:%M").time()
+                        fields["state.slots.time"] = parsed_t.strftime("%H:%M")
+                    except ValueError:
+                        pass
+
+            if service:
+                cleaned_service = single_line(service, NOTE_MAX)
+                if cleaned_service:
+                    fields["state.slots.service"] = cleaned_service
+
+            if declined_iso:
+                try:
+                    merged_declined = list(current.declined) if current else []
+                    norm = to_local(ensure_aware(datetime.fromisoformat(declined_iso))).isoformat()
+                    if norm not in merged_declined:
+                        merged_declined.append(norm)
+                    fields["state.slots.declined"] = merged_declined[-MAX_DECLINED:]
+                except ValueError:
+                    pass
+
+            if len(fields) > 1:
+                await self._set_today_fields(user_id, fields, now)
+                updated = await self.conversations.get_state(user_id)
+                if updated and updated.slots is not None:
+                    await self.sessions.upsert(
+                        user_id=user_id,
+                        day=local_today,
+                        digest=updated.digest,
+                        slots=updated.slots,
+                        expires_at=now + timedelta(days=SESSION_TTL_DAYS),
+                    )
+                    return updated.slots
+            return current
+        except Exception as exc:
+            logger.warning(
+                "record_tool_facts_failed",
+                extra={"user_id": user_id, "error": str(exc)[:200]},
+            )
+            return None
 
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
@@ -318,15 +409,6 @@ class ConversationStateService:
         })
         return True
 
-
-ALLOWED_INTENTS = {"book", "reschedule", "cancel"}
-MAX_DECLINED = 6
-# Trần trên cho `day`: hội thoại trong phiên chỉ nói về lịch sắp tới rất gần.
-# Không có trần thì "9999-12-31" đi qua sạch, mà _format_vi_day cố ý không in
-# năm nên prompt ghi "Thứ Sáu 31/12" trong khi khối bối cảnh ghi năm khác —
-# hai chỗ mâu thuẫn cả thứ trong tuần. 90 ngày rộng hơn mọi lịch tiệm từng
-# nhận, nhưng chặn được lệch năm do model neo sai mốc thời gian.
-MAX_DAYS_AHEAD = 90
 
 # --- 4 nhóm mới (spec mục 3, bộ phân tích câu khách): `stated`/`told` là chữ
 # TỰ DO (bộ phân tích hoặc code), `asked` là câu hỏi của chính bot. Dùng

@@ -111,6 +111,7 @@ class ConversationState(BaseModel):
     updated_at: datetime = Field(default_factory=now_utc)
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
     slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate
+    tool_day: Optional[str] = None   # ngày YYYY-MM-DD chỉ do code (record_tool_facts) ghi, _compact không chạm
 
     @field_validator("day", mode="before")
     @classmethod

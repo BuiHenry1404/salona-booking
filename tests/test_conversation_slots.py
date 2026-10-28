@@ -308,3 +308,69 @@ class TestApplyTurnAnalysis:
         assert state.summary == ["Khách muốn làm tóc."]
         assert state.failures == 2
         assert state.slots.service == "làm móng"
+
+
+class TestRecordToolFacts:
+    """Working Memory (`state.slots` + `state.tool_day`) và Episodic Memory
+    (`conversation_sessions`) được cập nhật tức thì từ tool và confirm,
+    không cần đợi nén 800 tokens."""
+
+    async def test_records_day_time_intent_service_and_tool_day(self, test_db):
+        svc = ConversationStateService(test_db)
+        slots = await svc.record_tool_facts(
+            "u1",
+            intent="book",
+            day="2026-10-28",
+            time="09:00",
+            service="làm móng gel",
+        )
+        assert slots is not None and slots.day == "2026-10-28"
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.intent == "book"
+        assert state.slots.day == "2026-10-28"
+        assert state.tool_day == "2026-10-28"
+        assert state.slots.time == "09:00"
+        assert state.slots.service == "làm móng gel"
+
+    async def test_records_declined_and_keeps_day(self, test_db):
+        svc = ConversationStateService(test_db)
+        await svc.record_tool_facts("u1", day="2026-10-28", time="09:00")
+        slots = await svc.record_tool_facts(
+            "u1",
+            day="2026-10-28",
+            declined_iso="2026-10-28T09:00:00+07:00",
+        )
+        assert slots is not None and slots.declined == ["2026-10-28T09:00:00+07:00"]
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.day == "2026-10-28"
+        assert state.tool_day == "2026-10-28"
+        assert state.slots.declined == ["2026-10-28T09:00:00+07:00"]
+
+    async def test_clear_active_wipes_intent_day_time_and_tool_day_and_syncs_session(self, test_db):
+        from datetime import timedelta
+        from app.core.clock import now_utc, to_local
+        from app.repositories.conversation_session import ConversationSessionRepository
+
+        svc = ConversationStateService(test_db)
+        await svc.record_tool_facts(
+            "u1", intent="book", day="2026-10-28", time="09:00", service="cắt tóc"
+        )
+        today = to_local(now_utc()).date()
+        s1 = await ConversationSessionRepository(test_db).most_recent_before(
+            "u1", today + timedelta(days=1), within_days=1
+        )
+        assert s1 is not None and s1.slots.intent == "book"
+
+        await svc.record_tool_facts("u1", clear_active=True)
+        state = await ConversationService(test_db).get_state("u1")
+        assert state.slots.intent is None
+        assert state.slots.day is None
+        assert state.slots.time is None
+        assert state.tool_day is None
+        assert state.slots.service == "cắt tóc"
+
+        s2 = await ConversationSessionRepository(test_db).most_recent_before(
+            "u1", today + timedelta(days=1), within_days=1
+        )
+        assert s2 is not None and s2.slots.intent is None
+
