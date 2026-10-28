@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +16,13 @@ class ChatMessage(BaseModel):
     # "code": câu do node confirm / câu lỗi sinh — cố ý giống nhau, không đem so
     # lặp. Document cũ không có trường này → mặc định "llm", không migrate.
     source: Literal["llm", "code"] = "llm"
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_created_at_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class DaySummary(BaseModel):
@@ -44,6 +51,13 @@ class AgreedAt(BaseModel):
 
     proposal_id: str
     at: datetime
+
+    @field_validator("at", mode="before")
+    @classmethod
+    def _ensure_at_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class ConversationSlots(BaseModel):
@@ -112,6 +126,13 @@ class ConversationState(BaseModel):
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
     slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate
     tool_day: Optional[str] = None   # ngày YYYY-MM-DD chỉ do code (record_tool_facts) ghi, _compact không chạm
+
+    @field_validator("covers_until", mode="before")
+    @classmethod
+    def _ensure_covers_until_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
     @field_validator("day", mode="before")
     @classmethod

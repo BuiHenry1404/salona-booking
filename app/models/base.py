@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from pydantic_core import core_schema
 from bson import ObjectId
+
+from app.core.clock import now_utc
 
 
 class PyObjectId(ObjectId):
@@ -37,5 +39,12 @@ class BaseDocument(BaseModel):
     )
     
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow) 
+    created_at: datetime = Field(default_factory=now_utc)
+    updated_at: datetime = Field(default_factory=now_utc)
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def _ensure_base_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v 

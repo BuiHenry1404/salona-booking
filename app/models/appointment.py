@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import List, Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, List, Literal, Optional
 
 from pydantic import Field, field_validator
 
@@ -27,6 +27,13 @@ class Appointment(BaseDocument):
     note: Optional[str] = None
     status: Status = "booked"
     created_via: CreatedVia = "chat"
+
+    @field_validator("start_at", mode="before")
+    @classmethod
+    def _ensure_start_at_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
     @field_validator("note")
     @classmethod

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -43,10 +43,15 @@ def select_window(
     → mới. Giữ tin `created_at >= cutoff` và (nếu có `after`) `> after`, rồi cắt
     từ cuối theo ngân sách token.
     """
+    def _to_utc(dt: datetime) -> datetime:
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+    co = _to_utc(cutoff)
+    af = _to_utc(after) if after is not None else None
     # `after`: mốc covers_until của state — tin đã nén không gửi nguyên văn.
     messages = [
         m for m in items
-        if m.created_at >= cutoff and (after is None or m.created_at > after)
+        if _to_utc(m.created_at) >= co and (af is None or _to_utc(m.created_at) > af)
     ]
     kept: List[T] = []
     used = 0
@@ -116,8 +121,11 @@ class ConversationService:
     async def session_messages(self, user_id: str) -> List[ChatMessage]:
         """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
         vào cho state."""
-        cutoff = self.session_cutoff()
-        return [m for m in await self._all_messages(user_id) if m.created_at >= cutoff]
+        def _to_utc(dt: datetime) -> datetime:
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+        cutoff = _to_utc(self.session_cutoff())
+        return [m for m in await self._all_messages(user_id) if _to_utc(m.created_at) >= cutoff]
 
     async def history(
         self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET,

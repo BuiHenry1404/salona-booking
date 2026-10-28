@@ -25,6 +25,7 @@ _DEFER_PHRASES_BARE = ("xem lai", "hoi lai", "suy nghi", "tinh sau")
 _REQUEST_PHRASES_ACC = (
     "đặt", "giữ", "dời", "đổi", "hủy", "huỷ", "book", "mấy giờ", "giờ nào",
     "đóng cửa", "mở cửa", "giá", "bao nhiêu", "bao lâu", "còn chỗ", "còn trống",
+    "xem lại lịch", "xem lịch", "lịch hẹn",
 )
 _REQUEST_VERBS_BARE = frozenset({"dat", "giu", "doi", "huy"})
 _REQUEST_OBJS_BARE = frozenset({
@@ -32,6 +33,7 @@ _REQUEST_OBJS_BARE = frozenset({
 })
 _REQUEST_PHRASES_BARE = (
     "book", "may gio", "gio nao", "dong cua", "mo cua", "bao nhieu", "bao lau", "con cho", "con trong",
+    "xem lai lich", "xem lich", "lich hen",
 )
 
 RELATIVE_LINE = ("Khách vừa hỏi NGƯỜI NHÀ/NGƯỜI QUEN của khách có rảnh không — không phải "
@@ -98,6 +100,11 @@ def defers(text: str) -> bool:
     """Khách sẽ hỏi ai đó / tính lại rồi nhắn sau."""
     if not text:
         return False
+    lowered = text.lower()
+    if ("xem lại lịch" in lowered or "xem lai lich" in lowered
+            or "xem lại hẹn" in lowered or "xem lai hen" in lowered):
+        if not any(w in lowered for w in ("nhắn sau", "nhan sau", "báo sau", "bao sau", "tính sau", "tinh sau", "đã", "da")):
+            return False
     p_acc = tokens.padded(text)
     p_bare = tokens.padded_bare(text)
     if tokens.has_phrase(p_acc, _DEFER_PHRASES_ACC) or tokens.has_phrase(p_bare, _DEFER_PHRASES_BARE):

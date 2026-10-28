@@ -1,7 +1,7 @@
-from datetime import datetime
-from typing import Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models.base import BaseDocument
 
@@ -18,6 +18,13 @@ class TargetSnapshot(BaseModel):
 
     status: str
     start_at: datetime
+
+    @field_validator("start_at", mode="before")
+    @classmethod
+    def _ensure_target_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class Proposal(BaseDocument):
@@ -42,3 +49,10 @@ class Proposal(BaseDocument):
     approved_at: Optional[datetime] = None
     result_appointment_id: Optional[str] = None
     error: Optional[str] = None
+
+    @field_validator("start_at", "expires_at", "approving_at", "approved_at", mode="before")
+    @classmethod
+    def _ensure_proposal_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v

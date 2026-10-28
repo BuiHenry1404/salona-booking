@@ -4,7 +4,7 @@ Spec: docs/superpowers/specs/2026-09-19-conversation-state-design.md.
 """
 import asyncio
 import re
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -78,7 +78,14 @@ def split_window(messages, covers_until: Optional[datetime]):
     recent = list(messages[-keep:]) if keep else []
     older = list(messages[:-keep]) if len(messages) > keep else []
     if covers_until is not None:
-        older = [m for m in older if m.created_at > covers_until]
+        def _to_utc(dt: datetime) -> datetime:
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+        cu = _to_utc(covers_until)
+        older = [
+            m for m in older
+            if getattr(m, "created_at", None) is not None and _to_utc(m.created_at) > cu
+        ]
     return older, recent
 
 
