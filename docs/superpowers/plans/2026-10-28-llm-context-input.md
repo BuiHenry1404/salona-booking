@@ -158,7 +158,7 @@ git commit -m "feat(context): add 14-day reference calendar and last-session slo
 - Produces in `app/services/conversation_state.py`:
   - `ConversationStateService.record_tool_facts(self, user_id: str, *, intent: Optional[str] = None, day: Optional[str] = None, time: Optional[str] = None, service: Optional[str] = None, declined_iso: Optional[str] = None, clear_active: bool = False) -> Optional[ConversationSlots]`
 
-- [ ] **Step 1: Write the failing tests in `tests/test_conversation_slots.py` and `tests/test_conversation_sessions.py`**
+- [x] **Step 1: Write the failing tests in `tests/test_conversation_slots.py` and `tests/test_conversation_sessions.py`**
 
 Add `TestRecordToolFacts` at the end of `tests/test_conversation_slots.py`:
 
@@ -247,12 +247,12 @@ async def test_short_session_without_compaction_still_saves_episodic_memory_pres
     assert session.slots.day == "2026-10-29"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_conversation_slots.py -k "TestRecordToolFacts" tests/test_conversation_sessions.py -k "short_session_without_compaction" -v`
 Expected: FAIL (`AttributeError: 'ConversationStateService' object has no attribute 'record_tool_facts'`).
 
-- [ ] **Step 3: Implement `tool_day` and `record_tool_facts` in `app/models/conversation.py` and `app/services/conversation_state.py`**
+- [x] **Step 3: Implement `tool_day` and `record_tool_facts` in `app/models/conversation.py` and `app/services/conversation_state.py`**
 
 1. In `app/models/conversation.py:113`, add `tool_day: Optional[str] = None` to `ConversationState`:
 
@@ -356,12 +356,12 @@ Expected: FAIL (`AttributeError: 'ConversationStateService' object has no attrib
              return None
      ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_conversation_slots.py tests/test_conversation_state_service.py tests/test_conversation_sessions.py -v`
 Expected: PASS (100% green).
 
-- [ ] **Step 5: Commit Phase 2**
+- [x] **Step 5: Commit Phase 2**
 
 ```bash
 git add app/models/conversation.py app/services/conversation_state.py tests/test_conversation_slots.py tests/test_conversation_sessions.py
