@@ -1,125 +1,129 @@
-# Kiến trúc Đọc Hiểu Đầu Vào bằng LLM + Context Xuyên Suốt Phiên — Thiết Kế
+# Kiến trúc Tool `parse_time` Thuần Python (0 Sub-LLM, 0 Regex) + Working Memory Xuyên Suốt Phiên — Thiết Kế
 
 Ngày: 2026-10-28.
 
 ## 1. Vì sao (Motivation)
 
-Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-design.md`), rà soát thực tế và kiểm thử live cho thấy kiến trúc tầng đầu vào của `app/agents/booking_graph/` vẫn còn 3 điểm bất cập cốt lõi:
+Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-design.md`), rà soát toàn bộ luồng Context Engineering và kiểm thử live cho thấy kiến trúc của `app/agents/booking_graph/` còn **4 lỗ hổng làm rớt ngữ cảnh giữa các lượt** và **1 anti-pattern lớn trong `timeparse.py`**:
 
-1. **Hai bộ não cùng đọc một câu nói (Input Token-Matching cạnh tranh với LLM):**
-   - Các module `supervisor.py`, `relatives.py`, và `reply.py` vẫn dùng các hàm đếm từ trong `tokens.py` (`asks_if_relative_free`, `defers`, `_has_negation`, `_is_question`, `has_aside`, `veto_reason`, `is_go_ahead`, `is_short_affirmation`) để tự đoán ý khách trên chuỗi chữ thô, thay vì tin vào kết quả phân tích ngữ cảnh có cấu trúc `TurnAnalysis` của `analyzer.analyze_turn`.
-2. **Anti-pattern "LLM gọi Tool, Tool lại gọi Sub-LLM mù ngữ cảnh" trong `parse_time`:**
-   - `Booking Agent` (vốn đã là một LLM có đầy đủ lịch sử hội thoại, `context_block` và `ConversationSlots`) khi gọi tool `parse_time(text)` chỉ truyền một mảnh chữ cắt rời.
-   - Bên trong `timeparse.py`, hàm `_ask_model` lại gọi một **Sub-LLM thứ hai** không hề nhìn thấy lịch sử hội thoại hay ngày đang bàn (`anchor`), dẫn tới vừa tốn thêm ~1.5–2 giây/lượt, vừa sinh lỗi quên ngày (khi khách chỉ đáp `"10 giờ 15 sáng"`) hoặc hiểu sai `"2 giờ chiều cùng ngày"` thành ngày hôm nay.
-3. **`tokens.py` ôm cả việc hiểu đầu vào lẫn kiểm tra đầu ra:**
-   - Các hàm như `names_a_day`, `names_a_clock`, `padded_unaccented_only` chỉ tồn tại để phục vụ việc đoán ý khách ở đầu vào.
+### 1.1. Bốn lỗ hổng làm mất Context giữa các lượt (Context Loss)
+1. **Toàn bộ `ToolMessage` bị vứt bỏ cuối mỗi lượt (`agents.py:159-160, 208-210`, `graph.py:51`):**
+   - Sub-agent (`booking`, `shop`, `social`) chạy với `checkpointer=False`. Khi kết thúc lượt, `make_agent_node` chỉ lấy chuỗi `AIMessage.content` cuối cùng, xoá sạch mọi `ToolMessage` (kết quả của `parse_time`, `find_free_slots`, lỗi `propose_appointment`). Thứ duy nhất được giữ lại là `proposal_id` và `queued` qua `ConfirmMiddleware`.
+   - Hệ quả: Ở Lượt $N$, `parse_time` tìm ra `partial_date: "2026-10-28"` hoặc `find_free_slots` báo 3 giờ trống; sang Lượt $N+1$, toàn bộ JSON đó biến mất.
+2. **`ConversationSlots` (`day`, `time`, `intent`, `declined`, `told`) chỉ được ghi khi nén lịch sử (> 800 tokens):**
+   - Model `ConversationSlots` (`app/models/conversation.py`) và hàm `render_slots` (`app/agents/booking_graph/context.py`) đã được thiết kế đầy đủ để hiển thị `Trạng thái cuộc trò chuyện:` cho Agent.
+   - Tuy nhiên, `apply_turn_analysis` (`app/services/conversation_state.py:185-190`) chỉ ghi `service`, `stated`, `asked`. Còn `day`, `time`, `intent`, `declined` chỉ được ghi trong `_compact` (khi hội thoại vượt 800 tokens $\approx$ 15–20 tin nhắn), và `told` chưa từng được ghi ở bất kỳ đâu!
+   - Hệ quả: Trong 95% cuộc hội thoại đặt lịch thông thường (dưới 15 lượt), `slots.day` và `slots.time` luôn bằng `None`.
+3. **Dòng `[declined: ...]` chỉ sống đúng 1 lượt duy nhất (`context.py:553-576`):**
+   - Khi khách hoãn hoặc từ chối đề xuất ở Lượt 5, dòng `[declined: ...]` chỉ hiện ở Lượt 6. Nếu Lượt 6 khách hỏi chuyện phụ (vd. hỏi dịch vụ/giá) rồi Lượt 7 mới chốt giờ, dòng `[declined: ...]` biến mất trong khi `slots.day` vẫn là `None` $\rightarrow$ bot quên sạch ngày đang bàn.
+4. **Bộ phân tích đầu lượt (`analyzer.py`) bị "mù" bối cảnh (`supervisor.py:85`, `confirm.py:330`):**
+   - `analyze_turn` không được truyền `slots` (`Trạng thái cuộc trò chuyện`), và ở `confirm.py` thậm chí nhận lịch sử `messages=[]`.
 
-Bản thiết kế này giải quyết triệt để cả 3 vấn đề trên theo nguyên tắc:
-- **Đầu vào (User Input):** 100% do **LLM + Context xuyên suốt phiên** đọc hiểu (`analyze_turn` và `Booking Agent`). Xoá bỏ hoàn toàn việc đếm chữ đoán ý khách ở đầu vào và xoá bỏ Sub-LLM `_ask_model` trong `timeparse.py`.
-- **Tool `parse_time`:** Giữ vai trò là công cụ **hợp nhất thông tin ngày/giờ do Booking Agent LLM trích xuất với Context đang có của phiên (`ConversationSlots` / `anchor`)**, chạy **100% bằng Python thuần (0ms, 0 Sub-LLM, 0 regex)** để phát hiện khách còn thiếu ngày, thiếu giờ hay thiếu buổi (`missing`) và kiểm tra hợp lệ (`_guard`).
-- **Đầu ra (Agent Output):** Chỉ giữ `guard.py` (và các hàm tách câu/giờ cần thiết trong `tokens.py`) để kiểm duyệt câu trả lời đầu ra của AI so với dữ liệu thật trong DB.
+### 1.2. Anti-pattern "LLM gọi Tool, Tool lại gọi Sub-LLM mù ngữ cảnh" trong `parse_time`
+- `Booking Agent` (vốn đã là một LLM có đầy đủ lịch sử hội thoại, `context_block` và `ConversationSlots`) khi gọi tool `parse_time(text)` chỉ truyền một mảnh chữ cắt rời.
+- Bên trong `timeparse.py`, hàm `_ask_model` lại gọi một **Sub-LLM thứ hai** không hề nhìn thấy lịch sử hội thoại hay ngày đang bàn (`anchor`), dẫn tới vừa tốn thêm ~1.5–2.5 giây/lượt, vừa sinh lỗi quên ngày (khi khách chỉ đáp `"10 giờ 15 sáng"`) hoặc hiểu sai `"2 giờ chiều cùng ngày"` thành ngày hôm nay.
+- Ngoài ra, `timeparse.py` vẫn còn giữ 1 regex `_FULL`.
 
 ---
 
-## 2. Kiến trúc Luồng Dữ Liệu (Data Flow)
+## 2. Kiến trúc Luồng Dữ Liệu Mới (Data Flow & Working Memory)
 
 ```mermaid
 flowchart TD
-    U["1. Khách gửi tin nhắn"] --> AN["2. analyze_turn (analyzer.py)<br/>Đọc: Lịch sử gần nhất + Câu hỏi cuối của Bot + Đề xuất đang chờ<br/>Xuất: TurnAnalysis (route, reply_to_proposal, aside, mentioned_times, service, time_text)"]
-    AN -->|Đang chờ xác nhận đề xuất| CF["3a. confirm_node (confirm.py)<br/>Quyết định trực tiếp từ TurnAnalysis:<br/>- reply_to_proposal (approve / reject / change / unclear)<br/>- aside (defer_only / defer_with_request -> reject)<br/>- mentioned_times khác giờ proposal -> change"]
-    AN -->|Đặt lịch / Hỏi đáp| AG["3b. Booking / Shop / Social Agent (agents.py)<br/>Nhận: context_block + ConversationSlots + TurnAnalysis.aside"]
-    AG -->|"Gọi @tool parse_time(date?, hour?, minute?, period?, ...)"| PT["4. Tool parse_time (tools.py -> timeparse.py)<br/>Chạy 100% Python thuần (0ms, 0 Sub-LLM, 0 regex):<br/>1. Hợp nhất với ngày/giờ trong Context phiên (anchor / ConversationSlots.day)<br/>2. Phát hiện mảnh còn thiếu: ngày nào / giờ cụ thể / sáng hay chiều / tuần này hay tuần sau<br/>3. Kiểm tra _guard (quá khứ, làm tròn 15p cho 'bây giờ', trần 30 ngày)<br/>4. Lưu partial_date vào Context phiên & trả JSON {start_at, partial_date, missing}"]
-    PT -->|"JSON {start_at, partial_date, missing}"| AG
-    AG --> GD["5. GuardMiddleware (guard.py)<br/>Kiểm duyệt câu trả lời đầu ra của AI so với DB"]
+    DB[("MongoDB\nconversations.state.slots\n(Working Memory)")] -->|"1. load_context()\nLuôn nạp context_block + Lịch 14 ngày\n+ render_slots(slots)"| AN
+    U["Khách gửi tin nhắn"] --> AN["2. analyze_turn (analyzer.py)\nNhận: slots_summary + recent messages + bot_question + pending\nXuất: TurnAnalysis (route, reply_to_proposal, aside, mentioned_times, service)"]
+    AN -->|Đang chờ xác nhận đề xuất| CF["3a. confirm_node (confirm.py)\nLưới phủ quyết (reply.py) + TurnAnalysis:\n- Approve -> xóa slots.day/time/intent\n- Reject/Change -> lưu vào slots.declined & giữ slots.day"]
+    AN -->|Đặt lịch / Hỏi đáp| AG["3b. Booking / Shop / Social Agent (agents.py)\nNhận: context_block (có Lịch 14 ngày) + render_slots(slots) + aside_line"]
+    AG -->|"Gọi @tool parse_time / find_free_slots / propose / cancel"| TL["4. Tools (tools.py -> timeparse.py)\n- parse_time chạy 100% Python thuần (0ms, 0 Sub-LLM, 0 regex)\n- Tự lấy anchor từ: tham số -> đề xuất gần nhất -> slots.day\n- Ghi NGAY kết quả (day, time, intent, service, told) vào Working Memory (state.slots)"]
+    TL -->|"JSON {start_at, partial_date, missing}"| AG
+    TL -->|"record_tool_facts() (tức thì)"| DB
+    CF -->|"record_tool_facts() (declined / clear)"| DB
+    AG --> GD["5. GuardMiddleware (guard.py)\nKiểm duyệt câu trả lời đầu ra của AI so với DB"]
 ```
 
 ---
 
 ## 3. Thiết kế Chi tiết Từng Thành Phần
 
-### 3.1. Tầng Đọc Hiểu Đầu Vào (`supervisor.py`, `relatives.py`, `reply.py`, `confirm.py`)
+### 3.1. Working Memory Tức Thì (`ConversationStateService`, `context.py`, `tools.py`, `confirm.py`)
 
-1. **`supervisor.py`:**
-   - Giữ nhánh kiểm tra trạng thái hệ thống `if live_queue(state.get("queued")): return {"route": "booking"}` và nhánh tái sử dụng `state.get("analysis")`.
-   - **Xoá** 2 nhánh kiểm tra chữ thô trước `analyze_turn`:
-     - `if asks_if_relative_free(text) or defers(text)`
-     - `if state.get("last_route") == "booking" and is_short_affirmation(text)`
-   - Cập nhật `ANALYZE_PROMPT` trong `prompts.py` để đảm bảo:
-     - Khi `Receptionist's last message` là câu hỏi xác nhận/đặt lịch mà khách trả lời ngắn gọn kiểu đồng ý (`"ok"`, `"ừ"`, `"chốt"`) hoặc hỏi người thân rảnh không / hẹn nhắn lại (`aside` khác `None`), `route` luôn là `"booking"`.
+1. **Lịch tham chiếu 14 ngày trong `build_context_block` (`context.py`):**
+   - Ngay dưới dòng `"Bây giờ là ..."`, bổ sung dòng lịch 14 ngày tới do code tính sẵn:
+     `Lịch 14 ngày tới: T3 27/10=2026-10-27, T4 28/10=2026-10-28, ...`
+   - Giúp cả `Booking Agent` và `analyze_turn` ánh xạ tức thì mọi cách nói ngày (`"mai"`, `"mốt"`, `"thứ Tư tuần này"`, `"thứ Năm tuần sau"`, `"Chủ nhật tới"`, `"cùng ngày"`) ra `YYYY-MM-DD` mà không bao giờ cộng nhầm ngày.
+   - Trong `render_slots(slots)` (`context.py`), dòng `Ngày đang nhắm` hiển thị kèm mã ISO:
+     `- Ngày đang nhắm: Thứ Tư 28/10 (2026-10-28)`
+     để Agent và tool nối ngày qua nhiều lượt không cần tính lại.
 
-2. **`relatives.py` & `agents.py`:**
-   - **Xoá** các hàm quét từ vựng trên chuỗi gốc: `_person_near_free`, `_has_de_verb`, `has_request`, `asks_if_relative_free`, `defers`, cùng các tập từ `_PERSONS`, `_SHOP_PERSONS`, `_FREE_WORDS`, `_DEFER_PHRASES`, `_REQUEST_VERBS`, `_TIME_HINT_WORDS`.
-   - `aside_line(analysis)` và `deferral_reply(address, previous_replies, analysis)` chỉ đọc trực tiếp trường `aside` (`"relative_free" | "defer_only" | "defer_with_request"`) từ `TurnAnalysis`.
+2. **Ghi Working Memory tức thì từ Tool & Confirm (`ConversationStateService` trong `app/services/conversation_state.py`):**
+   - Thêm phương thức `record_tool_facts(user_id, *, intent=None, day=None, time=None, service=None, told=None, declined_iso=None, clear_active=False)` dùng chung pipeline nguyên tử `_set_today_fields`:
+     - Khi **`parse_time`** giải ra `start_at` hoặc `partial_date` / `partial_hour`:
+       - Nếu có `start_at`: ghi `state.slots.day = local_start.date().isoformat()` và `state.slots.time = local_start.strftime("%H:%M")`.
+       - Nếu chỉ có `partial_date`: ghi `state.slots.day = partial_date.isoformat()`.
+       - Nếu chỉ có `partial_hour` đã rõ buổi (`0..23` và `"sáng hay chiều"` không nằm trong `missing`): ghi `state.slots.time = f"{partial_hour:02d}:{partial_minute:02d}"`.
+     - Khi **`find_free_slots`** trả về danh sách giờ trống cho ngày `parsed_day`:
+       - Ghi `state.slots.day = parsed_day.isoformat()`.
+       - Ghi vào `state.slots.told` (tối đa `MAX_TOLD = 5` mục) câu tóm tắt ngắn: `"Ngày D/M còn trống: ..."` (hoặc `"Ngày D/M đã kín lịch"`).
+     - Khi **`propose_appointment`** giữ chỗ thành công:
+       - Ghi `state.slots.intent = "reschedule" if old else "book"`, `state.slots.day = local_start.date().isoformat()`, `state.slots.time = local_start.strftime("%H:%M")`, và `state.slots.service = note` (nếu có).
+     - Khi **`cancel_appointment`** tạo đề xuất hủy:
+       - Ghi `state.slots.intent = "cancel"`, `state.slots.day = local_start.date().isoformat()`, `state.slots.time = local_start.strftime("%H:%M")`.
+     - Khi **`confirm.py`** từ chối / đổi ý (`reject` / `supersede` / nút `"no"`):
+       - Ghi mốc đề xuất vừa từ chối vào `state.slots.declined` và giữ `state.slots.day = to_local(proposal.start_at).date().isoformat()`, để kể cả sau 2–3 lượt hỏi chuyện khác, ngày khách đang bàn và giờ khách đã lắc đầu vẫn còn nguyên trong `Trạng thái cuộc trò chuyện:`.
+     - Khi **`confirm.py`** duyệt thành công (`execute_proposal` trả về `booked` / `moved` / `cancelled`):
+       - Xoá `state.slots.intent = None`, `state.slots.day = None`, `state.slots.time = None` (`clear_active=True`, vì lịch đã chính thức nằm trong `Lịch sắp tới của khách:`).
 
-3. **`reply.py` & `confirm.py`:**
-   - **Xoá** các hàm quét chữ đầu vào trong `reply.py`: `_has_negation`, `_is_question`, `has_aside`, `veto_reason`, `is_short_affirmation`, `is_go_ahead`, `_without_queued_clauses`, và `classify_reply` (đã được thay thế bởi `analyzer.analyze_turn`).
-   - Giữ lại trong `reply.py`:
-     - `_describe(proposal)`: dựng mô tả đề xuất cho `analyze_turn`.
-     - `mentions_other_time(proposal_start, now, mentioned_times, queued=())`: kiểm tra thuần dữ liệu xem danh sách `MentionedTime` trong `TurnAnalysis` có chứa mốc ngày/giờ nào khác với `proposal.start_at` (và không nằm trong `queued`) hay không.
-     - `decide(proposal, bot_question, customer_text, now, *, label_fn, veto_mode="full")`: gọi `label_fn` (tức `analyze_turn`) và kết hợp với kiểm tra `aside` + `mentioned_times` để trả về `"approve" | "reject" | "change" | "unclear"`.
+3. **Cập nhật `apply_turn_analysis` (`app/services/conversation_state.py`):**
+   - Ngoài `service`, `stated`, `asked`, nếu `TurnAnalysis.mentioned_times` có mốc ngày/giờ rõ ràng (ví dụ khách nói `"sáng thứ 4 tuần này"` rồi kèm `"để chị hỏi lại nó đã"` khiến lượt đó trả lời bằng `deferral_reply` mà chưa gọi tool), `apply_turn_analysis` cũng trích `day` và `time` lưu vào `state.slots.day` / `state.slots.time` nếu `current.day` / `current.time` đang trống.
+
+4. **Truyền Context vào `analyze_turn` (`analyzer.py`, `supervisor.py`, `confirm.py`):**
+   - Mở rộng chữ ký `analyze_turn(messages, customer_text, pending, bot_question="", state_summary="")`.
+   - Khi gọi từ `supervisor.py` và `confirm.py`, truyền `state_summary=render_slots(state.get("slots"))` và lịch sử gần nhất `recent` (kể cả trong `confirm.py`, thay vì `[]` như cũ) để `analyze_turn` luôn nắm được mạch hội thoại và trạng thái đặt lịch hiện tại.
 
 ---
 
-### 3.2. Tầng Thời Gian Thuần Python + Context Phiên (`timeparse.py` & `tools.py`)
+### 3.2. Tầng Thời Gian Thuần Python — 0 Sub-LLM, 0 Regex (`timeparse.py` & `tools.py`)
 
 1. **Xoá bỏ Sub-LLM `_ask_model` và Regex `_FULL` trong `timeparse.py`:**
    - `timeparse.py` trở thành module **100% Python thuần (0 LLM call, 0 `re.compile`)**.
-   - Xoá `_FULL`, `_match_regex`, `_PROMPT`, `_ask_model`, `put_on_anchor_day`, `anchor_day_applies`.
+   - Xoá `_FULL`, `_DAY_PATTERN`, `_TIME_PATTERN`, `_match_regex`, `_PROMPT`, `_ask_model`.
+   - Ngân sách regex toàn bộ `app/agents/booking_graph/` giảm từ **3 xuống còn 2 regex** (`timeparse.py: 0`, chỉ còn 2 regex xoá tên tool trong `guard.py`).
 
-2. **Hàm hợp nhất & kiểm tra thời gian `resolve_booking_time(...)` trong `timeparse.py`:**
-   Nhận các trường có cấu trúc do `Booking Agent` truyền vào khi gọi tool `parse_time` (hoặc từ `TurnAnalysis.mentioned_times`), kết hợp với `anchor` của phiên:
-   - Tham số đầu vào:
-     - `day: Optional[date] = None` (ngày khách nêu, đã quy ra `YYYY-MM-DD`)
-     - `hour: Optional[int] = None` (`0..23` hoặc `1..12`)
-     - `minute: int = 0` (`0..59`)
-     - `period: Optional[Literal["sáng", "trưa", "chiều", "tối"]] = None`
-     - `is_now: bool = False` (`True` khi khách nói `"bây giờ"`, `"qua liền"`, `"ngay lúc này"`)
-     - `ambiguous_week: bool = False` (`True` khi khách chỉ nói `"thứ Năm"` mà chưa rõ tuần này hay tuần sau)
-     - `now: datetime`
-     - `anchor: Optional[datetime] = None` (mốc đang bàn trong phiên)
-     - `session_day: Optional[date] = None` (ngày đã lưu trong `ConversationSlots.day` của phiên hôm nay)
-     - `hours: Optional[ShopHours] = None`
-   - Quy tắc hợp nhất với Context phiên & phát hiện `missing` (`ParsedTime`):
-     1. **Trường hợp `is_now=True`:** Trả về `_guard(ParsedTime(start_at=now), now)` (tự động đẩy lên mốc 15 phút kế tiếp).
-     2. **Trường hợp `ambiguous_week=True` (chưa rõ tuần này hay tuần sau):** Trả về `ParsedTime(missing=["tuần này hay tuần sau"], partial_hour=resolved_hour, partial_minute=minute)`.
-     3. **Xác định Ngày (`resolved_day`):**
-        - Ưu tiên 1: `day` do khách nêu ở lượt này.
-        - Ưu tiên 2: Nếu `day is None`, lấy từ `anchor.astimezone(TZ).date()` hoặc `session_day`.
-        - Nếu vẫn không có ngày:
-          - Nếu có giờ: trả về `ParsedTime(missing=["ngày nào"[, "sáng hay chiều"]], partial_hour=..., partial_minute=minute)`.
-          - Nếu không có cả giờ: trả về `ParsedTime(missing=["giờ cụ thể"])`.
-     4. **Xác định Giờ & Buổi (`resolved_hour`):**
-        - Nếu `hour is None`: đã có `resolved_day` nhưng chưa có giờ $\rightarrow$ trả về `ParsedTime(partial_date=resolved_day, missing=["giờ cụ thể"])`.
-        - Nếu có `period` (`"sáng" | "trưa" | "chiều" | "tối"`) hoặc `hour >= 13`: quy đổi ra giờ 24h qua `_to_24h(hour, period)`.
-        - Nếu `1 <= hour <= 12` và `period is None`: dùng `apply_anchor` (suy buổi từ `anchor` hoặc từ giờ mở cửa `hours` nếu chỉ có 1 buổi mở cửa; nếu cả sáng lẫn chiều đều mở và không có `anchor` $\rightarrow$ trả về `ParsedTime(partial_date=resolved_day, partial_hour=hour, partial_minute=minute, missing=["sáng hay chiều"])`).
-     5. **Kiểm tra hợp lệ cuối cùng (`_guard`):**
-        - Giữ nguyên 100% logic `_guard(candidate, now)`:
-          - Trong vòng 15 phút vừa qua (`now - 15m < start <= now`) $\rightarrow$ đẩy lên slot 15 phút kế tiếp.
-          - Đã qua trong quá khứ (`start <= now`) $\rightarrow$ `start_at=None, missing=["ngày khác — giờ đó qua mất rồi"]`.
-          - Xa quá 30 ngày (`start > now + 30d`) $\rightarrow$ `start_at=None, missing=["ngày gần hơn"]`.
+2. **Giải mã thời gian thuần Python trong `parse_vi_time` (`timeparse.py`):**
+   - Hỗ trợ đồng thời cả đầu vào có cấu trúc (`day`, `hour`, `minute`, `period`, `is_now`) do `Booking Agent` truyền VÀ chuỗi `text` tiếng Việt (nhờ bộ tách từ/giờ/ngày thuần Python trong `tokens.py` + `timeparse.py`):
+     1. **Nhận diện `"bây giờ"` / `"qua liền"` (`_is_now_phrase(text)` hoặc `is_now=True`):**
+        - Khớp các cụm `"bây giờ"`, `"giờ này"`, `"ngay bây giờ"`, `"qua liền"`, `"qua ngay"`, `"tới liền"`, `"tới ngay"`, `"giờ em qua"`, `"giờ chị qua"`, `"giờ anh qua"` (có dấu và không dấu).
+        - Trả về `_guard(ParsedTime(start_at=now), now)` (tự đẩy lên mốc 15 phút kế tiếp).
+     2. **Giải mã Ngày (`_extract_day(text, local_today, day_iso)`):**
+        - Nếu có `day_iso` (`YYYY-MM-DD`) hợp lệ: dùng ngay `date.fromisoformat(day_iso)`.
+        - Nếu `text` có dạng ISO `YYYY-MM-DD` hoặc ngày/tháng `DD/MM` (hoặc `ngày DD tháng MM`): tính ra `date` tương ứng.
+        - Nếu `text` có offset tương đối (`"hôm nay"`=0, `"mai"`/`"ngày mai"`=1, `"mốt"`/`"ngày kia"`=2; `"hôm qua"`=-1): cộng vào `local_today`.
+        - Nếu `text` có thứ trong tuần (`scan_weekdays`, `0..6`):
+          - Nếu kèm `"tuần này"` / `"nay"`: lấy ngày của thứ đó trong tuần hiện tại (hoặc tuần kế nếu thứ đó đã qua).
+          - Nếu kèm `"tuần sau"` / `"tuần tới"` (`has_next_week`): lấy ngày của thứ đó ở tuần kế tiếp.
+          - Nếu chỉ nói trống `"thứ Năm"` mà không có `"tuần này"` / `"tuần sau"` / `"nay"` / `"tới"`: đánh dấu `ambiguous_week = True` (`missing=["tuần này hay tuần sau"]`).
+     3. **Giải mã Giờ & Buổi (`_extract_clock(text, hour, minute, period)`):**
+        - Lấy từ tham số `(hour, minute, period)` nếu được truyền, hoặc từ `tokens.scan_times(text)` (hỗ trợ `"3h chiều"`, `"9 giờ rưỡi sáng"`, `"10 giờ 15"`, `"15:30"`).
+        - Nếu câu chỉ có buổi (`"sáng mai"`, `"chiều thứ Tư"`) mà không có số giờ: `has_period_only = True` (`missing=["giờ cụ thể"]`).
+     4. **Hợp nhất với `anchor` / `session_day` & Kiểm tra `_guard`:**
+        - Dùng `put_on_anchor_day` và `apply_anchor(candidate, anchor, hours)` để tự động lấy ngày hoặc buổi từ `anchor` / `session_day` khi khách chỉ nói giờ (`"10 giờ 15"`, `"đổi sang 4 giờ chiều"`, `"2 giờ chiều cùng ngày"`).
+        - Cho kết quả qua `_guard(candidate, now)` để kiểm tra giờ quá khứ (`"ngày khác — giờ đó qua mất rồi"`), cửa sổ 15 phút (`next_slot_after`), và trần 90 ngày (`"ngày gần hơn"`).
 
-3. **Tự động đọc/ghi Context phiên trong Tool `parse_time` (`tools.py`):**
-   - Trong `context_block` (`context.py`), dòng thời gian đầu tiên in kèm **lịch tham chiếu 14 ngày tới** (từ hôm nay đến 14 ngày sau: `T4 28/10=2026-10-28, T5 29/10=2026-10-29...`) để `Booking Agent` và `analyze_turn` ánh xạ tức thì mọi từ chỉ ngày (`"mai"`, `"mốt"`, `"thứ sáu tuần này"`, `"thứ ba tuần sau"`, `"cùng ngày"`) sang `YYYY-MM-DD` chính xác 100%.
-   - Khi `Booking Agent` gọi `parse_time`:
-     - Nếu `anchor` không được truyền, `parse_time` tự động tra đề xuất gần nhất trong phiên hoặc `ConversationSlots.day` của khách trong DB làm mốc neo.
-     - Nếu kết quả trả về có `partial_date` (hoặc `start_at`), `parse_time` cập nhật luôn `day` vào bộ nhớ phiên để lượt sau khách chỉ nói giờ (`"10 giờ 15 sáng nha em"`) là tự động nối được ngay.
-
----
-
-### 3.3. Thu gọn `tokens.py` & Ngân sách Regex Mới (`2 regex` toàn hệ thống)
-
-1. **`tokens.py`:**
-   - Xoá các hàm chỉ phục vụ đoán ý đầu vào: `names_a_day`, `names_a_clock`, `padded_unaccented_only`, `_DAY_MARKER_WORDS`.
-   - Chỉ giữ các hàm tiện ích phục vụ `guard.py` kiểm tra câu trả lời đầu ra của AI (`words`, `cased_words`, `padded`, `padded_bare`, `has_phrase`, `digits_in`, `split_sentences`, `split_clauses`, `scan_times`, `scan_spoken_clocks`, `has_slash_date`).
-2. **Ngân sách Regex (`tests/test_regex_budget.py`):**
-   - Toàn bộ `app/agents/booking_graph/` giảm từ **3 regex xuống còn đúng 2 regex** (chỉ còn `_TOOL_GROUP` và `_TOOL_BARE` trong `guard.py` để xoá tên tool bị lộ; `timeparse.py` giảm về **0 regex**).
+3. **Tự động lấy `anchor` từ Working Memory trong Tool `parse_time` (`tools.py`):**
+   - Tool `parse_time(text: str, anchor: Optional[str] = None, day: Optional[str] = None, hour: Optional[int] = None, minute: Optional[int] = None, period: Optional[str] = None)` giữ nguyên tương thích ngược với mọi lời gọi `parse_time(text=..., anchor=...)` đồng thời cho phép Agent truyền thêm `day`/`hour`/`minute`/`period`.
+   - Khi `anchor` không được truyền, `parse_time` tự động tra cứu mốc neo từ Working Memory theo thứ tự:
+     1. Đề xuất gần nhất của khách trong ngày hôm nay (`ProposalService(db).latest(user)` đang `pending` hoặc vừa đóng trong `DECLINED_MAX_AGE_MINUTES`).
+     2. `state.slots.day` (+ `state.slots.time` nếu có) từ `ConversationService(db).get_state(str(user.id))`.
+   - Ngay sau khi `parse_vi_time` trả về `ParsedTime`, `parse_time` gọi `ConversationStateService(db).record_tool_facts(...)` để lưu `partial_date` / `start_at` vào `state.slots` trước khi trả JSON `{"start_at", "partial_date", "missing"}` cho Agent.
 
 ---
 
 ## 4. Xử lý Lỗi & Kiểm thử (Error Handling & Testing)
 
-- **Fail-soft:** Nếu `Booking Agent` truyền sai định dạng `date` hoặc `hour` ngoài khoảng `0..23` vào `parse_time`, hàm không ném exception làm sập lượt chat mà trả về JSON `missing` tương ứng để Agent hỏi lại khách.
+- **Fail-soft:**
+  - Mọi đầu vào ngoài khoảng (`hour=25`, `anchor="không phải iso"`, câu hỏi không chứa thời gian `"chủ tiệm rảnh không con"`) đều trả về `ParsedTime(missing=["giờ cụ thể"])` thay vì ném exception.
+  - Mọi thao tác `record_tool_facts` bọc `try/except` log warning để lỗi DB tạm thời không làm hỏng kết quả tool trả về cho Agent.
 - **Kiểm thử:**
-  - Cập nhật `tests/test_timeparse.py` để kiểm thử trực tiếp `resolve_booking_time` và `parse_time` với mọi tổ hợp: đủ ngày giờ, thiếu ngày, thiếu giờ, thiếu buổi sáng/chiều, nối ngày từ `anchor` / `session_day` qua nhiều lượt (`"sáng mai"` $\rightarrow$ `"10 giờ 15"`), giờ quá khứ, giờ `"bây giờ"`, và quá 30 ngày.
-  - Cập nhật `tests/test_relatives.py`, `tests/test_reply_veto.py`, `tests/test_reply_classify.py`, `tests/test_supervisor.py` theo luồng dựa trên `TurnAnalysis`.
-  - Cập nhật `tests/test_regex_budget.py`: khoá ngân sách regex toàn `app/agents/booking_graph/` ở mức **2 regex** (`guard.py: 2`, mọi file khác kể cả `timeparse.py: 0`).
+  - `tests/test_regex_budget.py`: Khoá chặt ngân sách regex toàn `app/agents/booking_graph/` ở mức **2 regex** (`guard.py: 2`, `timeparse.py: 0`, mọi file khác `0`).
+  - `tests/test_timeparse.py`: Kiểm thử toàn diện `parse_vi_time` thuần Python (0 LLM, 0 regex) cho mọi ca: đủ ngày giờ, thiếu ngày, thiếu giờ, thiếu buổi, thứ chưa rõ tuần, `"bây giờ"` / `"giờ em qua được không"`, nối ngày/buổi từ `anchor` và `session_day`, giờ quá khứ, quá 90 ngày, và giờ ngoài khoảng (`25 giờ`).
+  - `tests/test_conversation_state_service.py` & `tests/test_tools.py`: Kiểm thử `record_tool_facts` và luồng tự động nhớ `slots.day` / `slots.time` / `slots.told` / `slots.declined` qua nhiều lượt khi gọi `parse_time`, `find_free_slots`, `propose_appointment`, `cancel_appointment`, và `confirm`.
