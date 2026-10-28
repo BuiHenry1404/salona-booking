@@ -1370,7 +1370,7 @@ git commit -m "feat(timeparse): replace sub-LLM and regex with structured pure-p
   - Auto-anchor strictly from unapproved `ProposalService(db).latest(user)` (`pending` or `DECLINED_STATUSES` within `DECLINED_MAX_AGE_MINUTES`, never `approved`) or `state.tool_day`.
   - Records facts into `state_svc.record_tool_facts` on `parse_time`, `find_free_slots` (`day` only), `propose_appointment`, and `cancel_appointment`.
 
-- [ ] **Step 1: Update `tests/test_tools.py` and `tests/test_timeparse_llm.py`**
+- [x] **Step 1: Update `tests/test_tools.py` and `tests/test_timeparse_llm.py`**
 
 In `tests/test_tools.py`:
 1. Update the 3 existing `parse_time` calls:
@@ -1575,12 +1575,12 @@ async def test_right_now_resolves_to_the_next_slot(text):
     assert result.start_at.isoformat() == "2026-08-07T14:45:00+07:00"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_tools.py -k "parse_time or working_memory" -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement structured `parse_time` and `record_tool_facts` wiring in `app/agents/booking_graph/tools.py`**
+- [x] **Step 3: Implement structured `parse_time` and `record_tool_facts` wiring in `app/agents/booking_graph/tools.py`**
 
 In `app/agents/booking_graph/tools.py`:
 1. Update imports at the top:
@@ -1734,12 +1734,12 @@ In `app/agents/booking_graph/tools.py`:
      )
      ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_tools.py tests/test_prompts.py -v`
 Expected: PASS (100% green).
 
-- [ ] **Step 5: Commit Phase 5**
+- [x] **Step 5: Commit Phase 5**
 
 ```bash
 git add app/agents/booking_graph/tools.py tests/test_tools.py tests/test_timeparse_llm.py
