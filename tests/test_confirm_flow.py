@@ -1237,3 +1237,47 @@ async def test_analyzer_runs_at_most_once_per_turn(test_db, user, models, monkey
 
     assert len(models.analyzer_calls) == 3
     assert await appointments(test_db) == 0
+
+
+async def test_working_memory_preserves_day_and_declined_slot_across_multiple_turns(
+    test_db, user, models
+):
+    """Kiểm chứng sửa lỗ hổng mất context giữa các lượt và giữa các agent:
+    - Lượt 1 (`booking`): Đề xuất 3 giờ chiều mai -> interrupt.
+    - Lượt 2 (`confirm` -> `booking`): Khách từ chối ('dạ ko em') -> đề xuất đóng,
+      Working Memory (state.slots + state.tool_day) lưu day = ngày mai & declined = [15:00].
+    - Lượt 3 (`shop`): Khách hỏi chuyện phụ ('tiệm mở cửa mấy giờ') -> sang Lượt 4,
+      dòng [declined: ...] đã hết hạn 1 lượt, NHƯNG Working Memory (Trạng thái cuộc trò chuyện)
+      vẫn giữ nguyên 'Ngày đang nhắm' và 'Đã chào mà khách không lấy', và
+      parse_time(hour=4, period='chiều') tự động nối đúng vào ngày mai (kèm day_from='anchor')."""
+    from app.agents.booking_graph.tools import make_booking_tools
+
+    await propose_turn(test_db, user, models, hour=15)
+
+    # Lượt 2: Khách từ chối -> ngay trong lượt 2, booking agent đã thấy slots.declined
+    models.agent.replies += [AIMessage("Dạ vâng, chị Lan muốn đổi sang giờ nào ạ?")]
+    await turn(test_db, user, "dạ ko em")
+    turn2_prompt = "\n".join(str(m.content) for m in models.agent.calls[-1])
+    assert "Đã chào mà khách không lấy:" in turn2_prompt
+
+    # Lượt 3: Khách hỏi chuyện phụ (qua shop agent)
+    models.sup.replies += [AIMessage("shop")]
+    models.agent.replies += [AIMessage("Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ.")]
+    await turn(test_db, user, "tiệm mở cửa mấy giờ em")
+
+    # Lượt 4: Khách nói "vậy 4 giờ chiều nha" (không nhắc lại ngày mai)
+    parse_tool = next(t for t in make_booking_tools(test_db, user) if t.name == "parse_time")
+    parsed = json.loads(await parse_tool.ainvoke({"hour": 4, "period": "chiều"}))
+    assert parsed["start_at"] == tomorrow_at(16).isoformat()
+    assert parsed["day_from"] == "anchor"
+
+    models.sup.replies += [AIMessage("booking")]
+    models.agent.replies += [AIMessage("Dạ chị muốn đặt 4 giờ chiều mai đúng không ạ?")]
+    await turn(test_db, user, "vậy 4 giờ chiều nha")
+
+    # Agent ở Lượt 4 phải nhìn thấy Trạng thái cuộc trò chuyện chứa Ngày đang nhắm & giờ đã từ chối
+    full_prompt = "\n".join(str(m.content) for m in models.agent.calls[-1])
+    assert "Trạng thái cuộc trò chuyện:" in full_prompt
+    assert "Ngày đang nhắm:" in full_prompt
+    assert "Đã chào mà khách không lấy:" in full_prompt
+
