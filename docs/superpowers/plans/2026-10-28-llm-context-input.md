@@ -35,7 +35,7 @@
   - `format_14_day_calendar(today: date) -> str` included in `build_context_block` right after the `"Bây giờ là ..."` line.
   - `render_last_session_line(session: ConversationSession, *, today: date) -> str` falling back to `session.slots` (`intent`, `service`, `day`, `time`, `stated`) when `session.digest` has no `wants`/`open`.
 
-- [ ] **Step 1: Write the failing tests in `tests/test_context_block.py`**
+- [x] **Step 1: Write the failing tests in `tests/test_context_block.py`**
 
 Add `test_empty_digest_falls_back_to_slots_summary` inside `TestRenderLastSessionLine` and `test_block_includes_14_day_reference_calendar` at the end of `tests/test_context_block.py`:
 
@@ -68,12 +68,12 @@ def test_block_includes_14_day_reference_calendar():
     assert "Thứ Năm 20/8=2026-08-20" in block
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_context_block.py -k "14_day or falls_back_to_slots" -v`
 Expected: FAIL (`Lịch 14 ngày tới:` not in `block`, and `làm móng bột` not in `line`).
 
-- [ ] **Step 3: Implement `format_14_day_calendar` and `render_last_session_line` fallback in `app/agents/booking_graph/context.py`**
+- [x] **Step 3: Implement `format_14_day_calendar` and `render_last_session_line` fallback in `app/agents/booking_graph/context.py`**
 
 In `app/agents/booking_graph/context.py`:
 1. Add `format_14_day_calendar(today: date) -> str` right above `render_last_session_line`:
@@ -130,12 +130,12 @@ def render_last_session_line(session: ConversationSession, *, today: date) -> st
         f"Bạn đang nói chuyện với: {display_name(user.full_name)}.",
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_context_block.py -v`
 Expected: PASS (100% green).
 
-- [ ] **Step 5: Commit Phase 1**
+- [x] **Step 5: Commit Phase 1**
 
 ```bash
 git add app/agents/booking_graph/context.py tests/test_context_block.py
