@@ -1,44 +1,42 @@
-# Pure-Python `parse_time` (0 Sub-LLM, 0 Regex) & Working Memory Implementation Plan
+# Structured `parse_time` (0 Sub-LLM, 0 Regex) & Working/Episodic Memory Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eliminate the blind sub-LLM (`_ask_model`) and the last regex (`_FULL`) in `timeparse.py`, and persist tool outputs (`parse_time`, `find_free_slots`, `propose_appointment`, `cancel_appointment`) and confirmation outcomes immediately into `ConversationSlots` (`state.slots` Working Memory) on every turn so context is never lost between turns.
+**Goal:** Eliminate the blind sub-LLM (`_ask_model`) and the last regex (`_FULL`) in `timeparse.py` by switching `parse_time` to structured parameters resolved in pure Python, and persist verified tool outputs (`parse_time`, `find_free_slots`, `propose_appointment`, `cancel_appointment`) and confirmation outcomes immediately into `ConversationSlots` (`state.slots`), `state.tool_day`, and `conversation_sessions` (Episodic Memory) on every turn.
 
 **Architecture:**
-1. `app/agents/booking_graph/timeparse.py` becomes 100% pure Python (`0` LLM calls, `0` `re.compile`), extracting dates, weekdays, relative offsets, periods, and `"bây giờ"` expressions via `tokens.py` and merging them with session `anchor` / `session_day` (`state.slots.day`), then running `_guard`.
-2. `ConversationStateService.record_tool_facts` (`app/services/conversation_state.py`) atomically writes `intent`, `day`, `time`, `service`, `told`, and `declined` into `conversations.state.slots` on every tool execution and confirmation decision, without waiting for the 800-token compaction threshold.
-3. `parse_time` (`app/agents/booking_graph/tools.py`) automatically resolves its fallback `anchor` / `session_day` from the latest proposal or `state.slots` when the agent omits `anchor`, and `build_context_block` (`app/agents/booking_graph/context.py`) includes a 7-day reference calendar so the main LLM never miscalculates dates.
+1. `app/agents/booking_graph/timeparse.py` becomes 100% pure Python (`0` LLM calls, `0` `re.compile`, `0` free-text regex/scanning), accepting structured parameters (`day`, `hour`, `minute`, `period`, `is_now`, `ambiguous_week`, `anchor`, `session_day`, `hours`), resolving 24-hour clock times, merging with verified `anchor` / `session_day` (marking `day_from="anchor"` when the date comes from the anchor), and running `_guard`.
+2. `ConversationStateService.record_tool_facts` (`app/services/conversation_state.py`) atomically writes `intent`, `day`, `time`, `service`, `declined` into `conversations.state.slots` and code-verified `state.tool_day` on every tool execution and confirmation decision, and immediately upserts `conversation_sessions` (preserving `updated.digest` and syncing `updated.slots`, including on `clear_active=True`).
+3. `build_context_block` (`app/agents/booking_graph/context.py`) includes a 14-day reference calendar so the Booking Agent LLM maps any Vietnamese date expression (`"mai"`, `"thứ Năm tuần sau"`, `"Chủ Nhật 20/9"`) to `YYYY-MM-DD` without arithmetic errors, and `render_last_session_line` falls back to `session.slots` when `session.digest` is empty.
+4. `parse_time` (`app/agents/booking_graph/tools.py`) automatically resolves its fallback `anchor` / `session_day` strictly from code-verified sources: an unapproved (`pending` or recently declined within `DECLINED_MAX_AGE_MINUTES`, never `approved`) proposal or `state.tool_day` (never LLM-compacted slots).
 
 **Tech Stack:** Python 3.12, FastAPI, LangGraph, Motor (AsyncIO MongoDB), Pydantic v2, Pytest.
 
 ## Global Constraints
 
 - **Ngân sách Regex toàn `app/agents/booking_graph/`:** Tối đa **2 regex** (`guard.py: 2`, `timeparse.py: 0`, mọi file khác `0`).
+- **Code không bao giờ hành động dựa trên Slots do LLM sinh:** `apply_turn_analysis` không ghi `mentioned_times` vào `state.slots`; `parse_time` chỉ lấy mốc ngày dự phòng từ `ProposalService.latest` (chưa `approved`) hoặc `state.tool_day` (chỉ do `record_tool_facts` ghi, `_compact` không bao giờ chạm tới).
 - **Agent has NO create/write tool:** `propose_appointment` và `cancel_appointment` chỉ tạo đề xuất trong `proposals`; chỉ `ProposalService.approve` trong `confirm.py` được phép ghi lịch.
-- **Giữ nguyên lưới phủ quyết `reply.py` và `relatives.py` (`0 regex`):** Không phá vỡ bất kỳ ràng buộc nào trong `AGENTS.md` và `tests/test_confirm_flow.py`.
-- **Fail-soft:** Mọi thao tác ghi Working Memory (`record_tool_facts`) phải bọc `try/except` log warning để lỗi DB thoáng qua không làm hỏng kết quả tool trong lượt hiện tại.
+- **Giữ nguyên `render_slots` nói tiếng Việt tự nhiên (không in mã ISO thô)** và giữ nguyên các lưới `0 regex` trong `supervisor.py`, `relatives.py`, `reply.py`.
+- **Fail-soft:** Mọi thao tác ghi Working/Episodic Memory (`record_tool_facts`) phải bọc `try/except` log warning để lỗi DB thoáng qua không làm hỏng kết quả tool trong lượt hiện tại.
 
 ---
 
-### Task 1: Pure-Python `timeparse.py` (0 Sub-LLM, 0 Regex) & Regex Budget Lock (`2` regex)
+### Task 1: Structured Pure-Python `timeparse.py` (0 Sub-LLM, 0 Regex) & Regex Budget Lock (`2` regex)
 
 **Files:**
-- Modify: `app/agents/booking_graph/tokens.py`
 - Modify: `app/agents/booking_graph/timeparse.py`
 - Modify: `tests/test_timeparse.py`
 - Modify: `tests/test_regex_budget.py`
 
 **Interfaces:**
-- Produces in `app/agents/booking_graph/tokens.py`:
-  - `extract_slash_dates(text: str, default_year: int) -> List[date]`
-  - `has_this_week(text: str, weekday_idx: Optional[int] = None) -> bool`
-  - `scan_periods(text: str) -> List[str]`
 - Produces in `app/agents/booking_graph/timeparse.py`:
-  - `parse_vi_time(text: str, now: datetime, timeout: float = PARSE_TIMEOUT_SECONDS, anchor: Optional[datetime] = None, hours: Optional[ShopHours] = None, *, session_day: Optional[date] = None, day_iso: Optional[str] = None, hour: Optional[int] = None, minute: Optional[int] = None, period: Optional[str] = None) -> ParsedTime` (0 LLM calls, 0 regex)
+  - `ParsedTime` with `day_from: Optional[Literal["explicit", "anchor"]] = None` and `source: Literal["code", "regex", "llm"] = "code"`
+  - `parse_vi_time(now: datetime, *, day: Optional[str] = None, hour: Optional[int] = None, minute: int = 0, period: Optional[str] = None, is_now: bool = False, ambiguous_week: bool = False, anchor: Optional[datetime] = None, session_day: Optional[date] = None, hours: Optional[ShopHours] = None) -> ParsedTime` (0 LLM calls, 0 regex)
 
 - [ ] **Step 1: Write the failing tests in `tests/test_regex_budget.py` and `tests/test_timeparse.py`**
 
-Update `tests/test_regex_budget.py` to lock the budget at 2 regexes (`guard.py: 2`, `timeparse.py` removed from `EXPECTED_BUDGET`):
+Replace `tests/test_regex_budget.py` with:
 
 ```python
 """Hàng rào số lượng regex (`re.compile`) trong tầng AI Agent (`app/agents/booking_graph/`).
@@ -47,6 +45,7 @@ Spec `2026-10-28-llm-context-input-design.md`: cắt xuống còn đúng 2 regex
 - `guard.py`: 2 (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`)
 - Mọi module khác trong `app/agents/booking_graph/` (kể cả `timeparse.py`): 0 regex.
 """
+import ast
 import pathlib
 import re
 
@@ -58,7 +57,6 @@ EXPECTED_BUDGET = {
 
 
 def test_agent_regex_budget_is_at_most_two():
-    import ast
     actual = {}
     re_importers = set()
     for path in sorted(ROOT.rglob("*.py")):
@@ -79,127 +77,768 @@ def test_agent_regex_budget_is_at_most_two():
     )
 ```
 
-Update `tests/test_timeparse.py` to test pure-Python `parse_vi_time` (including `session_day`, structured args, Vietnamese phrases, and `0` regex in `timeparse.py`):
+Replace `tests/test_timeparse.py` with the complete unit test suite for structured pure-Python `timeparse.py`:
 
 ```python
+import inspect
+import re
 from datetime import date, datetime, timedelta
 
 import pytest
 
+from app.agents.booking_graph import timeparse
 from app.agents.booking_graph.timeparse import (
     PARSE_TIMEOUT_SECONDS,
     ParsedTime,
     _guard,
+    _to_24h,
     apply_anchor,
+     apply_session_day,
     parse_vi_time,
 )
 from app.core.clock import TZ
 from app.models.shop import ShopHours
 
 NOW = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)   # Thứ Sáu 7/8/2026, 2:30 chiều
+HOURS = ShopHours(open_time="08:00", close_time="19:00")
+ANCHOR_MORNING = datetime(2026, 9, 15, 9, 0, tzinfo=TZ)
+ANCHOR_AFTERNOON = datetime(2026, 9, 15, 15, 0, tzinfo=TZ)
 
 
 def at(day, hour, minute=0):
     return datetime(2026, 8, day, hour, minute, tzinfo=TZ)
-```
 
-(In `tests/test_timeparse.py`, replace `TestRegexMatches`, `TestRegexDefers`, `TestParseViTime`, `TestParseViTimeSurvivesABadAnchorHour`, `TestAnchorDayWinsWhenTheTextNamesNoDay`, and `test_timeparse_only_compiles_the_single_fast_path_regex` with pure-Python tests covering all cases without `monkeypatch` on `_ask_model` or `build_chat_model`, and asserting `len(re.findall(r"re\.compile\(", source)) == 0`.)
+
+class TestGuard:
+    def test_lets_a_sensible_time_through(self):
+        result = _guard(ParsedTime(start_at=at(8, 15)), NOW)
+        assert result.start_at == at(8, 15)
+
+    def test_attaches_vietnam_time_when_the_model_forgets_the_offset(self):
+        naive = datetime(2026, 8, 8, 15, 0)
+        result = _guard(ParsedTime(start_at=naive), NOW)
+        assert result.start_at is not None
+        assert result.start_at.utcoffset() is not None
+        assert result.start_at == at(8, 15)
+
+    def test_a_time_already_past_is_rejected(self):
+        result = _guard(ParsedTime(start_at=at(7, 10)), NOW)
+        assert result.start_at is None
+        assert result.missing == ["ngày khác — giờ đó qua mất rồi"]
+
+    def test_a_year_off_date_is_rejected(self):
+        result = _guard(
+            ParsedTime(start_at=datetime(2025, 8, 8, 15, 0, tzinfo=TZ)), NOW
+        )
+        assert result.start_at is None
+
+    def test_a_date_too_far_ahead_is_rejected(self):
+        far = NOW + timedelta(days=120)
+        result = _guard(ParsedTime(start_at=far), NOW)
+        assert result.start_at is None
+        assert result.missing == ["ngày gần hơn"]
+
+    def test_ninety_days_ahead_is_still_allowed(self):
+        edge = NOW + timedelta(days=89)
+        assert _guard(ParsedTime(start_at=edge), NOW).start_at == edge
+
+    def test_missing_information_passes_through_untouched(self):
+        candidate = ParsedTime(
+            start_at=None, partial_date=date(2026, 8, 8), missing=["giờ cụ thể"]
+        )
+        result = _guard(candidate, NOW)
+        assert result.missing == ["giờ cụ thể"]
+        assert result.partial_date == date(2026, 8, 8)
+
+    def test_guard_does_not_check_opening_hours(self):
+        three_am = _guard(ParsedTime(start_at=at(8, 3)), NOW)
+        assert three_am.start_at == at(8, 3)
+
+
+class TestTo24h:
+    @pytest.mark.parametrize(
+        "hour,period,expected",
+        [
+            (3, "chiều", 15),
+            (15, "chiều", 15),
+            (12, "trưa", 12),
+            (12, "chiều", 12),
+            (1, "trưa", 13),
+            (13, "trưa", 13),
+            (9, "sáng", 9),
+            (7, "tối", 19),
+            (19, "tối", 19),
+            (15, None, 15),
+            (0, None, 0),
+            (3, None, None),
+            (9, None, None),
+        ],
+    )
+    def test_converts_12h_and_24h_correctly(self, hour, period, expected):
+        assert _to_24h(hour, period) == expected
+
+
+class TestParseViTimeStructured:
+    async def test_full_day_and_hour_with_period(self):
+        out = await parse_vi_time(NOW, day="2026-08-08", hour=3, period="chiều")
+        assert out.start_at == at(8, 15)
+        assert out.partial_date == date(2026, 8, 8)
+        assert out.missing == []
+        assert out.day_from == "explicit"
+        assert out.source == "code"
+
+    async def test_full_day_and_24h_hour_with_period(self):
+        out = await parse_vi_time(NOW, day="2026-08-08", hour=15, minute=30, period="chiều")
+        assert out.start_at == at(8, 15, 30)
+        assert out.missing == []
+
+    async def test_day_only_asks_for_specific_hour(self):
+        out = await parse_vi_time(NOW, day="2026-08-08", period="sáng")
+        assert out.start_at is None
+        assert out.partial_date == date(2026, 8, 8)
+        assert out.missing == ["giờ cụ thể"]
+        assert out.day_from == "explicit"
+
+    async def test_day_and_ambiguous_hour_asks_for_period(self):
+        out = await parse_vi_time(NOW, day="2026-08-08", hour=3)
+        assert out.start_at is None
+        assert out.partial_date == date(2026, 8, 8)
+        assert out.partial_hour == 3
+        assert out.missing == ["sáng hay chiều"]
+
+    async def test_hour_with_period_without_day_asks_for_day(self):
+        out = await parse_vi_time(NOW, hour=3, period="chiều")
+        assert out.start_at is None
+        assert out.partial_hour == 15
+        assert out.missing == ["ngày nào"]
+
+    async def test_ambiguous_hour_without_day_asks_for_day_and_period(self):
+        out = await parse_vi_time(NOW, hour=3)
+        assert out.start_at is None
+        assert out.partial_hour == 3
+        assert out.missing == ["ngày nào", "sáng hay chiều"]
+
+    async def test_ambiguous_week_asks_which_week(self):
+        out = await parse_vi_time(NOW, ambiguous_week=True, hour=3, period="chiều")
+        assert out.start_at is None
+        assert out.missing == ["tuần này hay tuần sau"]
+
+    async def test_ambiguous_week_with_ambiguous_hour_keeps_both_questions(self):
+        out = await parse_vi_time(NOW, ambiguous_week=True, hour=3, anchor=ANCHOR_MORNING, hours=HOURS)
+        assert out.start_at is None
+        assert out.missing == ["tuần này hay tuần sau", "sáng hay chiều"]
+
+    async def test_is_now_bumps_to_next_15_minute_slot(self):
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        out = await parse_vi_time(now, is_now=True)
+        assert out.start_at == at(7, 14, 45)
+        assert out.missing == []
+        assert out.day_from == "explicit"
+
+    async def test_empty_call_asks_for_specific_time(self):
+        out = await parse_vi_time(NOW)
+        assert out.start_at is None
+        assert out.missing == ["giờ cụ thể"]
+
+    async def test_out_of_range_hour_or_minute_fails_soft(self):
+        out = await parse_vi_time(NOW, hour=25, anchor=ANCHOR_MORNING, hours=HOURS)
+        assert out.start_at is None
+        assert out.missing == ["giờ cụ thể"]
+
+        out_min = await parse_vi_time(NOW, day="2026-08-08", hour=10, minute=75)
+        assert out_min.start_at is None
+        assert out_min.partial_date == date(2026, 8, 8)
+        assert out_min.missing == ["giờ cụ thể"]
+
+
+class TestRightNow:
+    def test_right_now_becomes_the_next_slot_instead_of_being_called_past(self):
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now), now)
+        assert result.start_at == at(7, 14, 45)
+        assert result.missing == []
+
+    def test_a_time_inside_the_current_slot_also_moves_up(self):
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=at(7, 14, 30)), now)
+        assert result.start_at == at(7, 14, 45)
+
+    def test_the_bumped_time_lands_on_a_15_minute_mark(self):
+        from app.core.slots import slot_keys_for
+
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now), now)
+        assert result.start_at is not None
+        assert slot_keys_for(result.start_at, 60)
+
+    def test_exactly_on_a_slot_mark_moves_to_the_next_one(self):
+        now = datetime(2026, 8, 7, 14, 30, 0, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=now), now)
+        assert result.start_at == at(7, 14, 45)
+
+    def test_a_genuinely_past_time_is_still_rejected(self):
+        now = datetime(2026, 8, 7, 14, 32, 10, tzinfo=TZ)
+        result = _guard(ParsedTime(start_at=at(7, 10)), now)
+        assert result.start_at is None
+        assert result.missing == ["ngày khác — giờ đó qua mất rồi"]
+
+
+class TestMissingIsAClosedVocabulary:
+    def test_rejects_a_question_outside_the_vocabulary(self):
+        with pytest.raises(ValueError):
+            ParsedTime(missing=["thứ ba tuần sau là ngày nào cụ thể"])
+
+    @pytest.mark.parametrize("question", [
+        "giờ cụ thể",
+        "sáng hay chiều",
+        "ngày nào",
+        "tuần này hay tuần sau",
+        "ngày khác — giờ đó qua mất rồi",
+        "ngày gần hơn",
+    ])
+    def test_accepts_every_question_the_code_actually_asks(self, question):
+        assert ParsedTime(missing=[question]).missing == [question]
+
+
+class TestKnownDayIsNeverAskedAgain:
+    def test_the_day_question_is_dropped_when_the_day_is_known(self):
+        parsed = ParsedTime(partial_date=date(2026, 9, 15), missing=["ngày nào"])
+        assert parsed.partial_date == date(2026, 9, 15)
+        assert "ngày nào" not in parsed.missing
+
+    def test_the_week_question_is_dropped_too(self):
+        parsed = ParsedTime(
+            partial_date=date(2026, 9, 15), missing=["tuần này hay tuần sau"]
+        )
+        assert parsed.partial_date == date(2026, 9, 15)
+        assert "tuần này hay tuần sau" not in parsed.missing
+
+    def test_dropping_the_day_question_leaves_the_time_question(self):
+        parsed = ParsedTime(partial_date=date(2026, 9, 15), missing=["ngày nào"])
+        assert parsed.missing == ["giờ cụ thể"]
+
+    def test_a_known_start_needs_no_question_at_all(self):
+        parsed = ParsedTime(
+            start_at=datetime(2026, 9, 15, 15, 0, tzinfo=TZ),
+            partial_date=date(2026, 9, 15),
+            missing=["ngày nào"],
+        )
+        assert parsed.missing == []
+
+    def test_allows_asking_the_time_when_the_day_is_known(self):
+        parsed = ParsedTime(partial_date=date(2026, 9, 17), missing=["giờ cụ thể"])
+        assert parsed.partial_date == date(2026, 9, 17)
+        assert parsed.missing == ["giờ cụ thể"]
+
+    def test_allows_asking_which_day_when_no_day_is_known(self):
+        assert ParsedTime(missing=["ngày nào"]).missing == ["ngày nào"]
+
+
+class TestApplyAnchorAndSessionDay:
+    def test_no_anchor_changes_nothing(self):
+        c = ParsedTime(missing=["ngày nào"], partial_hour=10)
+        assert apply_anchor(c, None, HOURS) == c
+
+    def test_missing_day_takes_the_anchor_day_and_marks_day_from_anchor(self):
+        c = ParsedTime(missing=["ngày nào"], partial_hour=10, partial_minute=0)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+        assert out.missing == []
+        assert out.day_from == "anchor"
+
+    def test_missing_period_with_explicit_day_keeps_day_from_explicit(self):
+        c = ParsedTime(
+            missing=["sáng hay chiều"],
+            partial_date=date(2026, 9, 15),
+            partial_hour=10,
+            day_from="explicit",
+        )
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+        assert out.missing == []
+        assert out.day_from == "explicit"
+
+    def test_missing_period_afternoon_anchor(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=4)
+        out = apply_anchor(c, ANCHOR_AFTERNOON, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 16, 0, tzinfo=TZ)
+
+    def test_anchor_period_outside_hours_uses_the_other_period(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=7)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at is None and out.missing == ["sáng hay chiều"]
+
+    def test_anchor_period_outside_hours_but_other_period_open(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=6)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 18, 0, tzinfo=TZ)
+
+    def test_missing_both_day_and_period(self):
+        c = ParsedTime(missing=["ngày nào", "sáng hay chiều"], partial_hour=10)
+        out = apply_anchor(c, ANCHOR_MORNING, HOURS)
+        assert out.start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+        assert out.day_from == "anchor"
+
+    def test_missing_the_hour_itself_cannot_be_resolved(self):
+        c = ParsedTime(missing=["giờ cụ thể"], partial_date=date(2026, 9, 15))
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS).start_at is None
+
+    def test_no_hours_given_trusts_the_anchor_period(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=10)
+        assert apply_anchor(c, ANCHOR_MORNING, None).start_at == datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+
+    def test_out_of_range_hour_is_ignored_not_a_crash(self):
+        c = ParsedTime(missing=["sáng hay chiều"], partial_date=date(2026, 9, 15), partial_hour=25)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_out_of_range_minute_is_ignored_not_a_crash(self):
+        c = ParsedTime(
+            missing=["sáng hay chiều"], partial_date=date(2026, 9, 15),
+            partial_hour=10, partial_minute=70,
+        )
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_week_unknown_is_not_resolved(self):
+        c = ParsedTime(missing=["tuần này hay tuần sau"], partial_hour=10)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_week_unknown_combined_with_period_is_not_resolved(self):
+        c = ParsedTime(missing=["tuần này hay tuần sau", "sáng hay chiều"], partial_hour=3)
+        assert apply_anchor(c, ANCHOR_MORNING, HOURS) == c
+
+    def test_session_day_fills_missing_day_when_hour_and_period_are_known(self):
+        c = ParsedTime(missing=["ngày nào"], partial_hour=10, partial_minute=15)
+        out = apply_session_day(c, date(2026, 8, 8))
+        assert out.start_at == at(8, 10, 15)
+        assert out.partial_date == date(2026, 8, 8)
+        assert out.missing == []
+        assert out.day_from == "anchor"
+
+    def test_session_day_fills_partial_date_when_period_still_missing(self):
+        c = ParsedTime(missing=["ngày nào", "sáng hay chiều"], partial_hour=10)
+        out = apply_session_day(c, date(2026, 8, 8))
+        assert out.start_at is None
+        assert out.partial_date == date(2026, 8, 8)
+        assert out.missing == ["sáng hay chiều"]
+        assert out.day_from == "anchor"
+
+
+def test_timeout_constant_kept_for_compat():
+    assert PARSE_TIMEOUT_SECONDS >= 5.0
+
+
+def test_timeparse_uses_zero_regex_and_zero_llm():
+    source = inspect.getsource(timeparse)
+    assert len(re.findall(r"re\.compile\(", source)) == 0
+    assert "build_chat_model" not in source
+```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_regex_budget.py tests/test_timeparse.py -v`
-Expected: FAIL (`timeparse.py` still has `re.compile` and `_ask_model`).
+Expected: FAIL (`timeparse.py` still imports `re`, `build_chat_model`, and lacks `apply_session_day` / structured `parse_vi_time`).
 
-- [ ] **Step 3: Implement pure-Python date/time extraction in `app/agents/booking_graph/tokens.py` and `app/agents/booking_graph/timeparse.py`**
+- [ ] **Step 3: Implement pure-Python structured `timeparse.py`**
 
-In `app/agents/booking_graph/tokens.py`, add helpers `extract_slash_dates`, `scan_periods`, and `has_this_week`:
+Replace `app/agents/booking_graph/timeparse.py` with:
 
 ```python
-def extract_slash_dates(text: str, default_year: int) -> List[Tuple[int, int, int]]:
-    """Trích các bộ `(year, month, day)` từ chuỗi dạng `D/M` hoặc `D/M/YYYY`."""
-    out: List[Tuple[int, int, int]] = []
-    for raw in (text or "").split():
-        cleaned = raw.strip(".,!?;:()[]\"'«»")
-        if "/" in cleaned:
-            parts = cleaned.split("/")
-            if len(parts) in (2, 3) and all(p.isascii() and p.isdigit() for p in parts):
-                d, m = int(parts[0]), int(parts[1])
-                y = int(parts[2]) if len(parts) == 3 else default_year
-                if y < 100:
-                    y += 2000
-                if 1 <= m <= 12 and 1 <= d <= 31:
-                    out.append((y, m, d))
-    return out
+from datetime import date, datetime, timedelta
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field, model_validator
+
+from app.agents.booking_graph import tokens
+from app.core.clock import TZ
+from app.core.logging import get_logger
+from app.core.slots import SLOT_MINUTES, next_slot_after
+from app.models.shop import ShopHours
+from app.services.shop import is_within
+
+logger = get_logger(__name__)
+
+PARSE_TIMEOUT_SECONDS = 8.0
+MAX_DAYS_AHEAD = 90
+
+# Bộ câu hỏi ĐÓNG mà lễ tân được phép hỏi lại khách.
+# Hai giá trị cuối do `_guard` sinh ra.
+MissingPiece = Literal[
+    "giờ cụ thể",
+    "sáng hay chiều",
+    "ngày nào",
+    "tuần này hay tuần sau",
+    "ngày khác — giờ đó qua mất rồi",
+    "ngày gần hơn",
+]
+
+# Xác định được ngày rồi thì hai câu này thành vô nghĩa.
+_DAY_QUESTIONS = {"ngày nào", "tuần này hay tuần sau"}
 
 
-def scan_periods(text: str) -> List[str]:
-    """Các buổi được nêu trong câu (`'sáng'`, `'trưa'`, `'chiều'`, `'tối'`)."""
-    out: List[str] = []
-    for w in words(text):
-        p = _PERIOD_MAP.get(w)
-        if p and p not in out:
-            out.append(p)
-    return out
+class ParsedTime(BaseModel):
+    """Kết quả quy đổi. `start_at` khác None nghĩa là dùng được ngay."""
+
+    start_at: Optional[datetime] = Field(
+        default=None, description="Thời điểm ISO 8601 kèm múi giờ, hoặc null nếu chưa đủ thông tin"
+    )
+    missing: List[MissingPiece] = Field(
+        default_factory=list,
+        description="Còn thiếu thông tin gì, chọn trong danh sách cho sẵn",
+    )
+    partial_date: Optional[date] = Field(
+        default=None, description="Ngày đã xác định được, dùng khi chưa biết giờ"
+    )
+    partial_hour: Optional[int] = Field(
+        default=None,
+        description="Giờ đã nghe được. 0-23 nếu biết sáng/chiều; 1-12 nếu chưa biết buổi",
+    )
+    partial_minute: int = Field(default=0, description="Phút, mặc định 0")
+    day_from: Optional[Literal["explicit", "anchor"]] = Field(
+        default=None,
+        description="Nguồn gốc của ngày: 'explicit' (khách nêu) hay 'anchor' (lấy từ mốc neo đang bàn)",
+    )
+    source: Literal["code", "regex", "llm"] = "code"
+
+    @model_validator(mode="after")
+    def _a_known_day_is_never_asked_again(self):
+        """Biết ngày rồi mà vẫn hỏi lại ngày là tự mâu thuẫn.
+        ÉP về dạng đúng chứ KHÔNG ném lỗi.
+        """
+        if not (self.partial_date and _DAY_QUESTIONS & set(self.missing)):
+            return self
+
+        kept = [m for m in self.missing if m not in _DAY_QUESTIONS]
+        if not kept and self.start_at is None:
+            kept = ["giờ cụ thể"]
+        self.missing = kept
+        return self
 
 
-def has_this_week(text: str) -> bool:
-    """Câu khách có chỉ rõ tuần hiện tại (`'tuần này'`, `'thứ ... này'`, `'chủ nhật này'`, `'tới'`)."""
-    pb = padded_bare(text)
-    if has_phrase(pb, ("tuan nay", "hom nay", "bua nay")):
-        return True
-    ws = [strip_diacritics(w) for w in words(text)]
-    for i, w in enumerate(ws):
-        if w == "thu" and i + 2 < len(ws) and ws[i + 1] in _WEEKDAY_BARE_MAP and ws[i + 2] in ("nay", "toi"):
-            return True
-        if w == "chu" and i + 2 < len(ws) and ws[i + 1] == "nhat" and ws[i + 2] in ("nay", "toi"):
-            return True
-        if w == "cn" and i + 1 < len(ws) and ws[i + 1] in ("nay", "toi"):
-            return True
-    return False
+def _guard(candidate: ParsedTime, now: datetime) -> ParsedTime:
+    """Chỗ DUY NHẤT được phép nói một kết quả là dùng được.
+
+    Cố ý KHÔNG kiểm giờ mở cửa: AppointmentService đã từ chối giờ ngoài
+    shop_hours và find_free_slots đã lọc.
+    """
+    start = candidate.start_at
+    if start is None:
+        return candidate
+
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=TZ)
+
+    # Trong slot đang chạy ("bây giờ", "qua liền") thì hiểu là tới ngay, giữ chỗ ở mốc kế tiếp.
+    if now - timedelta(minutes=SLOT_MINUTES) < start <= now:
+        return candidate.model_copy(update={"start_at": next_slot_after(now), "missing": []})
+
+    # Quá slot hiện tại thì đúng là đã qua: "10 giờ sáng" nói lúc 2 giờ chiều.
+    if start <= now:
+        return candidate.model_copy(
+            update={"start_at": None, "missing": ["ngày khác — giờ đó qua mất rồi"]}
+        )
+
+    # Lưới bắt lỗi lệch năm hoặc quá xa (> 90 ngày).
+    if start > now + timedelta(days=MAX_DAYS_AHEAD):
+        logger.warning("timeparse_out_of_window", extra={"start_at": start.isoformat()})
+        return candidate.model_copy(
+            update={"start_at": None, "missing": ["ngày gần hơn"]}
+        )
+
+    return candidate.model_copy(update={"start_at": start})
+
+
+def _to_24h(hour: int, period: Optional[str]) -> Optional[int]:
+    """Quy giờ nói kiểu Việt (hoặc giờ 24h kèm buổi do Agent truyền) về giờ 24 (0..23).
+    Trả None nếu không chắc chắn buổi (1..12 không kèm buổi)."""
+    norm = tokens._PERIOD_MAP.get((period or "").strip().lower()) if period else None
+    if norm is None:
+        if hour == 0:
+            return 0
+        return hour if 13 <= hour <= 23 else None
+    if norm == "sáng":
+        return hour if 1 <= hour <= 11 else None
+    if norm == "trưa":
+        if hour == 12:
+            return 12
+        if hour == 1:
+            return 13
+        return hour if 11 <= hour <= 13 else None
+    if norm == "chiều":
+        if hour == 12:
+            return 12
+        if 1 <= hour <= 6:
+            return hour + 12
+        return hour if 13 <= hour <= 18 else None
+    if norm == "tối":
+        if 6 <= hour <= 11:
+            return hour + 12
+        return hour if 18 <= hour <= 23 else None
+    return None
+
+
+def _period_candidates(hour: int) -> List[int]:
+    """1–12 chưa biết buổi → hai ứng viên 24h; 0–23 đã biết → chính nó."""
+    if hour >= 13 or hour == 0:
+        return [hour]
+    return sorted({hour, (hour + 12) % 24})
+
+
+def apply_anchor(
+    candidate: ParsedTime, anchor: Optional[datetime], hours: Optional[ShopHours]
+) -> ParsedTime:
+    """Điền phần thiếu (ngày và/hoặc buổi) từ mốc neo — bằng code, không hỏi lại khách."""
+    if anchor is None or candidate.start_at is not None or candidate.partial_hour is None:
+        return candidate
+    missing = set(candidate.missing)
+    if "giờ cụ thể" in missing:
+        return candidate
+    if missing - {"ngày nào", "sáng hay chiều"}:
+        return candidate
+
+    if not (0 <= candidate.partial_hour <= 23) or not (0 <= candidate.partial_minute <= 59):
+        logger.warning(
+            "anchor_bad_hour",
+            extra={"partial_hour": candidate.partial_hour, "partial_minute": candidate.partial_minute},
+        )
+        return candidate
+
+    local_anchor = anchor.astimezone(TZ)
+    day_came_from_anchor = candidate.partial_date is None
+    day = candidate.partial_date or local_anchor.date()
+    minute = candidate.partial_minute or 0
+
+    if "sáng hay chiều" in missing:
+        options = _period_candidates(candidate.partial_hour)
+        anchor_is_morning = local_anchor.hour < 12
+        preferred = [h for h in options if (h < 12) == anchor_is_morning]
+        others = [h for h in options if (h < 12) != anchor_is_morning]
+        ordered = preferred + others
+        if hours is not None:
+            ordered = [
+                h
+                for h in ordered
+                if is_within(hours, datetime(day.year, day.month, day.day, h, minute, tzinfo=TZ))
+            ]
+            if len(ordered) == 2:          # cả hai đều mở — không đoán
+                return candidate
+        if not ordered:
+            return candidate
+        hour = ordered[0]
+    else:
+        hour = candidate.partial_hour
+
+    start = datetime(day.year, day.month, day.day, hour, minute, tzinfo=TZ)
+    day_from = "anchor" if day_came_from_anchor else (candidate.day_from or "explicit")
+    return candidate.model_copy(
+        update={"start_at": start, "missing": [], "partial_date": day, "day_from": day_from}
+    )
+
+
+def apply_session_day(candidate: ParsedTime, session_day: Optional[date]) -> ParsedTime:
+    """Điền ngày từ `state.tool_day` (dữ kiện ngày đã xác thực trong phiên hôm nay)
+    khi chưa có đề xuất nào làm `anchor` đầy đủ."""
+    if session_day is None or candidate.start_at is not None or candidate.partial_date is not None:
+        return candidate
+    if "tuần này hay tuần sau" in candidate.missing:
+        return candidate
+    if "ngày nào" not in candidate.missing or candidate.partial_hour is None:
+        return candidate
+    if not (0 <= candidate.partial_hour <= 23) or not (0 <= candidate.partial_minute <= 59):
+        return candidate
+
+    remaining = [m for m in candidate.missing if m != "ngày nào"]
+    if not remaining:
+        start = datetime(
+            session_day.year,
+            session_day.month,
+            session_day.day,
+            candidate.partial_hour,
+            candidate.partial_minute,
+            tzinfo=TZ,
+        )
+        return candidate.model_copy(
+            update={
+                "start_at": start,
+                "partial_date": session_day,
+                "missing": [],
+                "day_from": "anchor",
+            }
+        )
+    return candidate.model_copy(
+        update={
+            "partial_date": session_day,
+            "missing": remaining,
+            "day_from": "anchor",
+        }
+    )
+
+
+async def parse_vi_time(
+    now: datetime,
+    *,
+    day: Optional[str] = None,
+    hour: Optional[int] = None,
+    minute: int = 0,
+    period: Optional[str] = None,
+    is_now: bool = False,
+    ambiguous_week: bool = False,
+    anchor: Optional[datetime] = None,
+    session_day: Optional[date] = None,
+    hours: Optional[ShopHours] = None,
+) -> ParsedTime:
+    """Quy tham số thời gian có cấu trúc ra `ParsedTime` chuẩn bằng Python thuần (0 LLM, 0 regex)."""
+    if is_now:
+        return _guard(
+            ParsedTime(
+                start_at=now,
+                partial_date=now.astimezone(TZ).date(),
+                day_from="explicit",
+                source="code",
+            ),
+            now,
+        )
+
+    parsed_day: Optional[date] = None
+    if day:
+        try:
+            parsed_day = date.fromisoformat(day.strip())
+        except ValueError:
+            logger.warning("timeparse_bad_day", extra={"day": day[:40]})
+
+    if minute is None:
+        minute = 0
+
+    if hour is not None and (not (0 <= hour <= 23) or not (0 <= minute <= 59)):
+        logger.warning("timeparse_bad_clock", extra={"hour": hour, "minute": minute})
+        return ParsedTime(
+            partial_date=parsed_day,
+            missing=["giờ cụ thể"],
+            day_from="explicit" if parsed_day else None,
+            source="code",
+        )
+
+    norm_period = tokens._PERIOD_MAP.get((period or "").strip().lower()) if period else None
+    resolved_hour = _to_24h(hour, norm_period) if hour is not None else None
+
+    if parsed_day is not None:
+        if resolved_hour is not None:
+            start = datetime(
+                parsed_day.year, parsed_day.month, parsed_day.day, resolved_hour, minute, tzinfo=TZ
+            )
+            candidate = ParsedTime(
+                start_at=start,
+                partial_date=parsed_day,
+                partial_hour=resolved_hour,
+                partial_minute=minute,
+                missing=[],
+                day_from="explicit",
+                source="code",
+            )
+        elif hour is not None:
+            candidate = ParsedTime(
+                partial_date=parsed_day,
+                partial_hour=hour,
+                partial_minute=minute,
+                missing=["sáng hay chiều"],
+                day_from="explicit",
+                source="code",
+            )
+        else:
+            candidate = ParsedTime(
+                partial_date=parsed_day,
+                missing=["giờ cụ thể"],
+                day_from="explicit",
+                source="code",
+            )
+    elif ambiguous_week:
+        missing_list: List[MissingPiece] = ["tuần này hay tuần sau"]
+        if hour is not None and resolved_hour is None:
+            missing_list.append("sáng hay chiều")
+        candidate = ParsedTime(
+            partial_hour=resolved_hour if resolved_hour is not None else hour,
+            partial_minute=minute,
+            missing=missing_list,
+            source="code",
+        )
+    elif hour is not None:
+        if resolved_hour is not None:
+            candidate = ParsedTime(
+                partial_hour=resolved_hour,
+                partial_minute=minute,
+                missing=["ngày nào"],
+                source="code",
+            )
+        else:
+            candidate = ParsedTime(
+                partial_hour=hour,
+                partial_minute=minute,
+                missing=["ngày nào", "sáng hay chiều"],
+                source="code",
+            )
+    else:
+        if norm_period is not None:
+            fallback_day = anchor.astimezone(TZ).date() if anchor else session_day
+            if fallback_day is not None:
+                candidate = ParsedTime(
+                    partial_date=fallback_day,
+                    missing=["giờ cụ thể"],
+                    day_from="anchor",
+                    source="code",
+                )
+            else:
+                candidate = ParsedTime(missing=["ngày nào"], source="code")
+        else:
+            candidate = ParsedTime(missing=["giờ cụ thể"], source="code")
+
+    candidate = apply_anchor(candidate, anchor, hours)
+    candidate = apply_session_day(candidate, session_day)
+    return _guard(candidate, now)
 ```
-
-In `app/agents/booking_graph/timeparse.py`, remove `import re`, `build_chat_model`, `_FULL`, `_match_regex`, `_PROMPT`, `_ask_model`, and implement pure-Python `_resolve_pure_python(...)` and `parse_vi_time(...)` supporting both structured args (`day_iso`, `hour`, `minute`, `period`, `session_day`) and `text` + `anchor`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_regex_budget.py tests/test_timeparse.py tests/test_timeparse_llm.py -m "llm or not llm" -v`
-Expected: PASS (100% green, including all tests in `test_timeparse_llm.py` running in < 0.1s without Azure).
+Run: `pytest tests/test_regex_budget.py tests/test_timeparse.py -v`
+Expected: PASS (100% green).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/agents/booking_graph/tokens.py app/agents/booking_graph/timeparse.py tests/test_regex_budget.py tests/test_timeparse.py
-git commit -m "feat(timeparse): replace sub-LLM and regex with pure-python resolver"
+git add app/agents/booking_graph/timeparse.py tests/test_regex_budget.py tests/test_timeparse.py
+git commit -m "feat(timeparse): replace sub-LLM and regex with structured pure-python resolver"
 ```
 
 ---
 
-### Task 2: Working Memory & Episodic Memory Sync (`ConversationStateService.record_tool_facts`, `apply_turn_analysis`, `render_last_session_line`)
+### Task 2: Working Memory (`record_tool_facts`, `state.tool_day`), 14-Day Reference Calendar & Episodic Memory Sync (`conversation_sessions`)
 
 **Files:**
+- Modify: `app/models/conversation.py`
 - Modify: `app/services/conversation_state.py`
 - Modify: `app/agents/booking_graph/context.py`
-- Modify: `tests/test_conversation_state_service.py`
 - Modify: `tests/test_conversation_slots.py`
 - Modify: `tests/test_context_block.py`
+- Modify: `tests/test_conversation_sessions.py`
 
 **Interfaces:**
+- Produces in `app/models/conversation.py`:
+  - `ConversationState.tool_day: Optional[str] = None` (code-only field written exclusively by `record_tool_facts`, never by `_compact`)
 - Produces in `app/services/conversation_state.py`:
-  - `ConversationStateService.record_tool_facts(self, user_id: str, *, intent: Optional[str] = None, day: Optional[str] = None, time: Optional[str] = None, service: Optional[str] = None, told: Optional[str] = None, declined_iso: Optional[str] = None, clear_active: bool = False) -> None` (also upserts `conversation_sessions` Episodic Memory for today so short sessions < 800 tokens are never lost across days)
-  - Enhances `ConversationStateService.apply_turn_analysis(self, user_id: str, a: TurnAnalysis, last_bot_text: str) -> None` to also extract `day`/`time` from `a.mentioned_times` and sync `conversation_sessions`
+  - `ConversationStateService.record_tool_facts(self, user_id: str, *, intent: Optional[str] = None, day: Optional[str] = None, time: Optional[str] = None, service: Optional[str] = None, declined_iso: Optional[str] = None, clear_active: bool = False) -> None` (atomically updates `state.slots` + `state.tool_day` and syncs `conversation_sessions` with `updated.digest` and `updated.slots`, including on `clear_active=True`)
 - Produces in `app/agents/booking_graph/context.py`:
-  - Enhances `render_last_session_line(session: ConversationSession, *, today: date) -> str` to fall back to `session.slots` (`service`, `day`, `time`, `stated`) when `session.digest` has no `wants`/`open` (short session from a previous day that didn't trigger 800-token compaction)
+  - `format_14_day_calendar(today: date) -> str` included in `build_context_block`
+  - `render_last_session_line(session: ConversationSession, *, today: date) -> str` with fallback to `session.slots` when `session.digest` has no `wants`/`open`
 
-- [ ] **Step 1: Write the failing tests in `tests/test_conversation_slots.py`**
+- [ ] **Step 1: Write the failing tests in `tests/test_conversation_slots.py`, `tests/test_context_block.py`, and `tests/test_conversation_sessions.py`**
 
-Add tests in `tests/test_conversation_slots.py` under `TestApplyTurnAnalysis` and a new class `TestRecordToolFacts`:
+Add `TestRecordToolFacts` at the end of `tests/test_conversation_slots.py`:
 
 ```python
 class TestRecordToolFacts:
-    """Working Memory (`state.slots`) được cập nhật tức thì từ tool và confirm,
+    """Working Memory (`state.slots` + `state.tool_day`) và Episodic Memory
+    (`conversation_sessions`) được cập nhật tức thì từ tool và confirm,
     không cần đợi nén 800 tokens."""
 
-    async def test_records_day_time_intent_service_and_told(self, test_db):
+    async def test_records_day_time_intent_service_and_tool_day(self, test_db):
         svc = ConversationStateService(test_db)
         await svc.record_tool_facts(
             "u1",
@@ -207,14 +846,13 @@ class TestRecordToolFacts:
             day="2026-10-28",
             time="09:00",
             service="làm móng gel",
-            told="Ngày 28/10 còn trống: 9 giờ sáng, 10 giờ sáng",
         )
         state = await ConversationService(test_db).get_state("u1")
         assert state.slots.intent == "book"
         assert state.slots.day == "2026-10-28"
+        assert state.tool_day == "2026-10-28"
         assert state.slots.time == "09:00"
         assert state.slots.service == "làm móng gel"
-        assert state.slots.told == ["Ngày 28/10 còn trống: 9 giờ sáng, 10 giờ sáng"]
 
     async def test_records_declined_and_keeps_day(self, test_db):
         svc = ConversationStateService(test_db)
@@ -226,144 +864,316 @@ class TestRecordToolFacts:
         )
         state = await ConversationService(test_db).get_state("u1")
         assert state.slots.day == "2026-10-28"
+        assert state.tool_day == "2026-10-28"
         assert state.slots.declined == ["2026-10-28T09:00:00+07:00"]
 
-    async def test_clear_active_wipes_intent_day_time_after_approval(self, test_db):
+    async def test_clear_active_wipes_intent_day_time_and_tool_day_and_syncs_session(self, test_db):
+        from datetime import timedelta
+        from app.core.clock import now_utc, to_local
+        from app.repositories.conversation_session import ConversationSessionRepository
+
         svc = ConversationStateService(test_db)
-        await svc.record_tool_facts("u1", intent="book", day="2026-10-28", time="09:00", service="cắt tóc")
+        await svc.record_tool_facts(
+            "u1", intent="book", day="2026-10-28", time="09:00", service="cắt tóc"
+        )
+        today = to_local(now_utc()).date()
+        s1 = await ConversationSessionRepository(test_db).most_recent_before(
+            "u1", today + timedelta(days=1), within_days=1
+        )
+        assert s1 is not None and s1.slots.intent == "book"
+
         await svc.record_tool_facts("u1", clear_active=True)
         state = await ConversationService(test_db).get_state("u1")
         assert state.slots.intent is None
         assert state.slots.day is None
         assert state.slots.time is None
+        assert state.tool_day is None
         assert state.slots.service == "cắt tóc"
+
+        s2 = await ConversationSessionRepository(test_db).most_recent_before(
+            "u1", today + timedelta(days=1), within_days=1
+        )
+        assert s2 is not None and s2.slots.intent is None
+```
+
+Add tests in `tests/test_context_block.py` under `TestRenderLastSessionLine` and `test_block_includes_14_day_reference_calendar`:
+
+```python
+    def test_empty_digest_falls_back_to_slots_summary(self):
+        session = ConversationSession(
+            user_id="u1",
+            day=date(2026, 10, 25),
+            digest=None,
+            slots=ConversationSlots(
+                intent="book",
+                service="làm móng bột",
+                day="2026-10-28",
+                time="15:00",
+            ),
+            expires_at=datetime(2026, 11, 25, tzinfo=timezone.utc),
+        )
+        line = render_last_session_line(session, today=date(2026, 10, 26))
+        assert "làm móng bột" in line
+        assert "Thứ Tư 28/10" in line
+        assert "3 giờ chiều" in line
+
+
+def test_block_includes_14_day_reference_calendar():
+    now = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)
+    block = build_context_block(a_user(), ShopStatusView(is_busy=False), [], now=now)
+    assert "Lịch 14 ngày tới:" in block
+    assert "Thứ Sáu 7/8=2026-08-07" in block
+    assert "Thứ Bảy 8/8=2026-08-08" in block
+    assert "Thứ Năm 20/8=2026-08-20" in block
+```
+
+Add test in `tests/test_conversation_sessions.py`:
+
+```python
+async def test_short_session_without_compaction_still_saves_episodic_memory_preserving_digest(test_db):
+    """Phiên ngắn (< 800 tokens, chưa chạy _compact) khi gọi record_tool_facts
+    vẫn lưu bản conversation_sessions của hôm nay và không xoá digest đã có."""
+    repo = ConversationSessionRepository(test_db)
+    svc = ConversationStateService(test_db)
+
+    await svc.record_tool_facts("u1", intent="book", day="2026-10-29", service="nhuộm tóc")
+
+    today = to_local(now_utc()).date()
+    session = await repo.most_recent_before("u1", today + timedelta(days=1), within_days=1)
+    assert session is not None
+    assert session.slots.intent == "book"
+    assert session.slots.service == "nhuộm tóc"
+    assert session.slots.day == "2026-10-29"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_conversation_slots.py -k "TestRecordToolFacts" -v`
-Expected: FAIL with `AttributeError: 'ConversationStateService' object has no attribute 'record_tool_facts'`.
+Run: `pytest tests/test_conversation_slots.py -k "TestRecordToolFacts" tests/test_context_block.py -k "14_day or falls_back_to_slots" tests/test_conversation_sessions.py -k "short_session_without_compaction" -v`
+Expected: FAIL (`record_tool_facts`, `tool_day`, and 14-day calendar do not exist yet).
 
-- [ ] **Step 3: Implement `record_tool_facts` and `apply_turn_analysis` slot extraction in `app/services/conversation_state.py`**
+- [ ] **Step 3: Implement `tool_day`, `record_tool_facts`, 14-day calendar, and `render_last_session_line` fallback**
 
-In `app/services/conversation_state.py`, add `record_tool_facts` on `ConversationStateService` and update `apply_turn_analysis` so `mentioned_times` can populate empty `day` / `time` on `state.slots`:
+1. In `app/models/conversation.py`, add `tool_day: Optional[str] = None` to `ConversationState`:
 
 ```python
-    async def record_tool_facts(
-        self,
-        user_id: str,
-        *,
-        intent: Optional[str] = None,
-        day: Optional[str] = None,
-        time: Optional[str] = None,
-        service: Optional[str] = None,
-        told: Optional[str] = None,
-        declined_iso: Optional[str] = None,
-        clear_active: bool = False,
-    ) -> None:
-        """Ghi tức thì dữ kiện từ tool (`parse_time`, `find_free_slots`,
-        `propose_appointment`, `cancel_appointment`) và node `confirm` vào
-        Working Memory (`state.slots`) của hôm nay — fail-soft, không bao giờ ném."""
-        if not user_id:
-            return
-        try:
-            now = now_utc()
-            state = await self.conversations.get_state(user_id)
-            current = state.slots if state and state.slots else None
-            fields: dict = {"state.updated_at": now}
-
-            if clear_active:
-                fields["state.slots.intent"] = None
-                fields["state.slots.day"] = None
-                fields["state.slots.time"] = None
-            else:
-                if intent in ALLOWED_INTENTS:
-                    fields["state.slots.intent"] = intent
-                if day:
-                    fields["state.slots.day"] = day
-                if time:
-                    fields["state.slots.time"] = time
-
-            if service:
-                cleaned_service = single_line(service, NOTE_MAX)
-                if cleaned_service:
-                    fields["state.slots.service"] = cleaned_service
-
-            if told:
-                cleaned_told = clean_free_text_item(told)
-                if cleaned_told:
-                    merged_told = list(current.told) if current else []
-                    if cleaned_told not in merged_told:
-                        merged_told.append(cleaned_told)
-                    fields["state.slots.told"] = merged_told[-MAX_TOLD:]
-
-            if declined_iso:
-                merged_declined = list(current.declined) if current else []
-                norm = to_local(ensure_aware(datetime.fromisoformat(declined_iso))).isoformat()
-                if norm not in merged_declined:
-                    merged_declined.append(norm)
-                fields["state.slots.declined"] = merged_declined[-MAX_DECLINED:]
-
-            if len(fields) > 1:
-                await self._set_today_fields(user_id, fields, now)
-        except Exception as exc:
-            logger.warning("record_tool_facts_failed", extra={"user_id": user_id, "error": str(exc)[:200]})
+    failures: int = 0                # cầu chì: nén hỏng liên tiếp
+    slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate
+    tool_day: Optional[str] = None   # ngày YYYY-MM-DD chỉ do code (record_tool_facts) ghi, _compact không chạm
 ```
+
+2. In `app/services/conversation_state.py`:
+   - In `_set_today_fields`, include `"tool_day": None` in `fresh`:
+     ```python
+     fresh = {"day": day, "covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
+              "summary": [], "digest": None, "customer_quotes": [],
+              "updated_at": now, "failures": 0, "slots": {}, "tool_day": None}
+     ```
+   - Add `record_tool_facts` to `ConversationStateService`:
+     ```python
+     async def record_tool_facts(
+         self,
+         user_id: str,
+         *,
+         intent: Optional[str] = None,
+         day: Optional[str] = None,
+         time: Optional[str] = None,
+         service: Optional[str] = None,
+         declined_iso: Optional[str] = None,
+         clear_active: bool = False,
+     ) -> None:
+         """Ghi tức thì dữ kiện đã xác thực từ tool (`parse_time`, `find_free_slots`,
+         `propose_appointment`, `cancel_appointment`) và node `confirm` vào
+         Working Memory (`state.slots` + `state.tool_day`) và đồng bộ ngay sang
+         Episodic Memory (`conversation_sessions`) — fail-soft, không bao giờ ném."""
+         if not user_id:
+             return
+         try:
+             now = now_utc()
+             local_today = to_local(now).date()
+             state = await self.conversations.get_state(user_id)
+             current = state.slots if state and state.slots else None
+             fields: dict = {"state.updated_at": now}
+
+             if clear_active:
+                 fields["state.slots.intent"] = None
+                 fields["state.slots.day"] = None
+                 fields["state.slots.time"] = None
+                 fields["state.tool_day"] = None
+             else:
+                 if intent in ALLOWED_INTENTS:
+                     fields["state.slots.intent"] = intent
+                 if day:
+                     try:
+                         parsed_d = date.fromisoformat(day)
+                         if local_today <= parsed_d <= local_today + timedelta(days=MAX_DAYS_AHEAD):
+                             fields["state.slots.day"] = parsed_d.isoformat()
+                             fields["state.tool_day"] = parsed_d.isoformat()
+                     except ValueError:
+                         pass
+                 if time:
+                     try:
+                         parsed_t = datetime.strptime(time, "%H:%M").time()
+                         fields["state.slots.time"] = parsed_t.strftime("%H:%M")
+                     except ValueError:
+                         pass
+
+             if service:
+                 cleaned_service = single_line(service, NOTE_MAX)
+                 if cleaned_service:
+                     fields["state.slots.service"] = cleaned_service
+
+             if declined_iso:
+                 merged_declined = list(current.declined) if current else []
+                 norm = to_local(ensure_aware(datetime.fromisoformat(declined_iso))).isoformat()
+                 if norm not in merged_declined:
+                     merged_declined.append(norm)
+                 fields["state.slots.declined"] = merged_declined[-MAX_DECLINED:]
+
+             if len(fields) > 1:
+                 await self._set_today_fields(user_id, fields, now)
+                 updated = await self.conversations.get_state(user_id)
+                 if updated and updated.slots is not None:
+                     await self.sessions.upsert(
+                         user_id=user_id,
+                         day=local_today,
+                         digest=updated.digest,
+                         slots=updated.slots,
+                         expires_at=now + timedelta(days=SESSION_TTL_DAYS),
+                     )
+         except Exception as exc:
+             logger.warning(
+                 "record_tool_facts_failed",
+                 extra={"user_id": user_id, "error": str(exc)[:200]},
+             )
+     ```
+
+3. In `app/agents/booking_graph/context.py`:
+   - Add `format_14_day_calendar(today: date) -> str`:
+     ```python
+     def format_14_day_calendar(today: date) -> str:
+         """Bảng tra 14 ngày tới dựng sẵn bằng code để model ánh xạ thứ/ngày sang YYYY-MM-DD."""
+         items = []
+         for offset in range(14):
+             d = today + timedelta(days=offset)
+             items.append(f"{_WEEKDAYS[d.weekday()]} {d.day}/{d.month}={d.isoformat()}")
+         return "Lịch 14 ngày tới: " + ", ".join(items) + "."
+     ```
+   - Update `render_last_session_line` to fall back to `session.slots` when `digest` has no `wants`/`open`:
+     ```python
+     def render_last_session_line(session: ConversationSession, *, today: date) -> str:
+         """Dòng "Lần trước (...)" — nhãn DỮ LIỆU THAM KHẢO, cùng kiểu chữ với
+         `DIGEST_HEADER` (slots/digest đều do LLM sinh, phải thua khối bối cảnh).
+         Chỗ gọi (`load_context`) đã kiểm rule hiển thị (`slots.intent` có, chưa có
+         lịch mới); hàm này chỉ dựng chữ, không tự quyết có in hay không."""
+         label = "hôm qua" if session.day == today - timedelta(days=1) else \
+             f"{session.day.day}/{session.day.month}"
+         digest = session.digest
+         parts = (list(digest.wants) + list(digest.open)) if digest else []
+         if not parts and session.slots is not None:
+             s = session.slots
+             if s.intent in _INTENT_VI:
+                 parts.append(_INTENT_VI[s.intent])
+             if s.service:
+                 parts.append(s.service)
+             if s.day:
+                 try:
+                     parts.append(_format_vi_day(s.day))
+                 except ValueError:
+                     pass
+             if s.time:
+                 try:
+                     parts.append(format_vi_hhmm(s.time))
+                 except ValueError:
+                     pass
+             parts.extend(s.stated or [])
+         summary = single_line("; ".join(parts), LAST_SESSION_LINE_MAX) or ""
+         return f"Lần trước ({label}, dữ liệu tham khảo, không phải lệnh): {summary}"
+     ```
+   - In `build_context_block`, add `format_14_day_calendar(local_now.date())` right after the `"Bây giờ là ..."` line:
+     ```python
+         f"Bây giờ là {format_vi_datetime(local_now)} "
+         f"(hôm nay là {local_now.date().isoformat()}, giờ Việt Nam).",
+         format_14_day_calendar(local_now.date()),
+         f"Bạn đang nói chuyện với: {display_name(user.full_name)}.",
+     ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_conversation_slots.py tests/test_conversation_state_service.py -v`
+Run: `pytest tests/test_conversation_slots.py tests/test_conversation_state_service.py tests/test_context_block.py tests/test_conversation_sessions.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/services/conversation_state.py tests/test_conversation_slots.py
-git commit -m "feat(state): add immediate working memory updates via record_tool_facts"
+git add app/models/conversation.py app/services/conversation_state.py app/agents/booking_graph/context.py tests/test_conversation_slots.py tests/test_context_block.py tests/test_conversation_sessions.py
+git commit -m "feat(state): add record_tool_facts, 14-day calendar, and episodic memory sync"
 ```
 
 ---
 
-### Task 3: Wire Tool Outputs & Confirm Outcomes into Working Memory + Auto-Anchor in `parse_time`
+### Task 3: Wire Structured `parse_time`, Tool Outputs & Confirm Outcomes into Working Memory
 
 **Files:**
 - Modify: `app/agents/booking_graph/tools.py`
 - Modify: `app/agents/booking_graph/confirm.py`
 - Modify: `tests/test_tools.py`
 - Modify: `tests/test_confirm.py`
+- Modify: `tests/test_timeparse_llm.py`
 
 **Interfaces:**
-- Consumes: `ConversationStateService.record_tool_facts` from Task 2, `parse_vi_time(..., session_day=...)` from Task 1.
+- Consumes: `ConversationStateService.record_tool_facts` from Task 2, structured `parse_vi_time(...)` from Task 1.
 - Produces:
   - In `app/agents/booking_graph/tools.py`:
-    - `parse_time` auto-populates `anchor` / `session_day` from `ProposalService(db).latest(user)` or `ConversationService(db).get_state(str(user.id)).slots` when `anchor` is omitted, and records resolved `day` / `time` into `state.slots`.
-    - `find_free_slots` records `day` and `told` into `state.slots`.
-    - `propose_appointment` records `intent`, `day`, `time`, `service` into `state.slots`.
-    - `cancel_appointment` records `intent="cancel"`, `day`, `time` into `state.slots`.
+    - `parse_time(day: Optional[str] = None, hour: Optional[int] = None, minute: int = 0, period: Optional[str] = None, is_now: bool = False, ambiguous_week: bool = False, anchor: Optional[str] = None) -> str`
+    - Safe auto-anchor lookup: only from `ProposalService(db).latest(user)` when `status == "pending"` or (`status in DECLINED_STATUSES` within `DECLINED_MAX_AGE_MINUTES`, NEVER `approved`), or `state.tool_day` from today's `ConversationState`.
+    - Returns `"day_from": "anchor"` in JSON when the date was filled from `anchor` / `tool_day`.
+    - Records verified facts into `ConversationStateService(db).record_tool_facts` on `parse_time`, `find_free_slots` (`day` only), `propose_appointment`, and `cancel_appointment`.
   - In `app/agents/booking_graph/confirm.py`:
-    - `execute_proposal` clears active booking target (`clear_active=True`) when outcome is `"booked"`, `"moved"`, or `"cancelled"`.
-    - Reject/supersede (both text and button `"no"`) records `declined_iso` and keeps `day` in `state.slots`.
+    - `execute_proposal` clears active booking target (`clear_active=True`) when `result.outcome == "approved"`.
+    - Reject/supersede (both text and button `"no"`) records `declined_iso` and keeps `day` in `state.slots` + `state.tool_day`.
 
 - [ ] **Step 1: Write the failing tests in `tests/test_tools.py` and `tests/test_confirm.py`**
 
-Add tests in `tests/test_tools.py` under `TestParseTimeAnchor`:
+In `tests/test_tools.py`:
+1. Update the 3 existing `parse_time` calls (`test_parse_time_returns_json_the_agent_can_hand_straight_on`, `test_parse_time_says_what_is_missing_instead_of_guessing`, `TestParseTimeAnchor.test_bad_anchor_is_ignored_not_fatal`) to pass structured arguments (`{"day": tomorrow_at(15).date().isoformat(), "hour": 3, "period": "chiều"}`, `{"day": tomorrow_at(15).date().isoformat(), "period": "sáng"}`, `{"hour": 10, "anchor": "không phải iso"}`).
+2. Add the new tests under `TestParseTimeAnchor`:
 
 ```python
-    async def test_parse_time_remembers_day_across_turns_via_working_memory(self, test_db):
+    async def test_parse_time_remembers_day_across_turns_via_tool_day_and_flags_day_from_anchor(self, test_db):
         """Lượt 1 khách nói 'sáng mai' (chưa có giờ) -> parse_time lưu partial_date
-        vào state.slots.day. Lượt 2 khách chỉ nói '10 giờ 15 sáng' mà agent không
-        truyền anchor hay ngày -> parse_time tự nối với state.slots.day."""
+        vào state.tool_day & state.slots.day. Lượt 2 khách chỉ nói '10 giờ 15 sáng'
+        mà agent quên truyền day/anchor -> parse_time tự nối với state.tool_day
+        và báo day_from='anchor'."""
         user = await a_user(test_db)
         tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        day_iso = tomorrow_at(9).date().isoformat()
 
-        out1 = json.loads(await tool.ainvoke({"text": "sáng mai"}))
+        out1 = json.loads(await tool.ainvoke({"day": day_iso, "period": "sáng"}))
         assert out1["start_at"] is None
-        assert out1["partial_date"] is not None
+        assert out1["partial_date"] == day_iso
 
-        out2 = json.loads(await tool.ainvoke({"text": "10 giờ 15 sáng"}))
+        out2 = json.loads(await tool.ainvoke({"hour": 10, "minute": 15, "period": "sáng"}))
         assert out2["start_at"] is not None
-        assert out2["start_at"].startswith(out1["partial_date"])
+        assert out2["start_at"].startswith(day_iso)
         assert "T10:15:00+07:00" in out2["start_at"]
+        assert out2["day_from"] == "anchor"
+
+    async def test_parse_time_never_uses_an_approved_proposal_as_auto_anchor(self, test_db):
+        """Đề xuất đã được duyệt (approved) là lịch đã chốt xong — sang câu mới
+        khách hỏi '10 giờ sáng' không kèm ngày thì PHẢI hỏi 'ngày nào', tuyệt đối
+        không tự neo vào đề xuất đã approved."""
+        from app.core.clock import now_utc
+        from app.services.proposal import ProposalService
+
+        user = await a_user(test_db)
+        proposals = ProposalService(test_db)
+        p = await proposals.create(user, "book", tomorrow_at(15), "làm tóc")
+        await proposals.approve(user, str(p.id), turn_at=now_utc() + timedelta(seconds=5))
+
+        tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        out = json.loads(await tool.ainvoke({"hour": 10, "period": "sáng"}))
+        assert out["start_at"] is None
+        assert out["missing"] == ["ngày nào"]
 
     async def test_find_free_slots_and_propose_populate_working_memory(self, test_db):
         from app.services.conversation import ConversationService
@@ -376,7 +1186,8 @@ Add tests in `tests/test_tools.py` under `TestParseTimeAnchor`:
         await by_name(btools, "find_free_slots").ainvoke({"day": day_iso, "part_of_day": "chiều"})
         state1 = await ConversationService(test_db).get_state(str(user.id))
         assert state1.slots.day == day_iso
-        assert state1.slots.told
+        assert state1.tool_day == day_iso
+        assert state1.slots.told == []
 
         await by_name(btools, "propose_appointment").ainvoke(
             {"start_at": start.isoformat(), "note": "làm móng bột"}
@@ -388,7 +1199,7 @@ Add tests in `tests/test_tools.py` under `TestParseTimeAnchor`:
         assert state2.slots.service == "làm móng bột"
 ```
 
-Add test in `tests/test_confirm.py`:
+Add tests in `tests/test_confirm.py`:
 
 ```python
 async def test_rejecting_a_proposal_records_declined_in_working_memory(test_db, classifier):
@@ -404,38 +1215,347 @@ async def test_rejecting_a_proposal_records_declined_in_working_memory(test_db, 
     state = await ConversationService(test_db).get_state(str(user.id))
     assert state is not None and state.slots is not None
     assert state.slots.day == tomorrow_at(15).date().isoformat()
+    assert state.tool_day == tomorrow_at(15).date().isoformat()
     assert tomorrow_at(15).isoformat() in state.slots.declined
+
+
+async def test_approving_a_proposal_clears_active_working_memory(test_db, classifier):
+    from app.services.conversation import ConversationService
+    from app.services.conversation_state import ConversationStateService
+
+    user = await a_user(test_db)
+    await ConversationStateService(test_db).record_tool_facts(
+        str(user.id), intent="book", day=tomorrow_at(15).date().isoformat(), time="15:00"
+    )
+    pid = await book_proposal(test_db, user, hour=15)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    await answer(graph, "ừ đặt đi em")
+
+    state = await ConversationService(test_db).get_state(str(user.id))
+    assert state is not None and state.slots is not None
+    assert state.slots.intent is None
+    assert state.slots.day is None
+    assert state.slots.time is None
+    assert state.tool_day is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_tools.py -k "working_memory" tests/test_confirm.py -k "working_memory" -v`
-Expected: FAIL (`state` is `None` because tools and confirm do not call `record_tool_facts` yet).
+Run: `pytest tests/test_tools.py -k "working_memory or tool_day or approved_proposal" tests/test_confirm.py -k "working_memory" -v`
+Expected: FAIL.
 
-- [ ] **Step 3: Implement Working Memory wiring in `app/agents/booking_graph/tools.py` and `app/agents/booking_graph/confirm.py`**
+- [ ] **Step 3: Implement Working Memory wiring in `app/agents/booking_graph/tools.py`, `app/agents/booking_graph/confirm.py`, and update `tests/test_timeparse_llm.py`**
 
-In `app/agents/booking_graph/tools.py`:
-- Instantiate `state_svc = ConversationStateService(db)` in `make_booking_tools`.
-- In `parse_time`: if `anchor_dt is None`, check `proposals.latest(user)` (if `pending` or closed within `DECLINED_MAX_AGE_MINUTES`, use `latest.start_at` as `anchor_dt`) and `state_svc.conversations.get_state(str(user.id))` (extract `session_day` from `state.slots.day`, and if `anchor_dt is None` and `state.slots.time` is set, combine `session_day` + `state.slots.time` into `anchor_dt`).
-- After `parse_vi_time` returns `parsed`: call `await state_svc.record_tool_facts(...)` with `day` and `time`.
-- In `find_free_slots`: call `await state_svc.record_tool_facts(str(user.id), day=day, told=...)`.
-- In `propose_appointment`: call `await state_svc.record_tool_facts(str(user.id), intent="reschedule" if old else "book", day=to_local(start).date().isoformat(), time=to_local(start).strftime("%H:%M"), service=note)`.
-- In `cancel_appointment`: call `await state_svc.record_tool_facts(str(user.id), intent="cancel", day=to_local(appt.start_at).date().isoformat(), time=to_local(appt.start_at).strftime("%H:%M"))`.
+1. In `app/agents/booking_graph/tools.py`:
+   - Import `DECLINED_MAX_AGE_MINUTES, DECLINED_STATUSES` from `app.agents.booking_graph.context`, `ensure_aware` from `app.core.clock`, `timedelta` from `datetime`, and `ConversationStateService` from `app.services.conversation_state`.
+   - In `make_booking_tools(db, user)`:
+     ```python
+     service = AppointmentService(db)
+     proposals = ProposalService(db)
+     state_svc = ConversationStateService(db)
 
-In `app/agents/booking_graph/confirm.py`:
-- In `execute_proposal`: when `result.outcome == "approved"`, call `await ConversationStateService(db).record_tool_facts(str(user.id), clear_active=True)`.
-- In `_handle_button` (`button == "no"`) and `make_confirm_node` (`decision in ("change", "reject")` or second `unclear`): call `await ConversationStateService(db).record_tool_facts(str(user.id), day=to_local(proposal.start_at).date().isoformat(), declined_iso=to_local(proposal.start_at).isoformat())`.
+     @tool
+     async def parse_time(
+         day: Optional[str] = None,
+         hour: Optional[int] = None,
+         minute: int = 0,
+         period: Optional[str] = None,
+         is_now: bool = False,
+         ambiguous_week: bool = False,
+         anchor: Optional[str] = None,
+     ) -> str:
+         """Turn what the customer said about time into a concrete date and time.
+         Call this BEFORE find_free_slots and propose_appointment, every time the
+         customer mentions a time. Never compute a date yourself.
+         Extract the structured fields from the conversation and the 14-day
+         calendar in the context block:
+         - `day`: YYYY-MM-DD copied from the 14-day calendar in the context block
+           when a date is known (from this turn or an earlier turn). Leave None
+           if no date has been named yet.
+         - `ambiguous_week`: set True when the customer names a weekday without
+           specifying this week or next week. Leave `day` None in that case.
+         - `hour`: clock hour as an integer (1-12 when paired with `period` or
+           when the part of the day is unknown; 0-23 when in 24-hour format).
+         - `minute`: clock minute (0, 15, 30, 45; default 0).
+         - `period`: part of the day if stated ("sáng", "trưa", "chiều", "tối").
+         - `is_now`: set True when the customer asks to come right now / immediately.
+         - `anchor`: pass it whenever the customer is changing or answering about a
+           time already on the table — the appointment being moved (its `iso:` in
+           the context block), the slot just proposed (`held.iso` in
+           propose_appointment's result), or the proposal the customer just
+           declined (the `iso` on the context block line tagged
+           [declined: ...]). The tool then fills a missing day or part of the
+           day from it, and sets `day_from: "anchor"` so you state the full date
+           back to the customer.
+         Result has `missing` -> ask the customer for exactly that ONE missing
+         piece, one piece per turn, and nothing else. The value "sáng hay chiều"
+         is quoted from the tool's own output, not an example: it means the hour
+         is known but the part of the day is not."""
+         now = now_utc()
+         anchor_dt = None
+         if anchor:
+             try:
+                 anchor_dt = _parse_local(anchor)
+             except ValueError:
+                 logger.warning("anchor_ignored", extra={"anchor": anchor[:60]})
+
+         session_day: Optional[date] = None
+         if anchor_dt is None:
+             latest = await proposals.latest(user)
+             if latest is not None:
+                 if latest.status == "pending":
+                     anchor_dt = to_local(latest.start_at)
+                 elif (
+                     latest.status in DECLINED_STATUSES
+                     and now - ensure_aware(latest.updated_at)
+                     <= timedelta(minutes=DECLINED_MAX_AGE_MINUTES)
+                 ):
+                     anchor_dt = to_local(latest.start_at)
+             state = await state_svc.conversations.get_state(str(user.id))
+             if state and state.tool_day:
+                 try:
+                     session_day = date.fromisoformat(state.tool_day)
+                 except ValueError:
+                     session_day = None
+
+         hours = await service.shop.get_hours()
+         parsed: ParsedTime = await parse_vi_time(
+             now,
+             day=day,
+             hour=hour,
+             minute=minute,
+             period=period,
+             is_now=is_now,
+             ambiguous_week=ambiguous_week,
+             anchor=anchor_dt,
+             session_day=session_day,
+             hours=hours,
+         )
+
+         rec_day = (
+             to_local(parsed.start_at).date().isoformat()
+             if parsed.start_at is not None
+             else (parsed.partial_date.isoformat() if parsed.partial_date is not None else None)
+         )
+         rec_time = (
+             to_local(parsed.start_at).strftime("%H:%M")
+             if parsed.start_at is not None
+             else (
+                 f"{parsed.partial_hour:02d}:{parsed.partial_minute:02d}"
+                 if parsed.partial_hour is not None
+                 and 0 <= parsed.partial_hour <= 23
+                 and "sáng hay chiều" not in parsed.missing
+                 else None
+             )
+         )
+         if rec_day or rec_time:
+             await state_svc.record_tool_facts(str(user.id), day=rec_day, time=rec_time)
+
+         payload = json.loads(
+             parsed.model_dump_json(
+                 include={"start_at", "partial_date", "missing"}, exclude_none=False
+             )
+         )
+         if parsed.day_from == "anchor":
+             payload["day_from"] = "anchor"
+         return json.dumps(payload, ensure_ascii=False)
+     ```
+   - In `find_free_slots`: after `parsed_day = date.fromisoformat(day)` succeeds, call:
+     ```python
+     await state_svc.record_tool_facts(str(user.id), day=parsed_day.isoformat())
+     ```
+   - In `propose_appointment`: right after `proposal = await proposals.create(...)`, call:
+     ```python
+     local_start = to_local(start)
+     await state_svc.record_tool_facts(
+         str(user.id),
+         intent="reschedule" if old else "book",
+         day=local_start.date().isoformat(),
+         time=local_start.strftime("%H:%M"),
+         service=note,
+     )
+     ```
+   - In `cancel_appointment`: right after `proposal = await proposals.create(...)`, call:
+     ```python
+     local_appt = to_local(appt.start_at)
+     await state_svc.record_tool_facts(
+         str(user.id),
+         intent="cancel",
+         day=local_appt.date().isoformat(),
+         time=local_appt.strftime("%H:%M"),
+     )
+     ```
+
+2. In `app/agents/booking_graph/confirm.py`:
+   - Import `to_local` from `app.core.clock` and `ConversationStateService` from `app.services.conversation_state`.
+   - In `execute_proposal`: when `result.outcome == "approved"`, call:
+     ```python
+     if result.outcome == "approved":
+         await ConversationStateService(db).record_tool_facts(
+             str(user.id), clear_active=True
+         )
+     ```
+   - In `_handle_button` (`button == "no"`, right after `await proposals.reject(user, proposal_id)` succeeds):
+     ```python
+     local_p = to_local(proposal.start_at)
+     await ConversationStateService(db).record_tool_facts(
+         str(user.id),
+         day=local_p.date().isoformat(),
+         declined_iso=local_p.isoformat(),
+     )
+     ```
+   - In `make_confirm_node` (right before `logger.info("confirm_declined", ...)` when `decision` is `"change"`, `"reject"`, or second `"unclear"`):
+     ```python
+     local_p = to_local(proposal.start_at)
+     await ConversationStateService(db).record_tool_facts(
+         str(user.id),
+         day=local_p.date().isoformat(),
+         declined_iso=local_p.isoformat(),
+     )
+     ```
+
+3. Update `tests/test_timeparse_llm.py` so the `-m llm` suite tests real Azure LLM tool extraction + `parse_vi_time` end-to-end with the 14-day reference calendar:
+
+```python
+"""Gọi Azure OpenAI thật. Mặc định bị loại khỏi pytest bởi addopts trong
+`[tool.pytest.ini_options]` của pyproject.toml. Chạy tay bằng:
+pytest tests/test_timeparse_llm.py -m llm -v
+
+Đo xem Booking Agent (với Lịch 14 ngày trong context_block) trích xuất tham số
+cho `parse_time` và giải ra `ParsedTime` có chính xác với tiếng Việt thật không.
+"""
+from datetime import datetime
+from typing import Optional
+
+import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
+
+from app.agents.booking_graph.context import format_14_day_calendar, format_vi_datetime
+from app.agents.booking_graph.prompts import BOOKING_PROMPT
+from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
+from app.agents.llm import build_chat_model
+from app.core.clock import TZ
+from app.models.shop import ShopHours
+
+pytestmark = [pytest.mark.llm, pytest.mark.asyncio]
+
+NOW = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)   # Thứ Sáu 7/8/2026, 2:30 chiều
+HOURS = ShopHours(open_time="08:00", close_time="19:00")
+
+
+async def _llm_parse(text: str) -> ParsedTime:
+    captured = {}
+
+    @tool
+    async def parse_time(
+        day: Optional[str] = None,
+        hour: Optional[int] = None,
+        minute: int = 0,
+        period: Optional[str] = None,
+        is_now: bool = False,
+        ambiguous_week: bool = False,
+        anchor: Optional[str] = None,
+    ) -> str:
+        """Turn what the customer said about time into a concrete date and time."""
+        captured.update(
+            day=day,
+            hour=hour,
+            minute=minute,
+            period=period,
+            is_now=is_now,
+            ambiguous_week=ambiguous_week,
+        )
+        return "{}"
+
+    ctx = (
+        f"Bây giờ là {format_vi_datetime(NOW)} (hôm nay là {NOW.date().isoformat()}, giờ Việt Nam).\n"
+        f"{format_14_day_calendar(NOW.date())}\n"
+        "Bạn đang nói chuyện với: Lan.\nGọi khách là: chị Lan."
+    )
+    model = build_chat_model(tags=["timeparse"], streaming=False).bind_tools([parse_time])
+    ai = await model.ainvoke([
+        SystemMessage(content=BOOKING_PROMPT),
+        HumanMessage(content=f"{ctx}\n\nKhách nói: {text}"),
+    ])
+    if not ai.tool_calls:
+        return ParsedTime(missing=[])
+    args = ai.tool_calls[0]["args"]
+    return await parse_vi_time(
+        NOW,
+        day=args.get("day"),
+        hour=args.get("hour"),
+        minute=args.get("minute") or 0,
+        period=args.get("period"),
+        is_now=bool(args.get("is_now")),
+        ambiguous_week=bool(args.get("ambiguous_week")),
+        hours=HOURS,
+    )
+
+
+@pytest.mark.parametrize(
+    "text,expected_iso",
+    [
+        ("thứ Bảy này 2 giờ chiều", "2026-08-08T14:00:00+07:00"),
+        ("thứ Hai tuần sau lúc 9 giờ sáng", "2026-08-10T09:00:00+07:00"),
+        ("ngày 10/8 lúc 4 giờ chiều", "2026-08-10T16:00:00+07:00"),
+        ("trưa mai 12 giờ", "2026-08-08T12:00:00+07:00"),
+        ("chiều mai lúc 5 giờ", "2026-08-08T17:00:00+07:00"),
+    ],
+)
+async def test_understands_real_vietnamese(text, expected_iso):
+    result = await _llm_parse(text)
+    assert result.start_at is not None, f"không đọc được: {text}"
+    assert result.start_at.isoformat() == expected_iso
+
+
+@pytest.mark.parametrize(
+    "text,phai_hoi_lai",
+    [
+        ("thứ Năm", "tuần này hay tuần sau"),
+        ("sáng mai", "giờ cụ thể"),
+        ("3 giờ", "sáng hay chiều"),
+        ("khi nào cũng được", "chưa có gì cụ thể"),
+    ],
+)
+async def test_asks_back_instead_of_guessing(text, phai_hoi_lai):
+    result = await _llm_parse(text)
+    assert result.start_at is None, f"không được đoán với: {text}"
+    assert result.missing, f"phải nói rõ thiếu gì ({phai_hoi_lai}) với: {text}"
+
+
+async def test_a_question_with_no_time_returns_nothing():
+    result = await _llm_parse("chủ tiệm rảnh không")
+    assert result.start_at is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bây giờ",
+        "giờ chị qua được không",
+        "chị qua liền được không",
+        "giờ này qua được không",
+    ],
+)
+async def test_right_now_resolves_to_the_next_slot(text):
+    result = await _llm_parse(text)
+    assert result.start_at is not None, f"vẫn hỏi lại thay vì hiểu: {text} ({result.missing})"
+    assert result.start_at.isoformat() == "2026-08-07T14:45:00+07:00"
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_tools.py tests/test_confirm.py -v`
+Run: `pytest tests/test_tools.py tests/test_confirm.py tests/test_prompts.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/agents/booking_graph/tools.py app/agents/booking_graph/confirm.py tests/test_tools.py tests/test_confirm.py
-git commit -m "feat(booking_graph): persist tool outputs and confirm state into working memory"
+git add app/agents/booking_graph/tools.py app/agents/booking_graph/confirm.py tests/test_tools.py tests/test_confirm.py tests/test_timeparse_llm.py
+git commit -m "feat(booking_graph): wire structured parse_time and working memory persistence"
 ```
 
 ---
@@ -446,8 +1566,8 @@ git commit -m "feat(booking_graph): persist tool outputs and confirm state into 
 - Modify: `tests/test_confirm_flow.py`
 
 **Interfaces:**
-- Consumes: `parse_time`, `propose_appointment`, `confirm`, and `ConversationStateService.record_tool_facts` from Tasks 1–3.
-- Produces: End-to-end multi-turn regression tests in `tests/test_confirm_flow.py` proving that after a deferral/rejection and an intermediate turn, `Trạng thái cuộc trò chuyện:` (`state.slots`) and `parse_time` retain the target date and declined times without needing 800-token compaction.
+- Consumes: `make_booking_tools`, `parse_time`, `propose_appointment`, `confirm`, and `ConversationStateService.record_tool_facts` from Tasks 1–3.
+- Produces: End-to-end multi-turn regression test in `tests/test_confirm_flow.py` proving that after a rejection and an intermediate shop question turn (where the 1-turn `[declined: ...]` line has expired), `Trạng thái cuộc trò chuyện:` (`state.slots`) and `parse_time` (via `state.tool_day`) retain the target date and declined times without needing 800-token compaction.
 
 - [ ] **Step 1: Write the end-to-end test in `tests/test_confirm_flow.py`**
 
@@ -457,14 +1577,16 @@ Add `test_working_memory_preserves_day_and_declined_slot_across_multiple_turns` 
 async def test_working_memory_preserves_day_and_declined_slot_across_multiple_turns(
     test_db, user, models
 ):
-    """Kiểm chứng lỗ hổng mất context giữa các lượt:
+    """Kiểm chứng sửa lỗ hổng mất context giữa các lượt:
     - Lượt 1: Đề xuất 3 giờ chiều mai -> interrupt.
     - Lượt 2: Khách từ chối ('dạ ko em') -> đề xuất đóng, dòng [declined: ...] hiện ở Lượt 2,
-      đồng thời Working Memory (state.slots) lưu day = ngày mai & declined = [15:00].
+      đồng thời Working Memory (state.slots + state.tool_day) lưu day = ngày mai & declined = [15:00].
     - Lượt 3: Khách hỏi chuyện phụ ('tiệm mở cửa mấy giờ') -> sang Lượt 4, dòng [declined: ...]
       đã hết hạn 1 lượt, NHƯNG Working Memory (Trạng thái cuộc trò chuyện) vẫn giữ nguyên
-      'Ngày đang nhắm' và 'Đã chào mà khách không lấy', và parse_time('4 giờ chiều')
-      tự động nối đúng vào ngày mai mà không cần truyền anchor."""
+      'Ngày đang nhắm' và 'Đã chào mà khách không lấy', và parse_time(hour=4, period='chiều')
+      tự động nối đúng vào ngày mai (kèm day_from='anchor')."""
+    from app.agents.booking_graph.tools import make_booking_tools
+
     await propose_turn(test_db, user, models, hour=15)
 
     # Lượt 2: Khách từ chối
@@ -477,9 +1599,10 @@ async def test_working_memory_preserves_day_and_declined_slot_across_multiple_tu
     await turn(test_db, user, "tiệm mở cửa mấy giờ em")
 
     # Lượt 4: Khách nói "vậy 4 giờ chiều nha" (không nhắc lại ngày mai)
-    parse_tool = next(t for t in agents_booking_tools(test_db, user) if t.name == "parse_time")
-    parsed = json.loads(await parse_tool.ainvoke({"text": "vậy 4 giờ chiều nha"}))
+    parse_tool = next(t for t in make_booking_tools(test_db, user) if t.name == "parse_time")
+    parsed = json.loads(await parse_tool.ainvoke({"hour": 4, "period": "chiều"}))
     assert parsed["start_at"] == tomorrow_at(16).isoformat()
+    assert parsed["day_from"] == "anchor"
 
     models.sup.replies += [AIMessage("booking")]
     models.agent.replies += [AIMessage("Dạ chị muốn đặt 4 giờ chiều mai đúng không ạ?")]
@@ -503,4 +1626,3 @@ Expected: PASS (all 720+ tests green, 0 failures).
 git add tests/test_confirm_flow.py
 git commit -m "test(confirm_flow): verify working memory persistence across multi-turn deferral"
 ```
-
