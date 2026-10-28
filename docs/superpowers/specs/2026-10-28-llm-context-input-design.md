@@ -4,33 +4,42 @@ Ngày: 2026-10-28.
 
 ## 1. Vì sao (Motivation)
 
-Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-design.md`), rà soát toàn bộ luồng Context Engineering của `app/agents/booking_graph/` cho thấy **4 điểm đứt gãy ngữ cảnh giữa các lượt** và **1 anti-pattern trong `timeparse.py`**:
+Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-design.md`), rà soát toàn bộ luồng Context Engineering của `app/agents/booking_graph/` cho thấy **4 điểm đứt gãy ngữ cảnh giữa các lượt**, **2 điểm đứt gãy giữa các node/agent trong cùng 1 lượt**, và **1 anti-pattern trong `timeparse.py`**:
 
-### 1.1. Bốn điểm đứt gãy ngữ cảnh giữa các lượt (Context Loss)
+### 1.1. Bốn điểm đứt gãy ngữ cảnh giữa các lượt (Cross-Turn Context Loss)
 1. **Kết quả trung gian của tool chỉ sống trong 1 lượt:**
    - Thiết kế hiện tại cố ý không lưu `ToolMessage` vào thread checkpointer ngoài (`test_thread_holds_only_question_and_answer_not_tool_messages` giữ thread sạch, chỉ gồm câu hỏi khách và câu đáp lễ tân). Thứ duy nhất được giữ lại qua `ConfirmMiddleware` là `proposal_id` và `queued`.
    - Tuy nhiên, khi kết quả của `parse_time` (vd. `partial_date: "2026-10-29"` khi khách mới nói `"sáng mai"` mà chưa nói giờ) hoặc `find_free_slots` không được lưu vào Working Memory (`state.slots`), sang lượt kế tiếp dữ kiện đã xác thực đó biến mất khỏi trạng thái có cấu trúc.
 2. **`ConversationSlots` (`day`, `time`, `intent`, `declined`) chỉ được ghi khi nén lịch sử (> 800 tokens):**
-   - Model `ConversationSlots` (`app/models/conversation.py`) và hàm `render_slots` (`app/agents/booking_graph/context.py`) đã được thiết kế để hiển thị khối `Trạng thái cuộc trò chuyện:` cho Agent.
+   - Model `ConversationSlots` (`app/models/conversation.py`) và hàm `render_slots` (`app/agents/booking_graph/context.py`) đã được thiết kế để hiển thị khối `Trạng thái cuộc trò chuyện:` cho cả 3 Agent (`booking`, `shop`, `social`).
    - Thế nhưng `apply_turn_analysis` (`app/services/conversation_state.py:185-190`) chỉ ghi `service`, `stated`, `asked`. Còn `day`, `time`, `intent`, `declined` chỉ được ghi trong `_compact` (khi phần tin cũ ngoài cửa sổ vượt 800 tokens $\approx$ 15–20 tin nhắn).
    - Hệ quả: Trong phần lớn cuộc hội thoại đặt lịch thông thường (dưới 15 lượt), `slots.day`, `slots.time`, `slots.intent`, `slots.declined` luôn rỗng.
 3. **Dòng `[declined: ...]` chỉ sống đúng 1 lượt duy nhất (`context.py:553-576`):**
-   - Khi khách hoãn hoặc từ chối đề xuất ở Lượt 5, dòng `[declined: ...]` chỉ hiện ở Lượt 6. Nếu Lượt 6 khách hỏi chuyện phụ (vd. hỏi giờ mở cửa/giá) rồi Lượt 7 mới chốt giờ khác, dòng `[declined: ...]` biến mất trong khi `slots.day` và `slots.declined` vẫn rỗng $\rightarrow$ Agent mất dấu ngày đang bàn và các mốc giờ khách đã lắc đầu.
+   - Khi khách hoãn hoặc từ chối đề xuất ở Lượt 5, dòng `[declined: ...]` chỉ hiện ở Lượt 6. Nếu Lượt 6 khách hỏi chuyện phụ qua `shop` agent (vd. hỏi giờ mở cửa) rồi Lượt 7 mới quay lại `booking` agent chốt giờ khác, dòng `[declined: ...]` biến mất trong khi `slots.day` và `slots.declined` vẫn rỗng $\rightarrow$ Agent mất dấu ngày đang bàn và các mốc giờ khách đã lắc đầu.
 4. **Episodic Memory (`conversation_sessions` — dòng `"Lần trước"`) bị khoá sau ngưỡng nén 800 tokens (`conversation_state.py:311`, `context.py:375-386`):**
    - Hệ thống đã thiết kế Episodic Memory qua bảng `conversation_sessions` (TTL 30 ngày, hiển thị dòng `"Lần trước (hôm qua...)"` trong 7 ngày nếu phiên trước còn `slots.intent` dang dở mà chưa đặt lịch mới).
    - **NHƯNG** `self.sessions.upsert(...)` hiện chỉ được gọi bên trong `_compact()` (> 800 tokens). Nếu khách chat 3–5 câu rồi hẹn mai nhắn lại, `_compact()` không chạy $\rightarrow$ `conversation_sessions` không có bản ghi nào $\rightarrow$ hôm sau khách quay lại mất sạch Episodic Memory.
    - Ngoài ra, `render_last_session_line` (`context.py:382-385`) chỉ đọc `digest.wants + digest.open`; khi phiên trước ngắn (chưa có `digest`, chỉ có `slots`), dòng `"Lần trước"` bị rỗng phần mô tả.
 
-### 1.2. Anti-pattern "LLM gọi Tool, Tool lại gọi Sub-LLM mù ngữ cảnh" trong `parse_time`
+### 1.2. Hai điểm đứt gãy ngữ cảnh giữa các Node/Agent trong CÙNG 1 lượt (Same-Turn Context Loss)
+1. **Từ `supervisor` (`analyze_turn`) $\rightarrow$ Agent (`booking` / `shop` / `social`):**
+   - Ở đầu lượt, `supervise` (`supervisor.py:85-88`) gọi `analyze_turn` và trích xuất được `analysis` (`service`, `stated`, `aside`).
+   - Nhưng `apply_analysis` (`events.py:446`) lại chỉ ghi `service` và `stated` vào `state.slots` ở **cuối lượt** (sau khi Agent đã trả lời xong và phát `complete`).
+   - Hệ quả: Trong chính lượt đó, `make_agent_node` (`agents.py:186-195`) chỉ lấy `analysis` để dựng `aside_line`, còn `state["slots"]` đưa vào Agent chưa có `service` và `stated` vừa phân tích được.
+2. **Từ node `confirm` $\rightarrow$ `booking` agent khi khách từ chối / đổi ý:**
+   - Khi khách từ chối hoặc đổi giờ ở `confirm.py:387`, graph nhảy thẳng từ `confirm` sang `booking` **ngay trong cùng lượt đó** (`gate_next="booking"`).
+   - Nếu `confirm` chỉ ghi `declined` và `day` xuống MongoDB mà không trả `"slots": updated_slots` vào `GraphState`, thì `booking` chạy ngay sau đó vẫn đọc `state["slots"]` cũ (nạp từ đầu lượt trước khi `confirm` chạy).
+
+### 1.3. Anti-pattern "LLM gọi Tool, Tool lại gọi Sub-LLM mù ngữ cảnh" trong `parse_time`
 - `Booking Agent` (vốn đã là một LLM có đầy đủ lịch sử hội thoại, `context_block` và `ConversationSlots`) khi gọi tool `parse_time(text)` chỉ truyền một mảnh chữ cắt rời.
 - Bên trong `timeparse.py`, hàm `_ask_model` lại gọi một **Sub-LLM thứ hai** không thấy lịch sử hội thoại, vừa tốn thêm ~2 giây/lượt, vừa dễ đoán sai ngày khi câu khách ngắn (`"10 giờ 15 sáng"`, `"2 giờ chiều cùng ngày"`).
 - Hơn nữa, `timeparse.py` vẫn còn giữ 1 regex `_FULL`. Nếu thay `_FULL` bằng một bộ quét chữ tiếng Việt tự viết trong `timeparse.py` thì lại vi phạm bẫy #11 trong `CONTEXT.md` ("parser thứ hai làm được một nửa").
 - **Giải pháp chuẩn:** Giao việc trích xuất ngữ nghĩa thời gian cho chính **Booking Agent LLM** (dựa trên lịch tham chiếu 14 ngày trong `context_block` + lịch sử hội thoại) và truyền **tham số có cấu trúc** (`day`, `hour`, `minute`, `period`, `is_now`, `ambiguous_week`, `anchor`) vào tool `parse_time`. Bên trong `timeparse.py` chỉ làm nhiệm vụ **quy đổi 24h, hợp nhất mốc neo (`anchor` / `tool_day`) và kiểm tra hàng rào `_guard` bằng Python thuần** (0 Sub-LLM, 0 Regex, 0 bộ quét chữ tự chế).
 
-### 1.3. Phạm vi (Scope Boundary)
+### 1.4. Phạm vi (Scope Boundary)
 - Spec này tập trung giải quyết dứt điểm:
   1. Chuyển `parse_time` / `timeparse.py` sang kiến trúc tham số có cấu trúc thuần Python (0 Sub-LLM, 0 Regex).
-  2. Ghi tức thì dữ kiện xác thực từ tool và node `confirm` vào Working Memory (`state.slots` + `state.tool_day`) và đồng bộ ngay sang Episodic Memory (`conversation_sessions`).
+  2. Ghi tức thì dữ kiện xác thực từ tool và node `confirm` vào Working Memory (`state.slots` + `state.tool_day`), đồng bộ ngay sang Episodic Memory (`conversation_sessions`), và truyền tức thì giữa `supervisor` $\rightarrow$ `agent` và `confirm` $\rightarrow$ `booking` ngay trong cùng 1 lượt.
 - Các lưới kiểm tra đầu vào bằng Python thuần (`0 regex`) trong `supervisor.py`, `relatives.py` và `reply.py` (từ spec `2026-10-27-regex-reduction-design.md`) được giữ nguyên hoàn toàn.
 
 ---
@@ -39,10 +48,11 @@ Sau khi rút gọn regex từ 45 xuống 3 (spec `2026-10-27-regex-reduction-des
 
 ```mermaid
 flowchart TD
-    U["Khách gửi tin nhắn"] --> SUP["1. supervisor / analyze_turn (supervisor.py -> analyzer.py)\nPhân tích nhẹ đầu lượt (recent messages + bot_question + pending)\nXuất: TurnAnalysis (route, reply_to_proposal, aside, mentioned_times, service)"]
+    U["Khách gửi tin nhắn"] --> SUP["1. supervisor / analyze_turn (supervisor.py -> analyzer.py)\nPhân tích nhẹ đầu lượt (recent messages + bot_question + pending)\nXuất: TurnAnalysis (route, reply_to_proposal, aside, mentioned_times, service, stated)"]
     DB[("MongoDB\nconversations.state\n+ conversation_sessions")] -->|"2. load_context()\nNạp context_block (có Lịch 14 ngày)\n+ render_slots(state.slots)\n+ Lần trước (last_session)"| AG
-    SUP -->|Đang chờ xác nhận đề xuất| CF["3a. confirm_node (confirm.py)\nLưới phủ quyết (reply.py) + TurnAnalysis:\n- Approve -> xóa active slots & tool_day\n- Reject/Change -> lưu vào slots.declined, giữ slots.day & tool_day"]
-    SUP -->|Đặt lịch / Hỏi đáp| AG["3b. Booking / Shop / Social Agent (agents.py)\nNhận: context_block (Lịch 14 ngày) + render_slots(slots) + aside_line"]
+    SUP -->|Đang chờ xác nhận đề xuất| CF["3a. confirm_node (confirm.py)\nLưới phủ quyết (reply.py) + TurnAnalysis:\n- Approve -> xóa active slots & tool_day\n- Reject/Change -> lưu vào slots.declined, giữ slots.day & tool_day,\n  trả luôn slots mới vào GraphState cho booking"]
+    CF -->|"gate_next=booking (kèm updated slots + declined_line)"| AG
+    SUP -->|"Đặt lịch / Hỏi đáp (kèm analysis.service & stated)"| AG["3b. Booking / Shop / Social Agent (agents.py)\nNhận: context_block (Lịch 14 ngày) + render_slots(slots gộp analysis) + aside_line"]
     AG -->|"Gọi @tool parse_time(day, hour, minute, period, ...)"| TL["4. Tools (tools.py -> timeparse.py)\n- timeparse.py chạy 100% Python thuần trên tham số có cấu trúc (0 Sub-LLM, 0 regex)\n- Tự lấy anchor xác thực từ: tham số -> đề xuất chưa duyệt gần nhất -> state.tool_day\n- Ghi NGAY kết quả xác thực vào state.slots + state.tool_day + conversation_sessions"]
     TL -->|"JSON {start_at, partial_date, missing, day_from}"| AG
     TL -->|"record_tool_facts() (tức thì)"| DB
@@ -84,9 +94,9 @@ Tuân thủ tuyệt đối quy tắc khóa trong `docs/superpowers/specs/2026-09
          service: Optional[str] = None,
          declined_iso: Optional[str] = None,
          clear_active: bool = False,
-     ) -> None
+     ) -> Optional[ConversationSlots]
      ```
-   - Dùng chung pipeline nguyên tử `_set_today_fields`:
+   - Dùng chung pipeline nguyên tử `_set_today_fields` và trả về `updated.slots` mới nhất (hoặc `None` nếu lỗi):
      - Khi `clear_active=True` (ngay sau khi `confirm.py` duyệt lịch thành công — `booked`, `moved`, `cancelled`):
        - Xoá `state.slots.intent = None`, `state.slots.day = None`, `state.slots.time = None`, và `state.tool_day = None`.
      - Khi **`parse_time`** giải ra `start_at` hoặc `partial_date` / `partial_hour`:
@@ -108,7 +118,7 @@ Tuân thủ tuyệt đối quy tắc khóa trong `docs/superpowers/specs/2026-09
      if updated and updated.slots is not None:
          await self.sessions.upsert(
              user_id=user_id,
-             day=today,
+             day=local_today,
              digest=updated.digest,
              slots=updated.slots,
              expires_at=now + timedelta(days=SESSION_TTL_DAYS),
@@ -120,7 +130,18 @@ Tuân thủ tuyệt đối quy tắc khóa trong `docs/superpowers/specs/2026-09
 
 ---
 
-### 3.3. Tool `parse_time` Có Cấu Trúc & `timeparse.py` Thuần Python (0 Sub-LLM, 0 Regex)
+### 3.3. Truyền Ngữ Cảnh Tức Thì Giữa Các Node/Agent Trong Cùng 1 Lượt (`confirm.py`, `agents.py`)
+
+1. **Từ `confirm` $\rightarrow$ `booking` trong cùng lượt (`app/agents/booking_graph/confirm.py`):**
+   - Khi khách từ chối hoặc đổi ý ở `make_confirm_node` (`gate_next="booking"`), node `confirm` lấy giá trị trả về `updated_slots = await ConversationStateService(db).record_tool_facts(...)` và đưa luôn `"slots": updated_slots` (nếu `updated_slots is not None`) vào dict trả về cho `GraphState`.
+   - Nhờ vậy, `booking` agent chạy nối tiếp ngay trong lượt đó nhìn thấy ngay mốc giờ vừa bị từ chối trong `slots.declined` và ngày đang bàn trong `slots.day`.
+2. **Từ `supervisor` (`analyze_turn`) $\rightarrow$ `booking` / `shop` / `social` trong cùng lượt (`app/agents/booking_graph/agents.py`):**
+   - Trong `make_agent_node`, bổ sung hàm thuần `_merge_turn_analysis_slots(slots, analysis)`: nếu `state.get("analysis")` của lượt hiện tại có `service` hoặc `stated` mới, tạo bản sao `ConversationSlots` đã gộp `service` và `stated` để truyền vào `agent.ainvoke({"slots": ...})`.
+   - Nếu `analysis` không có `service` và `stated` mới, giữ nguyên `state.get("slots")` (không tạo `ConversationSlots` rỗng làm thay đổi bố cục message).
+
+---
+
+### 3.4. Tool `parse_time` Có Cấu Trúc & `timeparse.py` Thuần Python (0 Sub-LLM, 0 Regex)
 
 1. **Xoá bỏ Sub-LLM `_ask_model` và Regex `_FULL` trong `timeparse.py`:**
    - `timeparse.py` trở thành module **100% Python thuần (0 LLM call, 0 `re.compile`, 0 quét chữ tự do)**.
@@ -174,5 +195,5 @@ Tuân thủ tuyệt đối quy tắc khóa trong `docs/superpowers/specs/2026-09
   - Mọi thao tác `record_tool_facts` bọc `try/except` log warning để lỗi DB tạm thời không làm hỏng kết quả tool trả về cho Agent.
 - **Kiểm thử:**
   - `tests/test_regex_budget.py`: Khoá chặt ngân sách regex toàn `app/agents/booking_graph/` ở mức **2 regex** (`guard.py: 2`, `timeparse.py: 0`, mọi file khác `0`).
-  - `tests/test_timeparse.py`: Kiểm thử toàn diện `parse_vi_time` thuần Python (0 LLM, 0 regex) cho mọi ca: đủ ngày giờ, thiếu ngày, thiếu giờ, thiếu buổi, thứ chưa rõ tuần (`ambiguous_week=True`), `"bây giờ"` (`is_now=True`), nối ngày/buổi từ `anchor` và `session_day` kèm `day_from="anchor"`, giờ quá khứ, quá 90 ngày, và giờ ngoài khoảng (`hour=25`).
-  - `tests/test_conversation_slots.py`, `tests/test_conversation_sessions.py`, `tests/test_tools.py`, `tests/test_confirm.py`, `tests/test_confirm_flow.py`: Kiểm thử `record_tool_facts`, đồng bộ `conversation_sessions` (cả khi tạo mới lẫn khi `clear_active=True`), không lấy đề xuất `approved` làm anchor, và giữ ngữ cảnh xuyên suốt nhiều lượt.
+  - `tests/test_timeparse.py`: Kiểm thử toàn diện `parse_vi_time` thuần Python (0 LLM, 0 regex).
+  - `tests/test_conversation_slots.py`, `tests/test_conversation_sessions.py`, `tests/test_subagents.py`, `tests/test_tools.py`, `tests/test_confirm.py`, `tests/test_confirm_flow.py`: Kiểm thử `record_tool_facts`, đồng bộ `conversation_sessions`, truyền context same-turn giữa `supervisor` $\rightarrow$ `agent` và `confirm` $\rightarrow$ `booking`, không lấy đề xuất `approved` làm anchor, và giữ ngữ cảnh xuyên suốt nhiều lượt.
