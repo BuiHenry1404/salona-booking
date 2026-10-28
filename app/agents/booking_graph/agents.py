@@ -20,7 +20,9 @@ from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
+from app.models.conversation import ConversationSlots
 from app.models.user import User
+from app.services.conversation_state import MAX_STATED
 
 logger = get_logger(__name__)
 
@@ -149,6 +151,29 @@ def build_agent(
 DEFERRAL_LOOKBACK = 8
 
 
+def _merge_turn_analysis_slots(
+    slots: Optional[ConversationSlots], analysis: Optional[dict]
+) -> Optional[ConversationSlots]:
+    """Gộp nhẹ `service` và `stated` từ `TurnAnalysis` của chính lượt này vào
+    `slots` gửi cho Agent — để Agent (`booking`, `shop`, `social`) thấy ngay
+    dữ kiện vừa phân tích ở `supervisor` mà không phải đợi `apply_analysis`
+    chạy sau `complete`."""
+    if not analysis:
+        return slots
+    new_service = analysis.get("service") if isinstance(analysis, dict) else getattr(analysis, "service", None)
+    new_stated = [s for s in ((analysis.get("stated") if isinstance(analysis, dict) else getattr(analysis, "stated", None)) or []) if s]
+    if not new_service and not new_stated:
+        return slots
+    base = slots.model_copy(deep=True) if slots is not None else ConversationSlots()
+    if new_service:
+        base.service = new_service
+    for item in new_stated:
+        if item not in base.stated:
+            base.stated.append(item)
+    base.stated = base.stated[-MAX_STATED:]
+    return base
+
+
 def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState], Awaitable[dict]]:
     """Node LangGraph bọc một agent `build_agent`.
 
@@ -192,7 +217,7 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
                                                   analysis=state.get("analysis"))),
             "queued": queue,
             "summary": state.get("summary") or "",
-            "slots": state.get("slots"),
+            "slots": _merge_turn_analysis_slots(state.get("slots"), state.get("analysis")),
             # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
             # bị gửi lại nguyên văn mỗi lượt (F2).
             "history_after": state.get("history_after"),

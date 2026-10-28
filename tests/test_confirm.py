@@ -664,3 +664,45 @@ async def test_an_approval_outliving_the_wait_is_logged_and_writes_nothing_here(
     assert values["gate_next"] == "supervisor"
     assert classifier["calls"] == 0
     assert await test_db["appointments"].count_documents({}) == 0
+
+
+async def test_rejecting_a_proposal_records_declined_in_working_memory_and_returns_slots(test_db, classifier):
+    from app.services.conversation import ConversationService
+
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user, hour=15)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    out = await answer(graph, "dạ ko em")
+    assert out.get("slots") is not None
+    assert tomorrow_at(15).isoformat() in out["slots"].declined
+
+    state = await ConversationService(test_db).get_state(str(user.id))
+    assert state is not None and state.slots is not None
+    assert state.slots.day == tomorrow_at(15).date().isoformat()
+    assert state.tool_day == tomorrow_at(15).date().isoformat()
+    assert tomorrow_at(15).isoformat() in state.slots.declined
+
+
+async def test_approving_a_proposal_clears_active_working_memory(test_db, classifier):
+    from app.services.conversation import ConversationService
+    from app.services.conversation_state import ConversationStateService
+
+    user = await a_user(test_db)
+    await ConversationStateService(test_db).record_tool_facts(
+        str(user.id), intent="book", day=tomorrow_at(15).date().isoformat(), time="15:00"
+    )
+    pid = await book_proposal(test_db, user, hour=15)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    await answer(graph, "ừ đặt đi em")
+
+    state = await ConversationService(test_db).get_state(str(user.id))
+    assert state is not None and state.slots is not None
+    assert state.slots.intent is None
+    assert state.slots.day is None
+    assert state.slots.time is None
+    assert state.tool_day is None
+

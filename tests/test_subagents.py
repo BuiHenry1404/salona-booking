@@ -146,3 +146,22 @@ async def test_lazy_agent_builds_its_model_once(monkeypatch):
     assert (await node(a_state()))["draft"] == "Dạ."
     assert (await node(a_state()))["draft"] == "Dạ lần hai."
     assert len(seen) == 1
+
+
+async def test_make_agent_node_merges_same_turn_supervisor_analysis_into_slots():
+    """Dữ kiện `service` và `stated` do supervisor (`analyze_turn`) trích xuất ở
+    đầu lượt phải có mặt ngay trong `slots` gửi cho agent ở chính lượt đó."""
+    model = scripted([AIMessage(content="Dạ.")])
+    state = {
+        **a_state("chị muốn sơn thạch, chỉ rảnh sau 5 giờ chiều"),
+        "analysis": {
+            "route": "booking",
+            "service": "sơn thạch",
+            "stated": ["chỉ rảnh sau 5 giờ chiều"],
+        },
+    }
+    await node_for(model, tools=())(state)
+    sent = "\n".join(str(m.content) for m in model.calls[0])
+    assert "- Dịch vụ: sơn thạch" in sent
+    assert "- Khách đã nói rõ: chỉ rảnh sau 5 giờ chiều" in sent
+

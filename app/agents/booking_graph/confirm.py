@@ -32,10 +32,11 @@ from app.agents.booking_graph.context import (RECENT_VISITS_HEADER, address_phra
                                               declined_line, format_vi_datetime, live_queue,
                                               queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
-from app.core.clock import now_utc
+from app.core.clock import now_utc, to_local
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.user import User
+from app.services.conversation_state import ConversationStateService
 from app.services.proposal import (PROPOSAL_MAX_AGE_MINUTES,  # noqa: F401 (re-export)
                                    ApprovalResult, ProposalService)
 
@@ -151,6 +152,10 @@ async def execute_proposal(db: AsyncIOMotorDatabase, user: User, proposal_id: st
     result = await ProposalService(db).approve(user, proposal_id, turn_at=turn_at)
     if result.outcome == "not_approvable":
         return None
+    if result.outcome == "approved":
+        await ConversationStateService(db).record_tool_facts(
+            str(user.id), clear_active=True
+        )
     context = await _resolve_context(db, user, result.proposal, context_block)
     return confirm_fact_for(result, address_phrase(user), context=context)
 
@@ -236,14 +241,23 @@ async def _handle_button(db: AsyncIOMotorDatabase, user: User, state: GraphState
         proposal = await proposals.get(user, proposal_id)
         if proposal is None or proposal.status != "pending" or not await proposals.reject(user, proposal_id):
             return _stale_button_reply(address)
+        local_p = to_local(proposal.start_at)
+        updated_slots = await ConversationStateService(db).record_tool_facts(
+            str(user.id),
+            day=local_p.date().isoformat(),
+            declined_iso=local_p.isoformat(),
+        )
         text = _button_text(BUTTON_NO_REPLY, address)
         when = format_vi_datetime(proposal.start_at)
-        return {"draft": text, "fallback": text, "answer_source": "code",
-                "gate_next": "phrase", "proposal_id": None,
-                "confirm_fact": {"kind": "clarify", "when": when, "note": None,
-                                 "address": address, "error": None},
-                "context_block": with_line(state.get("context_block", ""),
-                                           declined_line(proposal))}
+        out = {"draft": text, "fallback": text, "answer_source": "code",
+               "gate_next": "phrase", "proposal_id": None,
+               "confirm_fact": {"kind": "clarify", "when": when, "note": None,
+                                "address": address, "error": None},
+               "context_block": with_line(state.get("context_block", ""),
+                                          declined_line(proposal))}
+        if updated_slots is not None:
+            out["slots"] = updated_slots
+        return out
 
     # Giá trị `button` lạ (không phải "yes"/"no"): coi như đề xuất đã hết hạn,
     # không đoán ý — chưa ghi gì.
@@ -375,6 +389,13 @@ def make_confirm_node(
         else:
             await proposals.reject(user, proposal_id)
 
+        local_p = to_local(proposal.start_at)
+        updated_slots = await ConversationStateService(db).record_tool_facts(
+            str(user.id),
+            day=local_p.date().isoformat(),
+            declined_iso=local_p.isoformat(),
+        )
+
         # Chưa chốt thì VẪN đang đặt lịch — "khoan để chị xem lại", "thôi 10
         # giờ đi em" là chuyện của booking (có lịch sử và đủ tool).
         #
@@ -384,10 +405,13 @@ def make_confirm_node(
         # mở lại việc hủy, hoặc mất ngày đang bàn. Lượt sau load_context dựng
         # lại đúng dòng này từ DB.
         logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
-        return {"proposal_id": None, "gate_next": "booking",
-                "context_block": with_line(state.get("context_block", ""),
-                                           declined_line(proposal)),
-                **analysed}
+        out = {"proposal_id": None, "gate_next": "booking",
+               "context_block": with_line(state.get("context_block", ""),
+                                          declined_line(proposal)),
+               **analysed}
+        if updated_slots is not None:
+            out["slots"] = updated_slots
+        return out
 
     return node
 
