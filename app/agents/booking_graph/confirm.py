@@ -366,7 +366,14 @@ def make_confirm_node(
 
         if decision == "unclear":
             marked = await proposals.mark_unclear(user, proposal_id)
-            if marked is not None and marked.status == "pending":
+            if marked is None:
+                # Đề xuất không còn pending lúc đánh dấu (đua với hết hạn, bị
+                # thay…) — không phải ta đóng nó: như nhánh không-còn-pending ở
+                # trên, câu khách là tin mới; không dòng từ chối, không ghi giờ.
+                logger.info("proposal_not_pending", extra={"proposal_id": proposal_id,
+                                                           "status": "mark_unclear_none"})
+                return {"proposal_id": None, "gate_next": "supervisor", **analysed}
+            if marked.status == "pending":
                 # Lần đầu không rõ: hỏi lại MỘT câu, giữ đề xuất. Câu này đi
                 # đường câu chốt (agent booking: PhraseMiddleware đặt nguyên
                 # văn, GuardMiddleware kiểm, fallback = chính nó) rồi record,
@@ -404,8 +411,9 @@ def make_confirm_node(
         # chuyển đề xuất thành `rejected`) — ba giá trị khớp thẳng `reason`
         # của `declined_line`, không cần đoán lại. `asked` chỉ có ý nghĩa với
         # "change": giờ khách vừa nêu, viết lại bằng code (`reply.spoken_times`),
-        # KHÔNG chép nguyên câu khách.
-        asked = reply.spoken_times(text) if decision == "change" else None
+        # KHÔNG chép nguyên câu khách — và bỏ mệnh đề về lịch đang chờ (`facts`
+        # có `queued`) để chỉ còn giờ cho CHÍNH đề xuất này.
+        asked = reply.spoken_times(text, facts, now_utc()) if decision == "change" else None
         out = {"proposal_id": None, "gate_next": "booking",
                "customer_text": text,
                "context_block": with_line(state.get("context_block", ""),

@@ -183,6 +183,45 @@ def test_change_label_on_restated_proposal_time_becomes_unclear(analysis):
     assert resolve_label(analysis, "ừ 3 giờ chiều mai nha", P_BOOK, NOW) == "unclear"
 
 
+def test_change_restating_the_time_but_naming_a_service_stays_change():
+    """F2: nhắc đúng giờ nhưng đổi dịch vụ — vẫn là đổi, không hỏi lại chỉ về giờ."""
+    a = {**LIVE_RESTATE_1, "service": "cắt tóc"}
+    assert resolve_label(a, "ok 3 giờ chiều mai, đổi sang cắt tóc nha", P_BOOK, NOW) == "change"
+
+
+def test_change_to_a_time_that_is_also_queued_stays_change():
+    """F2: "nhắc lại giờ" xét trên câu GỐC — mệnh đề trùng giờ chờ không bị bỏ."""
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    a = {"reply_to_proposal": "change", "aside": None, "service": None,
+         "mentioned_times": [{"hour": 9}, {"hour": 2, "part_of_day": "chieu"}]}
+    assert resolve_label(a, "9 giờ sớm quá, 2 giờ chiều đi", p, NOW) == "change"
+
+
+def test_approve_naming_only_a_queued_time_is_unclear():
+    """F3: "ừ, 2 giờ chiều" khi đề xuất 9 giờ, giờ chờ 14 giờ — không ghi 9 giờ."""
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    a = {"reply_to_proposal": "approve", "aside": None, "service": None,
+         "mentioned_times": [{"hour": 2, "part_of_day": "chieu"}]}
+    assert resolve_label(a, "ừ, 2 giờ chiều", p, NOW) == "unclear"
+
+
+def test_approve_naming_the_proposal_and_a_queued_time_stays_approve():
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    a = {"reply_to_proposal": "approve", "aside": None, "service": None,
+         "mentioned_times": [{"hour": 9}, {"hour": 2, "part_of_day": "chieu"}]}
+    assert resolve_label(a, "ừ 9 giờ, còn 2 giờ chiều cho cháu thì sao", p, NOW) == "approve"
+
+
+def test_spoken_times_of_queue_stripped_text_names_only_this_proposal():
+    """F4: `asked` không lẫn giờ của lịch đang chờ."""
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    assert spoken_times("dời qua 10 giờ, còn 2 giờ chiều cho cháu", p, NOW) == "10 giờ"
+
+
 def test_change_without_any_time_stays_change():
     a = {"reply_to_proposal": "change", "aside": None, "mentioned_times": []}
     assert resolve_label(a, "đổi giờ khác đi em", P_BOOK, NOW) == "change"

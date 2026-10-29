@@ -590,6 +590,53 @@ async def test_second_unclear_rejects_and_routes_booking(test_db, classifier):
     assert await status_of(test_db, pid) == "rejected"
 
 
+async def test_change_asked_names_only_times_for_this_proposal(test_db, classifier):
+    """F4: "dời qua 10 giờ, còn 2 giờ chiều cho cháu" (chờ 14 giờ) → `asked`
+    chỉ là "10 giờ", không lẫn giờ của lịch đang chờ."""
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user, hour=9)
+    graph = one_node_graph(test_db, user)
+    await graph.ainvoke({"messages": [HumanMessage("mai 9 giờ chị làm tóc"), AIMessage(QUESTION)],
+                         "proposal_id": pid,
+                         "queued": [{"start_at": tomorrow_at(14).isoformat()}]}, CFG)
+
+    values = await answer(graph, "dời qua 10 giờ, còn 2 giờ chiều cho cháu")
+
+    assert values["gate_next"] == "booking"
+    assert 'reason: change, asked: "10 giờ"]' in values["context_block"]
+    assert classifier["calls"] == 0
+
+
+async def test_unclear_when_mark_unclear_finds_nothing_routes_supervisor(
+        test_db, classifier, monkeypatch):
+    """F5: `mark_unclear` trả None (đua với hết hạn…) — đề xuất KHÔNG do ta đóng:
+    như nhánh không-còn-pending, về supervisor, không dòng từ chối, không ghi
+    giờ bị từ chối."""
+    from app.services.conversation_state import ConversationStateService
+    classifier["label"] = "unclear"
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    async def nothing(self, user, proposal_id):
+        return None
+    recorded = []
+
+    async def spy(self, user_id, **kw):
+        recorded.append(kw)
+    monkeypatch.setattr(ProposalService, "mark_unclear", nothing)
+    monkeypatch.setattr(ConversationStateService, "record_tool_facts", spy)
+
+    values = await answer(graph, "cho cô dùng thử")
+
+    assert values["gate_next"] == "supervisor" and values["proposal_id"] is None
+    assert "[declined:" not in values.get("context_block", "")
+    assert recorded == []
+    assert values["analysis"]["reply_to_proposal"] == "unclear"
+    assert await test_db["appointments"].count_documents({}) == 0
+
+
 async def test_huy_di_approves_a_cancel_proposal(test_db, classifier):
     user = await a_user(test_db)
     appt = await AppointmentService(test_db).create(user, tomorrow_at(15), "làm tóc")

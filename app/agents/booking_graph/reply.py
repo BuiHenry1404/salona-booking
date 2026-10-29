@@ -123,17 +123,50 @@ def other_time(text: str, proposal: Mapping[str, Any], now: datetime,
 
 
 def restates_proposal_time(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
-    """Khách CÓ nói giờ và mọi giờ đều trùng đề xuất (chỉ dựa vào quét chữ)."""
-    return _has_time(text) and not other_time(text, proposal, now)
+    """Khách CÓ nói giờ và mọi giờ đều trùng đề xuất (chỉ dựa vào quét chữ).
+
+    Xét trên câu GỐC, không bỏ mệnh đề về lịch đang chờ: "9 giờ sớm quá, 2 giờ
+    chiều đi" (đề xuất 9 giờ, chờ 14 giờ) có một giờ khác nên không phải nhắc lại.
+    """
+    lowered = (text or "").strip().lower()
+    return _has_time(lowered) and not mentions_other_time(
+        lowered, _as_datetime(proposal["start_at"]), now)
 
 
-def spoken_times(text: str) -> Optional[str]:
+def _time_matches(hour: int, period: Optional[str], minute: Optional[int],
+                  local: datetime) -> bool:
+    return (not _hour_differs(hour, period, local.hour)
+            and (minute is None or minute == local.minute))
+
+
+def names_only_queued_times(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
+    """Mọi giờ khách nói đều trùng một lịch ĐANG CHỜ và không giờ nào trùng đề
+    xuất ("ừ, 2 giờ chiều" khi đề xuất 9 giờ, chờ 14 giờ) — "ừ" đó không dành
+    cho đề xuất này."""
+    times = tokens.scan_times((text or "").strip().lower())
+    waiting = [to_local(_as_datetime(q)) for q in (proposal.get("queued") or [])]
+    if not times or not waiting:
+        return False
+    local_start = to_local(_as_datetime(proposal["start_at"]))
+    return (all(any(_time_matches(*t, q) for q in waiting) for t in times)
+            and not any(_time_matches(*t, local_start) for t in times))
+
+
+def spoken_times(text: str, proposal: Optional[Mapping[str, Any]] = None,
+                 now: Optional[datetime] = None) -> Optional[str]:
     """Các giờ khách nói, viết lại bằng CODE ("4 giờ", "10 giờ 30 sáng").
 
     Không bao giờ chép chữ khách (chống tiêm lệnh). Không có giờ → None.
+    Có `proposal` (+ `now`): bỏ trước các mệnh đề chỉ nói về lịch đang chờ, để
+    chỉ còn giờ cho CHÍNH đề xuất này. Giới hạn bộ quét: "3 rưỡi chiều" ra
+    "3 giờ 30" — mất buổi.
     """
+    if proposal is not None and now is not None:
+        text = _without_queued_clauses((text or "").strip().lower(),
+                                       _as_datetime(proposal["start_at"]),
+                                       proposal.get("queued") or [], now)
     parts = []
-    for hour, period, minute in tokens.scan_times(text):
+    for hour, period, minute in tokens.scan_times(text or ""):
         spoken = f"{hour} giờ"
         if minute:  # minute=0 bị bỏ qua cố ý: "3 giờ" đọc tự nhiên hơn "3 giờ 0"
             spoken = f"{spoken} {minute}"
@@ -197,9 +230,12 @@ def resolve_label(analysis: Mapping[str, Any], text: str, proposal: Mapping[str,
     1. hoãn (`defer_only`/`defer_with_request`) → "reject";
     2. đồng ý mà còn hỏi người nhà rảnh không (`relative_free`) → "unclear";
     3. giờ có cấu trúc khác đề xuất → "change";
-    4. model nói "change" nhưng khách chỉ nhắc lại đúng giờ đề xuất → "unclear"
-       (không bao giờ đổi thành approve);
-    5. còn lại: nhãn model nếu hợp lệ, không thì "unclear".
+    4. model nói "change" nhưng khách chỉ nhắc lại đúng giờ đề xuất, không nêu
+       dịch vụ → "unclear" (không bao giờ đổi thành approve; có `service` thì
+       vẫn là đổi);
+    5. model nói "approve" nhưng khách chỉ nêu giờ của lịch đang chờ →
+       "unclear";
+    6. còn lại: nhãn model nếu hợp lệ, không thì "unclear".
     """
     aside = analysis.get("aside")
     label = analysis.get("reply_to_proposal")
@@ -209,6 +245,9 @@ def resolve_label(analysis: Mapping[str, Any], text: str, proposal: Mapping[str,
         return "unclear"
     if other_time(text, proposal, now, analysis.get("mentioned_times") or ()):
         return "change"
-    if label == "change" and restates_proposal_time(text, proposal, now):
+    if (label == "change" and not analysis.get("service")
+            and restates_proposal_time(text, proposal, now)):
+        return "unclear"
+    if label == "approve" and names_only_queued_times(text, proposal, now):
         return "unclear"
     return label if label in REPLY_LABELS else "unclear"
