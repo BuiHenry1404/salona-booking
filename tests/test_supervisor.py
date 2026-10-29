@@ -194,17 +194,12 @@ async def test_supervisor_model_has_its_own_short_budget(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_short_ok_after_a_booking_turn_routes_to_booking_without_llm(monkeypatch):
-    """Lỗi LLM-02: agent hỏi "giữ 2 giờ chiều được không?" KHÔNG qua đề xuất
-    → lượt sau không "đang chờ", vào thẳng supervisor. "Ok em" phải về booking
-    mà không cần hỏi model (model giả không được gọi)."""
-    calls = []
-    monkeypatch.setattr(
-        "app.agents.booking_graph.analyzer.build_chat_model",
-        lambda **kw: calls.append(kw) or FakeModel("social"))
+async def test_short_ok_after_a_booking_turn_routes_via_analyzer(analyzer_spy):
+    """Không còn lối tắt chuỗi is_short_affirmation: 'Ok em' đi qua analyze_turn."""
+    analyzer_spy["route"] = "booking"
     out = await supervise(a_state("Ok em", last_route="booking"))
     assert out["route"] == "booking"
-    assert calls == []
+    assert len(analyzer_spy["calls"]) == 1
 
 
 @pytest.mark.asyncio
@@ -213,6 +208,13 @@ async def test_short_ok_after_social_turn_still_asks_the_model(patch_model):
     model = patch_model("social")
     assert (await supervise(a_state("Ok em", last_route="social")))["route"] == "social"
     assert model.seen_messages is not None
+
+
+def test_supervisor_does_not_import_retired_heuristics():
+    import app.agents.booking_graph.supervisor as sup
+    assert not hasattr(sup, "asks_if_relative_free")
+    assert not hasattr(sup, "defers")
+    assert not hasattr(sup, "is_short_affirmation")
 
 
 # --- Task 12b: supervisor định tuyến bằng bộ phân tích --------------------------
@@ -253,16 +255,25 @@ async def test_new_message_calls_analyzer_once_and_routes_by_it(analyzer_spy):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extra,text", [
-    ({"queued": [{"start_at": "2099-01-01T09:00:00+07:00", "note": "cắt tóc cho cháu"}]}, "ừ"),
-    ({}, "để chị hỏi lại thằng cháu rồi nhắn em"),
-    ({"last_route": "booking"}, "Ok em"),
-])
-async def test_code_shortcuts_skip_the_analyzer(analyzer_spy, extra, text):
-    """Hàng chờ, người nhà/hoãn, "ok" ngắn sau booking: code quyết, 0 lời gọi."""
-    out = await supervise(a_state(text, **extra))
+async def test_queued_shortcut_skips_the_analyzer(analyzer_spy):
+    """Hàng chờ: còn lịch chờ đề xuất thì code quyết về booking, 0 lời gọi analyzer."""
+    out = await supervise(a_state("ừ", queued=[{"start_at": "2099-01-01T09:00:00+07:00", "note": "cắt tóc cho cháu"}]))
     assert out == {"route": "booking"}
     assert analyzer_spy["calls"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "để chị hỏi lại thằng cháu rồi nhắn em",
+    "nó có rảnh không em",
+])
+async def test_relative_and_deferral_messages_route_via_analyzer_without_string_heuristics(analyzer_spy, text):
+    """Tin nhắn hỏi người nhà hay hoãn không còn lối tắt quét chuỗi; được định tuyến qua TurnAnalysis."""
+    analyzer_spy["route"] = "booking"
+    out = await supervise(a_state(text))
+    assert out["route"] == "booking"
+    assert len(analyzer_spy["calls"]) == 1
+    assert analyzer_spy["calls"][0]["customer_text"] == text
 
 
 @pytest.mark.asyncio

@@ -41,10 +41,3 @@ def deferral_reply(text: str, address: str, previous_replies: Sequence[str],
     return next((o for o in options if o not in previous and not guard.repeats(o, previous)), options[-1])
 
 
-# Shims tương thích ngược tạm thời cho supervisor.py và reply.py trước khi hoàn thành Task 2 & Task 3
-def __getattr__(name: str) -> Any:
-    if name in ("asks_if_relative_free", "defers", "has_request"):
-        return lambda *args, **kwargs: False
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-

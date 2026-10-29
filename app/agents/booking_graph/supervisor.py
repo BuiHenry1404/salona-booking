@@ -5,8 +5,6 @@ from langchain_core.messages import AIMessage
 from app.agents.booking_graph import analyzer
 from app.agents.booking_graph.context import live_queue
 from app.agents.booking_graph.history import model_history
-from app.agents.booking_graph.relatives import asks_if_relative_free, defers
-from app.agents.booking_graph.reply import is_short_affirmation
 from app.agents.booking_graph.state import GraphState
 from app.core.logging import get_logger
 
@@ -33,33 +31,16 @@ def _last_ai_text(messages) -> str:
 
 
 async def supervise(state: GraphState) -> dict:
-    """Phân loại ý định: lối tắt CODE trước, rồi bộ phân tích đầu lượt.
+    """Phân loại ý định qua bộ phân tích đầu lượt TurnAnalysis (Task 12b).
 
     Bộ phân tích KHÔNG nhận memory, KHÔNG nhận schema tool, KHÔNG nhận lịch sắp
-    tới — chỉ vài lượt chat cuối. Lối tắt code (hàng chờ, người nhà/hoãn, "ok"
-    ngắn sau booking) gọi nó 0 lần.
+    tới — chỉ vài lượt chat cuối. Hàng chờ đặt lần lượt giữ lối tắt code về
+    booking.
     """
     if live_queue(state.get("queued")):
         # Đang đặt lần lượt (lỗi live B2 #2): còn lịch chờ đề xuất thì mọi tin
         # vào booking — "ừ" sau câu mời lịch kế không được rơi vào social.
         logger.info("supervisor_queue_route")
-        return {"route": "booking"}
-
-    text = str(getattr(state["messages"][-1], "content", "") or "")
-    if asks_if_relative_free(text) or defers(text):
-        # Lỗi live B3 #2: "nó có rảnh không" (đứa cháu) từng thành câu hỏi
-        # chủ tiệm. Hỏi người nhà rảnh không / hẹn hỏi rồi nhắn lại là chuyện
-        # lịch của khách: booking (có dòng [relative]/[deferral]).
-        logger.info("supervisor_relative_route")
-        return {"route": "booking"}
-
-    if state.get("last_route") == "booking" and is_short_affirmation(text):
-        # Lỗi LLM-02: agent hỏi "giữ 2 giờ chiều được không?" KHÔNG qua
-        # `propose_appointment` (chưa có đề xuất) → lượt sau không "đang chờ"
-        # (`waiting` ở `events.py`), vào thẳng supervisor từ START. "Ok em"
-        # thành social thì bot chào tạm biệt, mất lịch. Lượt trước là booking
-        # + câu ngắn kiểu đồng ý → về thẳng booking, không hỏi model.
-        logger.info("supervisor_short_affirmation_route")
         return {"route": "booking"}
 
     prior = state.get("analysis")
@@ -70,6 +51,8 @@ async def supervise(state: GraphState) -> dict:
         route = prior.get("route")
         logger.info("supervisor_reuse_analysis")
         return {"route": route if route in VALID_ROUTES else "booking"}
+
+    text = str(getattr(state["messages"][-1], "content", "") or "")
 
     # Vài lượt cuối của CỬA SỔ lịch sử (như A), không phải của cả thread:
     # tin đã nén hay của hôm qua không được kéo định tuyến.

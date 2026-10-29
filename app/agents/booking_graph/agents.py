@@ -193,6 +193,7 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
     dòng [deferral]). Lượt câu chốt (`confirm_fact`) không bao giờ đi đường này.
     """
     async def node(state: GraphState) -> dict:
+        analysis = state.get("analysis")
         # Hàng chờ (đặt lần lượt) → MỘT dòng code viết trong khối bối cảnh.
         queue = live_queue(state.get("queued"))
         if user is not None and not state.get("confirm_fact"):
@@ -200,7 +201,7 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
                     if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
             code = deferral_reply(state.get("customer_text") or "", address_phrase(user),
                                   [*said, *(state.get("previous_replies") or [])],
-                                  analysis=state.get("analysis"))
+                                  analysis=analysis)
             if code:
                 logger.info("deferral_code_reply")
                 result = {"draft": code, "answer": code, "answer_source": "code",
@@ -214,10 +215,10 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
             "context_block": with_line(with_line(state.get("context_block", ""),
                                                  queued_line(queue)),
                                        aside_line(state.get("customer_text") or "",
-                                                  analysis=state.get("analysis"))),
+                                                  analysis=analysis)),
             "queued": queue,
             "summary": state.get("summary") or "",
-            "slots": _merge_turn_analysis_slots(state.get("slots"), state.get("analysis")),
+            "slots": _merge_turn_analysis_slots(state.get("slots"), analysis),
             # HistoryWindowMiddleware đọc mốc nén từ đây — thiếu là tin đã nén
             # bị gửi lại nguyên văn mỗi lượt (F2).
             "history_after": state.get("history_after"),
