@@ -416,8 +416,8 @@ class ConversationStateService:
         # của CODE (`record_tool_facts`) — nén có thể nhìn thấy lại một giờ
         # khách đã từ chối trong phần transcript bị nén và model bịa ra một
         # danh sách `declined` RỖNG hoặc khác, ghi đè là mất dữ kiện code đã
-        # xác thực. `sanitize_slots` vẫn lọc `declined` (cho khối session bên
-        # dưới nếu cần so sánh), chỉ là `_set_today_fields` không đụng tới nó.
+        # xác thực. `sanitize_slots` vẫn lọc `declined`, chỉ là
+        # `_set_today_fields` không đụng tới nó.
         today = to_local(now).date()
         fields = {
             "state.day": datetime(today.year, today.month, today.day),
@@ -435,25 +435,17 @@ class ConversationStateService:
             fields["state.slots.time"] = slots.time
         if slots and slots.service:
             fields["state.slots.service"] = slots.service
-        await self._set_today_fields(user_id, fields, now)
+        written = await self._set_today_fields(user_id, fields, now, return_state=True)
         # Task 14: mỗi lượt nén thành công cũng ghi/đè bản `conversation_sessions`
         # CỦA NGÀY HÔM NAY — khác `state.*` ở trên (chỉ sống tới nửa đêm), bản
         # này còn đọc được sau khi ngày đã qua, làm nguồn cho "Lần trước" của
-        # ngày mai (hoặc xa hơn). `digest` ở đây là kết quả CHÍNH lượt nén này
-        # vừa ghi vào `state.*` — cùng giá trị, không đọc lại DB. `slots` thì
-        # KHÔNG được dùng thẳng `slots` (biến cục bộ) cho `declined`: nó chỉ
-        # mang declined do LLM nén bịa ra (đã bị bỏ ở trên) — ghép declined do
-        # CODE đã ghi (từ `state` đọc ở đầu hàm, trước lượt nén này) vào, để
-        # bản episodic không mất nó.
-        code_declined = list(state.slots.declined) if state and state.slots else []
-        session_slots = slots
-        if code_declined:
-            if session_slots:
-                session_slots = session_slots.model_copy(update={"declined": code_declined})
-            else:
-                session_slots = ConversationSlots(declined=code_declined)
+        # ngày mai (hoặc xa hơn). `digest`/`slots` lấy từ `state` VỪA ghi
+        # (`return_state=True`, cùng một lệnh) — không phải `slots` thô của LLM
+        # nén (intent/day/time có thể None trong khi state giữ giá trị code đã
+        # ghi, `declined` LLM bịa đã bị bỏ ở trên), cũng không phải `state` đọc
+        # đầu hàm (một `declined` confirm ghi trong lúc nén chạy sẽ thiếu).
         await self.sessions.upsert(
-            user_id=user_id, day=today, digest=digest, slots=session_slots,
+            user_id=user_id, day=today, digest=written.digest, slots=written.slots,
             expires_at=now + timedelta(days=SESSION_TTL_DAYS),
         )
         logger.info("state_compacted", extra={

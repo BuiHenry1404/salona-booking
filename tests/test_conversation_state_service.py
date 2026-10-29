@@ -555,6 +555,38 @@ async def test_compaction_never_clears_code_recorded_declined(test_db, patch_mod
     )
     assert session is not None
     assert session.slots.declined == [f"{future_day}T15:00:00+07:00"]
+    # F6: bản episodic khớp working memory, không phải `slots` thô của LLM nén.
+    assert (session.slots.intent, session.slots.day, session.slots.time) == (
+        state.slots.intent, state.slots.day, state.slots.time)
+    assert session.slots.declined == state.slots.declined
+
+
+async def test_compaction_session_copy_sees_a_decline_recorded_mid_compaction(
+        test_db, patch_model):
+    """F6: confirm ghi `declined` trong lúc LLM nén đang chạy — bản episodic
+    lấy `state` VỪA ghi, không phải `state` đọc lúc vào (đã cũ)."""
+    from datetime import timedelta
+    from app.core.clock import now_utc, to_local
+
+    future_day = (to_local(now_utc()).date() + timedelta(days=3)).isoformat()
+    svc = ConversationStateService(test_db)
+    await _seed(test_db, turns=12)
+    model = patch_model(reply=StateOutput(digest=StateDigest(wants=["Khách muốn làm tóc."])))
+    original = model.structured.ainvoke
+
+    async def racing(prompt):
+        await svc.record_tool_facts("u1", declined_iso=f"{future_day}T15:00:00+07:00")
+        return await original(prompt)
+    model.structured.ainvoke = racing
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    session = await ConversationSessionRepository(test_db).most_recent_before(
+        "u1", to_local(now_utc()).date() + timedelta(days=1), within_days=1,
+    )
+    assert state.slots.declined == [f"{future_day}T15:00:00+07:00"]
+    assert session.slots.declined == state.slots.declined
 
 
 async def test_compaction_still_sets_day_when_it_has_one(test_db, patch_model):
