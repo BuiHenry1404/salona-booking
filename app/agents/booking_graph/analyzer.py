@@ -4,8 +4,10 @@ Thay LƯỢT của supervisor (định tuyến) VÀ của bộ phân loại câu
 riêng trước đây (`reply.classify_reply`, đã xoá ở Task 6): một lượt structured
 output duy nhất, mỗi turn vẫn tối đa một lượt LLM trước agent — không thêm
 lượt nào. Task 12b nối nó vào graph:
-`supervisor.supervise` (tin mới, sau lối tắt code) và nhãn cuối của
-`reply.decide` trong node `confirm` (câu gõ chữ, sau lưới phủ quyết/go-ahead).
+`supervisor.supervise` (tin mới; luật định tuyến code áp SAU lên kết quả) và nhãn
+cuối của `reply.decide` trong node `confirm` (câu gõ chữ, sau khi code quét
+giờ/ngày — `reply.other_time` — không thấy giờ khác đề xuất; nhãn model rồi
+còn qua `reply.resolve_label` để code đè).
 
 Mọi kết quả — kể cả bản lùi an toàn khi lỗi/timeout — đều phải qua
 `sanitize_analysis` trước khi dùng: model có thể bịa `time_text` không phải

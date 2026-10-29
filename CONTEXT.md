@@ -147,7 +147,7 @@ có chủ ý**.
 | Chủ đề | Chốt | Vì sao |
 |---|---|---|
 | Agent | **LangGraph**, không AutoGen | Cần subagent + định tuyến tường minh |
-| Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** (kể cả bọc HITL) | `propose_appointment` / `cancel_appointment` chỉ tạo **đề xuất** trong collection `proposals` (`ProposalService.create`); state graph chỉ mang `proposal_id`. Node `confirm` `interrupt()`, lượt sau CODE quyết (lưới phủ quyết `reply.py` trước, bộ phân loại tag `classify` sau) và chỉ `ProposalService.approve(user, proposal_id)` ghi: đúng chủ, còn hạn 10 phút, đề xuất tạo trước lượt duyệt, một lần duy nhất (claim pending→approving, không transaction), lịch đích của dời/hủy chưa đổi. Giá trị lấy từ DB, không từ chuỗi model gõ lại. Checkpoint KHÔNG phải nguồn sự thật cho ghi lịch (TTL xoá được nó) |
+| Ghi lịch | **Agent không có tool ghi, cũng không hủy ngay** (kể cả bọc HITL) | `propose_appointment` / `cancel_appointment` chỉ tạo **đề xuất** trong collection `proposals` (`ProposalService.create`); state graph chỉ mang `proposal_id`. Node `confirm` `interrupt()`, lượt sau CODE quyết (nút bấm → duyệt thẳng; câu gõ chữ → code quét giờ/ngày/thứ `reply.other_time` trước — khác đề xuất là `change`, không gọi model; lọt qua mới tới MỘT lượt bộ phân tích + `reply.resolve_label`, code đè nhãn model; không chắc = `unclear`, không bao giờ ghi) và chỉ `ProposalService.approve(user, proposal_id)` ghi: đúng chủ, còn hạn 10 phút, đề xuất tạo trước lượt duyệt, một lần duy nhất (claim pending→approving, không transaction), lịch đích của dời/hủy chưa đổi. Giá trị lấy từ DB, không từ chuỗi model gõ lại. Checkpoint KHÔNG phải nguồn sự thật cho ghi lịch (TTL xoá được nó) |
 | Câu trả lời | **Mọi câu qua guard (code) trước khi phát; `rewrite` tối đa 1 lần; câu chốt do LLM viết, số liệu code cấp; tên tool bị xoá bằng code** — từ M4 guard là `GuardMiddleware` (`after_agent`, chạy sau cùng trong mỗi agent), luật không đổi, một bản duy nhất ở `guard.apply_guard` | Prompt không sửa được lặp/xưng hô — đo 2026-09-14 |
 | Memory | **2 tầng + trạng thái hội thoại trong phiên**, bỏ tầng vector | Agent chỉ trả lời trạng thái hiện tại. Tầng 3 kéo theo Postgres và rủi ro lộ ký ức chéo khách. `ConversationState` = summary (văn xuôi) + slots (dạng trường), cả hai đều là bản nén của tầng 2, không phải tầng 3 |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA | Bot API miễn phí, không khung 48h, không cần giấy phép |
@@ -192,9 +192,11 @@ biên bản, không phải mẫu để chép.
 2. `load_context` (code, song song): giờ hiện tại, trạng thái tiệm (cache Redis), lịch sắp
    tới `[id, iso]`, 3 lần đã đến, "Lần trước", slots + tóm tắt theo mục, câu bot vừa nói.
 3. Thread đang chờ xác nhận → `confirm`: **nút** → `ProposalService.approve` thẳng;
-   **gõ chữ** → lưới phủ quyết code → `is_go_ahead` → nhãn của bộ phân tích; không chắc = không ghi.
-4. Tin mới → `supervisor`: lối tắt code (hàng chờ, người nhà/hoãn, "ok" ngắn sau booking)
-   hoặc **một** lượt bộ phân tích → booking | shop | social.
+   **gõ chữ** → code quét giờ/ngày (`reply.other_time`, khác đề xuất = `change`, không gọi model) →
+   bộ phân tích + `reply.resolve_label`; không chắc = không ghi.
+4. Tin mới → `supervisor`: **một** lượt bộ phân tích (hoặc dùng lại phân tích confirm vừa
+   làm), rồi luật code đè nhãn (hàng chờ, người nhà/hoãn, trả lời câu hỏi booking → booking)
+   → booking | shop | social.
 5. Trong agent: middleware (bố cục prompt, ≤4 vòng tool, lỗi tool tiếng Việt, câu chốt,
    guard + rewrite 1 lần). Agent **không có tool ghi**; `propose_*` chỉ tạo đề xuất PENDING.
 6. `record` → `confirm` (có đề xuất thì `interrupt`, `complete` mang `proposal` để web hiện nút)
@@ -253,7 +255,7 @@ biên bản, không phải mẫu để chép.
 
 **Nghiệp vụ và tầng gác**
 
-19. **Dời lịch KHÔNG phải đặt thêm.** `propose_appointment` nhận `replaces_appointment_id`; `confirm` gọi `AppointmentService.reschedule` — **đặt mới trước, hủy cũ sau** (đặt hụt thì khách vẫn còn lịch cũ; hủy trước rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất: giờ mới chồng lên chính lịch cũ thì phải nhả cũ trước, sau khi đã kiểm quá khứ/giờ mở cửa/hạn mức. Id để dời và hủy nằm ở đuôi `[id: ..., iso: ...]` mỗi dòng "Lịch sắp tới" của khối bối cảnh — dựng từ DB mỗi lượt, không phụ thuộc lượt trước gọi tool gì. **Hủy cũng qua `confirm`** (đề xuất `kind="cancel"`); khi đang chốt hủy thì chữ "hủy" trong "ừ hủy đi" là ĐỒNG Ý — lưới phủ quyết `reply.veto_reason` bỏ "hủy"/"huy" khỏi bộ từ phủ định khi `kind == "cancel"` (trước M3 là `is_affirmative(..., cancelling=True)`); dùng chung bộ từ phủ định là khách không bao giờ hủy được. Đề xuất dời/hủy chụp lại lịch đích (`target_snapshot`: status + start_at); lúc duyệt mà lịch đã bị hủy/dời chỗ khác (REST, Telegram) thì không duyệt — khách đồng ý với lịch họ đã thấy.
+19. **Dời lịch KHÔNG phải đặt thêm.** `propose_appointment` nhận `replaces_appointment_id`; `confirm` gọi `AppointmentService.reschedule` — **đặt mới trước, hủy cũ sau** (đặt hụt thì khách vẫn còn lịch cũ; hủy trước rồi đặt hụt là khách mất lịch). Ngoại lệ duy nhất: giờ mới chồng lên chính lịch cũ thì phải nhả cũ trước, sau khi đã kiểm quá khứ/giờ mở cửa/hạn mức. Id để dời và hủy nằm ở đuôi `[id: ..., iso: ...]` mỗi dòng "Lịch sắp tới" của khối bối cảnh — dựng từ DB mỗi lượt, không phụ thuộc lượt trước gọi tool gì. **Hủy cũng qua `confirm`** (đề xuất `kind="cancel"`); khi đang chốt hủy thì chữ "hủy" trong "ừ hủy đi" là ĐỒNG Ý — code KHÔNG còn bộ từ phủ định nào (`reply.veto_reason` đã xoá): `reply._describe` gắn `CLASSIFY_GO_AHEAD` vào mô tả đề xuất dời/hủy cho bộ phân tích ("dùng đúng động từ của việc đó, không giờ/ngày/điều kiện khác = approve"). Nhãn cuối do `reply.resolve_label` quyết, theo thứ tự: hoãn (`defer_*`) → reject; đồng ý mà còn hỏi người nhà rảnh không → unclear; nêu giờ khác đề xuất → change; `change` mà chỉ nhắc lại đúng giờ đề xuất, không nêu dịch vụ → unclear; `approve` mà chỉ nêu giờ của lịch đang chờ → unclear; nhãn không hợp lệ → unclear. Đừng dựng lại bộ từ khóa: dùng chung bộ từ phủ định là khách không bao giờ hủy được. Đề xuất dời/hủy chụp lại lịch đích (`target_snapshot`: status + start_at); lúc duyệt mà lịch đã bị hủy/dời chỗ khác (REST, Telegram) thì không duyệt — khách đồng ý với lịch họ đã thấy.
 
 20. **`ConversationState.summary` chỉ ghi diễn biến, không ghi trạng thái lịch — khối bối cảnh thắng.** Nén hỏng 3 lần thì hệ suy giảm về đúng hành vi cũ; đừng "sửa" bằng cách bỏ cầu chì.
 

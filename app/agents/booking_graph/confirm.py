@@ -334,7 +334,8 @@ def make_confirm_node(
         # "change", không gọi model. Câu lọt qua mới tới bộ phân tích (Task
         # 12b, thay bộ phân loại `classify_reply` cũ) — tối đa một lời gọi
         # mỗi lượt — rồi `reply.resolve_label` để code đè nhãn model (hoãn →
-        # reject, giờ khác → change, nhắc lại đúng giờ mà model nói change →
+        # reject, giờ khác → change, nhắc lại đúng giờ mà model nói change,
+        # không nêu dịch vụ → unclear, approve mà chỉ nêu giờ đang chờ →
         # unclear). Nhãn None/lạ → "unclear": không bao giờ ghi khi model
         # không nói rõ approve.
         captured: dict = {}
