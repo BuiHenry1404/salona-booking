@@ -272,7 +272,10 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         if anchor_dt is None:
             latest = await proposals.latest(user)
             if latest is not None:
-                if latest.status == "pending":
+                # `latest()` trả trạng thái DB thô, không chuẩn hoá hạn như
+                # `ProposalService.get` — "pending" quá hạn vẫn còn status đó
+                # trong DB nên phải tự kiểm `expires_at` ở đây.
+                if latest.status == "pending" and ensure_aware(latest.expires_at) > now:
                     anchor_dt = to_local(latest.start_at)
                 elif (
                     latest.status in DECLINED_STATUSES

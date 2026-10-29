@@ -6,7 +6,7 @@ import pytest
 
 from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
 from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
-from app.core.clock import TZ, to_local
+from app.core.clock import TZ, now_utc, to_local
 from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -809,6 +809,40 @@ class TestParseTimeAnchor:
         out = json.loads(await tool.ainvoke({"hour": 10, "period": "sáng"}))
         assert out["start_at"] is None
         assert out["missing"] == ["ngày nào"]
+
+    async def test_parse_time_ignores_a_stale_pending_proposal_as_anchor(self, test_db):
+        """Đề xuất pending còn trong DB nhưng đã hết hạn (quá 10 phút) không còn
+        là "đang trên bàn" — khách hỏi giờ mới không được tự neo vào ngày đó."""
+        from app.services.proposal import ProposalService
+
+        user = await a_user(test_db)
+        proposals = ProposalService(test_db)
+        anchor_day = tomorrow_at(15)
+        p = await proposals.create(user, "book", anchor_day, "làm tóc")
+        await test_db["proposals"].update_one({"_id": p.id}, {"$set": {
+            "expires_at": now_utc() - timedelta(days=1)}})
+
+        tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        out = json.loads(await tool.ainvoke({"hour": 14, "period": "chiều"}))
+        assert out.get("day_from") != "anchor"
+        if out["start_at"]:
+            assert not out["start_at"].startswith(anchor_day.date().isoformat())
+
+    async def test_parse_time_still_anchors_on_a_live_pending_proposal(self, test_db):
+        """Ngược lại: đề xuất pending còn hạn (chưa quá 10 phút) vẫn neo như cũ."""
+        from app.services.proposal import ProposalService
+
+        user = await a_user(test_db)
+        proposals = ProposalService(test_db)
+        anchor_day = tomorrow_at(15)
+        p = await proposals.create(user, "book", anchor_day, "làm tóc")
+        await test_db["proposals"].update_one({"_id": p.id}, {"$set": {
+            "expires_at": now_utc() + timedelta(minutes=5)}})
+
+        tool = by_name(make_booking_tools(test_db, user), "parse_time")
+        out = json.loads(await tool.ainvoke({"hour": 14, "period": "chiều"}))
+        assert out["day_from"] == "anchor"
+        assert out["start_at"].startswith(anchor_day.date().isoformat())
 
     async def test_find_free_slots_and_propose_populate_working_memory(self, test_db):
         from app.services.conversation import ConversationService
