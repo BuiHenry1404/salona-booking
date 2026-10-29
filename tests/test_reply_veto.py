@@ -12,7 +12,6 @@ import pytest
 from app.agents.booking_graph.analyzer import MentionedTime, TurnAnalysis
 from app.agents.booking_graph.reply import (
     decide,
-    is_short_affirmation,
     mentions_other_time,
     other_time,
     resolve_label,
@@ -282,25 +281,6 @@ def test_strip_diacritics_handles_d_bar():
     assert strip_diacritics("Đúng rồi đó") == "Dung roi do"
     assert strip_diacritics("") == ""
     assert strip_diacritics(None) == ""
-
-
-# --- is_short_affirmation: dùng cho supervisor --------------------------------
-
-@pytest.mark.parametrize("text", ["Ok em", "dạ được", "ừ nha", "oke", "Dc",
-                                  "um", "ok a", "duoc roi"])
-def test_short_affirmations_are_recognised(text):
-    assert is_short_affirmation(text), text
-
-
-@pytest.mark.parametrize("text", [
-    "ok mà 4 giờ được không",       # đổi giờ, không phải đồng ý suông
-    "dạ không",                      # có từ phủ định
-    "chào em",                       # không có từ đồng ý nào
-    "ok em cảm ơn nhiều nha chị",    # quá 4 từ / có từ ngoài lưới
-    "",
-])
-def test_short_affirmations_rejects_everything_else(text):
-    assert not is_short_affirmation(text), text
 
 
 # --- Ngân sách regex: module reply tuyệt đối 0 regex --------------------------

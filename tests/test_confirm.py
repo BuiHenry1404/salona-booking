@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from app.agents.booking_graph import analyzer, reply
+from app.agents.booking_graph import analyzer
 from app.agents.booking_graph.confirm import (PROPOSAL_MAX_AGE_MINUTES,
                                               _sentence_start, clarify_question,
                                               execute_proposal, make_confirm_node)
@@ -337,8 +337,8 @@ CFG = {"configurable": {"thread_id": "t1"}}
 @pytest.fixture
 def classifier(monkeypatch):
     """Bộ phân tích giả (Task 12b — nhãn cuối của câu gõ chữ đến từ
-    `analyze_turn`, không còn từ `classify_reply`): trả nhãn đặt sẵn, đếm số
-    lần được gọi. `classify_reply` bị gài nổ: đường chính không được gọi nó."""
+    `analyze_turn`, không còn từ bộ phân loại `classify_reply` riêng trước
+    đây, đã xoá ở Task 6): trả nhãn đặt sẵn, đếm số lần được gọi."""
     state = {"label": "approve", "calls": 0}
 
     async def fake(messages, customer_text, pending, bot_question=""):
@@ -348,11 +348,7 @@ def classifier(monkeypatch):
         return analyzer.sanitize_analysis(
             analyzer.TurnAnalysis(reply_to_proposal=state["label"]), customer_text, True)
 
-    async def classify_must_not_run(*a, **kw):
-        raise AssertionError("classify_reply không còn nằm trên đường chính")
-
     monkeypatch.setattr(analyzer, "analyze_turn", fake)
-    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     return state
 
 

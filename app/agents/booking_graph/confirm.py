@@ -332,10 +332,11 @@ def make_confirm_node(
 
         # Lưới code TRƯỚC (`reply.decide`): khách nói giờ/ngày khác đề xuất →
         # "change", không gọi model. Câu lọt qua mới tới bộ phân tích (Task
-        # 12b, thay `classify_reply`) — tối đa một lời gọi mỗi lượt — rồi
-        # `reply.resolve_label` để code đè nhãn model (hoãn → reject, giờ khác
-        # → change, nhắc lại đúng giờ mà model nói change → unclear). Nhãn
-        # None/lạ → "unclear": không bao giờ ghi khi model không nói rõ approve.
+        # 12b, thay bộ phân loại `classify_reply` cũ) — tối đa một lời gọi
+        # mỗi lượt — rồi `reply.resolve_label` để code đè nhãn model (hoãn →
+        # reject, giờ khác → change, nhắc lại đúng giờ mà model nói change →
+        # unclear). Nhãn None/lạ → "unclear": không bao giờ ghi khi model
+        # không nói rõ approve.
         captured: dict = {}
 
         async def label_fn(proposal_facts, bot_question, customer_text):

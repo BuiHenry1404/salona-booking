@@ -122,7 +122,8 @@ async def test_analyzer_does_not_stream_and_uses_low_reasoning(patch_model):
 
 async def test_customer_text_and_bot_question_go_in_a_human_message(patch_model):
     """Review Task 12 #4: chữ khách gõ (và câu bot vừa hỏi) phải nằm trong
-    HumanMessage, không phải SystemMessage — mirror `reply.classify_reply`."""
+    HumanMessage, không phải SystemMessage — mirror cách `reply._describe`
+    từng mô tả đề xuất cho bộ phân loại câu trả lời xác nhận trước đây."""
     box = patch_model(reply=TurnAnalysis(route="booking"))
     await analyze_turn([], "làm móng lúc 3 giờ chiều mai", PENDING,
                        bot_question="Chị muốn làm dịch vụ gì ạ?")
@@ -365,8 +366,6 @@ class TestSemanticClassificationRealLLM:
         assert result.route == "booking"
         assert result.aside in (None, "none")
         assert result.aside != "defer_only"
-
-
 
 
 def test_empty_time_text_becomes_none():

@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from app.agents import checkpoint
-from app.agents.booking_graph import agents, analyzer, events, phrase, reply, rewrite
+from app.agents.booking_graph import agents, analyzer, events, phrase, rewrite
 from app.agents.booking_graph.confirm import BUTTON_NO_REPLY, BUTTON_STALE_REPLY
 from app.agents.booking_graph.context import address_phrase, format_vi_datetime
 from app.core.clock import TZ, now_utc, to_local
@@ -45,7 +45,8 @@ async def user(test_db, clean_db):
 @pytest.fixture
 def models(monkeypatch):
     """Task 12b: một bộ phân tích (`analyzer.analyze_turn`) thay cả supervisor
-    model lẫn `classify_reply`. Bọc nó để tách hai đường cho dễ khẳng định:
+    model lẫn bộ phân loại câu đáp đề xuất riêng trước đây (`classify_reply`,
+    đã xoá ở Task 6). Bọc nó để tách hai đường cho dễ khẳng định:
 
     - tin mới (`pending=None`, từ supervisor): chạy `analyze_turn` THẬT trên
       model giả `sup` (đếm `sup.calls` như trước);
@@ -53,8 +54,7 @@ def models(monkeypatch):
       giả — trả `classifier["label"]` (hoặc `classifier["fn"]`, hoặc trọn
       `classifier["analysis"]`), đếm `classifier["calls"]`.
 
-    `analyzer_calls` đếm MỌI lời gọi (mỗi lượt tối đa một). `classify_reply`
-    bị gài nổ: đường chính không được gọi nó nữa."""
+    `analyzer_calls` đếm MỌI lời gọi (mỗi lượt tối đa một)."""
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
     phrase_model = scripted([])
@@ -142,15 +142,11 @@ def models(monkeypatch):
             analyzer.TurnAnalysis(route=route, aside=aside),
             customer_text, False)
 
-    async def classify_must_not_run(*a, **kw):
-        raise AssertionError("classify_reply không còn nằm trên đường chính")
-
     monkeypatch.setattr(analyzer, "build_chat_model", lambda **kw: sup)
     monkeypatch.setattr(analyzer, "analyze_turn", fake_analyze)
     monkeypatch.setattr(agents, "build_chat_model", lambda **kw: agent)
     monkeypatch.setattr(phrase, "build_chat_model", lambda **kw: phrase_model)
     monkeypatch.setattr(rewrite, "build_chat_model", lambda **kw: scripted([AIMessage("")]))
-    monkeypatch.setattr(reply, "classify_reply", classify_must_not_run)
     monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
     monkeypatch.setattr(events, "get_callbacks", lambda: [])
     return SimpleNamespace(sup=sup, agent=agent, phrase=phrase_model, classifier=classifier,

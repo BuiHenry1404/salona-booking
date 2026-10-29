@@ -43,13 +43,16 @@ pytest tests/test_timeparse_llm.py -m llm -v     # calls real Azure ($$$); exclu
 - **Agent has NO create/write tool.** Flow: `propose_appointment` / `cancel_appointment`
   create a *proposal* in the `proposals` collection (`ProposalService.create`);
   `ConfirmMiddleware` puts only its `proposal_id` into graph state; the `confirm` node
-  `interrupt()`s and, on the next turn, code decides (deterministic veto in `reply.py`
-  first, then the `classify` model). Only `ProposalService.approve(user, proposal_id)`
+  `interrupt()`s and, on the next turn, code decides: a structural veto in `reply.py`
+  first (another time/day in the reply → `change`, no model call), then the
+  `TurnAnalysis` label (`aside` defer → reject, `relative_free` + approve → unclear,
+  a `change` label on a reply that only restates the proposed time → unclear). No
+  keyword dictionaries. Only `ProposalService.approve(user, proposal_id)`
   writes — it re-checks owner, 10-min expiry, later turn, single use, and that a
   move/cancel target is unchanged. Adding a `create_appointment` tool (or HITL around
   one) removes the user's confirmation step — forbidden. `tests/test_write_fence.py` guards it.
 - **Only stream tokens tagged `respond`.** Time-parser LLM must use `tags=["timeparse"]` +
-  `streaming=False`; reply classifier `tags=["classify"]` + `streaming=False`; supervisor
+  `streaming=False`; turn analyzer `tags=["analyze"]` + `streaming=False`; supervisor
   output is routing JSON, never user-visible.
 - **Context block goes first after system prompt and must state today's date** ("mai", "3h
   chiều" are unresolvable otherwise). It's per-turn, so it must NOT be inside the cached

@@ -140,9 +140,11 @@ async def apply_analysis(db: AsyncIOMotorDatabase, user: User, values: dict) -> 
 
     `self_address` lấy từ `analysis` (đã qua `sanitize_analysis`, tức là
     KHỚP với `detect_self_address` trên câu khách) khi lượt có chạy bộ phân
-    tích; lượt đi lối tắt code (không có `analysis`, VD hàng chờ/"ok" ngắn)
-    thì dùng thẳng `detect_self_address(customer_text)` một mình — vẫn cùng
-    một hàm, chỉ thiếu vế analyzer đồng thuận.
+    tích; từ Task 1, supervisor LUÔN gọi bộ phân tích cho tin mới (kể cả hàng
+    chờ/"ok" ngắn) nên `analysis` chỉ vắng khi lưới phủ quyết giờ khác trong
+    `reply.decide` (node `confirm`) chặn trước, không gọi tới bộ phân tích —
+    lượt đó dùng thẳng `detect_self_address(customer_text)` một mình, vẫn
+    cùng một hàm, chỉ thiếu vế analyzer đồng thuận.
     """
     from app.agents.booking_graph.analyzer import TurnAnalysis
 

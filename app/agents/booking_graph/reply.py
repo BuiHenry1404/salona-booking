@@ -1,23 +1,20 @@
 """Đọc câu khách trả lời câu hỏi xác nhận: lưới code giờ/ngày TRƯỚC, rồi `TurnAnalysis`.
 
-Toàn bộ các bộ từ điển từ khóa chuỗi tĩnh (_NEG_PHRASES_*, _GO_VERBS, veto_reason)
-đã được loại bỏ. Code chỉ còn so giờ/ngày/thứ (`other_time`, quét bằng
-`tokens.scan_*`); phủ định/hoãn/hỏi giao cho bộ phân tích ngữ nghĩa (`label_fn`
-+ `resolve_label`), với cơ chế fail-closed an toàn (lỗi/không rõ -> 'unclear').
+Toàn bộ các bộ từ điển từ khóa chuỗi tĩnh (_NEG_PHRASES_*, _GO_VERBS, veto_reason,
+và bộ phân loại `classify_reply` gọi model riêng cho bước này) đã được loại bỏ.
+Code chỉ còn so giờ/ngày/thứ (`other_time`, quét bằng `tokens.scan_*`); phủ
+định/hoãn/hỏi giao cho bộ phân tích ngữ nghĩa đầu lượt (`label_fn` — tức
+`analyzer.analyze_turn` — + `resolve_label`), với cơ chế fail-closed an toàn
+(lỗi/không rõ -> 'unclear'). `_describe` vẫn ở đây vì `analyzer.py` dùng nó để
+mô tả đề xuất cho bộ phân tích đó.
 """
-import asyncio
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, Sequence
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel
-
 from app.agents.booking_graph import tokens
 from app.agents.booking_graph.context import format_vi_datetime
-from app.agents.booking_graph.prompts import (CLASSIFY_GO_AHEAD, CLASSIFY_KIND,
-                                              CLASSIFY_PROMPT, CLASSIFY_QUEUE)
+from app.agents.booking_graph.prompts import CLASSIFY_GO_AHEAD, CLASSIFY_KIND, CLASSIFY_QUEUE
 from app.agents.booking_graph.timeparse import _to_24h
-from app.agents.llm import build_chat_model
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.text import strip_diacritics  # noqa: F401 (re-export)
@@ -127,7 +124,7 @@ def other_time(text: str, proposal: Mapping[str, Any], now: datetime,
 
 def restates_proposal_time(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
     """Khách CÓ nói giờ và mọi giờ đều trùng đề xuất (chỉ dựa vào quét chữ)."""
-    return bool(tokens.scan_times(text)) and not other_time(text, proposal, now)
+    return _has_time(text) and not other_time(text, proposal, now)
 
 
 def spoken_times(text: str) -> Optional[str]:
@@ -138,44 +135,12 @@ def spoken_times(text: str) -> Optional[str]:
     parts = []
     for hour, period, minute in tokens.scan_times(text):
         spoken = f"{hour} giờ"
-        if minute:
+        if minute:  # minute=0 bị bỏ qua cố ý: "3 giờ" đọc tự nhiên hơn "3 giờ 0"
             spoken = f"{spoken} {minute}"
         if period:
             spoken = f"{spoken} {period}"
         parts.append(spoken)
     return ", ".join(parts) if parts else None
-
-
-# --- khẳng định ngắn sau lượt booking (lỗi LLM-02, dùng cho supervisor) ------
-_AFFIRM_YES = ("ừ", "ừa", "ờ", "ừm", "ok", "oke", "okay", "okie", "vâng", "dạ",
-               "được", "đc", "dc", "đúng", "uh", "um")
-_AFFIRM_YES_BARE = frozenset(strip_diacritics(w) for w in _AFFIRM_YES)
-_AFFIRM_FILLER = ("em", "nha", "nhé", "nhe", "ạ", "đi", "rồi", "vậy", "luôn")
-_AFFIRM_FILLER_BARE = frozenset(strip_diacritics(w) for w in _AFFIRM_FILLER)
-_AFFIRM_MAX_TOKENS = 4
-
-
-def _is_affirm_yes(token: str) -> bool:
-    return token in _AFFIRM_YES or token in _AFFIRM_YES_BARE
-
-
-def _is_affirm_filler(token: str) -> bool:
-    return token in _AFFIRM_FILLER or token in _AFFIRM_FILLER_BARE
-
-
-def is_short_affirmation(text: str) -> bool:
-    """Câu NGẮN, chỉ gồm từ đồng ý + tiểu từ đệm, không nói giờ/ngày khác —
-    dùng để định tuyến trong supervisor, không dùng để duyệt lịch."""
-    ws = tokens.words(text)
-    if not ws or len(ws) > _AFFIRM_MAX_TOKENS:
-        return False
-    if not any(_is_affirm_yes(t) for t in ws):
-        return False
-    if not all(_is_affirm_yes(t) or _is_affirm_filler(t) for t in ws):
-        return False
-    if bool(tokens.scan_times(text)):
-        return False
-    return True
 
 
 # --- mô tả đề xuất cho LLM ---------------------------------------------------
@@ -195,41 +160,9 @@ def _describe(proposal: Mapping[str, Any]) -> str:
     return text
 
 
-CLASSIFY_TIMEOUT_SECONDS = 8
-
-
-class ReplyDecision(BaseModel):
-    decision: Literal["approve", "reject", "change", "unclear"]
-
-
-async def classify_reply(proposal: Mapping[str, Any], bot_question: str,
-                         customer_text: str) -> str:
-    """Nhãn của model; mọi lỗi/timeout/kết quả lạ -> 'unclear'."""
-    try:
-        model = build_chat_model(tags=["classify"], streaming=False, reasoning_effort="low")
-        structured = model.with_structured_output(ReplyDecision)
-        messages = [
-            SystemMessage(content=CLASSIFY_PROMPT),
-            HumanMessage(content=(
-                f"{_describe(proposal)}\n"
-                f"Receptionist's last message: {bot_question or '(none)'}\n"
-                f"Customer's reply: {customer_text}")),
-        ]
-        result = await asyncio.wait_for(structured.ainvoke(messages),
-                                        timeout=CLASSIFY_TIMEOUT_SECONDS)
-        if not isinstance(result, ReplyDecision):
-            raise TypeError(f"unexpected classifier result {type(result).__name__}")
-        return result.decision
-    except Exception as exc:
-        logger.warning("classify_failed", extra={"error": str(exc)[:200],
-                                                 "error_type": type(exc).__name__})
-        return "unclear"
-
-
 ReplyLabel = Literal["approve", "reject", "change", "unclear"]
 REPLY_LABELS = frozenset(ReplyLabel.__args__)
 LabelFn = Callable[[Mapping[str, Any], str, str], Awaitable[Optional[str]]]
-VetoMode = Literal["full", "time_only"]
 
 
 async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,

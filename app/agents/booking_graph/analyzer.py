@@ -1,8 +1,9 @@
 """Bộ phân tích đầu lượt (spec mục 3, sửa 25/10/2026).
 
-Thay LƯỢT của supervisor (định tuyến) VÀ của `reply.classify_reply` (đọc câu
-đáp đề xuất): một lượt structured output duy nhất, mỗi turn vẫn tối đa một
-lượt LLM trước agent — không thêm lượt nào. Task 12b nối nó vào graph:
+Thay LƯỢT của supervisor (định tuyến) VÀ của bộ phân loại câu đáp đề xuất
+riêng trước đây (`reply.classify_reply`, đã xoá ở Task 6): một lượt structured
+output duy nhất, mỗi turn vẫn tối đa một lượt LLM trước agent — không thêm
+lượt nào. Task 12b nối nó vào graph:
 `supervisor.supervise` (tin mới, sau lối tắt code) và nhãn cuối của
 `reply.decide` trong node `confirm` (câu gõ chữ, sau lưới phủ quyết/go-ahead).
 
@@ -92,10 +93,10 @@ async def analyze_turn(messages: Sequence[BaseMessage], customer_text: str,
     `sanitize_analysis` trước khi trả về.
 
     Chữ khách gõ (và câu bot vừa hỏi) nằm trong `HumanMessage` CUỐI, không
-    phải `SystemMessage` (review Task 12 #4) — cùng cấu trúc với
-    `reply.classify_reply`: vai "system" là chỗ của chỉ dẫn cố định, không
-    phải chữ khách tự gõ (chữ khách trong vai system dễ bị model đọc như một
-    chỉ dẫn thay vì dữ liệu cần phân tích).
+    phải `SystemMessage` (review Task 12 #4) — cùng cấu trúc với bộ phân loại
+    câu đáp đề xuất trước đây (`reply.classify_reply`, đã xoá): vai "system"
+    là chỗ của chỉ dẫn cố định, không phải chữ khách tự gõ (chữ khách trong
+    vai system dễ bị model đọc như một chỉ dẫn thay vì dữ liệu cần phân tích).
     """
     has_pending = pending is not None
     try:

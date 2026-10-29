@@ -62,7 +62,8 @@ Mỗi task đã qua review (spec + chất lượng); đa số cần đúng một
 ### ĐÃ LÀM thêm (26/10)
 
 - **Task 15** (`c6ad77b`): câu chốt theo ngữ cảnh (khách mới / khách quen / vừa đổi giờ /
-  vừa từ chối — suy từ đề xuất đã đóng trong ngày) + cờ `CONFIRM_VETO_MODE=full|time_only`,
+  vừa từ chối — suy từ đề xuất đã đóng trong ngày) + cờ đo benchmark lưới phủ quyết
+  (đã xoá ở Task 6, phần dọn code chết sau review `ee60723` — lưới chỉ còn một chế độ),
   `GUARD_VOICE_RULES=true|false` (mặc định giữ hành vi cũ). Qua review sau 1 vòng sửa.
 - **Đã DỪNG** sau Task 15 theo lệnh chủ dự án.
 
@@ -216,7 +217,7 @@ biên bản, không phải mẫu để chép.
 
 6. Khối bối cảnh **phải nói hôm nay là ngày nào, ở dòng đầu** — thiếu thì model đặt lệch cả năm mà chuỗi ISO vẫn hợp lệ nên không gì chặn.
 7. Node `booking` có **7 tool, 0 tool ghi**: 5 tool lịch + 2 tool đọc của shop (thêm 14/9 để trả lời câu kép). Thêm `create_appointment` là phá cả hai lớp bảo vệ — hàng rào là `test_there_is_NO_tool_that_writes_an_appointment`. Từ M3 hai tool đề xuất ghi một document `proposals` (không phải lịch) — y như A từng ghi cờ pending; `ConfirmMiddleware` không đăng ký tool nào và không có `HumanInTheLoopMiddleware` (HITL bọc một tool ghi, tức là phải CÓ tool ghi). `tests/test_write_fence.py` quét AST `app/agents`: chỉ node `confirm` được gọi `ProposalService.approve`, không chỗ nào gọi thẳng create/reschedule/cancel của `AppointmentService`.
-8. Chỉ stream token mang tag `respond`. Parser thời gian `tags=["timeparse"]` + `streaming=False`; bộ phân loại câu trả lời xác nhận `tags=["classify"]` + `streaming=False` (timeout 8 giây như parser, lỗi/timeout = `unclear`, không bao giờ approve); `rewrite` mang tag `rewrite`. Lọt tag là JSON chạy ngang màn hình khách. Câu hỏi lại khi khách trả lời không rõ do CODE viết nên không có token — tới khách qua `complete`, như mọi câu fallback của A.
+8. Chỉ stream token mang tag `respond`. Parser thời gian `tags=["timeparse"]` + `streaming=False`; bộ phân tích đầu lượt (đọc cả câu trả lời xác nhận, thay bộ phân loại `classify_reply` riêng cũ — xoá Task 6) `tags=["analyze"]` + `streaming=False` (timeout 8 giây như parser, lỗi/timeout = nhãn `fallback`, không bao giờ suy ra approve); `rewrite` mang tag `rewrite`. Lọt tag là JSON chạy ngang màn hình khách. Câu hỏi lại khi khách trả lời không rõ do CODE viết nên không có token — tới khách qua `complete`, như mọi câu fallback của A.
 9. Khối bối cảnh **không nằm trong system prompt** — nó đổi mỗi lượt, đặt đầu là cache không bao giờ trúng. Thứ tự: **System → summary + slots → lịch sử → bối cảnh → tin mới**. Thứ tự này từng bị code làm ngược (bối cảnh rơi xuống sau câu hỏi mới) và có một test khoá chặt cái sai đó lại; sửa 2026-09-13.
 10. Timeout parser **8 giây**. Ngưỡng cũ 2s mà Azure thật mất 2,2–2,4s → nhánh LLM chưa từng chạy. `test_timeout_leaves_room_for_a_real_azure_call` chốt.
 11. **Đừng nới regex parser** — nó chỉ trả lời khi khớp trọn vẹn. Thêm mẫu "thứ Năm" là nuốt luôn "thứ Năm tuần sau". `TestRegexDefers` canh.
