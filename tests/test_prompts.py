@@ -256,7 +256,9 @@ class TestHardWonRulesSurvive:
         flat = " ".join(BOOKING_PROMPT.split())
         assert "[declined: ...]" in flat
         assert "nothing was written" in flat
-        assert ("Do not call propose_appointment or cancel_appointment again unless "
+        # F1 (final fix wave): vế cấm đề xuất lại nằm TRONG nhánh reject/
+        # unclear/hết hạn (sau dấu chấm phẩy), không còn là câu đứng riêng.
+        assert ("call propose_appointment or cancel_appointment again only if "
                 "THIS message") in flat
         assert "pass its iso as parse_time's anchor" in flat
         assert "Call cancel_appointment only when THIS message asks to cancel" in flat
@@ -270,6 +272,20 @@ class TestHardWonRulesSurvive:
         rule 8 phải dạy model đọc `reason` thay vì tự đoán lại."""
         assert "reason: change" in BOOKING_PROMPT and "reason: reject" in BOOKING_PROMPT
         assert "reason: unclear" in BOOKING_PROMPT
+
+    def test_rule_8_proposes_on_change_only_when_a_time_is_known(self):
+        """F1: `reason: change` mà không có `asked` và tin này không nêu giờ
+        ("ừ", "đổi giờ khác đi em") — không được đề xuất bừa: mời giờ trống
+        hoặc hỏi giờ nào."""
+        flat = " ".join(BOOKING_PROMPT.split())
+        assert "if the line carries `asked` or THIS message names a time" in flat
+        assert "if neither, offer free times or ask which time they want" in flat
+
+    def test_rule_8_never_proposes_after_a_declined_cancel_change(self):
+        """F1: "ừ hủy đi, mai chị bận 4 giờ" → `[declined: cancel …, reason:
+        change]` — khách xin HỦY, không đẩy propose_appointment."""
+        flat = " ".join(BOOKING_PROMPT.split())
+        assert "on a `cancel` proposal, just ask what they want instead" in flat
 
     def test_only_the_checked_time_may_be_called_taken(self):
         """Lỗi live 2: 3 giờ sáng ra `slot_unavailable`, model nói "3 giờ
@@ -436,6 +452,10 @@ class TestBookingPromptSlimmed:
         # chỉ còn áp cho reject/unclear/hết hạn, KHÔNG áp cho change (review
         # chỉ ra bản đầu đọc tuyến tính có thể hiểu lầm là luôn phải hỏi lại
         # thay vì gọi tool khi change) — đo được 9706, vẫn dưới mốc 9800.
+        # Final fix wave (review ee60723): rule 8 chỉ "đề xuất ngay" khi có
+        # `asked` hay tin này nêu giờ, không thì mời giờ trống/hỏi giờ; đề
+        # xuất hủy + change thì chỉ hỏi khách muốn gì — đo được 9789, vẫn dưới
+        # mốc 9800.
         assert len(BOOKING_PROMPT) < 9800
 
     def test_picking_a_day_unasked_is_forbidden(self):
