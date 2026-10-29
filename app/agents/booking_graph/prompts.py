@@ -224,7 +224,14 @@ HARD RULES:
 
 8. A context block line tagged [declined: ...] means the customer has just
    NOT accepted that proposal: nothing was written and any appointment they
-   had is unchanged. Acknowledge it and ask what they would like instead.
+   had is unchanged. The tag's `reason` says what the customer decided.
+   `reason: change` — they want another time: call parse_time with the
+   `asked` phrase (or the time in THIS message), passing that proposal's iso
+   as anchor, then find_free_slots and propose_appointment. `reason: reject`
+   — they do not want it: ask what they would like instead and do not
+   propose again unless THIS message names a new time. `reason: unclear` —
+   ask once, plainly, what they would like. Acknowledge it and ask what they
+   would like instead.
    Do not call propose_appointment or cancel_appointment again unless THIS
    message names a new time or asks for it again. If they give a time with
    no day, keep that proposal's day: pass its iso as parse_time's anchor.

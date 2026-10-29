@@ -265,6 +265,12 @@ class TestHardWonRulesSurvive:
     def test_parse_time_points_at_the_declined_line_as_an_anchor(self):
         assert "[declined: ...]" in " ".join(_tool_descriptions()["parse_time"].split())
 
+    def test_rule_8_tells_the_model_what_each_reason_means(self):
+        """Task 7 (sửa lỗi 13): code đã biết khách đổi ý hay từ chối hẳn —
+        rule 8 phải dạy model đọc `reason` thay vì tự đoán lại."""
+        assert "reason: change" in BOOKING_PROMPT and "reason: reject" in BOOKING_PROMPT
+        assert "reason: unclear" in BOOKING_PROMPT
+
     def test_only_the_checked_time_may_be_called_taken(self):
         """Lỗi live 2: 3 giờ sáng ra `slot_unavailable`, model nói "3 giờ
         chiều đã kín". Giờ ngoài lịch tiệm không phải "có người đặt", và chỉ
@@ -423,7 +429,10 @@ class TestBookingPromptSlimmed:
         # cấm hỏi có/không về giờ chưa propose_appointment — đo được 9057 —
         # mốc lên 9100. Task 12 (2026-10-26): rule 11 mới, đọc khối trạng
         # thái mở rộng (asked/stated/told) — đo được 9327 — mốc lên 9400.
-        assert len(BOOKING_PROMPT) < 9400
+        # Task 7 review ee60723 (2026-10-29): rule 8 dạy model đọc `reason`
+        # (`change`/`reject`/`unclear`) của dòng `[declined: …]` thay vì tự
+        # đoán — đo được 9795 — mốc lên 9800.
+        assert len(BOOKING_PROMPT) < 9800
 
     def test_picking_a_day_unasked_is_forbidden(self):
         """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ

@@ -358,6 +358,85 @@ class TestLastReplyIsQuotedSoItIsNotRepeated:
 
 # --- dòng "khách vừa KHÔNG chốt" ở lượt kế (lỗi live 3/5/6) -------------------
 
+# Thứ Ba 20/10, 3 giờ chiều — mốc cố định cho các test `declined_line` dưới.
+START = datetime(2026, 10, 20, 15, 0, tzinfo=TZ)
+
+
+def book_proposal(start_at):
+    from types import SimpleNamespace
+    return SimpleNamespace(kind="book", start_at=start_at, target_snapshot=None)
+
+
+class TestDeclinedLineReasons:
+    """Task 7: code đã biết `change`/`reject`/`unclear` — viết thẳng vào dòng
+    thay vì để agent booking đoán lại (lỗi 13, review ee60723)."""
+
+    def test_declined_line_change_carries_reason_and_code_written_time(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START), reason="change", asked="4 giờ")
+        assert line.startswith("Khách muốn ĐỔI đề xuất đặt lịch Thứ Ba 20/10, 3 giờ chiều sang giờ khác")
+        assert '(khách nêu: "4 giờ")' in line
+        assert line.endswith('reason: change, asked: "4 giờ"]')
+
+    def test_declined_line_change_without_asked_has_no_asked_tag(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START), reason="change")
+        assert '(khách nêu:' not in line
+        assert line.endswith("reason: change]")
+
+    def test_declined_line_reject_says_not_wanted(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START), reason="reject")
+        assert line.startswith("Khách KHÔNG muốn đề xuất đặt lịch")
+        assert line.endswith("reason: reject]")
+
+    def test_declined_line_unclear_says_not_settled_after_two_asks(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START), reason="unclear")
+        assert "sau hai lần hỏi" in line
+        assert line.endswith("reason: unclear]")
+
+    def test_declined_line_without_reason_is_unchanged(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START))
+        assert line.startswith("Khách vừa KHÔNG chốt đề xuất")
+        assert "reason:" not in line
+
+    def test_declined_line_expired_is_unchanged_even_with_reason(self):
+        from app.agents.booking_graph.context import declined_line
+        line = declined_line(book_proposal(START), expired=True, reason="reject")
+        assert "HẾT HẠN" in line
+        assert "reason:" not in line
+
+    async def test_recent_decline_derives_reason_from_status(self):
+        from app.agents.booking_graph.context import _recent_decline
+        from app.core.clock import now_ms
+
+        class Conversations:
+            async def _all_messages(self, user_id):
+                return []
+
+        def latest_with(status, unclear_count=0):
+            from types import SimpleNamespace
+            return SimpleNamespace(status=status, updated_at=now_ms(), kind="book",
+                                   start_at=START, target_snapshot=None,
+                                   unclear_count=unclear_count)
+
+        superseded = await _recent_decline(Conversations(), "u1", latest_with("superseded"))
+        assert "reason: change" in superseded
+
+        rejected = await _recent_decline(Conversations(), "u1", latest_with("rejected"))
+        assert "reason: reject" in rejected
+        assert "reason: unclear" not in rejected
+
+        unclear = await _recent_decline(Conversations(), "u1", latest_with("rejected", unclear_count=2))
+        assert "reason: unclear" in unclear
+
+        expired = await _recent_decline(Conversations(), "u1", latest_with("expired"))
+        assert "HẾT HẠN" in expired
+        assert "reason:" not in expired
+
+
 class TestDeclinedLineInLoadContext:
     @pytest.fixture
     async def lan(self, test_db):
@@ -378,7 +457,7 @@ class TestDeclinedLineInLoadContext:
         p = await proposals.create(lan, "book", self.tomorrow_at(15), "làm tóc")
         await proposals.reject(lan, str(p.id))
         block = (await load_context(test_db, lan, "sao em"))["context_block"]
-        assert "KHÔNG chốt" in block and "[declined: book" in block
+        assert "KHÔNG muốn" in block and "[declined: book" in block and "reason: reject" in block
 
     async def test_a_newer_proposal_hides_the_old_decline(self, test_db, lan):
         from app.agents.booking_graph.context import load_context
@@ -449,7 +528,7 @@ class TestDeclinedLineInLoadContext:
         assert format_vi_datetime(self.tomorrow_at(15)) in line
         assert format_vi_datetime(self.tomorrow_at(16)) in line
         assert "lịch cũ vẫn giữ nguyên" in line
-        assert f"[declined: move, iso: {self.tomorrow_at(16).isoformat()}]" in line
+        assert f"[declined: move, iso: {self.tomorrow_at(16).isoformat()}, reason: change]" in line
 
 
 class TestRenderSlotsShowsExtendedGroups:

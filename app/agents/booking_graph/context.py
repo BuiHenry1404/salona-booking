@@ -1,6 +1,6 @@
 import asyncio
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services.appointment import AppointmentService
 from app.services.conversation import ConversationService
 from app.services.conversation_state import ConversationStateService, SESSION_TTL_DAYS
-from app.services.proposal import PROPOSAL_MAX_AGE_MINUTES, ProposalService
+from app.services.proposal import PROPOSAL_MAX_AGE_MINUTES, UNCLEAR_LIMIT, ProposalService
 from app.services.shop import ShopService
 
 logger = get_logger(__name__)
@@ -275,8 +275,18 @@ _DECLINED_TAIL = {
 }
 
 
-def declined_line(proposal, *, expired: bool = False) -> str:
-    """Một dòng code viết: khách đã KHÔNG chốt đề xuất nào, và chưa ghi gì."""
+def declined_line(proposal, *, expired: bool = False,
+                  reason: Optional[Literal["change", "reject", "unclear"]] = None,
+                  asked: Optional[str] = None) -> str:
+    """Một dòng code viết: khách đã KHÔNG chốt đề xuất nào, và chưa ghi gì.
+
+    `reason` (Task 7, sửa lỗi 13): code đã biết khách ĐỔI giờ, TỪ CHỐI hẳn,
+    hay chưa chốt rõ sau hai lần hỏi — viết thẳng vào dòng để agent booking
+    không phải đoán lại từ câu khách (dễ sai). `reason=None` (hoặc
+    `expired=True`, luôn ưu tiên câu "HẾT HẠN" cũ) giữ NGUYÊN câu cũ cho
+    tương thích ngược. `asked` (chỉ dùng với `reason="change"`) là giờ khách
+    vừa nêu, đã qua `reply.spoken_times` — KHÔNG BAO GIỜ chép nguyên câu
+    khách vào đây (chống tiêm lệnh)."""
     kind = proposal.kind
     when = format_vi_datetime(proposal.start_at)
     if kind == "move":
@@ -287,11 +297,27 @@ def declined_line(proposal, *, expired: bool = False) -> str:
         what = f"hủy lịch {when}"
     else:
         what = f"đặt lịch {when}"
-    head = (f"Đề xuất {what} đã HẾT HẠN, khách chưa chốt" if expired
-            else f"Khách vừa KHÔNG chốt đề xuất {what}")
     tail = _DECLINED_TAIL.get(kind, _DECLINED_TAIL["book"])
-    return (f"{head} — chưa ghi gì, {tail}. "
-            f"[declined: {kind}, iso: {to_local(proposal.start_at).isoformat()}]")
+    iso = to_local(proposal.start_at).isoformat()
+
+    if expired:
+        head = f"Đề xuất {what} đã HẾT HẠN, khách chưa chốt"
+        return (f"{head} — chưa ghi gì, {tail}. "
+                f"[declined: {kind}, iso: {iso}]")
+    if reason is None:
+        head = f"Khách vừa KHÔNG chốt đề xuất {what}"
+        return (f"{head} — chưa ghi gì, {tail}. "
+                f"[declined: {kind}, iso: {iso}]")
+    if reason == "change":
+        asked_part = f' (khách nêu: "{asked}")' if asked else ""
+        asked_tag = f', asked: "{asked}"' if asked else ""
+        return (f"Khách muốn ĐỔI đề xuất {what} sang giờ khác{asked_part} — chưa ghi gì, "
+                f"{tail}. [declined: {kind}, iso: {iso}, reason: change{asked_tag}]")
+    if reason == "unclear":
+        return (f"Khách chưa chốt rõ đề xuất {what} sau hai lần hỏi — chưa ghi gì, "
+                f"{tail}. [declined: {kind}, iso: {iso}, reason: unclear]")
+    return (f"Khách KHÔNG muốn đề xuất {what} — chưa ghi gì, "
+            f"{tail}. [declined: {kind}, iso: {iso}, reason: reject]")
 
 
 # --- hàng chờ: nhiều lịch trong một câu, đặt LẦN LƯỢT (lỗi live B2 #2) ---------
@@ -600,4 +626,18 @@ async def _recent_decline(conversations: ConversationService, user_id: str,
     messages = await conversations._all_messages(user_id)
     if any(m.role == "user" and _aware(m.created_at) >= closed for m in messages):
         return None
-    return declined_line(latest, expired=latest.status == "expired")
+    if latest.status == "expired":
+        return declined_line(latest, expired=True)
+    # Task 7: dựng lại ĐÚNG `reason` của lượt `confirm` từ trạng thái đề xuất
+    # trong DB — `superseded` chỉ đến từ quyết "change" (đã kiểm: đề xuất MỚI
+    # mà `create` tạo ra khi supersede cái cũ luôn là `pending`, không bao
+    # giờ là đề xuất MỚI NHẤT còn `superseded`); `rejected` sau đủ
+    # `UNCLEAR_LIMIT` lần hỏi lại (`mark_unclear` tự chuyển trạng thái) là
+    # "chưa chốt rõ", không phải từ chối thật — map sang reason="unclear".
+    if latest.status == "superseded":
+        reason = "change"
+    elif getattr(latest, "unclear_count", 0) >= UNCLEAR_LIMIT:
+        reason = "unclear"
+    else:
+        reason = "reject"
+    return declined_line(latest, reason=reason)

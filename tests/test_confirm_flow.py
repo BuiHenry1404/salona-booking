@@ -726,13 +726,40 @@ async def test_decline_tells_the_agent_what_was_declined(test_db, user, models):
     await turn(test_db, user, "dạ ko em")
 
     ctx = context_seen(models)
-    assert "KHÔNG chốt" in ctx
+    assert "KHÔNG muốn" in ctx
     assert format_vi_datetime(tomorrow_at(15)) in ctx
-    assert f"[declined: book, iso: {tomorrow_at(15).isoformat()}]" in ctx
+    assert f"[declined: book, iso: {tomorrow_at(15).isoformat()}, reason: reject]" in ctx
     assert "chưa ghi gì" in ctx
     assert ctx.count("[declined:") == 1
     # Dòng nằm TRƯỚC dòng chốt "hãy tin phần trên".
     assert ctx.rstrip().endswith("hãy tin phần trên.")
+
+
+async def test_change_hands_the_agent_a_change_line(test_db, user, models):
+    """Task 7 (sửa lỗi 13): khách đổi ý về GIỜ — dòng `[declined …]` phải nói
+    `reason: change` và mang theo giờ khách vừa nêu (`reply.spoken_times`)."""
+    await propose_turn(test_db, user, models)
+    models.agent.replies += [AIMessage("Dạ chị muốn đổi sang giờ nào ạ?")]
+
+    await turn(test_db, user, "ok mà 4 giờ nha")
+
+    ctx = context_seen(models)
+    assert 'reason: change, asked: "4 giờ"' in ctx
+    assert await test_db["proposals"].count_documents({"status": "superseded"}) == 1
+
+
+async def test_reject_hands_the_agent_a_reject_line(test_db, user, models):
+    """Task 7: khách từ chối hẳn (không đổi giờ) — dòng phải nói `reason: reject`,
+    không phải `reason: change`."""
+    await propose_turn(test_db, user, models)
+    models.classifier["label"] = "reject"
+    models.agent.replies += [AIMessage("Dạ vâng ạ.")]
+
+    await turn(test_db, user, "thôi em, không làm nữa")
+
+    ctx = context_seen(models)
+    assert "reason: reject" in ctx
+    assert "reason: change" not in ctx
 
 
 async def test_decline_line_survives_one_more_turn_then_drops(test_db, user, models):

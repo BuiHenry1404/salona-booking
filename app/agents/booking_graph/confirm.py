@@ -253,7 +253,7 @@ async def _handle_button(db: AsyncIOMotorDatabase, user: User, state: GraphState
                "confirm_fact": {"kind": "clarify", "when": when, "note": None,
                                 "address": address, "error": None},
                "context_block": with_line(state.get("context_block", ""),
-                                          declined_line(proposal))}
+                                          declined_line(proposal, reason="reject"))}
         if updated_slots is not None:
             out["slots"] = updated_slots
         return out
@@ -399,10 +399,17 @@ def make_confirm_node(
         # mở lại việc hủy, hoặc mất ngày đang bàn. Lượt sau load_context dựng
         # lại đúng dòng này từ DB.
         logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
+        # Task 7 (sửa lỗi 13): `decision` ở đây chỉ còn "change"/"reject", hoặc
+        # "unclear" rơi xuống từ nhánh trên (hỏi lại lần 2, `mark_unclear` đã
+        # chuyển đề xuất thành `rejected`) — ba giá trị khớp thẳng `reason`
+        # của `declined_line`, không cần đoán lại. `asked` chỉ có ý nghĩa với
+        # "change": giờ khách vừa nêu, viết lại bằng code (`reply.spoken_times`),
+        # KHÔNG chép nguyên câu khách.
+        asked = reply.spoken_times(text) if decision == "change" else None
         out = {"proposal_id": None, "gate_next": "booking",
                "customer_text": text,
                "context_block": with_line(state.get("context_block", ""),
-                                          declined_line(proposal)),
+                                          declined_line(proposal, reason=decision, asked=asked)),
                **analysed}
         if updated_slots is not None:
             out["slots"] = updated_slots
