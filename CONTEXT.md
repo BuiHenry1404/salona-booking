@@ -5,7 +5,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 
 | Cần gì | Đọc file |
 |---|---|
-| Đang làm gì tiếp | [`NOTE.md`](NOTE.md) |
+| Đang làm gì tiếp | `refactor.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` (kiến trúc mới, chờ duyệt) |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
 | Nợ kỹ thuật, lỗ hổng | [`REPO_AUDIT.md`](REPO_AUDIT.md) |
@@ -40,12 +40,11 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 ### Plan đang chạy
 
 - Spec: `docs/superpowers/specs/2026-10-20-target-architecture-design.md`
-- Plan: `docs/superpowers/plans/2026-10-20-target-architecture.md` (16 task + 12b, 12c)
-- Sơ đồ: `docs/research/Architech.md`
-- **Sổ tiến độ (nguồn sự thật để chạy tiếp):**
-  `.superpowers/sdd/2026-10-20-target-architecture/progress.md` — dòng
-  `Task N: complete` = xong, đừng làm lại; mọi `Ruling:` là quyết định đã chốt;
-  mọi `minor (deferred)` là việc nhỏ để review cuối phân loại.
+- Plan: `docs/superpowers/plans/2026-10-20-target-architecture.md` — **đã xoá 30/10** (plan đã thực thi
+  xong tới Task 15 rồi dừng; xem git history nếu cần). Sổ tiến độ `.superpowers/sdd/` cũng đã dọn.
+- Sơ đồ: `docs/research/Architech.md` (sẽ sai sau refactor orchestrator; thay khi refactor xong)
+- **Hướng đi từ 29/10**: `refactor.md` + spec `2026-10-29-llm-orchestrator-design.md` thay thế toàn bộ
+  mục này và các "chốt cứng" bên dưới liên quan tới tầng agent (xem §0 của spec đó).
 - Thực thi bằng skill `superpowers:subagent-driven-development` (mỗi task: một
   implementer + một reviewer; tối đa 5 vòng sửa).
 
@@ -181,7 +180,7 @@ Hai hàng rào: `tests/test_prompts.py` (sót "cô chú" hay "giúp con" trong p
 là test đỏ) và phép kiểm `pronoun` của `guard` (câu trả lời thật sai xưng hô thì
 bị viết lại trước khi phát).
 
-Tài liệu có ghi ngày (`REPO_AUDIT.md`, `docs/SYSTEM_PROMPTS_EVALUATION.md`,
+Tài liệu có ghi ngày (`REPO_AUDIT.md`,
 `docs/test-scenarios/03-llm-live-run-*.md`, `docs/superpowers/`) **giữ vai cũ** —
 biên bản, không phải mẫu để chép.
 
@@ -334,4 +333,4 @@ cho **chính họ**.
 **Lặt vặt**
 
 - **Test DB không chịu được hai `pytest` song song**: chạy chồng nhau sinh `OperationFailure: Index build failed` ở những test không liên quan. Chạy một lần một.
-- **Dọn 3 bản trùng** của tài liệu test (xem `NOTE.md`).
+- ~~Dọn 3 bản trùng của tài liệu test~~ — xong 30/10 (xoá `TEST_SCENARIOS.md` gốc và bản trùng trong `docs/test-scenarios/`; `NOTE.md` cũng đã xoá vì dừng ở 20/9).
