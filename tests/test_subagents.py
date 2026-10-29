@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 from app.agents.booking_graph.agents import (FALLBACK_ANSWER, MAX_TOOL_ROUNDS,
                                              build_agent, make_agent_node)
 from app.models.conversation import ConversationSlots
+from app.models.user import User
 from tests.fakes import scripted, tool_call
 
 
@@ -164,4 +165,21 @@ async def test_make_agent_node_merges_same_turn_supervisor_analysis_into_slots()
     sent = "\n".join(str(m.content) for m in model.calls[0])
     assert "- Dịch vụ: sơn thạch" in sent
     assert "- Khách đã nói rõ: chỉ rảnh sau 5 giờ chiều" in sent
+
+
+async def test_agent_node_never_calls_the_analyzer(monkeypatch):
+    """Supervisor là nơi DUY NHẤT gọi bộ phân tích (Task 1). Node agent chỉ
+    đọc `state.get("analysis")` — kể cả khi có `user` và state thiếu
+    `analysis` (lỗi 8), node vẫn chạy xong mà không gọi `analyzer.analyze_turn`."""
+    from app.agents.booking_graph import analyzer
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("agent node không được gọi bộ phân tích")
+
+    monkeypatch.setattr(analyzer, "analyze_turn", boom)
+    user = User(phone="0912345678", hashed_password="x", full_name="Cô Lan")
+    model = scripted([AIMessage(content="Dạ.")])
+    node = make_agent_node(build_agent("p", [], model=model), user=user)
+    out = await node(a_state("mai còn trống không con"))
+    assert out["draft"] == "Dạ."
 

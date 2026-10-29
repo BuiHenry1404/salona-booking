@@ -195,8 +195,10 @@ async def test_supervisor_model_has_its_own_short_budget(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_short_ok_after_a_booking_turn_routes_via_analyzer(analyzer_spy):
-    """Không còn lối tắt chuỗi is_short_affirmation: 'Ok em' đi qua analyze_turn."""
+    """Không còn lối tắt chuỗi is_short_affirmation: 'Ok em' đi qua analyze_turn,
+    và chỉ về booking vì model đánh dấu `answers_question` (luật 3)."""
     analyzer_spy["route"] = "booking"
+    analyzer_spy["answers_question"] = True
     out = await supervise(a_state("Ok em", last_route="booking"))
     assert out["route"] == "booking"
     assert len(analyzer_spy["calls"]) == 1
@@ -221,14 +223,17 @@ def test_supervisor_does_not_import_retired_heuristics():
 
 @pytest.fixture
 def analyzer_spy(monkeypatch):
-    """Thay `analyzer.analyze_turn`: đếm lời gọi, ghi đối số, trả nhãn đặt sẵn."""
+    """Thay `analyzer.analyze_turn`: đếm lời gọi, ghi đối số, trả nhãn đặt sẵn
+    (và `aside`/`answers_question` khi test đặt chúng trong `spy`)."""
     from app.agents.booking_graph import analyzer
     spy = {"calls": [], "route": "shop"}
 
     async def fake(messages, customer_text, pending, bot_question=""):
         spy["calls"].append({"messages": list(messages), "customer_text": customer_text,
                              "pending": pending, "bot_question": bot_question})
-        return analyzer.TurnAnalysis(route=spy["route"], stated=["muốn làm móng gel"])
+        return analyzer.TurnAnalysis(route=spy["route"], stated=["muốn làm móng gel"],
+                                     aside=spy.get("aside"),
+                                     answers_question=spy.get("answers_question", False))
 
     monkeypatch.setattr(analyzer, "analyze_turn", fake)
     return spy
@@ -255,10 +260,49 @@ async def test_new_message_calls_analyzer_once_and_routes_by_it(analyzer_spy):
 
 
 @pytest.mark.asyncio
-async def test_queued_shortcut_skips_the_analyzer(analyzer_spy):
-    """Hàng chờ: còn lịch chờ đề xuất thì code quyết về booking, 0 lời gọi analyzer."""
-    out = await supervise(a_state("ừ", queued=[{"start_at": "2099-01-01T09:00:00+07:00", "note": "cắt tóc cho cháu"}]))
-    assert out == {"route": "booking"}
+async def test_queued_turn_still_analyses_once_and_returns_it(analyzer_spy):
+    """Hàng chờ: vẫn gọi bộ phân tích đúng một lần (lỗi 8) và trả lại
+    `analysis` — route bị ép về booking, không phải vì bỏ qua model."""
+    state = a_state("ừ", queued=[{"start_at": "2099-01-01T09:00:00+07:00", "note": "cắt tóc cho cháu"}])
+    out = await supervise(state)
+    assert out["route"] == "booking"
+    assert len(analyzer_spy["calls"]) == 1
+    assert out["analysis"]["stated"] == ["muốn làm móng gel"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("aside", ["relative_free", "defer_only", "defer_with_request"])
+async def test_aside_forces_booking_even_if_model_routes_elsewhere(analyzer_spy, aside):
+    """Lỗi live B3 #2: hỏi người nhà rảnh / hoãn trần luôn về booking, dù
+    model trả nhãn khác."""
+    analyzer_spy["route"] = "shop"
+    analyzer_spy["aside"] = aside
+    assert (await supervise(a_state("nó có rảnh không")))["route"] == "booking"
+
+
+@pytest.mark.asyncio
+async def test_answer_to_booking_question_stays_in_booking(analyzer_spy):
+    """Lỗi LLM-02: lượt trước booking, câu này trả lời câu hỏi đang chờ
+    (`answers_question`) → về booking dù model tự xếp social."""
+    analyzer_spy["route"] = "social"
+    analyzer_spy["answers_question"] = True
+    out = await supervise(a_state("ok em", last_route="booking"))
+    assert out["route"] == "booking"
+
+
+@pytest.mark.asyncio
+async def test_answer_after_social_turn_follows_the_model(analyzer_spy):
+    """`answers_question` chỉ ép booking khi lượt TRƯỚC là booking (luật 3)."""
+    analyzer_spy["route"] = "social"
+    analyzer_spy["answers_question"] = True
+    assert (await supervise(a_state("ok em", last_route="social")))["route"] == "social"
+
+
+@pytest.mark.asyncio
+async def test_reused_prior_analysis_also_respects_aside(analyzer_spy):
+    """Nhánh `prior` (confirm đã phân tích) áp đúng luật 1-4, không gọi model."""
+    out = await supervise(a_state(analysis={"route": "shop", "aside": "defer_only"}))
+    assert out["route"] == "booking"
     assert analyzer_spy["calls"] == []
 
 
