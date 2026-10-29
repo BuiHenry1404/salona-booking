@@ -367,3 +367,10 @@ class TestSemanticClassificationRealLLM:
         assert result.aside != "defer_only"
 
 
+
+
+def test_empty_time_text_becomes_none():
+    a = sanitize_analysis(TurnAnalysis(time_text=""), "để chị hỏi thằng Huy đã", True)
+    assert a.time_text is None
+    b = sanitize_analysis(TurnAnalysis(time_text="   "), "để chị hỏi thằng Huy đã", True)
+    assert b.time_text is None

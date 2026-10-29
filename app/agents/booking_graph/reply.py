@@ -1,8 +1,9 @@
-"""Đọc câu khách trả lời câu hỏi xác nhận: ủy thác hoàn toàn cho `TurnAnalysis`.
+"""Đọc câu khách trả lời câu hỏi xác nhận: lưới code giờ/ngày TRƯỚC, rồi `TurnAnalysis`.
 
 Toàn bộ các bộ từ điển từ khóa chuỗi tĩnh (_NEG_PHRASES_*, _GO_VERBS, veto_reason)
-đã được loại bỏ. Quyết định xác nhận được giao trực tiếp cho bộ phân tích ngữ nghĩa có cấu trúc (`label_fn`),
-với cơ chế fail-closed an toàn (lỗi/không rõ -> 'unclear').
+đã được loại bỏ. Code chỉ còn so giờ/ngày/thứ (`other_time`, quét bằng
+`tokens.scan_*`); phủ định/hoãn/hỏi giao cho bộ phân tích ngữ nghĩa (`label_fn`
++ `resolve_label`), với cơ chế fail-closed an toàn (lỗi/không rõ -> 'unclear').
 """
 import asyncio
 from datetime import datetime
@@ -79,6 +80,70 @@ def mentions_other_time(text: str, start: datetime, now: datetime,
         if _structured_time_differs(item, local_start, local_now):
             return True
     return False
+
+
+def _has_time(text: str) -> bool:
+    return bool(tokens.scan_times(text))
+
+
+def _without_queued_clauses(lowered: str, start: datetime, queued, now: datetime) -> str:
+    """Bỏ những mệnh đề chỉ nói về một lịch ĐANG CHỜ (lỗi live B2 #2)."""
+    if not queued:
+        return lowered
+    waiting = [_as_datetime(q) for q in queued]
+    kept = []
+    for clause in tokens.split_clauses(lowered, break_words=("còn", "con"), preserve_date_comma=False):
+        if (clause.strip() and _has_time(clause)
+                and mentions_other_time(clause, start, now)
+                and any(not mentions_other_time(clause, q, now) for q in waiting)):
+            continue
+        kept.append(clause)
+    remainder = " , ".join(c.strip() for c in kept if c.strip())
+    return remainder if remainder else lowered
+
+
+def other_time(text: str, proposal: Mapping[str, Any], now: datetime,
+               mentioned_times: Sequence[Any] = ()) -> bool:
+    """Khách nói một giờ/ngày/thứ KHÁC đề xuất — lưới code, chắc hơn nhãn model.
+
+    Quét chữ sau khi bỏ mệnh đề chỉ nói về lịch đang chờ. Với `mentioned_times`
+    (đối tượng `MentionedTime` hay dict từ `model_dump()`): bỏ mục khớp một giờ
+    đang chờ, phần còn lại so với `start_at`.
+    """
+    start = _as_datetime(proposal["start_at"])
+    queued = [_as_datetime(q) for q in (proposal.get("queued") or [])]
+    lowered = _without_queued_clauses((text or "").strip().lower(), start, queued, now)
+    if mentions_other_time(lowered, start, now):
+        return True
+    local_start, local_now = to_local(start), to_local(now)
+    local_queued = [to_local(q) for q in queued]
+    for item in mentioned_times or ():
+        if any(not _structured_time_differs(item, local_q, local_now) for local_q in local_queued):
+            continue
+        if _structured_time_differs(item, local_start, local_now):
+            return True
+    return False
+
+
+def restates_proposal_time(text: str, proposal: Mapping[str, Any], now: datetime) -> bool:
+    """Khách CÓ nói giờ và mọi giờ đều trùng đề xuất (chỉ dựa vào quét chữ)."""
+    return bool(tokens.scan_times(text)) and not other_time(text, proposal, now)
+
+
+def spoken_times(text: str) -> Optional[str]:
+    """Các giờ khách nói, viết lại bằng CODE ("4 giờ", "10 giờ 30 sáng").
+
+    Không bao giờ chép chữ khách (chống tiêm lệnh). Không có giờ → None.
+    """
+    parts = []
+    for hour, period, minute in tokens.scan_times(text):
+        spoken = f"{hour} giờ"
+        if minute:
+            spoken = f"{spoken} {minute}"
+        if period:
+            spoken = f"{spoken} {period}"
+        parts.append(spoken)
+    return ", ".join(parts) if parts else None
 
 
 # --- khẳng định ngắn sau lượt booking (lỗi LLM-02, dùng cho supervisor) ------
@@ -168,15 +233,21 @@ VetoMode = Literal["full", "time_only"]
 
 
 async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
-                 now: datetime, *, label_fn: LabelFn, veto_mode: str = "full") -> str:
-    """Gọi trực tiếp `label_fn` (chạy `analyzer.analyze_turn`) để lấy quyết định ngữ nghĩa.
+                 now: datetime, *, label_fn: LabelFn) -> str:
+    """Lưới code TRƯỚC: khách nói giờ/ngày/thứ khác đề xuất → "change", KHÔNG
+    gọi model (model hay gắn approve cho "ok mà 4 giờ nha"). Câu lọt qua mới
+    hỏi `label_fn` (bộ phân tích + `resolve_label`).
 
     Mọi lỗi/ngoại lệ/kết quả không hợp lệ đều chuyển thành 'unclear' (fail-closed),
     tuyệt đối không suy ra 'approve' khi không chắc chắn.
     """
+    if other_time(text, proposal, now):
+        logger.info("confirm_vetoed", extra={"reason": "other_time"})
+        return "change"
     try:
         label = await label_fn(proposal, bot_question, text)
     except Exception as exc:
+        # CancelledError (lượt mới thay) là BaseException — không bị nuốt.
         logger.warning("confirm_label_failed", extra={"error": str(exc)[:200],
                                                       "error_type": type(exc).__name__})
         return "unclear"
@@ -186,3 +257,25 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     return label
 
 
+def resolve_label(analysis: Mapping[str, Any], text: str, proposal: Mapping[str, Any],
+                  now: datetime) -> str:
+    """Nhãn cuối từ `TurnAnalysis` (dạng dict) — hàm thuần, code đè nhãn model:
+
+    1. hoãn (`defer_only`/`defer_with_request`) → "reject";
+    2. đồng ý mà còn hỏi người nhà rảnh không (`relative_free`) → "unclear";
+    3. giờ có cấu trúc khác đề xuất → "change";
+    4. model nói "change" nhưng khách chỉ nhắc lại đúng giờ đề xuất → "unclear"
+       (không bao giờ đổi thành approve);
+    5. còn lại: nhãn model nếu hợp lệ, không thì "unclear".
+    """
+    aside = analysis.get("aside")
+    label = analysis.get("reply_to_proposal")
+    if aside in ("defer_only", "defer_with_request"):
+        return "reject"
+    if aside == "relative_free" and label == "approve":
+        return "unclear"
+    if other_time(text, proposal, now, analysis.get("mentioned_times") or ()):
+        return "change"
+    if label == "change" and restates_proposal_time(text, proposal, now):
+        return "unclear"
+    return label if label in REPLY_LABELS else "unclear"

@@ -145,7 +145,7 @@ def sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) ->
     - `aside`: chỉ giữ 1 trong 3 giá trị hợp lệ.
     - `mentioned_times`: chỉ giữ tối đa 4 mục hợp lệ, lọc các giá trị ngoài khoảng.
     - `time_text`: phải là CHUỖI CON của câu khách (bỏ dấu, hạ chữ thường) —
-      model không được bịa cụm giờ khách chưa từng nói.
+      model không được bịa cụm giờ khách chưa từng nói; rỗng/chỉ khoảng trắng → None.
     - `self_address`: chỉ giữ khi khớp với `detect_self_address` (regex) trên
       chính câu khách — model không được tự suy diễn giới tính.
     - `service`/`stated`: qua cùng bộ lọc với `sanitize_slots`
@@ -163,7 +163,7 @@ def sanitize_analysis(a: TurnAnalysis, customer_text: str, has_pending: bool) ->
         if (cleaned := _clean_mentioned_time(item)) is not None
     ]
 
-    time_text = a.time_text
+    time_text = a.time_text if a.time_text and a.time_text.strip() else None
     if time_text:
         haystack = strip_diacritics((customer_text or "").lower())
         needle = strip_diacritics(time_text.lower())

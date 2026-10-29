@@ -33,7 +33,6 @@ from app.agents.booking_graph.context import (RECENT_VISITS_HEADER, address_phra
                                               queue_offer, with_line)
 from app.agents.booking_graph.state import GraphState
 from app.core.clock import now_utc, to_local
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.user import User
 from app.services.conversation_state import ConversationStateService
@@ -331,31 +330,25 @@ def make_confirm_node(
         facts = {"kind": proposal.kind, "start_at": proposal.start_at,
                  "queued": [q["start_at"] for q in queue]}
 
-        # Nhãn cuối của câu gõ chữ = bộ phân tích đầu lượt (Task 12b), thay
-        # `classify_reply`. Chỉ chạy khi lưới phủ quyết VÀ go-ahead đều cho qua
-        # (`reply.decide` giữ nguyên thứ tự) — nên tối đa một lời gọi mỗi lượt.
-        # Lời gọi đã có đề xuất (`pending=facts`) nên `reply_to_proposal` không
-        # bao giờ None sau sanitize; vẫn ép None/lạ → "unclear" ở đây và ở
-        # `decide`: không bao giờ ghi khi model không nói rõ approve.
+        # Lưới code TRƯỚC (`reply.decide`): khách nói giờ/ngày khác đề xuất →
+        # "change", không gọi model. Câu lọt qua mới tới bộ phân tích (Task
+        # 12b, thay `classify_reply`) — tối đa một lời gọi mỗi lượt — rồi
+        # `reply.resolve_label` để code đè nhãn model (hoãn → reject, giờ khác
+        # → change, nhắc lại đúng giờ mà model nói change → unclear). Nhãn
+        # None/lạ → "unclear": không bao giờ ghi khi model không nói rõ approve.
         captured: dict = {}
 
         async def label_fn(proposal_facts, bot_question, customer_text):
             analysis = await analyzer.analyze_turn(
                 [], customer_text, proposal_facts, bot_question=bot_question)
             captured["analysis"] = analysis.model_dump()
-            if analysis.aside in ("defer_only", "defer_with_request"):
-                return "reject"
-            if (analysis.mentioned_times
-                    and not proposal_facts.get("queued")
-                    and reply.mentions_other_time("", proposal.start_at, now_utc(),
-                                                  mentioned_times=analysis.mentioned_times)):
-                return "change"
-            return analysis.reply_to_proposal or "unclear"
+            return reply.resolve_label(captured["analysis"], customer_text,
+                                       proposal_facts, now_utc())
 
         decision = await reply.decide(text, facts, bot_question=question, now=now_utc(),
-                                      label_fn=label_fn, veto_mode=settings.confirm_veto_mode)
-        # `analysis` chỉ có khi bộ phân tích đã chạy (lưới phủ quyết/go-ahead
-        # thì không) — `events` ghi nó vào slots sau `complete`.
+                                      label_fn=label_fn)
+        # `analysis` chỉ có khi bộ phân tích đã chạy (lưới giờ khác thì không)
+        # — `events` ghi nó vào slots sau `complete`.
         analysed = {"analysis": captured["analysis"]} if captured else {}
 
         if decision == "approve":

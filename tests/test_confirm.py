@@ -447,7 +447,7 @@ async def test_analyzer_label_none_is_unclear_and_never_books(test_db, classifie
 
 
 @pytest.mark.parametrize("text", ["dạ ko em", "da ko em", "dạ khoan", "để chị hỏi thằng Huy đã",
-                                  "dạ 4 giờ nha em", "dạ vâng để chị gọi"])
+                                  "dạ vâng để chị gọi"])
 async def test_resume_with_semantic_rejection_routes_booking(test_db, classifier, text):
     classifier["label"] = "reject"
     user = await a_user(test_db)
@@ -496,17 +496,19 @@ async def test_resume_with_indirect_agreement_approves(test_db, classifier):
     assert await status_of(test_db, pid) == "approved"
 
 
-async def test_resume_with_change_time_supersedes(test_db, classifier):
-    """Khách gõ câu đổi giờ -> Nhận diện change."""
-    classifier["label"] = "change"
+@pytest.mark.parametrize("text", ["đổi sang 4 giờ chiều mai đi em", "dạ 4 giờ nha em"])
+async def test_resume_with_change_time_supersedes(test_db, classifier, text):
+    """Khách gõ câu đổi giờ -> lưới code trả change, KHÔNG gọi bộ phân tích
+    (model có gắn approve cũng vậy)."""
+    classifier["label"] = "approve"
     user = await a_user(test_db)
     pid = await book_proposal(test_db, user)
     graph = one_node_graph(test_db, user)
     await ask(graph, pid)
 
-    values = await answer(graph, "đổi sang 4 giờ chiều mai đi em")
+    values = await answer(graph, text)
 
-    assert classifier["calls"] == 1
+    assert classifier["calls"] == 0
     assert values["gate_next"] == "booking"
     assert await status_of(test_db, pid) == "superseded"
     assert await test_db["appointments"].count_documents({}) == 0

@@ -14,6 +14,9 @@ from app.agents.booking_graph.reply import (
     decide,
     is_short_affirmation,
     mentions_other_time,
+    other_time,
+    resolve_label,
+    spoken_times,
     strip_diacritics,
 )
 from app.core.clock import TZ
@@ -86,18 +89,18 @@ async def test_indirect_agreement_identifies_approve():
 
 @pytest.mark.asyncio
 async def test_change_time_identifies_change():
-    """Khách gõ câu đổi giờ -> Nhận diện change."""
+    """Khách gõ câu đổi giờ -> lưới code trả change, KHÔNG cần gọi model."""
     called_with = []
 
     async def label_fn(proposal, bot_question, customer_text):
         called_with.append(customer_text)
-        return "change"
+        return "approve"
 
     for text in ["đổi sang 4 giờ chiều mai đi em", "thôi 5 giờ đi em"]:
         decision = await decide(text, P_BOOK, QUESTION, NOW, label_fn=label_fn)
         assert decision == "change"
 
-    assert len(called_with) == 2
+    assert called_with == []
 
 
 # --- Step 1 / Requirement 3: decide với label_fn không bao giờ tự ý approve câu non-approving ---
@@ -119,18 +122,100 @@ async def test_non_approving_phrases_never_approve_when_analyzer_rejects_or_uncl
     assert decision in ("reject", "change", "unclear")
 
 
+# --- Lưới code giờ/ngày khác TRƯỚC nhãn model (lỗi 1, 2, 11, 12) -------------
+
 @pytest.mark.asyncio
-async def test_decide_calls_label_fn_directly_without_string_veto():
-    """decide gọi trực tiếp label_fn, không dùng bất kỳ heuristic so khớp chuỗi nào."""
+@pytest.mark.parametrize("text", ["ok mà 4 giờ nha", "dạ 4 giờ nha em", "ok nhưng thứ năm nha",
+                                  "ừ mà ngày kia nha", "ok tuần sau nha em", "da 4 gio nha em"])
+async def test_text_time_vetoes_approve_without_calling_model(text):
     calls = []
 
-    async def label_fn(proposal, bot_question, customer_text):
-        calls.append(customer_text)
-        return "reject"
+    async def label_fn(*a):
+        calls.append(a)
+        return "approve"
 
-    result = await decide("dạ ko em", P_BOOK, QUESTION, NOW, label_fn=label_fn)
-    assert calls == ["dạ ko em"]
-    assert result == "reject"
+    assert await decide(text, P_BOOK, QUESTION, NOW, label_fn=label_fn) == "change"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_same_time_restated_still_reaches_the_model():
+    async def label_fn(*a):
+        return "approve"
+
+    assert await decide("ừ 3 giờ chiều mai nha", P_BOOK, QUESTION, NOW, label_fn=label_fn) == "approve"
+
+
+def test_other_time_ignores_clauses_about_the_queued_slot():
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    assert other_time("ừ 9 giờ, còn 2 giờ chiều cho cháu thì sao", p, NOW) is False
+
+
+def test_other_time_still_catches_a_new_time_while_queued():
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    assert other_time("ừ nhưng dời qua 10 giờ", p, NOW) is True
+
+
+def test_other_time_skips_structured_items_matching_the_queue():
+    p = {**P_BOOK, "start_at": START.replace(hour=9).isoformat(),
+         "queued": [START.replace(hour=14).isoformat()]}
+    assert other_time("", p, NOW, [MentionedTime(hour=2, part_of_day="chieu")]) is False
+    assert other_time("", p, NOW, [MentionedTime(hour=10)]) is True
+
+
+def test_other_time_accepts_dict_mentioned_times():
+    """`resolve_label` nhận `model_dump()` — mục trong `mentioned_times` là dict."""
+    assert other_time("", P_BOOK, NOW, [{"hour": 4, "part_of_day": "chieu"}]) is True
+    assert other_time("", P_BOOK, NOW, [{"hour": 3, "part_of_day": "chieu", "day_offset": 1}]) is False
+
+
+# Đầu ra Azure THẬT đã ghi (đề xuất mai 15:00 = `P_BOOK`): model gắn "change"
+# cho câu chỉ nhắc lại đúng giờ đề xuất.
+LIVE_RESTATE_1 = {"reply_to_proposal": "change", "aside": None,
+                  "mentioned_times": [{"hour": 3, "minute": 0, "part_of_day": "chieu", "day_offset": 1}]}
+LIVE_RESTATE_2 = {"reply_to_proposal": "change", "aside": None,
+                  "mentioned_times": [{"hour": 15, "minute": 0, "part_of_day": "chieu", "day_offset": 1}]}
+
+
+@pytest.mark.parametrize("analysis", [LIVE_RESTATE_1, LIVE_RESTATE_2])
+def test_change_label_on_restated_proposal_time_becomes_unclear(analysis):
+    assert resolve_label(analysis, "ừ 3 giờ chiều mai nha", P_BOOK, NOW) == "unclear"
+
+
+def test_change_without_any_time_stays_change():
+    a = {"reply_to_proposal": "change", "aside": None, "mentioned_times": []}
+    assert resolve_label(a, "đổi giờ khác đi em", P_BOOK, NOW) == "change"
+
+
+def test_relative_free_with_approve_is_unclear():
+    a = {"reply_to_proposal": "approve", "aside": "relative_free", "mentioned_times": []}
+    assert resolve_label(a, "ok để chị hỏi nó rảnh không", P_BOOK, NOW) == "unclear"
+
+
+@pytest.mark.parametrize("aside", ["defer_only", "defer_with_request"])
+def test_defer_aside_is_reject(aside):
+    a = {"reply_to_proposal": "approve", "aside": aside, "mentioned_times": []}
+    assert resolve_label(a, "để chị hỏi thằng Huy đã", P_BOOK, NOW) == "reject"
+
+
+def test_structured_other_time_is_change_even_if_model_approves():
+    a = {"reply_to_proposal": "approve", "aside": None,
+         "mentioned_times": [{"hour": 4, "part_of_day": "chieu"}]}
+    assert resolve_label(a, "ok bốn giờ nha", P_BOOK, NOW) == "change"
+
+
+def test_unknown_label_is_unclear():
+    a = {"reply_to_proposal": None, "aside": None, "mentioned_times": []}
+    assert resolve_label(a, "ừm", P_BOOK, NOW) == "unclear"
+
+
+@pytest.mark.parametrize("text,expected", [("ok mà 4 giờ nha", "4 giờ"),
+                                           ("10 giờ 30 sáng nha", "10 giờ 30 sáng"),
+                                           ("thôi em, không làm nữa", None)])
+def test_spoken_times_is_written_by_code(text, expected):
+    assert spoken_times(text) == expected
 
 
 @pytest.mark.asyncio

@@ -50,15 +50,15 @@ def models(monkeypatch):
     - tin mới (`pending=None`, từ supervisor): chạy `analyze_turn` THẬT trên
       model giả `sup` (đếm `sup.calls` như trước);
     - câu trả lời đề xuất (`pending` khác None, từ confirm): "bộ phân loại"
-      giả — trả `classifier["label"]` (hoặc `classifier["fn"]`), đếm
-      `classifier["calls"]`.
+      giả — trả `classifier["label"]` (hoặc `classifier["fn"]`, hoặc trọn
+      `classifier["analysis"]`), đếm `classifier["calls"]`.
 
     `analyzer_calls` đếm MỌI lời gọi (mỗi lượt tối đa một). `classify_reply`
     bị gài nổ: đường chính không được gọi nó nữa."""
     sup = scripted([], tags=("supervisor",))
     agent = scripted([])
     phrase_model = scripted([])
-    classifier = {"label": "approve", "calls": 0, "fn": None}
+    classifier = {"label": "approve", "calls": 0, "fn": None, "analysis": None}
     analyzer_calls = []
     real_analyze = analyzer.analyze_turn
 
@@ -74,11 +74,18 @@ def models(monkeypatch):
         aside = None
         if any(w in t for w in ["khoan da", "de chu", "de co ", "de chi", "de em", "de tinh", "de hoi", "de goi", "nhan sau", "nhan lai", "xem lai da", "hoi lai"]):
             aside = "defer_only"
-        elif any(w in t for w in ["thang chau", "nguoi nha", "co ranh khong"]):
+        elif any(w in t for w in ["co ranh khong", "nguoi nha ranh"]):
+            # Chỉ khi khách HỎI người nhà rảnh không (định nghĩa trong prompt) —
+            # nhắc "thằng cháu" thôi ("2h chiều cho thằng cháu thì sao") thì không.
             aside = "relative_free"
 
         if pending is not None:
             classifier["calls"] += 1
+            if classifier["analysis"] is not None:
+                # Kịch bản trọn một `TurnAnalysis` (nhãn + aside + mentioned_times).
+                return analyzer.sanitize_analysis(
+                    analyzer.TurnAnalysis(route="booking", **classifier["analysis"]),
+                    customer_text, True)
             if classifier["fn"] is not None:
                 label = await classifier["fn"](pending, bot_question, customer_text)
             elif classifier["label"] != "approve":
@@ -244,6 +251,53 @@ async def test_g01_ko_em_never_books(test_db, user, models):
     assert models.classifier["calls"] == 1                # phân tích qua TurnAnalysis
     assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?",
                                     "proposal": None})
+
+
+async def test_ok_but_other_time_never_books_even_if_model_approves(test_db, user, models):
+    """Lỗi 1/2: "ok mà 4 giờ nha" — model có gắn approve cũng không được ghi.
+    Lưới code thấy giờ khác TRƯỚC, không gọi bộ phân tích."""
+    await propose_turn(test_db, user, models)
+    models.classifier["analysis"] = {"reply_to_proposal": "approve", "mentioned_times": []}
+    models.agent.replies += [AIMessage("Dạ chị muốn dời sang 4 giờ chiều mai phải không ạ?")]
+
+    await turn(test_db, user, "ok mà 4 giờ nha")
+
+    assert await appointments(test_db) == 0
+    assert await test_db["proposals"].count_documents({"status": "superseded"}) == 1
+    assert models.classifier["calls"] == 0
+
+
+async def test_relative_free_with_approve_label_asks_again(test_db, user, models):
+    """Lỗi 12: đồng ý mà còn hỏi người nhà rảnh không → mâu thuẫn → hỏi lại, không ghi."""
+    await propose_turn(test_db, user, models)
+    models.classifier["analysis"] = {"reply_to_proposal": "approve", "aside": "relative_free"}
+
+    out = await turn(test_db, user, "ok mà thằng cháu có rảnh không ta")
+
+    when = format_vi_datetime(tomorrow_at(15))
+    assert await appointments(test_db) == 0
+    doc = await pending(test_db, user)
+    assert doc["unclear_count"] == 1
+    assert out[-1][1]["answer"] == f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?"
+    assert models.classifier["calls"] == 1
+
+
+async def test_restating_the_proposed_time_keeps_the_proposal(test_db, user, models):
+    """Lỗi 11: model gắn "change" cho câu chỉ nhắc lại đúng giờ đề xuất (đầu ra
+    Azure thật) → "unclear": giữ đề xuất, hỏi lại; KHÔNG ghi, không bỏ đề xuất."""
+    await propose_turn(test_db, user, models)
+    models.classifier["analysis"] = {
+        "reply_to_proposal": "change", "aside": None,
+        "mentioned_times": [{"hour": 3, "minute": 0, "part_of_day": "chieu", "day_offset": 1}]}
+
+    out = await turn(test_db, user, "ừ 3 giờ chiều mai nha")
+
+    when = format_vi_datetime(tomorrow_at(15))
+    assert await appointments(test_db) == 0
+    doc = await pending(test_db, user)
+    assert doc["unclear_count"] == 1
+    assert out[-1][1]["answer"] == f"Dạ chị Lan chốt giúp em lịch {when} nha, đúng không ạ?"
+    assert models.classifier["calls"] == 1
 
 
 async def test_decline_resolved_by_confirm_marks_last_route_booking(test_db, user, models):
@@ -429,7 +483,7 @@ async def test_fact_context_changed_time_through_the_real_flow(test_db, user, mo
     vetoed = await turn(test_db, user, "dạ 4 giờ nha em")
 
     assert vetoed[-1][1]["answer"] == question2
-    assert models.classifier["calls"] == 1          # phân tích qua TurnAnalysis
+    assert models.classifier["calls"] == 0          # lưới code chặn, không gọi bộ phân tích
     assert await test_db["proposals"].count_documents({"status": "superseded"}) == 1
     assert await appointments(test_db) == 0
 
