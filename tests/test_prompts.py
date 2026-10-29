@@ -431,7 +431,11 @@ class TestBookingPromptSlimmed:
         # thái mở rộng (asked/stated/told) — đo được 9327 — mốc lên 9400.
         # Task 7 review ee60723 (2026-10-29): rule 8 dạy model đọc `reason`
         # (`change`/`reject`/`unclear`) của dòng `[declined: …]` thay vì tự
-        # đoán — đo được 9795 — mốc lên 9800.
+        # đoán — đo được 9795 — mốc lên 9800. Fix round 1 (review
+        # ee60723): rule 8 viết lại — vế "do not call propose_appointment…"
+        # chỉ còn áp cho reject/unclear/hết hạn, KHÔNG áp cho change (review
+        # chỉ ra bản đầu đọc tuyến tính có thể hiểu lầm là luôn phải hỏi lại
+        # thay vì gọi tool khi change) — đo được 9706, vẫn dưới mốc 9800.
         assert len(BOOKING_PROMPT) < 9800
 
     def test_picking_a_day_unasked_is_forbidden(self):
