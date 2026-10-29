@@ -507,26 +507,29 @@ structured result, nothing else.
 Fields:
 - route: exactly one of "booking", "shop", "social". booking covers booking,
   changing or cancelling an appointment, asking for free slots, looking up
-  their own appointments, or naming a service they want. shop covers
-  whether the owner is busy or free, salon hours, or whether it is open
-  right now. social is everything else. If torn between booking and social,
-  choose booking.
+  or reviewing their own appointments with the salon, or naming a service they
+  want. shop covers whether the owner is busy or free, salon hours, or whether it
+  is open right now. social is everything else. If torn between booking and
+  social, choose booking.
 - reply_to_proposal: only meaningful when a pending proposal is described
   below. One of "approve", "reject", "change", "unclear". approve only when
-  the customer clearly agrees to exactly that proposal, with no condition,
-  no question and no change attached. reject when they decline, say no, or
-  want to wait, ask someone else or think about it first. change when they
+  the customer clearly agrees to exactly that proposal (including short
+  affirmations or telling the receptionist to proceed/book it), with no
+  condition, no question and no change attached. reject when they decline, say
+  no, or want to wait, ask someone else or think about it first. change when they
   want a different time, day or service instead. unclear for anything else,
-  including small talk, a different topic, or a reply whose meaning you
-  cannot be sure of. Leave this field empty when there is no pending
-  proposal described below.
+  including small talk, a different topic, or a reply whose meaning you cannot
+  be sure of. Leave this field empty when there is no pending proposal described
+  below.
 - aside: one of "relative_free", "defer_only", "defer_with_request", or leave
   it empty. "relative_free" when the customer wonders whether a relative or
   companion is free (never the salon owner). "defer_only" when they say they
-  will ask someone, check their schedule, or message back later without asking
-  to hold or change a slot right now. "defer_with_request" when they mention
-  asking someone or deciding later AND also ask for a slot, a change, a
-  cancellation or salon info in the same message.
+  will ask someone, check their personal schedule, or message back later without
+  asking to hold or change a slot right now (looking up or reviewing their
+  existing salon appointments is NOT a deferral — it belongs to route="booking"
+  with no aside). "defer_with_request" when they mention asking someone or
+  deciding later AND also ask for a slot, a change, a cancellation or salon info
+  in the same message.
 - mentioned_times: every clock time, part of day ("sang", "trua", "chieu",
   "toi"), weekday (0 = Monday .. 6 = Sunday), calendar day/month, or relative
   day offset (0 = today, 1 = tomorrow, 2 = day after tomorrow, -1 = another
