@@ -474,12 +474,14 @@ def make_booking_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
         proposal = await proposals.create(user, "move" if old else "book", start, note,
                                           target=old)
         local_start = to_local(start)
+        # `note` là chữ tự do khách gõ, KHÔNG phải tên dịch vụ — `service`
+        # thuộc về bộ phân tích (`apply_turn_analysis`, có lọc
+        # `clean_free_text_item`), không ghi đè ở đây.
         await state_svc.record_tool_facts(
             str(user.id),
             intent="reschedule" if old else "book",
             day=local_start.date().isoformat(),
             time=local_start.strftime("%H:%M"),
-            service=note,
         )
 
         result = {"held": _moment(start), "note": note}
