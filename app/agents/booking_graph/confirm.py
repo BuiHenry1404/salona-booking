@@ -406,6 +406,7 @@ def make_confirm_node(
         # lại đúng dòng này từ DB.
         logger.info("confirm_declined", extra={"proposal_id": proposal_id, "decision": decision})
         out = {"proposal_id": None, "gate_next": "booking",
+               "customer_text": text,
                "context_block": with_line(state.get("context_block", ""),
                                           declined_line(proposal)),
                **analysed}

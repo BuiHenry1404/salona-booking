@@ -448,7 +448,8 @@ async def test_analyzer_label_none_is_unclear_and_never_books(test_db, classifie
 
 @pytest.mark.parametrize("text", ["dạ ko em", "da ko em", "dạ khoan", "để chị hỏi thằng Huy đã",
                                   "dạ 4 giờ nha em", "dạ vâng để chị gọi"])
-async def test_resume_with_veto_writes_nothing_and_routes_booking(test_db, classifier, text):
+async def test_resume_with_semantic_rejection_routes_booking(test_db, classifier, text):
+    classifier["label"] = "reject"
     user = await a_user(test_db)
     pid = await book_proposal(test_db, user)
     graph = one_node_graph(test_db, user)
@@ -457,9 +458,75 @@ async def test_resume_with_veto_writes_nothing_and_routes_booking(test_db, class
     values = await answer(graph, text)
 
     assert values["gate_next"] == "booking" and values["proposal_id"] is None
-    assert classifier["calls"] == 0                     # lưới chặn trước model
+    assert classifier["calls"] == 1                     # gọi TurnAnalysis trực tiếp
     assert await test_db["appointments"].count_documents({}) == 0
     assert await status_of(test_db, pid) == "rejected"
+
+
+async def test_resume_with_xem_lai_does_not_veto_as_deferral(test_db, classifier):
+    """Khách nói 'chị xem lại lịch hẹn của chị với': không bị veto hoãn,
+    chuyển tiếp phân tích ngữ nghĩa chính xác."""
+    classifier["label"] = "reject"
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "chị xem lại lịch hẹn của chị với")
+
+    assert classifier["calls"] == 1
+    assert values["gate_next"] == "booking"
+    assert await status_of(test_db, pid) == "rejected"
+
+
+async def test_resume_with_indirect_agreement_approves(test_db, classifier):
+    """Khách gõ câu đồng ý gián tiếp -> Nhận diện approve."""
+    classifier["label"] = "approve"
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "thế thì chốt lịch giúp chị nha")
+
+    assert classifier["calls"] == 1
+    assert values["gate_next"] == "phrase"
+    assert values["confirm_fact"]["kind"] == "booked"
+    assert await test_db["appointments"].count_documents({}) == 1
+    assert await status_of(test_db, pid) == "approved"
+
+
+async def test_resume_with_change_time_supersedes(test_db, classifier):
+    """Khách gõ câu đổi giờ -> Nhận diện change."""
+    classifier["label"] = "change"
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "đổi sang 4 giờ chiều mai đi em")
+
+    assert classifier["calls"] == 1
+    assert values["gate_next"] == "booking"
+    assert await status_of(test_db, pid) == "superseded"
+    assert await test_db["appointments"].count_documents({}) == 0
+
+
+async def test_resume_with_defer_aside_rejects(test_db, monkeypatch):
+    """Nếu analysis.aside == 'defer_only': decision = 'reject', route booking."""
+    async def fake_defer(messages, customer_text, pending, bot_question=""):
+        return analyzer.TurnAnalysis(route="booking", aside="defer_only", reply_to_proposal=None)
+    monkeypatch.setattr(analyzer, "analyze_turn", fake_defer)
+    user = await a_user(test_db)
+    pid = await book_proposal(test_db, user)
+    graph = one_node_graph(test_db, user)
+    await ask(graph, pid)
+
+    values = await answer(graph, "để chị hỏi lại người nhà đã nha")
+
+    assert values["gate_next"] == "booking"
+    assert await status_of(test_db, pid) == "rejected"
+    assert values.get("analysis", {}).get("aside") == "defer_only"
 
 
 async def test_expired_proposal_routes_to_supervisor_without_writing(test_db, classifier, monkeypatch):
@@ -669,6 +736,7 @@ async def test_an_approval_outliving_the_wait_is_logged_and_writes_nothing_here(
 async def test_rejecting_a_proposal_records_declined_in_working_memory_and_returns_slots(test_db, classifier):
     from app.services.conversation import ConversationService
 
+    classifier["label"] = "reject"
     user = await a_user(test_db)
     pid = await book_proposal(test_db, user, hour=15)
     graph = one_node_graph(test_db, user)
