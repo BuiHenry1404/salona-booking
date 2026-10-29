@@ -380,3 +380,21 @@ class TestRecordToolFacts:
         )
         assert s2 is not None and s2.slots.intent is None
 
+    async def test_record_tool_facts_does_not_reread_state(self, test_db, monkeypatch):
+        """Task 5 review ee60723: `_set_today_fields(..., return_state=True)`
+        thay cho cặp `_set_today_fields` + `get_state` — chỉ còn MỘT lời gọi
+        `ConversationService.get_state` mỗi lượt `record_tool_facts`."""
+        svc = ConversationStateService(test_db)
+        calls = {"n": 0}
+        original = ConversationService.get_state
+
+        async def counted(self, user_id):
+            calls["n"] += 1
+            return await original(self, user_id)
+
+        monkeypatch.setattr(ConversationService, "get_state", counted)
+
+        await svc.record_tool_facts("u1", intent="book")
+
+        assert calls["n"] == 1
+

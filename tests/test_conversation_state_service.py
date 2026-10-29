@@ -7,6 +7,7 @@ import pytest
 from app.core.clock import now_utc, to_local
 from app.models.appointment import NOTE_MAX
 from app.models.conversation import ChatMessage, ConversationSlots, StateDigest
+from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import ConversationService
 from app.services.conversation_state import (BULLET_MAX_CHARS, COMPACT_THRESHOLD_TOKENS,
                                  DIGEST_CAPS, KEEP_RECENT_TURNS,
@@ -520,6 +521,58 @@ async def test_compaction_overwrites_service_only_with_a_value(test_db, patch_mo
 
     state = await ConversationService(test_db).get_state("u1")
     assert state.slots.service == "sơn gel"
+
+
+async def test_compaction_never_clears_code_recorded_declined(test_db, patch_model):
+    """Task 5 review ee60723: `declined` thuộc CODE (`record_tool_facts`) —
+    lượt nén không bao giờ được ghi đè nó, kể cả bằng rỗng. `intent`/`day`/
+    `time` do code ghi cũng phải sống sót khi nén không thấy lại chúng."""
+    from datetime import timedelta
+    from app.core.clock import now_utc, to_local
+
+    future_day = (to_local(now_utc()).date() + timedelta(days=3)).isoformat()
+    svc = ConversationStateService(test_db)
+    await svc.record_tool_facts(
+        "u1", intent="book", day=future_day, time="09:00",
+        declined_iso=f"{future_day}T15:00:00+07:00",
+    )
+    await _seed(test_db, turns=12)
+    patch_model(reply=StateOutput(
+        digest=StateDigest(wants=["Khách muốn làm tóc."]),
+        slots=ConversationSlots(intent=None, day=None, time=None, declined=[]),
+    ))
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.declined == [f"{future_day}T15:00:00+07:00"]
+    assert state.slots.intent == "book"
+    assert state.slots.day == future_day
+    assert state.slots.time == "09:00"
+
+    session = await ConversationSessionRepository(test_db).most_recent_before(
+        "u1", to_local(now_utc()).date() + timedelta(days=1), within_days=1,
+    )
+    assert session is not None
+    assert session.slots.declined == [f"{future_day}T15:00:00+07:00"]
+
+
+async def test_compaction_still_sets_day_when_it_has_one(test_db, patch_model):
+    from datetime import timedelta
+    from app.core.clock import now_utc, to_local
+
+    soon = (to_local(now_utc()).date() + timedelta(days=5)).isoformat()
+    await _seed(test_db, turns=12)
+    svc = ConversationStateService(test_db)
+    patch_model(reply=StateOutput(
+        digest=StateDigest(wants=["Khách muốn làm tóc."]),
+        slots=ConversationSlots(day=soon),
+    ))
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.slots.day == soon
 
 
 async def test_analysis_lands_on_a_state_whose_slots_are_null(test_db, patch_model):

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
 
 from app.agents.llm import build_chat_model
 from app.core.clock import ensure_aware, now_utc, to_local
@@ -16,7 +17,7 @@ from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.conversation import (AskedItem, ChatMessage, ConversationSession,
-                                     ConversationSlots, StateDigest)
+                                     ConversationSlots, ConversationState, StateDigest)
 from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
@@ -109,7 +110,9 @@ class ConversationStateService:
         thức là `ConversationService._session_cutoff()`, không lặp lại ở đây."""
         return await self.conversations.session_messages(user_id)
 
-    async def _set_today_fields(self, user_id: str, fields: dict, now: datetime) -> None:
+    async def _set_today_fields(
+        self, user_id: str, fields: dict, now: datetime, *, return_state: bool = False,
+    ) -> Optional[ConversationState]:
         """`$set` ĐÚNG các trường `state.*` trong `fields` của state HÔM NAY —
         không bao giờ ghi CẢ `state` (review Task 12/12b). Lượt nén
         (`_compact`) và bộ phân tích (`apply_turn_analysis`) mỗi bên chỉ sở
@@ -137,26 +140,47 @@ class ConversationStateService:
         trước" (context.py) không cần `closed_at` — nó dùng `expires_at -
         SESSION_TTL_DAYS` của chính bản `conversation_sessions` làm mốc "lần
         nén cuối" — nên bỏ qua, giữ field `closed_at` cho tương lai.
+
+        `return_state=True` (Task 5 review ee60723): dùng CÙNG pipeline này
+        qua `find_one_and_update` thay vì `update_one`, lấy lại `state` VỪA
+        ghi trong một round-trip — bớt một lượt `get_state` riêng ngay sau ở
+        `record_tool_facts`. `False` (mặc định) giữ nguyên `update_one`, trả
+        `None`, cho các lệnh gọi không cần đọc lại (vd. `apply_turn_analysis`).
         """
         today = to_local(now).date()
         day = datetime(today.year, today.month, today.day)
         fresh = {"day": day, "covers_until": datetime(1970, 1, 1, tzinfo=now.tzinfo),
                  "summary": [], "digest": None, "customer_quotes": [],
                  "updated_at": now, "failures": 0, "slots": {}, "tool_day": None}
-        await self.conversations.collection.update_one(
-            {"user_id": user_id},
-            [
-                {"$set": {
-                    "state": {"$cond": [{"$eq": ["$state.day", day]}, "$state",
-                                        {"$literal": fresh}]},
-                    "messages": {"$ifNull": ["$messages", []]},
-                    "created_at": {"$ifNull": ["$created_at", {"$literal": now}]},
-                }},
-                {"$set": {"state.slots": {"$ifNull": ["$state.slots", {}]}}},
-                {"$set": {key: {"$literal": value} for key, value in fields.items()}},
-            ],
-            upsert=True,
+        pipeline = [
+            {"$set": {
+                "state": {"$cond": [{"$eq": ["$state.day", day]}, "$state",
+                                    {"$literal": fresh}]},
+                "messages": {"$ifNull": ["$messages", []]},
+                "created_at": {"$ifNull": ["$created_at", {"$literal": now}]},
+            }},
+            {"$set": {"state.slots": {"$ifNull": ["$state.slots", {}]}}},
+            {"$set": {key: {"$literal": value} for key, value in fields.items()}},
+        ]
+        if not return_state:
+            await self.conversations.collection.update_one(
+                {"user_id": user_id}, pipeline, upsert=True,
+            )
+            return None
+
+        doc = await self.conversations.collection.find_one_and_update(
+            {"user_id": user_id}, pipeline, upsert=True,
+            return_document=ReturnDocument.AFTER, projection={"state": 1},
         )
+        state = ConversationState(**doc["state"])
+        # Cùng chuẩn hoá tz mà `ConversationService.get_state` áp cho
+        # `covers_until` — tài liệu cũ (trước khi có tz) lưu naive datetime,
+        # không chuẩn hoá thì hai đường đọc trả về state khác nhau.
+        if state.covers_until.tzinfo is None:
+            state = state.model_copy(
+                update={"covers_until": state.covers_until.replace(tzinfo=now.tzinfo)}
+            )
+        return state
 
     async def apply_turn_analysis(self, user_id: str, a: "TurnAnalysis",
                                   last_bot_text: str) -> None:
@@ -268,8 +292,9 @@ class ConversationStateService:
                     pass
 
             if len(fields) > 1:
-                await self._set_today_fields(user_id, fields, now)
-                updated = await self.conversations.get_state(user_id)
+                updated = await self._set_today_fields(
+                    user_id, fields, now, return_state=True
+                )
                 if updated and updated.slots is not None:
                     await self.sessions.upsert(
                         user_id=user_id,
@@ -382,9 +407,17 @@ class ConversationStateService:
 
         # CHỈ các trường lượt nén sở hữu (Task 12b) — `set_state` ghi CẢ
         # `state` và xoá `stated`/`asked`/`told`/`agreed_at` mà bộ phân tích
-        # (`apply_turn_analysis`) đã ghi giữa hai lượt nén. `service` cả hai
-        # bên cùng ghi: nén chỉ được ghi đè khi nó CÓ giá trị — nén không thấy
-        # dịch vụ không có nghĩa là khách chưa nói.
+        # (`apply_turn_analysis`) đã ghi giữa hai lượt nén. `intent`/`day`/
+        # `time`/`service`: nén chỉ được ghi đè khi nó CÓ giá trị — nén không
+        # thấy nghĩa là khách chưa nói LẠI trong phần vừa nén, không phải
+        # khách đã đổi ý, nên giữ nguyên giá trị code đã ghi trước đó (muốn
+        # xoá thì gọi `record_tool_facts(clear_active=True)`).
+        # `declined` KHÔNG BAO GIỜ ghi ở đây (Task 5 review ee60723): nó là
+        # của CODE (`record_tool_facts`) — nén có thể nhìn thấy lại một giờ
+        # khách đã từ chối trong phần transcript bị nén và model bịa ra một
+        # danh sách `declined` RỖNG hoặc khác, ghi đè là mất dữ kiện code đã
+        # xác thực. `sanitize_slots` vẫn lọc `declined` (cho khối session bên
+        # dưới nếu cần so sánh), chỉ là `_set_today_fields` không đụng tới nó.
         today = to_local(now).date()
         fields = {
             "state.day": datetime(today.year, today.month, today.day),
@@ -393,21 +426,34 @@ class ConversationStateService:
             "state.customer_quotes": quotes,
             "state.updated_at": now,
             "state.failures": 0,
-            "state.slots.intent": slots.intent if slots else None,
-            "state.slots.day": slots.day if slots else None,
-            "state.slots.time": slots.time if slots else None,
-            "state.slots.declined": list(slots.declined) if slots else [],
         }
+        if slots and slots.intent:
+            fields["state.slots.intent"] = slots.intent
+        if slots and slots.day:
+            fields["state.slots.day"] = slots.day
+        if slots and slots.time:
+            fields["state.slots.time"] = slots.time
         if slots and slots.service:
             fields["state.slots.service"] = slots.service
         await self._set_today_fields(user_id, fields, now)
         # Task 14: mỗi lượt nén thành công cũng ghi/đè bản `conversation_sessions`
         # CỦA NGÀY HÔM NAY — khác `state.*` ở trên (chỉ sống tới nửa đêm), bản
         # này còn đọc được sau khi ngày đã qua, làm nguồn cho "Lần trước" của
-        # ngày mai (hoặc xa hơn). `digest`/`slots` ở đây là kết quả CHÍNH lượt
-        # nén này vừa ghi vào `state.*` — cùng giá trị, không đọc lại DB.
+        # ngày mai (hoặc xa hơn). `digest` ở đây là kết quả CHÍNH lượt nén này
+        # vừa ghi vào `state.*` — cùng giá trị, không đọc lại DB. `slots` thì
+        # KHÔNG được dùng thẳng `slots` (biến cục bộ) cho `declined`: nó chỉ
+        # mang declined do LLM nén bịa ra (đã bị bỏ ở trên) — ghép declined do
+        # CODE đã ghi (từ `state` đọc ở đầu hàm, trước lượt nén này) vào, để
+        # bản episodic không mất nó.
+        code_declined = list(state.slots.declined) if state and state.slots else []
+        session_slots = slots
+        if code_declined:
+            if session_slots:
+                session_slots = session_slots.model_copy(update={"declined": code_declined})
+            else:
+                session_slots = ConversationSlots(declined=code_declined)
         await self.sessions.upsert(
-            user_id=user_id, day=today, digest=digest, slots=slots,
+            user_id=user_id, day=today, digest=digest, slots=session_slots,
             expires_at=now + timedelta(days=SESSION_TTL_DAYS),
         )
         logger.info("state_compacted", extra={
