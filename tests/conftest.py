@@ -58,7 +58,8 @@ async def async_client(test_app):
 async def clean_db(test_db):
     """Mỗi test bắt đầu từ DB trống nhưng đã có index."""
     for name in await test_db.list_collection_names():
-        await test_db[name].drop()
+        if not name.startswith("system."):
+            await test_db[name].delete_many({})
     await ensure_indexes(test_db)
     yield
 

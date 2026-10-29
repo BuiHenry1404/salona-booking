@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime, timedelta
 
 import pytest
@@ -14,7 +15,10 @@ from app.services.shop import ShopService
 pytestmark = pytest.mark.asyncio
 
 
-async def a_user(db, phone="0912345678", name="Cô Lan"):
+async def a_user(db, phone=None, name="Cô Lan"):
+    if phone is None:
+        phone = f"09{uuid.uuid4().int % 100000000:08d}"
+    await db["users"].delete_many({"phone": phone})
     return await AuthService(db).create_user(phone, "matkhau123", name)
 
 

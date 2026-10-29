@@ -26,6 +26,36 @@ class Hang:
     then: Optional[Any] = None
 
 
+class ScriptedStructured:
+    def __init__(self, parent: "ScriptedChatModel", schema: Any):
+        self.parent = parent
+        self.schema = schema
+
+    def invoke(self, messages, *args, **kwargs):
+        return self._parse(self.parent._next(messages))
+
+    async def ainvoke(self, messages, *args, **kwargs):
+        return self._parse(await self.parent._anext(messages))
+
+    def _parse(self, reply: Any):
+        if isinstance(reply, self.schema):
+            return reply
+        if isinstance(reply, dict):
+            return self.schema(**reply)
+        if isinstance(reply, AIMessage):
+            content = reply.content
+            if hasattr(self.schema, "model_fields"):
+                if "route" in self.schema.model_fields and content in ("booking", "shop", "social"):
+                    return self.schema(route=content)
+                if "decision" in self.schema.model_fields and content in ("approve", "reject", "change", "unclear"):
+                    return self.schema(decision=content)
+            try:
+                return self.schema.model_validate_json(content)
+            except Exception:
+                pass
+        return reply
+
+
 class ScriptedChatModel(BaseChatModel):
     """Trả lần lượt các AIMessage dựng sẵn; ghi lại mọi lô message và kwargs bind."""
     replies: List[Any]
@@ -36,6 +66,9 @@ class ScriptedChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "scripted"
+
+    def with_structured_output(self, schema, **kwargs):
+        return ScriptedStructured(self, schema)
 
     def bind_tools(self, tools, **kwargs):
         self.bound_tools = tools

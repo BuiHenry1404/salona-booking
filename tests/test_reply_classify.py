@@ -55,20 +55,7 @@ def install(monkeypatch, outcome):
     return built
 
 
-async def test_veto_short_circuits_the_model(monkeypatch):
-    built = install(monkeypatch, AssertionError("model must not be called"))
-    assert await decide("dạ ko em", PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "reject"
-    assert "model" not in built
-
-
-async def test_veto_wins_even_when_the_model_would_approve(monkeypatch):
-    built = install(monkeypatch, ReplyDecision(decision="approve"))
-    sentence = "Mà làm móng bột mất bao lâu hả chị, việc gì cũng phải tính trước cho chắc"
-    assert await decide(sentence, PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "reject"
-    assert "model" not in built
-
-
-async def test_model_approve_passes_through_when_no_veto(monkeypatch):
+async def test_model_approve_passes_through(monkeypatch):
     built = install(monkeypatch, ReplyDecision(decision="approve"))
     assert await decide("ừ", PROPOSAL, QUESTION, NOW, label_fn=classify_reply) == "approve"
     assert built["model"].schema is ReplyDecision
@@ -179,69 +166,6 @@ async def test_go_ahead_with_the_actions_own_verb_is_approve_llm(proposal, text,
     assert await classify_reply(proposal, question, text) == expected
 
 
-# --- Lỗi live B2 #1 (cuộc Cô Lan lượt 11): "u doi di em" với đề xuất DỜI vẫn
-# bị model thật đọc là `change`. Câu chỉ gồm tiểu từ đồng ý + ĐÚNG động từ của
-# việc đang chốt + tiểu từ đệm → code quyết approve, KHÔNG gọi bộ phân loại.
-GO_AHEAD_MOVE = ["u doi di em", "ừ dời đi em", "Ừ dời đi em", "u dời đi em", "ừ doi di em",
-                 "dạ dời giùm cô nha", "ok doi di", "dời đi em", "ok đổi đi em",
-                 "da doi gium chu nha em", "ừ dời luôn đi em"]
-GO_AHEAD_CANCEL = ["ok huy di em", "dạ hủy đi", "ừ hủy đi em", "u huy di", "Dạ huỷ giùm cô nha",
-                   "ok hủy luôn em", "hủy đi em", "da huy cho chu nha"]
-NOT_GO_AHEAD_MOVE = [
-    "không dời nữa", "khong doi nua", "dời qua 5 giờ hả em?", "thôi khỏi dời", "thoi khoi doi",
-    "dời qua 5 giờ đi em", "doi qua 5 gio di em", "dời qua mai đi em", "dời thứ năm nha",
-    "ừ hủy đi em",                 # động từ của việc KHÁC
-    "u doi di em, ma con lich kia", # có thêm nội dung
-    "ừ đợi em",                    # "đợi" có dấu không phải "dời"
-    "ừ",                           # không có động từ: để bộ phân loại
-]
-NOT_GO_AHEAD_CANCEL = ["không hủy nữa", "thôi khỏi hủy", "hủy cái nào vậy em?", "ừ dời đi em",
-                       "hủy hả em", "để cô hỏi thằng Huy đã", "ừ"]
-
-
-@pytest.mark.parametrize("text", GO_AHEAD_MOVE)
-def test_go_ahead_move_is_recognised_in_code(text):
-    assert reply.is_go_ahead(text, "move"), text
-
-
-@pytest.mark.parametrize("text", GO_AHEAD_CANCEL)
-def test_go_ahead_cancel_is_recognised_in_code(text):
-    assert reply.is_go_ahead(text, "cancel"), text
-
-
-@pytest.mark.parametrize("text", NOT_GO_AHEAD_MOVE)
-def test_not_a_go_ahead_for_move(text):
-    assert not reply.is_go_ahead(text, "move"), text
-
-
-@pytest.mark.parametrize("text", NOT_GO_AHEAD_CANCEL)
-def test_not_a_go_ahead_for_cancel(text):
-    assert not reply.is_go_ahead(text, "cancel"), text
-
-
-@pytest.mark.parametrize("text", ["ừ dời đi em", "ok huy di em", "dời đi em"])
-def test_go_ahead_never_applies_to_a_new_booking(text):
-    assert not reply.is_go_ahead(text, "book"), text
-
-
-@pytest.mark.parametrize("proposal,text", [(MOVE, t) for t in GO_AHEAD_MOVE]
-                         + [(CANCEL, t) for t in GO_AHEAD_CANCEL])
-async def test_go_ahead_approves_without_calling_the_classifier(monkeypatch, proposal, text):
-    built = install(monkeypatch, AssertionError("model must not be called"))
-    assert await decide(text, proposal, QUESTION, NOW, label_fn=classify_reply) == "approve", text
-    assert "model" not in built
-
-
-@pytest.mark.parametrize("proposal,text", [
-    (MOVE, "không dời nữa"), (MOVE, "dời qua 5 giờ hả em?"), (MOVE, "thôi khỏi dời"),
-    (CANCEL, "không hủy nữa"), (CANCEL, "thôi khỏi hủy"),
-])
-async def test_negative_go_ahead_lookalikes_are_still_vetoed(monkeypatch, proposal, text):
-    built = install(monkeypatch, ReplyDecision(decision="approve"))
-    assert await decide(text, proposal, QUESTION, NOW, label_fn=classify_reply) == "reject", text
-    assert "model" not in built
-
-
 def test_describe_tells_the_classifier_about_the_queue():
     nine = datetime(2026, 10, 21, 9, 0, tzinfo=TZ)
     two = datetime(2026, 10, 21, 14, 0, tzinfo=TZ)
@@ -264,17 +188,11 @@ def label_fn_returning(label, calls=None):
     return fn
 
 
-async def test_typed_reply_uses_label_fn_after_the_veto_grid(monkeypatch):
-    """Lưới phủ quyết và go-ahead vẫn chạy TRƯỚC, cùng thứ tự; chỉ câu lọt qua
-    cả hai mới tới `label_fn` — và `classify_reply` không bị gọi nữa."""
+async def test_typed_reply_uses_label_fn(monkeypatch):
+    """`decide` gọi trực tiếp `label_fn` để lấy quyết định ngữ nghĩa."""
     install(monkeypatch, AssertionError("classify_reply must not be called"))
     calls = []
     fn = label_fn_returning("approve", calls)
-
-    assert await decide("dạ ko em", PROPOSAL, QUESTION, NOW, label_fn=fn) == "reject"
-    assert calls == []                                    # veto thắng, không hỏi nhãn
-    assert await decide("u doi di em", MOVE, QUESTION, NOW, label_fn=fn) == "approve"
-    assert calls == []                                    # go-ahead, không hỏi nhãn
 
     assert await decide("ừ", PROPOSAL, QUESTION, NOW, label_fn=fn) == "approve"
     assert calls == [(PROPOSAL, QUESTION, "ừ")]

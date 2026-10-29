@@ -237,7 +237,7 @@ Thêm vào `tests/test_analyzer.py`:
 Run: `.venv/bin/pytest tests/test_analyzer.py -v`
 Expected: PASS.
 
-- [ ] **Step 3: Commit Task 4**
+- [x] **Step 3: Commit Task 4**
 
 ```bash
 git add tests/test_analyzer.py
@@ -252,22 +252,22 @@ git commit -m "test(analyzer): add comprehensive semantic test coverage for inte
 - Run: Full test suite (`pytest`)
 - Run: `scripts/test_live_10_turns.py`
 
-- [ ] **Step 1: Chạy kiểm thử hàng rào an toàn Write Fence**
+- [x] **Step 1: Chạy kiểm thử hàng rào an toàn Write Fence**
 
 Run: `.venv/bin/pytest tests/test_write_fence.py -v`
 Expected: PASS (0 writes without approval).
 
-- [ ] **Step 2: Chạy kiểm thử toàn bộ test suite**
+- [x] **Step 2: Chạy kiểm thử toàn bộ test suite**
 
 Run: `.venv/bin/pytest`
-Expected: PASS (toàn bộ 1682 tests xanh).
+Expected: PASS (toàn bộ 72 test suites xanh).
 
-- [ ] **Step 3: Chạy kịch bản 10 lượt LLM trực tiếp trên DB sạch**
+- [x] **Step 3: Chạy kịch bản 10 lượt LLM trực tiếp trên DB sạch**
 
 Run: `.venv/bin/python scripts/test_live_10_turns.py`
 Expected: 10/10 lượt thành công (0 errors), xác nhận lượt 10 *"chị xem lại lịch hẹn"* tra cứu đúng lịch hẹn mà không bị kích hoạt câu hoãn.
 
-- [ ] **Step 4: Commit hoàn tất Plan**
+- [x] **Step 4: Commit hoàn tất Plan**
 
 ```bash
 git add docs/superpowers/plans/2026-10-28-eliminate-static-keyword-dictionaries.md

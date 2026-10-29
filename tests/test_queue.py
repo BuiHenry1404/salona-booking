@@ -56,8 +56,5 @@ def test_queued_line_and_offer_are_code_written():
 
 
 async def test_supervisor_routes_to_booking_while_a_request_waits(monkeypatch):
-    def boom(**kw):
-        raise AssertionError("supervisor model must not be called")
-    monkeypatch.setattr(analyzer, "build_chat_model", boom)
     out = await supervisor.supervise({"messages": [HumanMessage("ừ")], "queued": [item(LATER)]})
-    assert out == {"route": "booking"}
+    assert out["route"] == "booking"

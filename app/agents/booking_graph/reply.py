@@ -186,8 +186,3 @@ async def decide(text: str, proposal: Mapping[str, Any], bot_question: str,
     return label
 
 
-# Shim tương thích ngược tạm thời cho các test hoặc module cũ
-def __getattr__(name: str) -> Any:
-    if name in ("veto_reason", "is_go_ahead", "other_time_veto"):
-        return lambda *args, **kwargs: None
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

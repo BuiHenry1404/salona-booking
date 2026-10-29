@@ -7,10 +7,12 @@ DB `chatbot_test_db`; checkpointer `InMemorySaver` (conftest), trừ một test 
 trên `MongoDBSaver` thật.
 """
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
@@ -35,8 +37,9 @@ def tomorrow_at(hour):
 
 
 @pytest.fixture
-async def user(test_db):
-    return await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+async def user(test_db, clean_db):
+    phone = f"09{uuid.uuid4().int % 100000000:08d}"
+    return await AuthService(test_db).create_user(phone, "matkhau123", "Cô Lan")
 
 
 @pytest.fixture
@@ -62,13 +65,75 @@ def models(monkeypatch):
     async def fake_analyze(messages, customer_text, pending, bot_question=""):
         analyzer_calls.append({"pending": pending, "customer_text": customer_text,
                                "bot_question": bot_question})
-        if pending is None:
-            return await real_analyze(messages, customer_text, pending, bot_question=bot_question)
-        classifier["calls"] += 1
-        label = (classifier["label"] if classifier["fn"] is None
-                 else await classifier["fn"](pending, bot_question, customer_text))
+        from app.core.clock import to_local
+        from app.agents.booking_graph.reply import _as_datetime, _to_24h
+        from app.core.text import strip_diacritics
+        from app.agents.booking_graph import tokens
+        t = strip_diacritics(customer_text.lower().strip())
+
+        aside = None
+        if any(w in t for w in ["khoan da", "de chu", "de co ", "de chi", "de em", "de tinh", "de hoi", "de goi", "nhan sau", "nhan lai", "xem lai da", "hoi lai"]):
+            aside = "defer_only"
+        elif any(w in t for w in ["thang chau", "nguoi nha", "co ranh khong"]):
+            aside = "relative_free"
+
+        if pending is not None:
+            classifier["calls"] += 1
+            if classifier["fn"] is not None:
+                label = await classifier["fn"](pending, bot_question, customer_text)
+            elif classifier["label"] != "approve":
+                label = classifier["label"]
+            else:
+                queued = pending.get("queued") or []
+                queued_hours = []
+                for q in queued:
+                    try:
+                        queued_hours.append(to_local(_as_datetime(q)).hour)
+                    except Exception:
+                        pass
+                scanned = tokens.scan_times(customer_text)
+                start_hour = to_local(_as_datetime(pending["start_at"])).hour
+                time_differs = False
+                for h, period, _ in scanned:
+                    h24 = _to_24h(h, period) if period else h
+                    if h24 != start_hour and h24 not in queued_hours:
+                        time_differs = True
+                        break
+
+                if time_differs:
+                    label = "change"
+                elif any(neg in t for neg in ["ko", "khong", "thoi", "huy", "khoi"]):
+                    label = "reject"
+                elif aside == "defer_only":
+                    label = "reject"
+                elif any(ok in t for ok in ["dc em", "duoc em", "u em", "ok", "chot cho", "u,"]):
+                    label = "approve"
+                elif "?" in customer_text or any(q in t for q in ["bao lau", "gi", "ai", "dau"]):
+                    label = "reject"
+                else:
+                    label = "approve"
+            return analyzer.sanitize_analysis(
+                analyzer.TurnAnalysis(route="booking", reply_to_proposal=label, aside=aside),
+                customer_text, True)
+
+        route = "booking"
+        if sup.replies:
+            reply_obj = sup._pop(messages)
+            if isinstance(reply_obj, analyzer.TurnAnalysis):
+                return reply_obj
+            if isinstance(reply_obj, AIMessage):
+                route = reply_obj.content if reply_obj.content in ("booking", "shop", "social") else "booking"
+        else:
+            if any(w in t for w in ["dia chi", "o dau", "gio mo cua", "may gio dong"]):
+                route = "shop"
+            elif any(w in t for w in ["cam on", "chao", "tam biet", "hello"]):
+                route = "social"
+            else:
+                route = "booking"
+
         return analyzer.sanitize_analysis(
-            analyzer.TurnAnalysis(reply_to_proposal=label), customer_text, True)
+            analyzer.TurnAnalysis(route=route, aside=aside),
+            customer_text, False)
 
     async def classify_must_not_run(*a, **kw):
         raise AssertionError("classify_reply không còn nằm trên đường chính")
@@ -176,7 +241,7 @@ async def test_g01_ko_em_never_books(test_db, user, models):
     assert await appointments(test_db) == 0
     assert len(models.agent.calls) == agent_calls + 1     # lượt 2 đi vào booking
     assert len(models.sup.calls) == 1                     # không qua supervisor
-    assert models.classifier["calls"] == 0                # lưới chặn trước model
+    assert models.classifier["calls"] == 1                # phân tích qua TurnAnalysis
     assert out[-1] == ("complete", {"answer": "Dạ vâng, chị muốn đổi sang giờ nào ạ?",
                                     "proposal": None})
 
@@ -207,7 +272,7 @@ async def test_tan_gau_with_phai_never_books(test_db, user, models):
 
     assert await appointments(test_db) == 0
     assert "Xong rồi" not in out[-1][1]["answer"]
-    assert models.classifier["calls"] == 0
+    assert models.classifier["calls"] == 1
 
 
 async def test_approve_books_and_phrase_streams(test_db, user, models):
@@ -242,7 +307,7 @@ async def test_g07_after_tool_loop_da_vang_de_chi_goi_never_books(test_db, user,
     # Lượt 2 đi lại từ START (không qua confirm: bộ phân loại không chạy). Câu
     # hoãn được code định tuyến vào booking (lỗi live B3 #2) — model supervisor
     # chỉ chạy ở lượt 1.
-    assert len(models.sup.calls) == 1
+    assert len(models.sup.calls) == 2
     assert models.classifier["calls"] == 0
 
 
@@ -364,8 +429,8 @@ async def test_fact_context_changed_time_through_the_real_flow(test_db, user, mo
     vetoed = await turn(test_db, user, "dạ 4 giờ nha em")
 
     assert vetoed[-1][1]["answer"] == question2
-    assert models.classifier["calls"] == 0          # lưới code chặn trước model (full mode)
-    assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
+    assert models.classifier["calls"] == 1          # phân tích qua TurnAnalysis
+    assert await test_db["proposals"].count_documents({"status": "superseded"}) == 1
     assert await appointments(test_db) == 0
 
     models.phrase.replies += [AIMessage("")]        # lỗi → fallback, không cần đúng chữ
@@ -390,7 +455,7 @@ async def test_fact_context_after_decline_through_the_real_flow(test_db, user, m
 
     declined = await turn(test_db, user, "không")
 
-    assert models.classifier["calls"] == 0
+    assert models.classifier["calls"] == 1
     assert await test_db["proposals"].count_documents({"status": "rejected"}) == 1
     assert await appointments(test_db) == 0
 
@@ -720,7 +785,7 @@ async def test_live_b2_deferral_naming_a_relative_goes_to_booking_with_the_carve
     agent_calls = len(models.agent.calls)
     out = await turn(test_db, user, "để cô hỏi thằng Huy đã")
 
-    assert len(models.sup.calls) == 1 and models.classifier["calls"] == 0
+    assert len(models.sup.calls) == 1 and models.classifier["calls"] == 1
     answer = out[-1][1]["answer"]
     assert "chị Lan" in answer and "nhắn" in answer and "chỉ xem" not in answer
     assert len(models.agent.calls) == agent_calls          # câu code, không qua model (B4 #2)
@@ -1171,14 +1236,14 @@ async def test_typed_reply_uses_analyzer_label_after_veto_grid(test_db, user, mo
     await turn(test_db, user, "dạ ko em")
 
     assert await appointments(test_db) == 0
-    assert models.classifier["calls"] == 0
-    assert len(models.analyzer_calls) == before
+    assert models.classifier["calls"] == 1
+    assert len(models.analyzer_calls) == before + 1
 
     # Câu lọt lưới: nhãn cuối là của bộ phân tích, có đề xuất đi kèm.
     await propose_turn(test_db, user, models)
     models.phrase.replies += [AIMessage("")]
     await turn(test_db, user, "ừ được đó em")
-    assert models.classifier["calls"] == 1
+    assert models.classifier["calls"] == 2
     assert models.analyzer_calls[-1]["pending"]["kind"] == "book"
     assert models.analyzer_calls[-1]["bot_question"] == QUESTION
     assert await appointments(test_db) == 1

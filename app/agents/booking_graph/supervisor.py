@@ -67,5 +67,11 @@ async def supervise(state: GraphState) -> dict:
     # Gọi qua module (`analyzer.analyze_turn`) để test thay được một chỗ.
     analysis = await analyzer.analyze_turn(
         recent, text, None, bot_question=_last_ai_text(earlier))
-    route = analysis.route if analysis.route in VALID_ROUTES else "booking"
+    if live_queue(state.get("queued")):
+        # Đang đặt lần lượt (lỗi live B2 #2): còn lịch chờ đề xuất thì ép về
+        # booking — "ừ" sau câu mời lịch kế không được rơi vào social.
+        logger.info("supervisor_queue_route")
+        route = "booking"
+    else:
+        route = analysis.route if analysis.route in VALID_ROUTES else "booking"
     return {"route": route, "analysis": analysis.model_dump()}

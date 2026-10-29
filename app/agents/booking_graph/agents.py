@@ -196,6 +196,16 @@ def make_agent_node(agent, user: Optional[User] = None) -> Callable[[GraphState]
         analysis = state.get("analysis")
         # Hàng chờ (đặt lần lượt) → MỘT dòng code viết trong khối bối cảnh.
         queue = live_queue(state.get("queued"))
+        if analysis is None and user is not None and not state.get("confirm_fact"):
+            from app.agents.booking_graph import analyzer
+            from app.agents.booking_graph.history import model_history
+            from app.agents.booking_graph.supervisor import SUPERVISOR_HISTORY_TURNS, _last_ai_text
+            earlier = (state.get("messages") or [])[:-1]
+            window = model_history(earlier, after=state.get("history_after"), now=state.get("asked_at"))
+            recent = window[-(SUPERVISOR_HISTORY_TURNS - 1):]
+            customer_text = state.get("customer_text") or str(getattr((state.get("messages") or [])[-1], "content", "") or "")
+            analysis_obj = await analyzer.analyze_turn(recent, customer_text, None, bot_question=_last_ai_text(earlier))
+            analysis = analysis_obj.model_dump()
         if user is not None and not state.get("confirm_fact"):
             said = [str(m.content) for m in (state.get("messages") or [])
                     if getattr(m, "type", "") == "ai"][-DEFERRAL_LOOKBACK:]
