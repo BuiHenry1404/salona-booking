@@ -23,6 +23,7 @@ from app.agents.booking.schemas import (
     FinishArgs,
     FreeSlots,
     Moment,
+    PendingOutcome,
     ProposalCreated,
     ResolvedTime,
     ShopArgs,
@@ -30,6 +31,7 @@ from app.agents.booking.schemas import (
     ShopOpenOut,
     ShopStatusOut,
     TaskResult,
+    TaskSpec,
     TimeHint,
     appointment_args_model,
 )
@@ -157,3 +159,25 @@ def test_task_result_round_trips_every_data_variant(data):
     restored = TaskResult.model_validate_json(payload)
     assert type(restored.data) is type(data)
     assert restored.data == data
+
+
+def test_task_spec_rejects_an_action_outside_the_known_literals():
+    """`TaskSpec.action` siết theo §5.1 (AppointmentAction | ShopAction) — action lạ bị từ chối."""
+    base = {"task_id": "t1.1", "agent": "appointment", "args": {**_min_appointment_args(None)}}
+    assert TaskSpec.model_validate({**base, "action": "resolve_time"})
+    with pytest.raises(ValidationError):
+        TaskSpec.model_validate({**base, "action": "delete_everything"})
+
+
+def test_pending_outcome_round_trips_with_tz_aware_expiry():
+    """`PendingOutcome.expires_at` (nhánh "kept", §5.4) giữ nguyên giờ có múi sau round-trip."""
+    outcome = PendingOutcome(
+        outcome="kept",
+        proposal_id="p1",
+        kind="book",
+        spoken="10 giờ sáng thứ Sáu",
+        expires_at=datetime(2026, 10, 30, 10, 10, tzinfo=timezone.utc),
+    )
+    restored = PendingOutcome.model_validate_json(outcome.model_dump_json())
+    assert restored == outcome
+    assert restored.expires_at.tzinfo is not None

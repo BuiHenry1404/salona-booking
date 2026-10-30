@@ -172,7 +172,7 @@ class TaskSpec(BaseModel):
 
     task_id: str
     agent: Literal["appointment", "shop_info"]
-    action: str
+    action: AppointmentAction | ShopAction
     args: AppointmentArgs | ShopArgs
 
 
@@ -269,6 +269,7 @@ class PendingOutcome(BaseModel):
     error: str | None = None
     reason: str | None = None
     nearest: list[Moment] = []
+    expires_at: datetime | None = None  # cần cho nhánh "kept" trong §5.4 (đề xuất còn hạn)
 
 
 class CallRecord(BaseModel):

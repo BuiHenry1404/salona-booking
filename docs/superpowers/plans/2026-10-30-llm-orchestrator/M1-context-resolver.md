@@ -41,7 +41,7 @@ class FinishArgs(BaseModel): kind_hint: Literal["answer","unsupported","social"]
 def appointment_args_model(appointment_ids: Sequence[str], queue_ids: Sequence[str]) -> type[BaseModel]:
     """create_model('AppointmentArgs', appointment_id=(Literal[*ids] | None) hoặc (None) khi rỗng; TimeHint.queue_id tương tự qua TimeHint động)."""
 
-class TaskSpec(BaseModel): task_id: str; agent: Literal["appointment","shop_info"]; action: str; args: AppointmentArgs | ShopArgs
+class TaskSpec(BaseModel): task_id: str; agent: Literal["appointment","shop_info"]; action: AppointmentAction | ShopAction; args: AppointmentArgs | ShopArgs
 class ResolvedTime(BaseModel): start_at: Moment | None; partial_date: date | None; missing: list[Missing]; day_from: str | None
 class FreeSlots(BaseModel): day: date; slots: list[Moment]; more: bool; fetched_at: datetime
 class ProposalCreated(BaseModel): proposal_id: str; kind: Literal["book","move","cancel"]; start_at: Moment; note: str | None; replaces: Moment | None; queued: list[Moment]
@@ -61,6 +61,7 @@ class PendingOutcome(BaseModel):      # §5.1
     outcome: Literal["approved","rejected","superseded","clarify","kept","failed","not_approvable"]
     proposal_id: str; kind: str; spoken: str; appointment: AppointmentRefOut | None = None
     error: str | None = None; reason: str | None = None; nearest: list[Moment] = []
+    expires_at: datetime | None = None  # cần cho nhánh "kept" trong §5.4
 class CallRecord(BaseModel):          # §5.2 — một dòng trong ledger
     round: int; index: int; tool: str; action: str | None; args_norm: str
     allowed: bool; reject_code: str | None = None; result: TaskResult | PendingOutcome | dict | None = None
