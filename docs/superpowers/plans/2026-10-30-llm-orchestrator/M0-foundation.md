@@ -177,7 +177,7 @@ async def test_compact_does_not_touch_goal_or_queued(test_db, monkeypatch): ... 
 
 **Interfaces — Produces:** hàm `strict_probe_tools() -> list[BaseTool]` trả **một** tool `probe(action: Literal["a","b"], hint: ProbeHint)` với `ProbeHint(day: date | None, hour: int | None, part: Literal["sang","chieu"] | None, items: list[str] | None)` — mô phỏng hình dạng §5.1 (Literal, `| None`, model lồng, list, `date`). M3 Task 3.6 thay bằng 5 tool thật.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 ```python
 pytestmark = [pytest.mark.llm, pytest.mark.asyncio]
@@ -189,7 +189,7 @@ async def test_strict_tool_schema_is_accepted_by_the_deployment():
     assert reply.tool_calls and reply.tool_calls[0]["name"] == "probe"
 ```
 
-- [ ] **Step 2: Kiểm thuần không tốn tiền** (chạy mặc định được): `convert_to_openai_tool(tool, strict=True)` không chứa khoá `default`/`minimum`/`maximum` ở bất kỳ độ sâu nào — thêm `test_probe_schema_is_strict_safe()` không marker.
-- [ ] **Step 3: DỪNG — hỏi chủ dự án** đúng một câu: "Cho phép chạy `pytest tests/test_strict_schema_llm.py -m llm` một lần (1 lời gọi Azure) để xác nhận `strict=True` không 400?" Không chạy khi chưa có đồng ý. Có đồng ý → chạy, ghi kết quả (PASS hay mã lỗi) vào checkbox này.
-- [ ] **Step 4: Nếu 400** → ghi rõ thông điệp Azure vào spec §14 mục 4 và đổi quyết định: bỏ `strict` (plan M3 Task 3.4 dùng `strict=False`, giữ kiểm khoảng ở middleware). Nếu PASS → không đổi gì.
-- [ ] **Step 5: Commit** `test(llm): probe strict tool schemas on the deployment`
+- [x] **Step 2: Kiểm thuần không tốn tiền** (chạy mặc định được): `convert_to_openai_tool(tool, strict=True)` không chứa khoá `default`/`minimum`/`maximum` ở bất kỳ độ sâu nào — thêm `test_probe_schema_is_strict_safe()` không marker.
+- [x] **Step 3: DỪNG — hỏi chủ dự án** đúng một câu: "Cho phép chạy `pytest tests/test_strict_schema_llm.py -m llm` một lần (1 lời gọi Azure) để xác nhận `strict=True` không 400?" Không chạy khi chưa có đồng ý. Có đồng ý → chạy, ghi kết quả (PASS hay mã lỗi) vào checkbox này. **Kết quả: PASS** — `pytest tests/test_strict_schema_llm.py -m llm -q` → `1 passed` (deployment `gpt-5.4-mini` chấp nhận `strict=True` với schema hình dạng §5.1, không 400).
+- [x] **Step 4: Nếu 400** → ghi rõ thông điệp Azure vào spec §14 mục 4 và đổi quyết định: bỏ `strict` (plan M3 Task 3.4 dùng `strict=False`, giữ kiểm khoảng ở middleware). Nếu PASS → không đổi gì. **PASS → không đổi gì trong spec.**
+- [x] **Step 5: Commit** `test(llm): probe strict tool schemas on the deployment`
