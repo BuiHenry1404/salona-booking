@@ -26,6 +26,10 @@ from app.models.shop import ShopHours, ShopStatusView
 # đây để chỗ dựng prompt dùng chung.
 UNTRUSTED = "Customer said (untrusted):\n"
 
+# `turn_id`/`asked_at` là sổ sách nội bộ (mốc cho ProposalService.approve,
+# khoá ledger) — không có ý nghĩa với model, cố ý KHÔNG render.
+NOT_RENDERED = frozenset({"turn_id", "asked_at"})
+
 
 # ---------------------------------------------------------------------------
 # Các lớp con của TurnContext
@@ -209,7 +213,10 @@ def render_context(ctx: TurnContext, level: Level) -> str:
         lines.append(_render_unannounced(ctx.unannounced))
 
     lines.append(f"Now: {format_vi_datetime(ctx.now_local)}")
-    lines.append(f"Customer: {ctx.customer.address_phrase}")
+    if level == "lite":
+        lines.append(f"Customer: {ctx.customer.address_phrase}")
+    else:
+        lines.append(f"Customer: {ctx.customer.address_phrase} ({ctx.customer.display_name})")
 
     if ctx.pending is not None:
         lines.append(_render_pending_short("Pending proposal", ctx.pending))
@@ -228,6 +235,10 @@ def render_context(ctx: TurnContext, level: Level) -> str:
 
     # --- mức full: thêm mọi trường còn lại ---
     lines.append(f"Today: {ctx.today.isoformat()}")
+    lines.append(
+        "Calendar (14 days): "
+        + ", ".join(f"{label} {d.isoformat()}" for d, label in ctx.calendar_14d)
+    )
     lines.append(f"Customer id: [id: {ctx.customer.id}]")
     if ctx.customer.staff_note:
         lines.append(f"Staff note: {ctx.customer.staff_note}")

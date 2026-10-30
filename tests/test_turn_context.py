@@ -6,17 +6,22 @@ import re
 from datetime import timedelta
 
 from app.agents.booking.context import (
+    NOT_RENDERED,
     AppointmentRef,
     CustomerRef,
     OpenQuestion,
     PendingProposal,
     PreviousCall,
     PreviousTurn,
+    TurnContext,
     UnannouncedOutcome,
     render_context,
 )
 from app.agents.booking.schemas import Moment
 from app.core.clock import now_utc, to_local
+from app.core.vi_format import format_vi_datetime
+from app.models.conversation import ConversationSlots, GoalProgress, QueuedRequest
+from app.models.shop import ShopHours, ShopStatusView
 
 from tests.factories import make_ctx
 
@@ -178,6 +183,118 @@ def test_previous_turn_calls_show_offered_and_resolved():
     assert "ok" in full
     assert "9 giờ sáng" in full
     assert "10 giờ sáng" in full
+
+
+def test_full_render_covers_every_turn_context_field():
+    """Mọi trường của `TurnContext` ngoài `NOT_RENDERED` phải để lại dấu vết
+    trong `full`. Thêm trường mới vào `TurnContext` mà quên render là test
+    này phải đỏ."""
+    customer = CustomerRef(
+        id="c1c1c1c1c1c1c1c1c1c1c1c1",
+        display_name="Trần Thị Marker",
+        address_phrase="chị Marker",
+        staff_note="ghi chú nhân viên marker",
+    )
+    shop_status = ShopStatusView(is_busy=True)
+    shop_hours = ShopHours(open_time="08:00", close_time="19:00")
+    upcoming = [
+        AppointmentRef(id="u1u1u1u1u1u1u1u1u1u1u1u1", start_at=_future(10), spoken="marker-upcoming-spoken")
+    ]
+    recent_visit = _future(-240).date()
+    pending = PendingProposal(
+        id="p1p1p1p1p1p1p1p1p1p1p1p1",
+        kind="book",
+        start_at=_future(2),
+        spoken="marker-pending-spoken",
+        expires_at=_future(0),
+        unclear_count=2,
+    )
+    recently_declined = PendingProposal(
+        id="d1d1d1d1d1d1d1d1d1d1d1d1",
+        kind="cancel",
+        start_at=_future(1),
+        spoken="marker-declined-spoken",
+        expires_at=_future(0),
+        unclear_count=0,
+    )
+    unannounced = UnannouncedOutcome(
+        proposal_id="a1a1a1a1a1a1a1a1a1a1a1a1", outcome="approved", kind="book", spoken="marker-unannounced-spoken"
+    )
+    queued = [
+        QueuedRequest(
+            queue_id="q1q1q1q1q1q1q1q1q1q1q1q1",
+            start_at=_future(5),
+            spoken="marker-queued-spoken",
+            queued_at=to_local(now_utc()),
+        )
+    ]
+    open_question = OpenQuestion(field="time", asked_at=to_local(now_utc()), times=3)
+    previous_turns = [
+        PreviousTurn(
+            turn_id="t9",
+            route="marker-route",
+            reply_kind="marker-reply-kind",
+            calls=[PreviousCall(action="marker-action", status="ok")],
+        )
+    ]
+    goal = GoalProgress(
+        goal_id="marker-goal-id",
+        turns_without_progress=7,
+        last_marker="marker-last-marker",
+        service="marker-goal-service",
+        appointment_id="marker-goal-appointment-id",
+    )
+    slots = ConversationSlots(service="marker-slots-service")
+
+    ctx = make_ctx(
+        customer=customer,
+        shop_status=shop_status,
+        shop_hours=shop_hours,
+        upcoming=upcoming,
+        recent_visits=[recent_visit],
+        pending=pending,
+        recently_declined=recently_declined,
+        unannounced=unannounced,
+        queued_requests=queued,
+        open_question=open_question,
+        answers_open_question_hint=True,
+        last_bot_text="marker-last-bot-text",
+        previous_turns=previous_turns,
+        goal=goal,
+        slots=slots,
+        digest_text="marker-digest-text",
+    )
+
+    full = render_context(ctx, "full")
+
+    marker_of_field = {
+        "now_local": format_vi_datetime(ctx.now_local),
+        "today": ctx.today.isoformat(),
+        "calendar_14d": ctx.calendar_14d[0][1],
+        "customer": customer.display_name,
+        "shop_status": str(shop_status.is_busy),
+        "shop_hours": shop_hours.open_time,
+        "upcoming": upcoming[0].id,
+        "recent_visits": recent_visit.isoformat(),
+        "pending": pending.spoken,
+        "recently_declined": recently_declined.spoken,
+        "unannounced": unannounced.spoken,
+        "queued_requests": queued[0].spoken,
+        "open_question": "time",
+        "answers_open_question_hint": "True",
+        "last_bot_text": "marker-last-bot-text",
+        "previous_turns": "marker-action",
+        "goal": "marker-goal-id",
+        "slots": "marker-slots-service",
+        "digest_text": "marker-digest-text",
+    }
+
+    rendered_fields = set(TurnContext.model_fields) - NOT_RENDERED
+    assert rendered_fields == set(marker_of_field), (
+        "cập nhật test: TurnContext có trường mới chưa có marker để kiểm render"
+    )
+    for field_name, marker in marker_of_field.items():
+        assert marker in full, f"trường '{field_name}' không thấy dấu vết trong full render"
 
 
 def test_open_question_and_queued_counted_in_lite():
