@@ -45,7 +45,7 @@ Mọi task ngầm bao gồm mục này.
 
 Bộ test hiện có 1294 hàm, quá nửa kiểm *chữ* (prompt, docstring, khối bối cảnh) thay vì *hành vi*. Từ đây:
 
-1. **Kiểm hành vi, không kiểm chữ.** Không assert substring trong prompt, docstring tool, hay câu render — trừ đúng hai bất biến: *prompt tiếng Anh, không câu mẫu tiếng Việt* (một test parametrize trên mọi prompt) và *mọi id/iso trong văn bản gửi model lấy từ object*.
+1. **Kiểm hành vi, không kiểm chữ.** Không assert substring trong prompt, docstring tool, hay câu render — trừ đúng ba bất biến: *prompt tiếng Anh, không câu mẫu tiếng Việt* (một test parametrize trên mọi prompt), *mọi id/iso trong văn bản gửi model lấy từ object*, và *chỉ dẫn định dạng ngày `YYYY-MM-DD` của `DIGEST_PROMPT`* (CONTEXT.md bẫy #6).
 2. **Một bảng = một hàm test parametrize.** Bảng ánh xạ §5.4, luật (a)–(k), R0–R5, §7.2: mỗi bảng một hàm `@pytest.mark.parametrize`, không một hàm mỗi dòng. Trong M1–M5 chỗ nào liệt kê nhiều tên test cùng khuôn thì hiểu là **các ca của một hàm**.
 3. **Không test ghim hằng số/chữ ký** (`X == 4`, "module có đúng N tool", "class implements protocol"); `test_write_fence.py` và `test_regex_budget.py` là ngoại lệ vì chúng là hàng rào.
 4. **Không test trùng tầng.** Hành vi của service kiểm ở test service; test tầng agent chỉ kiểm phần agent thêm vào (từ chối, ánh xạ, thứ tự gọi). Khi xoá một test, phải chỉ ra test nào đỏ thay nó.
