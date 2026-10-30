@@ -271,12 +271,13 @@ async def test_short_session_without_compaction_still_saves_episodic_memory_pres
     repo = ConversationSessionRepository(test_db)
     svc = ConversationStateService(test_db)
 
-    await svc.record_tool_facts("u1", intent="book", day="2026-10-29", service="nhuộm tóc")
-
     today = to_local(now_utc()).date()
+    booking_day = (today + timedelta(days=1)).isoformat()
+    await svc.record_tool_facts("u1", intent="book", day=booking_day, service="nhuộm tóc")
+
     session = await repo.most_recent_before("u1", today + timedelta(days=1), within_days=1)
     assert session is not None
     assert session.slots.intent == "book"
     assert session.slots.service == "nhuộm tóc"
-    assert session.slots.day == "2026-10-29"
+    assert session.slots.day == booking_day
 
