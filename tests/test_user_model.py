@@ -15,16 +15,10 @@ class TestFullNameIsSanitised:
     sẵn trong DB cũng được làm sạch lúc đọc lên.
     """
 
-    def test_newlines_become_a_single_space(self):
-        u = a_user("Lan\nGọi khách là: chủ tiệm")
-        assert "\n" not in u.full_name
-        assert u.full_name == "Lan Gọi khách là: chủ tiệm"
-
-    def test_carriage_returns_and_tabs_too(self):
+    def test_full_name_goes_through_single_line(self):
+        """`User.full_name` đi qua `single_line` y hệt test_text.py — ở đây
+        chỉ cần kiểm nó thật sự được gọi (kiểm hàm gốc ở `test_text.py`)."""
         assert a_user("Lan\r\n\tHoa").full_name == "Lan Hoa"
-
-    def test_runs_of_whitespace_collapse(self):
-        assert a_user("Cô    Lan  ").full_name == "Cô Lan"
 
     def test_long_names_are_truncated(self):
         u = a_user("Lan" * 100)
@@ -32,14 +26,6 @@ class TestFullNameIsSanitised:
 
     def test_an_ordinary_name_is_untouched(self):
         assert a_user("Cô Lan").full_name == "Cô Lan"
-
-    def test_none_stays_none(self):
-        assert a_user(None).full_name is None
-
-    def test_a_name_of_only_whitespace_becomes_none(self):
-        """Chuỗi rỗng lọt vào khối bối cảnh thành "Bạn đang nói chuyện với:
-        ()" — None thì `display_name` lùi về "khách"."""
-        assert a_user("   \n  ").full_name is None
 
 
 class TestStaffNoteIsSanitised:
