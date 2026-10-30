@@ -23,7 +23,7 @@ from app.services.appointment import AppointmentService
 from app.core.config import settings
 from app.services.conversation_state import ConversationStateService
 from app.services.proposal import ProposalService
-from app.services.shop import ShopService, fits_before_closing
+from app.services.shop import ShopService, _to_minutes, fits_before_closing
 
 # Đủ để phủ trọn một ngày ở bước 15 phút (96 mốc), có dư.
 WHOLE_DAY = 200
@@ -194,7 +194,51 @@ def make_shop_tools(db: AsyncIOMotorDatabase, user: User) -> List[BaseTool]:
             "closed_days": closed,
         }, ensure_ascii=False)
 
-    return [get_shop_status, get_shop_hours]
+    @tool
+    async def is_open_at(at: str) -> str:
+        """Whether the salon is open at one specific moment, as JSON. `at` is
+        ISO 8601 Vietnam time, copied from another tool's `iso` (e.g.
+        parse_time's `start_at` or find_free_slots' `slots[].iso`) — never
+        hand-typed. `reason` is one of "closed_day", "before_open",
+        "after_close", "owner_busy" or "open". When `open` is false and the
+        salon will open or the owner will free up later the same check,
+        `next_change` carries that moment — say it using `next_change.spoken`
+        exactly as written; otherwise it is null."""
+        try:
+            dt = _parse_local(at)
+        except ValueError:
+            return json.dumps({"error": "bad_time_format"})
+
+        local = to_local(dt)
+        hours = await shop.get_hours()
+        result = {"at": _moment(dt)}
+
+        if (local.weekday() + 1) % 7 in hours.closed_days:
+            result.update(open=False, reason="closed_day", next_change=None)
+            return json.dumps(result, ensure_ascii=False)
+
+        minutes = local.hour * 60 + local.minute
+        if minutes < _to_minutes(hours.open_time):
+            open_at = local.replace(
+                hour=int(hours.open_time[:2]), minute=int(hours.open_time[3:]),
+                second=0, microsecond=0,
+            )
+            result.update(open=False, reason="before_open", next_change=_moment(open_at))
+            return json.dumps(result, ensure_ascii=False)
+        if minutes >= _to_minutes(hours.close_time):
+            result.update(open=False, reason="after_close", next_change=None)
+            return json.dumps(result, ensure_ascii=False)
+
+        status = await shop.get_status()
+        if status.is_busy and status.busy_until and dt < status.busy_until:
+            result.update(open=False, reason="owner_busy",
+                          next_change=_moment(status.busy_until))
+            return json.dumps(result, ensure_ascii=False)
+
+        result.update(open=True, reason="open", next_change=None)
+        return json.dumps(result, ensure_ascii=False)
+
+    return [get_shop_status, get_shop_hours, is_open_at]
 
 
 

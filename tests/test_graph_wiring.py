@@ -66,14 +66,14 @@ def test_there_is_no_confirm_shortcut_from_start():
     assert ("__start__", "supervisor") in e
 
 
-def test_booking_node_has_the_two_shop_tools_but_no_write_tool():
+def test_booking_node_has_the_shop_tools_but_no_write_tool():
     from unittest.mock import MagicMock
 
     from app.agents.booking_graph.graph import booking_tools
     from app.models.user import User
     names = {t.name for t in booking_tools(MagicMock(), User(phone="0912345678", hashed_password="x", full_name="Cô Lan"))}
     assert names == {"parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
-                     "cancel_appointment", "get_shop_hours", "get_shop_status"}
+                     "cancel_appointment", "get_shop_hours", "get_shop_status", "is_open_at"}
     assert "create_appointment" not in names
 
 

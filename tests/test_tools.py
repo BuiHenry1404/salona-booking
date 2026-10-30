@@ -41,7 +41,7 @@ async def pending_proposal(db, user):
 async def test_tool_names_are_exactly_as_specified(test_db):
     user = await a_user(test_db)
     assert sorted(t.name for t in make_shop_tools(test_db, user)) == [
-        "get_shop_hours", "get_shop_status",
+        "get_shop_hours", "get_shop_status", "is_open_at",
     ]
     assert sorted(t.name for t in make_booking_tools(test_db, user)) == [
         "cancel_appointment", "find_free_slots", "list_my_appointments",
@@ -94,6 +94,63 @@ async def test_shop_hours_returns_data_not_a_sentence(test_db):
     assert out["closed_days"] == []
     # Không còn câu nào: "Mở cả tuần." là kết luận của model, không phải của tool.
     assert "Mở cả tuần" not in json.dumps(out, ensure_ascii=False)
+
+
+class TestIsOpenAtTool:
+    """Thứ tự kiểm: closed_day → before_open/after_close → owner_busy → open
+    (app/agents/booking_graph/tools.py, is_open_at)."""
+
+    def _tool(self, test_db, user):
+        tools = {t.name: t for t in make_shop_tools(test_db, user)}
+        return tools["is_open_at"]
+
+    async def test_is_open_at_reports_closed_day(self, test_db):
+        user = await a_user(test_db)
+        when = tomorrow_at(12)
+        closed = (when.weekday() + 1) % 7   # quy ước shop: 0 = Chủ Nhật
+        await ShopService(test_db).set_hours("08:00", "19:00", [closed])
+        tool = self._tool(test_db, user)
+        out = json.loads(await tool.ainvoke({"at": when.isoformat()}))
+        assert out["open"] is False
+        assert out["reason"] == "closed_day"
+
+    async def test_is_open_at_reports_before_open_with_next_change(self, test_db):
+        user = await a_user(test_db)
+        when = tomorrow_at(7)
+        await ShopService(test_db).set_hours("08:00", "19:00", [])
+        tool = self._tool(test_db, user)
+        out = json.loads(await tool.ainvoke({"at": when.isoformat()}))
+        assert out["open"] is False
+        assert out["reason"] == "before_open"
+        assert out["next_change"]["iso"].endswith("T08:00:00+07:00")
+
+    async def test_is_open_at_reports_owner_busy_until(self, test_db):
+        user = await a_user(test_db)
+        await ShopService(test_db).set_hours("00:00", "23:59", [])
+        await ShopService(test_db).set_busy(60)
+        at = now_utc() + timedelta(minutes=10)
+        tool = self._tool(test_db, user)
+        out = json.loads(await tool.ainvoke({"at": at.isoformat()}))
+        status = await ShopService(test_db).get_status()
+        assert out["open"] is False
+        assert out["reason"] == "owner_busy"
+        assert out["next_change"]["iso"] == to_local(status.busy_until).isoformat()
+
+    async def test_is_open_at_reports_open(self, test_db):
+        user = await a_user(test_db)
+        when = tomorrow_at(12)
+        await ShopService(test_db).set_hours("00:00", "23:59", [])
+        tool = self._tool(test_db, user)
+        out = json.loads(await tool.ainvoke({"at": when.isoformat()}))
+        assert out["open"] is True
+        assert out["reason"] == "open"
+        assert out["next_change"] is None
+
+    async def test_is_open_at_rejects_bad_format(self, test_db):
+        user = await a_user(test_db)
+        tool = self._tool(test_db, user)
+        out = json.loads(await tool.ainvoke({"at": "mai"}))
+        assert out == {"error": "bad_time_format"}
 
 
 async def test_propose_stores_the_time_in_mongo_not_in_the_prompt(test_db):

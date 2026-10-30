@@ -50,7 +50,7 @@ _NUMBER_WORDS_SET = frozenset({
 _HONORIFICS_SET = frozenset({"anh", "chị", "em", "cô", "chú", "bác", "ông", "bà"})
 
 TOOL_NAMES = ("parse_time", "find_free_slots", "propose_appointment", "list_my_appointments",
-              "cancel_appointment", "get_shop_hours", "get_shop_status")
+              "cancel_appointment", "get_shop_hours", "get_shop_status", "is_open_at")
 _TOOL_ALT = "|".join(TOOL_NAMES)
 _SNAKE_IDENT = r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+"
 _TOOL_GROUP = re.compile(
