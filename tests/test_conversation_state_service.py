@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.clock import now_utc, to_local
-from app.models.conversation import ChatMessage, ConversationSlots, StateDigest
+from app.models.conversation import (ChatMessage, ConversationSlots, GoalProgress,
+                                     QueuedRequest, StateDigest)
 from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import ConversationService
 from app.services.conversation_state import (COMPACT_THRESHOLD_TOKENS,
@@ -599,3 +600,51 @@ async def test_analysis_replaces_a_stale_state_from_yesterday(test_db):
     assert state.slots.stated == ["điều hôm nay"]
     assert state.slots.intent is None and state.digest is None
     assert state.covers_until.year == 1970
+
+
+# --- Task 0.5: goal/queued — code-only, _compact không chạm --------------------
+
+async def test_record_goal_progress_roundtrips(test_db):
+    svc = ConversationStateService(test_db)
+    goal = GoalProgress(goal_id="g1", turns_without_progress=2,
+                        last_marker="hour_proposed", service="làm móng gel",
+                        appointment_id="a1")
+
+    await svc.record_goal_progress("u1", goal)
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.goal == goal
+
+
+async def test_set_queued_roundtrips_and_keeps_tz(test_db):
+    svc = ConversationStateService(test_db)
+    naive_start = datetime(2026, 10, 31, 9, 0)
+    queued = [QueuedRequest(queue_id="q1", start_at=naive_start,
+                            spoken="9 giờ sáng mai", queued_at=now_utc())]
+
+    await svc.set_queued("u1", queued)
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert len(state.queued) == 1
+    assert state.queued[0].queue_id == "q1"
+    assert state.queued[0].start_at.tzinfo is not None
+    assert state.queued[0].queued_at.tzinfo is not None
+
+
+async def test_compact_does_not_touch_goal_or_queued(test_db, patch_model):
+    """Như `tool_day`: `goal`/`queued` là code-only — `_compact` không nằm
+    trong các trường nó `$set`, nên phải còn nguyên sau một lượt nén."""
+    svc = ConversationStateService(test_db)
+    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="làm tóc")
+    queued = [QueuedRequest(queue_id="q1", start_at=now_utc(),
+                            spoken="chiều mai", queued_at=now_utc())]
+    await svc.record_goal_progress("u1", goal)
+    await svc.set_queued("u1", queued)
+    await _seed(test_db, turns=12)
+    patch_model(reply=StateOutput(digest=StateDigest(wants=["Khách muốn làm tóc."])))
+
+    assert await svc.maybe_compact("u1") is True
+
+    state = await ConversationService(test_db).get_state("u1")
+    assert state.goal == goal
+    assert [q.queue_id for q in state.queued] == ["q1"]

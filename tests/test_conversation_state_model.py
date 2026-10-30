@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from app.models.conversation import (Conversation, ConversationSlots, ConversationState,
-                                     StateDigest)
+                                     GoalProgress, QueuedRequest, StateDigest)
 from app.services.conversation_state import StateOutput
 
 
@@ -84,3 +84,30 @@ def test_slots_never_raises_on_rubbish_from_the_model():
 def test_slots_all_fields_optional():
     slots = ConversationSlots()
     assert slots.intent is None and slots.declined == []
+
+
+def test_goal_and_queued_default_to_none_and_empty_on_an_old_document():
+    """Document cũ (trước task này) không có `goal`/`queued` — vẫn đọc được,
+    không migrate: `goal` -> None, `queued` -> []."""
+    state = ConversationState(
+        day=date(2026, 9, 19),
+        covers_until=datetime(2026, 9, 19, 3, 0, tzinfo=timezone.utc),
+    )
+    assert state.goal is None
+    assert state.queued == []
+
+
+def test_goal_and_queued_round_trip_through_model_dump():
+    goal = GoalProgress(goal_id="g1", turns_without_progress=2,
+                        last_marker="hour_proposed", service="làm móng gel",
+                        appointment_id="a1")
+    queued = QueuedRequest(queue_id="q1", start_at=datetime(2026, 10, 31, 9, 0,
+                                                            tzinfo=timezone.utc),
+                           spoken="9 giờ sáng mai", queued_at=datetime.now(timezone.utc))
+    state = ConversationState(day=date(2026, 10, 30),
+                              covers_until=datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc),
+                              goal=goal, queued=[queued])
+    restored = ConversationState(**state.model_dump())
+    assert restored.goal == goal
+    assert restored.queued[0].queue_id == "q1"
+    assert restored.queued[0].start_at.tzinfo is not None

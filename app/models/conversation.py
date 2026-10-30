@@ -108,6 +108,37 @@ class StateDigest(BaseModel):
     open: List[str] = Field(default_factory=list)         # còn dang dở; ≤3
 
 
+class GoalProgress(BaseModel):
+    """Tiến độ mục tiêu đặt lịch hiện tại — CODE-ONLY (Task 0.5), sống trong
+    `ConversationState.goal`. `_compact` không chạm, giống `tool_day`."""
+
+    goal_id: Optional[str] = None
+    turns_without_progress: int = 0
+    last_marker: Optional[str] = None
+    service: Optional[str] = None    # dùng để nhận "đổi mục tiêu" (§7.2)
+    appointment_id: Optional[str] = None
+
+
+class QueuedRequest(BaseModel):
+    """Một yêu cầu đặt lịch thêm, khách nhắc tới ngoài mục tiêu đang xử lý —
+    CODE-ONLY (Task 0.5), sống trong `ConversationState.queued`. Khác
+    `QueuedRequest` trong `app/agents/booking_graph/tools.py` (kiểu đầu vào
+    của tool) — hai model độc lập, trùng tên tình cờ."""
+
+    queue_id: str
+    start_at: datetime               # UTC aware (validator như Proposal)
+    spoken: str
+    note: Optional[str] = None
+    queued_at: datetime
+
+    @field_validator("start_at", "queued_at", mode="before")
+    @classmethod
+    def _ensure_queued_tz(cls, v: Any) -> Any:
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
 class ConversationState(BaseModel):
     """Bản nén phần cũ của hội thoại HÔM NAY. Không phải tầng 3 đã bỏ (ký ức
     xuyên phiên) — nó là bản nén của tầng 2, cắt theo ngày, sống trong chính
@@ -126,6 +157,9 @@ class ConversationState(BaseModel):
     failures: int = 0                # cầu chì: nén hỏng liên tiếp
     slots: Optional[ConversationSlots] = None    # document cũ → None, không migrate
     tool_day: Optional[str] = None   # ngày YYYY-MM-DD chỉ do code (record_tool_facts) ghi, _compact không chạm
+    # Code-only (Task 0.5), như tool_day — _compact không chạm, document cũ -> None/[]
+    goal: Optional[GoalProgress] = None
+    queued: List[QueuedRequest] = Field(default_factory=list)
 
     @field_validator("covers_until", mode="before")
     @classmethod

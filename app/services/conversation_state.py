@@ -17,7 +17,8 @@ from app.core.logging import get_logger
 from app.core.text import single_line
 from app.models.appointment import NOTE_MAX
 from app.models.conversation import (AskedItem, ChatMessage, ConversationSession,
-                                     ConversationSlots, ConversationState, StateDigest)
+                                     ConversationSlots, ConversationState, GoalProgress,
+                                     QueuedRequest, StateDigest)
 from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
@@ -311,6 +312,24 @@ class ConversationStateService:
                 extra={"user_id": user_id, "error": str(exc)[:200]},
             )
             return None
+
+    async def record_goal_progress(self, user_id: str, goal: GoalProgress) -> None:
+        """Ghi `state.goal` — CODE-ONLY (Task 0.5), `_compact` không chạm,
+        giống `tool_day`."""
+        now = now_utc()
+        await self._set_today_fields(
+            user_id, {"state.goal": goal.model_dump(), "state.updated_at": now}, now,
+        )
+
+    async def set_queued(self, user_id: str, queued: List[QueuedRequest]) -> None:
+        """Ghi `state.queued` — CODE-ONLY (Task 0.5), `_compact` không chạm,
+        giống `tool_day`."""
+        now = now_utc()
+        await self._set_today_fields(
+            user_id,
+            {"state.queued": [q.model_dump() for q in queued], "state.updated_at": now},
+            now,
+        )
 
     async def maybe_compact(self, user_id: str) -> bool:
         """Nén nếu đáng nén. Chạy nền sau khi lượt chat đã complete, nên KHÔNG
