@@ -5,10 +5,8 @@ Nhận diện và xử lý qua `TurnAnalysis.aside`:
 - `defer_only`: Khách hoãn, không có yêu cầu khác.
 - `defer_with_request`: Khách hoãn nhưng có yêu cầu kèm theo.
 """
-import inspect
 import pytest
 
-from app.agents.booking_graph import relatives
 from app.agents.booking_graph.relatives import (
     DEFERRAL_LINE,
     RELATIVE_LINE,

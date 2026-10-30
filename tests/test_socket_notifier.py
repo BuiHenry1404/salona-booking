@@ -4,7 +4,6 @@ from bson import ObjectId
 
 from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
-from app.services.notifications import Notifier
 from app.services.socket_notifier import SocketNotifier
 
 

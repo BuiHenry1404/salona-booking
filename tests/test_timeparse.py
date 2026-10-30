@@ -6,7 +6,6 @@ import pytest
 
 from app.agents.booking_graph import timeparse
 from app.agents.booking_graph.timeparse import (
-    PARSE_TIMEOUT_SECONDS,
     ParsedTime,
     _guard,
     _to_24h,
