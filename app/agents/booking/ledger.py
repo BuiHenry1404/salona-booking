@@ -28,6 +28,9 @@ from app.agents.booking.schemas import (
 )
 from app.core.clock import to_local
 from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 LEDGER_COLLECTION = "turn_ledger"
 
@@ -51,6 +54,13 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     )
     await collection.create_index([("user_id", 1), ("day", 1), ("asked_at", 1)])
     _indexed_dbs.add(key)
+
+
+def _warn_if_missing(result, turn_id: str, method: str) -> None:
+    """Ghi gọi sau `start()` không bao giờ nên trật — không upsert (sẽ tạo
+    doc thiếu `user_id`/`day`), chỉ cảnh báo để lộ lỗi gọi sai thứ tự."""
+    if result.matched_count == 0:
+        logger.warning("ledger_turn_missing", extra={"turn_id": turn_id, "method": method})
 
 
 def previous_call_from(call: CallRecord) -> PreviousCall:
@@ -146,29 +156,34 @@ class TurnLedger:
         )
 
     async def append_call(self, turn_id: str, call: CallRecord) -> None:
-        await self._collection.update_one(
+        result = await self._collection.update_one(
             {"turn_id": turn_id}, {"$push": {"calls": call.model_dump(mode="json")}}
         )
+        _warn_if_missing(result, turn_id, "append_call")
 
     async def set_pending_outcome(self, turn_id: str, outcome: PendingOutcome) -> None:
-        await self._collection.update_one(
+        result = await self._collection.update_one(
             {"turn_id": turn_id},
             {"$set": {"pending_outcome": outcome.model_dump(mode="json")}},
         )
+        _warn_if_missing(result, turn_id, "set_pending_outcome")
 
     async def set_ask(self, turn_id: str, field: QuestionField) -> None:
-        await self._collection.update_one({"turn_id": turn_id}, {"$set": {"ask_field": field}})
+        result = await self._collection.update_one({"turn_id": turn_id}, {"$set": {"ask_field": field}})
+        _warn_if_missing(result, turn_id, "set_ask")
 
     async def finish(
         self, turn_id: str, *, ended_by: LedgerEndedBy, reply_kind: ReplyKind | None
     ) -> None:
-        await self._collection.update_one(
+        result = await self._collection.update_one(
             {"turn_id": turn_id},
             {"$set": {"ended_by": ended_by, "reply_kind": reply_kind}},
         )
+        _warn_if_missing(result, turn_id, "finish")
 
     async def mark_announced(self, turn_id: str) -> None:
-        await self._collection.update_one({"turn_id": turn_id}, {"$set": {"announced": True}})
+        result = await self._collection.update_one({"turn_id": turn_id}, {"$set": {"announced": True}})
+        _warn_if_missing(result, turn_id, "mark_announced")
 
     async def previous_turns(
         self, user_id: str, *, today: date, limit: int = 2

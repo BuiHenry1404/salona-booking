@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal, Sequence
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 
 # ---------------------------------------------------------------------------
 # Literal dùng xuyên suốt
@@ -282,7 +282,12 @@ class CallRecord(BaseModel):
     args_norm: str
     allowed: bool
     reject_code: str | None = None
-    result: TaskResult | PendingOutcome | dict | None = None
+    # `union_mode="left_to_right"` + `dict` cuối: smart union mặc định đọc lại
+    # từ Mongo (date/datetime trong `FreeSlots`... đã thành chuỗi JSON) sẽ
+    # chọn nhầm `dict` thay vì `TaskResult` — thử đúng thứ tự khai báo trước.
+    result: TaskResult | PendingOutcome | dict | None = Field(
+        default=None, union_mode="left_to_right"
+    )
     markers: list[str] = []
     at: datetime
 

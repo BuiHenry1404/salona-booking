@@ -4,16 +4,22 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+import structlog
 
 from app.agents.booking.context import PendingProposal, PreviousCall, PreviousTurn, UnannouncedOutcome
 from app.agents.booking.ledger import LEDGER_COLLECTION, TurnLedger, previous_call_from
 from app.agents.booking.schemas import (
+    AppointmentList,
+    AppointmentRefOut,
     CallRecord,
     FreeSlots,
     Moment,
     PendingOutcome,
     ProposalCreated,
     ResolvedTime,
+    ShopHoursOut,
+    ShopOpenOut,
+    ShopStatusOut,
     TaskResult,
 )
 from app.core.clock import now_utc, to_local
@@ -74,6 +80,84 @@ async def test_start_append_finish_roundtrip(test_db):
     # datetime lưu dạng chuỗi json phải đọc lại ra được CallRecord tz-aware
     stored = CallRecord.model_validate(doc["calls"][0])
     assert stored.at.tzinfo is not None
+    # Round-trip Mongo KHÔNG được làm `result` tuột về `dict` (smart union
+    # chọn nhầm vì FreeSlots mang date/datetime đã hoá chuỗi JSON).
+    assert isinstance(stored.result, TaskResult)
+    assert stored.result.status == "ok"
+    assert isinstance(stored.result.data, FreeSlots)
+
+
+# ---------------------------------------------------------------------------
+# previous_turns giữ nguyên kiểu của mọi biến thể TaskData + PendingOutcome
+# qua round-trip Mongo thật (không rơi về fallback "failed"/dict).
+# ---------------------------------------------------------------------------
+
+
+def _resolved_time_data():
+    return ResolvedTime(start_at=_moment(1), partial_date=None, missing=[], day_from=None)
+
+
+def _free_slots_data():
+    return FreeSlots(day=to_local(now_utc()).date(), slots=[_moment(1), _moment(2)], more=False, fetched_at=now_utc())
+
+
+def _proposal_created_data():
+    return ProposalCreated(proposal_id="p1", kind="book", start_at=_moment(3), note=None, replaces=None, queued=[])
+
+
+def _appointment_list_data():
+    return AppointmentList(appointments=[AppointmentRefOut(id="a1", at=_moment(1))])
+
+
+def _shop_hours_data():
+    return ShopHoursOut(open=_moment(0), close=_moment(10), closed_days=[])
+
+
+def _shop_status_data():
+    return ShopStatusOut(busy=False, until=None)
+
+
+def _shop_open_data():
+    return ShopOpenOut(at=_moment(0), open=True, reason="open", next_change=None)
+
+
+@pytest.mark.parametrize(
+    "make_result",
+    [
+        lambda: TaskResult(task_id="t", agent="appointment", action="resolve_time", status="ok", data=_resolved_time_data()),
+        lambda: TaskResult(task_id="t", agent="appointment", action="find_slots", status="ok", data=_free_slots_data()),
+        lambda: TaskResult(task_id="t", agent="appointment", action="propose_book", status="ok", data=_proposal_created_data()),
+        lambda: TaskResult(task_id="t", agent="appointment", action="list_appointments", status="ok", data=_appointment_list_data()),
+        lambda: TaskResult(task_id="t", agent="shop_info", action="get_hours", status="ok", data=_shop_hours_data()),
+        lambda: TaskResult(task_id="t", agent="shop_info", action="get_status", status="ok", data=_shop_status_data()),
+        lambda: TaskResult(task_id="t", agent="shop_info", action="is_open_at", status="ok", data=_shop_open_data()),
+        lambda: PendingOutcome(outcome="approved", proposal_id="p1", kind="book", spoken="3h chiều"),
+    ],
+    ids=[
+        "ResolvedTime", "FreeSlots", "ProposalCreated", "AppointmentList",
+        "ShopHoursOut", "ShopStatusOut", "ShopOpenOut", "PendingOutcome",
+    ],
+)
+async def test_previous_turns_keeps_typed_result_through_mongo_roundtrip(test_db, make_result):
+    ledger = TurnLedger(test_db)
+    asked_at = now_utc()
+    today = to_local(asked_at).date()
+    result = make_result()
+    call = _call(result=result, at=asked_at)
+    expected = previous_call_from(call)
+
+    await ledger.start(turn_id="t1", user_id="u1", route="orchestrate", rule="R2", asked_at=asked_at)
+    await ledger.append_call("t1", call)
+
+    turns = await ledger.previous_turns("u1", today=today)
+    assert len(turns) == 1
+    [actual] = turns[0].calls
+
+    assert actual.status == expected.status
+    assert actual.status != "failed"
+    assert actual.offered == expected.offered
+    assert actual.resolved == expected.resolved
+    assert actual.proposal == expected.proposal
 
 
 async def test_record_of_unknown_turn_is_none(test_db):
@@ -274,3 +358,34 @@ async def test_ttl_index_exists_after_first_start(test_db):
     ttl_indexes = [idx for idx in info.values() if idx.get("key") == [("created_at", 1)]]
     assert ttl_indexes, info
     assert ttl_indexes[0]["expireAfterSeconds"] == settings.orch_ledger_ttl_days * 86400
+
+
+# ---------------------------------------------------------------------------
+# Gọi write trước khi `start()` -> KHÔNG upsert, chỉ cảnh báo (không bịa doc
+# thiếu user_id/day).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,call_kwargs",
+    [
+        ("append_call", lambda ledger, turn_id: ledger.append_call(turn_id, _call())),
+        ("set_pending_outcome", lambda ledger, turn_id: ledger.set_pending_outcome(
+            turn_id, PendingOutcome(outcome="approved", proposal_id="p1", kind="book", spoken="x")
+        )),
+        ("set_ask", lambda ledger, turn_id: ledger.set_ask(turn_id, "time")),
+        ("finish", lambda ledger, turn_id: ledger.finish(turn_id, ended_by="finish", reply_kind="answer")),
+        ("mark_announced", lambda ledger, turn_id: ledger.mark_announced(turn_id)),
+    ],
+)
+async def test_write_before_start_logs_warning_and_does_not_upsert(test_db, method, call_kwargs):
+    ledger = TurnLedger(test_db)
+    turn_id = "never-started"
+
+    with structlog.testing.capture_logs() as logs:
+        await call_kwargs(ledger, turn_id)
+
+    warnings = [e for e in logs if e["event"] == "ledger_turn_missing"]
+    assert len(warnings) == 1
+    assert warnings[0]["extra"] == {"turn_id": turn_id, "method": method}
+    assert await ledger.record_of(turn_id) is None
