@@ -2,7 +2,7 @@ from app.models.appointment import Appointment
 from app.models.shop import ShopStatusView
 from app.telegram.client import admin_chat_ids
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.core.vi_format import format_vi_datetime
 
 
 class TelegramNotifier:

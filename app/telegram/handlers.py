@@ -11,7 +11,7 @@ from app.services.shop import ShopService
 from app.telegram.client import (MAIN_KEYBOARD, admin_chat_ids,
                                  duration_keyboard)
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.core.vi_format import format_vi_datetime
 
 logger = get_logger(__name__)
 

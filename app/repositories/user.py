@@ -90,7 +90,7 @@ class UserRepository(BaseRepository[User]):
         lý. Idempotent: `set_self_address` chỉ ghi khi còn `None`, nên gọi lại
         nhiều lần (mỗi lần khởi động app) không có tác dụng phụ.
         """
-        from app.agents.booking_graph.context import derive_address
+        from app.core.vi_format import derive_address
 
         seeded = 0
         for user in await self.list_all():
