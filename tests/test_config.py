@@ -34,3 +34,13 @@ def test_shell_environment_cannot_override_the_env_file(monkeypatch):
 
     assert fresh.app_name != "bi-shell-de-len"
     assert fresh.azure_openai_endpoint != "https://khong-phai-cai-nay"
+
+
+def test_orchestrator_settings_have_defaults():
+    # Kiểm mặc định của TRƯỜNG (như test_optional_integrations_default_to_none), không đọc .env máy đang chạy
+    from app.core.config import Settings
+    d = {name: f.default for name, f in Settings.model_fields.items() if name.startswith("orch_")}
+    assert d == {"orch_max_tool_rounds": 8, "orch_max_calls_per_round": 3, "orch_no_progress_streak": 2,
+                 "orch_goal_turns_limit": 3, "orch_turn_timeout_seconds": 150, "orch_orchestrate_timeout_seconds": 110,
+                 "orch_task_timeout_seconds": 40, "orch_llm_calls_per_user_per_hour": 150, "orch_ledger_ttl_days": 7}
+    assert d["orch_orchestrate_timeout_seconds"] + 30 <= d["orch_turn_timeout_seconds"]
