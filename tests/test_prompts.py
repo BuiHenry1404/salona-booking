@@ -698,6 +698,12 @@ def test_digest_prompt_is_english_with_no_vietnamese_samples():
     assert DIGEST_PROMPT.splitlines()[0].startswith("Today is {today}")
 
 
+def test_digest_prompt_tells_the_model_to_fill_slots_with_iso_days():
+    """CONTEXT.md bẫy #6: không đòi `day` dạng YYYY-MM-DD thì model neo vào ngày huấn luyện."""
+    assert "slots" in DIGEST_PROMPT.lower()
+    assert "YYYY-MM-DD" in DIGEST_PROMPT
+
+
 @pytest.mark.parametrize("key", sorted(DIGEST_CAPS), ids=sorted(DIGEST_CAPS))
 def test_digest_prompt_names_every_cap_the_code_enforces(key):
     """Mỗi khoá `DIGEST_CAPS` phải đổ đúng vào mục cùng tên của prompt đã

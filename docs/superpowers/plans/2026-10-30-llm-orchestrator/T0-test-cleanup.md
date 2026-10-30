@@ -66,5 +66,5 @@ Tool giữ qua M6 (dời sang `booking/tools.py`), nên dọn ở đây có giá
 | Mốc | Hàm test | Ca thu thập |
 |---|---|---|
 | Trước T0 | 1294 | 1468 |
-| Sau T0 | 1260 | 1442 |
+| Sau T0 | 1261 | 1443 |
 | Mục tiêu sau M6 | ≈ 850 | ≈ 1000 |
