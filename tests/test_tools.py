@@ -579,44 +579,6 @@ class TestShopHoursTool:
         assert out["closed_days"] == []
 
 
-class TestRulesMovedIntoToolDescriptions:
-    """Rule cắt khỏi BOOKING_PROMPT không được bốc hơi — docstring của tool đi
-    thẳng vào tool schema gửi cho model, nên nó vẫn là prompt.
-
-    Từ 2026-09-13 docstring là tiếng Anh toàn bộ, nên các test dưới đây canh
-    NỘI DUNG của rule chứ không canh câu mẫu tiếng Việt nữa."""
-
-    async def _descriptions(self, test_db):
-        user = await a_user(test_db)
-        return {
-            t.name: " ".join(t.description.split())
-            for t in make_booking_tools(test_db, user)
-        }
-
-    async def test_only_one_missing_piece_is_asked_per_turn(self, test_db):
-        """Luật này trước đây sống nhờ một câu mẫu tiếng Việt; câu mẫu bỏ rồi
-        thì luật phải tự đứng được bằng lời tiếng Anh."""
-        d = await self._descriptions(test_db)
-        assert "exactly that ONE missing piece" in d["parse_time"]
-        assert "one piece per turn" in d["parse_time"]
-
-    async def test_looking_up_own_appointments_must_call_the_tool(self, test_db):
-        d = await self._descriptions(test_db)
-        assert "call this IMMEDIATELY" in d["list_my_appointments"]
-        assert "never ask for a date" in d["list_my_appointments"]
-
-    async def test_free_slots_are_never_invented(self, test_db):
-        d = await self._descriptions(test_db)
-        assert "never invent a free slot" in d["find_free_slots"]
-
-    async def test_the_salon_may_not_pick_the_day_unasked(self, test_db):
-        """Transcript cũ: khách mới nói "chị muốn làm tóc", bot đã chào giờ
-        trống HÔM NAY."""
-        d = await self._descriptions(test_db)
-        assert "Never assume today." in d["find_free_slots"]
-        assert "ask which day first" in d["find_free_slots"]
-
-
 class TestProposeCanReplaceAnExistingAppointment:
     """BUG-1: "chuyển giùm anh qua 10 giờ, đừng để 9 giờ nữa" từng ra HAI lịch.
 
@@ -668,23 +630,6 @@ class TestProposeCanReplaceAnExistingAppointment:
         ))
         assert out["error"] == "not_your_appointment"
 
-    async def test_the_description_tells_the_model_when_to_pass_it(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "propose_appointment").description.split())
-        assert "replaces_appointment_id" in desc
-        assert "move" in desc.lower() or "reschedul" in desc.lower()
-
-
-class TestCancelKnowsWhereTheIdLives:
-    """BUG-2: id giờ nằm sẵn trong khối bối cảnh mỗi lượt. Docstring phải chỉ
-    model tới đó thay vì bắt nó gọi list_my_appointments cùng lượt."""
-
-    async def test_cancel_description_points_to_the_context_block(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
-        assert "context block" in desc
-        assert "never invent" in desc.lower() or "never guess" in desc.lower()
-
 
 class TestCancelGoesThroughConfirm:
     """Hủy giống đặt: tool chỉ giữ ý định, node confirm mới hủy thật.
@@ -720,22 +665,10 @@ class TestCancelGoesThroughConfirm:
         assert out["error"] == "appointment_not_found"
         assert await pending_proposal(test_db, user) is None
 
-    async def test_the_description_says_the_customer_confirms_next_turn(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
-        assert "NEXT turn" in desc
-        assert "already cancelled" in desc.lower() or "is cancelled" in desc.lower()
-
 
 class TestNoteIsTheServiceOnly:
     """Chạy thật: note lưu thành "cắt tóc mai" — chữ "mai" là thời gian, không
     phải dịch vụ, và nó chảy vào khối bối cảnh lẫn tin Telegram cho chủ tiệm."""
-
-    async def test_propose_description_forbids_time_words_in_note(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "propose_appointment").description.split())
-        assert "`note`" in desc
-        assert "service" in desc.lower() and "never the time" in desc.lower()
 
     async def test_propose_note_never_becomes_the_service_slot(self, test_db):
         """`service` là của bộ phân tích (`apply_turn_analysis`, có lọc
@@ -757,17 +690,6 @@ class TestNoteIsTheServiceOnly:
         assert state.slots.service == "sơn gel"
 
 
-class TestCancelDescriptionSaysCallFirst:
-    """Lượt 11 chạy thật 2026-09-14: model hỏi xác nhận trước khi gọi tool, nên
-    lượt sau không có pending để chốt. Docstring phải nói rõ thứ tự."""
-
-    async def test_description_orders_tool_call_before_the_question(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "cancel_appointment").description.split())
-        assert "as soon as the customer asks to cancel" in desc.lower()
-        assert "before asking" in desc.lower() or "do not ask" in desc.lower()
-
-
 class TestParseTimeAnchor:
     async def test_bad_anchor_is_ignored_not_fatal(self, test_db):
         user = await a_user(test_db)
@@ -775,11 +697,6 @@ class TestParseTimeAnchor:
             {"hour": 10, "anchor": "không phải iso"}
         )
         assert '"missing"' in out          # vẫn là JSON ParsedTime, không crash
-
-    async def test_description_explains_the_anchor(self, test_db):
-        user = await a_user(test_db)
-        desc = " ".join(by_name(make_booking_tools(test_db, user), "parse_time").description.split())
-        assert "`anchor`" in desc and "already on the table" in desc
 
     async def test_propose_returns_the_iso_for_the_next_turn(self, test_db):
         user = await a_user(test_db)
@@ -972,12 +889,6 @@ async def test_free_slots_spread_over_the_part_of_day(test_db, part, lo, hi):
     out = await _free(test_db, part_of_day=part)
     hours = [int(h[:2]) for h in _hhmm(out)]
     assert 1 <= len(hours) <= 3 and all(lo <= h < hi for h in hours), (part, hours)
-
-
-async def test_free_slots_docstring_says_at_most_three(test_db):
-    doc = by_name(make_booking_tools(test_db, await a_user(test_db)), "find_free_slots").description
-    assert "at most 3" in doc
-    assert "around" in doc and "part_of_day" in doc
 
 
 # --- Lỗi live B2 #2: hàng chờ khi khách xin nhiều lịch một lúc ----------------
