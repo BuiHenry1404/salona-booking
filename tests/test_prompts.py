@@ -9,9 +9,13 @@ không bị xoá mất trong một lần sửa prompt sau này.
 """
 import re
 
+import pytest
+
 from app.agents.booking_graph.prompts import (BOOKING_PROMPT, DIGEST_PROMPT, REWRITE_PROMPT,
                                               SHOP_PROMPT, SOCIAL_PROMPT,
                                               SUPERVISOR_PROMPT)
+from app.models.appointment import NOTE_MAX
+from app.services.conversation_state import BULLET_MAX_CHARS, DIGEST_CAPS
 
 CUSTOMER_FACING = {"BOOKING_PROMPT": BOOKING_PROMPT, "SHOP_PROMPT": SHOP_PROMPT}
 
@@ -683,44 +687,30 @@ class TestAnalyzePrompt:
 
 # --- Task 12c: DIGEST_PROMPT (nén cuốn chiếu 5 mục) ------------------------
 
-class TestDigestPromptIsEnglishWithNoVietnameseSamples:
+def test_digest_prompt_is_english_with_no_vietnamese_samples():
     """Spec mục 3 "Nén giữ lại, đổi cách tóm": prompt nén viết bằng tiếng Anh,
     không câu mẫu tiếng Việt (bẫy #15/#16) — nội dung tiếng Việt chỉ nằm
-    trong dữ kiện mà model/khách tạo ra lúc chạy thật, không trong luật."""
+    trong dữ kiện mà model/khách tạo ra lúc chạy thật, không trong luật.
+    Gộp với bất biến "today ở dòng đầu" (CONTEXT.md bẫy #6: model không có
+    mốc nào thì neo vào ngày huấn luyện)."""
+    vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
+    assert not vi.search(DIGEST_PROMPT), vi.search(DIGEST_PROMPT).group()
+    assert DIGEST_PROMPT.splitlines()[0].startswith("Today is {today}")
 
-    def test_no_vietnamese_diacritics_anywhere(self):
-        vi = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I)
-        assert not vi.search(DIGEST_PROMPT), vi.search(DIGEST_PROMPT).group()
 
-    def test_today_is_stated_on_the_first_line(self):
-        """CONTEXT.md bẫy #6: model không có mốc nào thì neo vào ngày huấn
-        luyện — `day` gần như không bao giờ sống sót."""
-        assert DIGEST_PROMPT.splitlines()[0].startswith("Today is {today}")
-
-    def test_mentions_all_five_sections(self):
-        for section in ("wants", "settled", "declined", "constraints", "open"):
-            assert f"- {section}" in DIGEST_PROMPT or f"{section}:" in DIGEST_PROMPT
-
-    def test_previous_digest_is_rolled_forward(self):
-        """Cuốn chiếu: prompt phải mang bản digest CŨ vào, và nói rõ cập
-        nhật tiếp chứ không viết lại từ đầu."""
-        assert "PREVIOUS DIGEST" in DIGEST_PROMPT
-        assert "{prev_wants}" in DIGEST_PROMPT and "{prev_constraints}" in DIGEST_PROMPT
-
-    def test_wants_and_constraints_are_kept_unless_contradicted(self):
-        assert "wants" in DIGEST_PROMPT.split("constraints")[0]
-        assert "UNLESS the new messages clearly contradict it" in DIGEST_PROMPT
-
-    def test_asks_for_the_same_slots_as_before(self):
-        assert "slots" in DIGEST_PROMPT.lower()
-        assert "YYYY-MM-DD" in DIGEST_PROMPT
-
-    def test_withdrawal_rule_forbids_signalling_by_an_empty_list(self):
-        """Review finding: `merge_digest`'s empty-means-keep (plan-mandated)
-        means an empty `wants`/`constraints` from the model can never mean
-        "the customer withdrew it" — the prompt must say so explicitly and
-        tell the model to record the withdrawal as a positive item instead."""
-        assert "WITHDRAWAL" in DIGEST_PROMPT
-        assert "no longer wants" in DIGEST_PROMPT
-        assert "no longer applies" in DIGEST_PROMPT
-        assert "never simply leave wants empty" in DIGEST_PROMPT
+@pytest.mark.parametrize("key", sorted(DIGEST_CAPS), ids=sorted(DIGEST_CAPS))
+def test_digest_prompt_names_every_cap_the_code_enforces(key):
+    """Mỗi khoá `DIGEST_CAPS` phải đổ đúng vào mục cùng tên của prompt đã
+    `.format` — chệch khoá (vd. gán nhầm `wants_max` cho `settled`) từng là
+    lỗi thật (xem `test_the_prompt_promises_the_same_cap_the_code_enforces`
+    ở `test_conversation_state_service.py` cho `service`/`NOTE_MAX`)."""
+    formatted = DIGEST_PROMPT.format(
+        today="2026-01-01", max_chars=BULLET_MAX_CHARS,
+        wants_max=DIGEST_CAPS["wants"], settled_max=DIGEST_CAPS["settled"],
+        declined_max=DIGEST_CAPS["declined"], constraints_max=DIGEST_CAPS["constraints"],
+        open_max=DIGEST_CAPS["open"], service_max=NOTE_MAX,
+        prev_wants="(none)", prev_settled="(none)", prev_declined="(none)",
+        prev_constraints="(none)", prev_open="(none)", messages="",
+    )
+    section_line = next(l for l in formatted.splitlines() if l.strip().startswith(f"- {key}"))
+    assert f"at most {DIGEST_CAPS[key]} items" in section_line

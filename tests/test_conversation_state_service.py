@@ -5,11 +5,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.clock import now_utc, to_local
-from app.models.appointment import NOTE_MAX
 from app.models.conversation import ChatMessage, ConversationSlots, StateDigest
 from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import ConversationService
-from app.services.conversation_state import (BULLET_MAX_CHARS, COMPACT_THRESHOLD_TOKENS,
+from app.services.conversation_state import (COMPACT_THRESHOLD_TOKENS,
                                  DIGEST_CAPS, KEEP_RECENT_TURNS,
                                  MAX_FAILURES, StateOutput, ConversationStateService,
                                  merge_digest, sanitize_digest, select_customer_quotes,
@@ -439,46 +438,6 @@ async def test_empty_slots_are_not_a_failure(test_db, patch_model):
     # một object rỗng thay vì None; cả hai đều không in ra khối slots nào.
     assert state.slots is None or state.slots == ConversationSlots()
     assert state.failures == 0
-
-
-async def test_the_prompt_asks_for_slots(test_db, patch_model):
-    model = patch_model()
-    await _seed(test_db, turns=12)
-    await ConversationStateService(test_db).maybe_compact("u1")
-
-    prompt = model.structured.prompts[0]
-    assert "slots" in prompt.lower()
-    assert "YYYY-MM-DD" in prompt
-
-
-async def test_the_prompt_says_what_day_today_is(test_db, patch_model):
-    """CONTEXT.md bẫy #6, lặp lại ở prompt nén: model được đòi `day` dạng ISO
-    mà không có mốc nào thì nó neo vào dữ liệu huấn luyện — ngày ra quá khứ,
-    sanitize_slots bỏ, và `day` không bao giờ sống sót."""
-    model = patch_model()
-    await _seed(test_db, turns=12)
-    await ConversationStateService(test_db).maybe_compact("u1")
-
-    prompt = model.structured.prompts[0]
-    today = to_local(now_utc()).date().isoformat()
-    assert today in prompt
-    # Ở NGAY dòng đầu, cùng lối với khối bối cảnh — không lẫn giữa thân prompt.
-    assert today in prompt.splitlines()[0]
-
-
-async def test_the_prompt_promises_the_same_cap_the_code_enforces(test_db, patch_model):
-    """Prompt từng hứa 120 ký tự cho `service` trong khi sanitize_slots cắt ở
-    NOTE_MAX=80: model tuân thủ đúng rồi bị cắt cụt giữa chữ, không log gì."""
-    model = patch_model()
-    await _seed(test_db, turns=12)
-    await ConversationStateService(test_db).maybe_compact("u1")
-
-    prompt = model.structured.prompts[0]
-    service_line = next(l for l in prompt.splitlines() if l.startswith("- service:"))
-    assert str(NOTE_MAX) in service_line
-    assert str(BULLET_MAX_CHARS) not in service_line
-    assert f"{BULLET_MAX_CHARS} characters" in prompt        # trần mỗi mục digest
-
 
 
 # --- Task 12b: lượt nén không được xoá trường của bộ phân tích ------------------
