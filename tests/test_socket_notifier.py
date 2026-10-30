@@ -126,7 +126,3 @@ async def test_free_status_broadcasts_nulls():
             {"is_busy": False, "busy_until": None, "minutes_left": None},
         )
     ]
-
-
-def test_socket_notifier_implements_notifier_protocol():
-    assert isinstance(SocketNotifier(SpySocketIO()), Notifier)

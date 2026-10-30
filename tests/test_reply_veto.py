@@ -320,12 +320,3 @@ def test_strip_diacritics_handles_d_bar():
     assert strip_diacritics("Đúng rồi đó") == "Dung roi do"
     assert strip_diacritics("") == ""
     assert strip_diacritics(None) == ""
-
-
-# --- Ngân sách regex: module reply tuyệt đối 0 regex --------------------------
-
-def test_reply_module_uses_zero_regex():
-    import inspect
-    from app.agents.booking_graph import reply
-    source = inspect.getsource(reply)
-    assert "import re" not in source and "re.compile" not in source

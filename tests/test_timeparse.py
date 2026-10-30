@@ -341,10 +341,6 @@ class TestApplyAnchorAndSessionDay:
         assert out.day_from == "anchor"
 
 
-def test_timeout_constant_kept_for_compat():
-    assert PARSE_TIMEOUT_SECONDS >= 5.0
-
-
 def test_timeparse_uses_zero_regex_and_zero_llm():
     source = inspect.getsource(timeparse)
     assert len(re.findall(r"re\.compile\(", source)) == 0

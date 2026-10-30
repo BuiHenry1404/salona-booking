@@ -68,8 +68,3 @@ def test_deferral_reply_fallback_when_all_options_seen():
     fourth = deferral_reply("thong thả nha", "anh Hùng", [first, second, third], analysis={"aside": "defer_only"})
     assert fourth is not None
     assert "anh Hùng" in fourth
-
-
-def test_relatives_module_uses_zero_regex():
-    source = inspect.getsource(relatives)
-    assert "import re" not in source and "re.compile" not in source

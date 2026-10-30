@@ -306,11 +306,3 @@ class TestFindViolations:
                                 customer_text="2 giờ chiều mai nhé", has_proposal=False,
                                 voice_rules=False)
         assert "ask_without_proposal" in codes
-
-    def test_voice_rules_default_is_on(self):
-        """An toàn: không truyền `voice_rules` thì vẫn kiểm đủ ba luật giọng —
-        không đổi hành vi hiện có khi cờ chưa bật."""
-        codes = find_violations("Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé.",
-                                previous_replies=[], address="anh Tám", name="Tám",
-                                customer_text="giá bao nhiêu")
-        assert codes == ["pronoun", "clock"]

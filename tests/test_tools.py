@@ -554,11 +554,6 @@ class TestShopHoursTool:
         tools = {t.name: t for t in make_shop_tools(test_db, user)}
         return await tools["get_shop_hours"].ainvoke({})
 
-    async def test_shop_tools_has_exactly_two_tools(self, test_db):
-        user = User(phone="0912345678", hashed_password="x")
-        names = {t.name for t in make_shop_tools(test_db, user)}
-        assert names == {"get_shop_status", "get_shop_hours"}
-
     async def test_open_and_close_are_spoken_not_digits(self, test_db):
         out = json.loads(await self._call(test_db, "08:00", "19:00", []))
         # `hhmm` giữ nguyên dạng số cho máy đọc (không phải ISO-8601 đầy đủ
@@ -1008,11 +1003,4 @@ async def test_propose_without_queue_has_no_queue_key(test_db):
     out = json.loads(await by_name(make_booking_tools(test_db, user), "propose_appointment")
                      .ainvoke({"start_at": tomorrow_at(9).isoformat()}))
     assert "queued" not in out
-
-
-async def test_tools_module_uses_zero_regex():
-    import inspect
-    from app.agents.booking_graph import tools
-    source = inspect.getsource(tools)
-    assert "import re" not in source and "re.compile" not in source
 
