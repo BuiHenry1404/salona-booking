@@ -10,16 +10,26 @@ PHẢI đến từ một trường của `ctx` — không bịa chuỗi trông g
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import asyncio
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.agents.booking.schemas import Moment, QuestionField
-from app.agents.booking_graph.context import render_slots
-from app.core.vi_format import format_vi_datetime
+from app.agents.booking_graph.context import (
+    QUEUE_MAX_AGE_MINUTES,
+    address_phrase,
+    display_name,
+    render_digest,
+    render_slots,
+)
+from app.core.clock import to_local
+from app.core.vi_format import _WEEKDAYS, format_vi_datetime
 from app.models.conversation import ConversationSlots, GoalProgress, QueuedRequest
 from app.models.shop import ShopHours, ShopStatusView
+from app.models.user import User
 
 # Nhãn DUY NHẤT bọc chữ khách trong mọi human message (M2–M4 import từ đây).
 # `render_context` không nhận và không in chữ khách — hằng số này chỉ sống ở
@@ -283,3 +293,186 @@ def render_context(ctx: TurnContext, level: Level) -> str:
         lines.append(f"State slots: {slots_block}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Nạp `TurnContext` từ DB (Task 1.4, §4.2/§6)
+# ---------------------------------------------------------------------------
+
+UPCOMING_LIMIT = 5
+RECENT_VISITS_LIMIT = 3
+# Đóng trong vòng ngần này phút mới còn tính là "vừa từ chối" — cùng hằng số
+# với `PROPOSAL_MAX_AGE_MINUTES` (một đề xuất hết hạn cũng coi như bị từ chối
+# trong đúng khoảng thời gian nó còn "mới" với khách).
+RECENTLY_DECLINED_MAX_AGE_MINUTES = 10
+_DECLINED_STATUSES = frozenset({"rejected", "superseded", "expired"})
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _appointment_ref(appointment) -> AppointmentRef:
+    return AppointmentRef(
+        id=str(appointment.id),
+        start_at=appointment.start_at,
+        spoken=format_vi_datetime(appointment.start_at),
+        note=appointment.note,
+    )
+
+
+def _pending_proposal(proposal) -> PendingProposal:
+    """`PendingProposal` từ một `Proposal` DB — `target` (nếu move/cancel)
+    dựng từ `target_snapshot` (lịch đích LÚC ĐỀ XUẤT, không đọc lại DB)."""
+    target = None
+    if proposal.target_snapshot is not None and proposal.appointment_id is not None:
+        target = AppointmentRef(
+            id=proposal.appointment_id,
+            start_at=proposal.target_snapshot.start_at,
+            spoken=format_vi_datetime(proposal.target_snapshot.start_at),
+        )
+    return PendingProposal(
+        id=str(proposal.id),
+        kind=proposal.kind,
+        start_at=proposal.start_at,
+        spoken=format_vi_datetime(proposal.start_at),
+        note=proposal.note,
+        expires_at=proposal.expires_at,
+        unclear_count=proposal.unclear_count,
+        target=target,
+    )
+
+
+def _calendar_14d(today: date) -> list[tuple[date, str]]:
+    items = []
+    for offset in range(14):
+        d = today + timedelta(days=offset)
+        items.append((d, f"{_WEEKDAYS[d.weekday()]} {d.day}/{d.month}"))
+    return items
+
+
+def _live_queued(queued: list[QueuedRequest], now: datetime) -> list[QueuedRequest]:
+    """Các mục hàng chờ còn hiệu lực: giờ chưa qua, chưa quá
+    `QUEUE_MAX_AGE_MINUTES` kể từ lúc xếp hàng (như `live_queue` cũ, nhưng
+    đọc thẳng từ `QueuedRequest` đã gõ kiểu thay vì dict thô)."""
+    out = []
+    for item in queued:
+        start = _aware(item.start_at)
+        queued_at = _aware(item.queued_at)
+        if start > now and now - queued_at <= timedelta(minutes=QUEUE_MAX_AGE_MINUTES):
+            out.append(item)
+    return out
+
+
+def _open_question(previous_turns: list["PreviousTurn"], asked_at: datetime) -> OpenQuestion | None:
+    """Câu hỏi còn mở, suy từ lượt NGAY TRƯỚC (mới nhất): chỉ khi lượt đó kết
+    thúc bằng `reply_kind == "clarify"` và có `ask_field`. `times` = số lượt
+    LIÊN TIẾP gần nhất (tính từ lượt mới nhất lùi về) cùng hỏi field đó —
+    `previous_turns` chỉ mang tối đa 2 lượt nên `times` chỉ có thể là 1 hay 2.
+    """
+    if not previous_turns:
+        return None
+    latest = previous_turns[0]
+    if latest.ask_field is None or latest.reply_kind != "clarify":
+        return None
+    times = 1
+    if len(previous_turns) > 1 and previous_turns[1].ask_field == latest.ask_field:
+        times = 2
+    return OpenQuestion(field=latest.ask_field, asked_at=asked_at, times=times)
+
+
+async def load_turn_context(
+    db: AsyncIOMotorDatabase, user: User, *, turn_id: str, asked_at: datetime
+) -> TurnContext:
+    """Dựng `TurnContext` của một lượt — nạp song song, không gọi LLM.
+
+    Import cục bộ `TurnLedger`/các service: `ledger.py` import ngược lại các
+    lớp con của `TurnContext` ở module này, nhập ở đầu file sẽ vòng lặp.
+    """
+    from app.agents.booking.ledger import TurnLedger
+    from app.services.appointment import AppointmentService
+    from app.services.conversation import ConversationService
+    from app.services.proposal import ProposalService
+    from app.services.shop import ShopService
+
+    user_id = str(user.id)
+    now_local = to_local(asked_at)
+    today = now_local.date()
+
+    conversations = ConversationService(db)
+    appointments = AppointmentService(db)
+    ledger = TurnLedger(db)
+
+    async def _window():
+        state = await conversations.get_state(user_id)
+        after = state.covers_until if state else None
+        history = await conversations.history(user_id, after=after)
+        return state, history
+
+    (
+        shop_status,
+        shop_hours,
+        upcoming,
+        recent_visits_appointments,
+        latest_proposal,
+        (state, history),
+        previous_turns,
+        unannounced,
+    ) = await asyncio.gather(
+        ShopService(db).get_status(),
+        ShopService(db).get_hours(),
+        appointments.upcoming_for(user),
+        appointments.recent_visits(user, limit=RECENT_VISITS_LIMIT),
+        ProposalService(db).latest(user),
+        _window(),
+        ledger.previous_turns(user_id, today=today),
+        ledger.unannounced(user_id, today=today),
+    )
+
+    pending = None
+    recently_declined = None
+    if latest_proposal is not None:
+        if latest_proposal.status == "pending" and _aware(latest_proposal.expires_at) > asked_at:
+            pending = _pending_proposal(latest_proposal)
+        elif latest_proposal.status in _DECLINED_STATUSES:
+            closed = _aware(latest_proposal.updated_at)
+            if asked_at - closed <= timedelta(minutes=RECENTLY_DECLINED_MAX_AGE_MINUTES):
+                recently_declined = _pending_proposal(latest_proposal)
+
+    last_bot_text = ""
+    if history and history[-1].role == "assistant":
+        last_bot_text = history[-1].content
+
+    goal = state.goal if state and state.goal is not None else GoalProgress()
+    queued = _live_queued(state.queued, asked_at) if state else []
+    slots = state.slots if state else None
+    digest_text = render_digest(state.digest, state.customer_quotes) if state else ""
+
+    return TurnContext(
+        turn_id=turn_id,
+        asked_at=asked_at,
+        now_local=now_local,
+        today=today,
+        calendar_14d=_calendar_14d(today),
+        customer=CustomerRef(
+            id=user_id,
+            display_name=display_name(user.full_name),
+            address_phrase=address_phrase(user),
+            staff_note=user.staff_note,
+        ),
+        shop_status=shop_status,
+        shop_hours=shop_hours,
+        upcoming=[_appointment_ref(a) for a in upcoming[:UPCOMING_LIMIT]],
+        recent_visits=[to_local(a.start_at).date() for a in recent_visits_appointments],
+        pending=pending,
+        recently_declined=recently_declined,
+        unannounced=unannounced,
+        queued_requests=queued,
+        open_question=_open_question(previous_turns, asked_at),
+        answers_open_question_hint=False,
+        last_bot_text=last_bot_text,
+        previous_turns=previous_turns,
+        goal=goal,
+        slots=slots,
+        digest_text=digest_text,
+    )

@@ -5,6 +5,10 @@ import inspect
 import re
 from datetime import timedelta
 
+from datetime import timedelta as _timedelta
+
+import pytest
+
 from app.agents.booking.context import (
     NOT_RENDERED,
     AppointmentRef,
@@ -15,13 +19,19 @@ from app.agents.booking.context import (
     PreviousTurn,
     TurnContext,
     UnannouncedOutcome,
+    load_turn_context,
     render_context,
 )
-from app.agents.booking.schemas import Moment
+from app.agents.booking.ledger import TurnLedger
+from app.agents.booking.schemas import Moment, PendingOutcome
 from app.core.clock import now_utc, to_local
 from app.core.vi_format import format_vi_datetime
 from app.models.conversation import ConversationSlots, GoalProgress, QueuedRequest
 from app.models.shop import ShopHours, ShopStatusView
+from app.services.appointment import AppointmentService
+from app.services.auth import AuthService
+from app.services.conversation_state import ConversationStateService
+from app.services.proposal import ProposalService
 
 from tests.factories import make_ctx
 
@@ -305,3 +315,224 @@ def test_open_question_and_queued_counted_in_lite():
     lite = render_context(ctx, "lite")
     assert "Open question" in lite
     assert "time" in lite
+
+
+# ---------------------------------------------------------------------------
+# Task 1.4: `load_turn_context` — nạp từ DB
+# ---------------------------------------------------------------------------
+
+
+async def _a_user(db, phone="0912345678", name="Nguyễn Thị Lan"):
+    return await AuthService(db).create_user(phone, "matkhau123", name)
+
+
+def _tomorrow_at(hour: int):
+    """Mốc trong giờ mở cửa mặc định (08:00–19:00) của ngày mai, giờ VN."""
+    local = to_local(now_utc()) + _timedelta(days=1)
+    return local.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+async def test_calendar_has_fourteen_days_starting_today(test_db):
+    user = await _a_user(test_db)
+    asked_at = now_utc()
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=asked_at)
+
+    assert len(ctx.calendar_14d) == 14
+    assert ctx.calendar_14d[0][0] == to_local(asked_at).date()
+    assert ctx.calendar_14d[-1][0] == to_local(asked_at).date() + _timedelta(days=13)
+    assert ctx.today == to_local(asked_at).date()
+
+
+async def test_pending_is_set_only_when_latest_is_pending_and_unexpired(test_db):
+    user = await _a_user(test_db)
+    proposals = ProposalService(test_db)
+    proposal = await proposals.create(user, "book", _tomorrow_at(15), "làm tóc")
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert ctx.pending is not None
+    assert ctx.pending.id == str(proposal.id)
+    assert ctx.pending.kind == "book"
+    assert ctx.recently_declined is None
+
+
+async def test_pending_is_none_once_the_proposal_has_expired(test_db):
+    user = await _a_user(test_db)
+    proposals = ProposalService(test_db)
+    await proposals.create(user, "book", _tomorrow_at(15), None)
+
+    # Lượt sau, quá 10 phút kể từ lúc tạo đề xuất — "pending" trong DB nhưng
+    # đã hết hạn, nên KHÔNG được coi là pending ở khối bối cảnh.
+    asked_at = now_utc() + _timedelta(minutes=11)
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=asked_at)
+
+    assert ctx.pending is None
+
+
+async def test_recently_declined_within_ten_minutes(test_db):
+    user = await _a_user(test_db)
+    proposals = ProposalService(test_db)
+    proposal = await proposals.create(user, "book", _tomorrow_at(16), None)
+    await proposals.reject(user, str(proposal.id))
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert ctx.recently_declined is not None
+    assert ctx.recently_declined.id == str(proposal.id)
+    assert ctx.pending is None
+
+
+async def test_recently_declined_is_none_after_ten_minutes(test_db):
+    user = await _a_user(test_db)
+    proposals = ProposalService(test_db)
+    proposal = await proposals.create(user, "book", _tomorrow_at(16), None)
+    await proposals.reject(user, str(proposal.id))
+
+    asked_at = now_utc() + _timedelta(minutes=11)
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=asked_at)
+
+    assert ctx.recently_declined is None
+
+
+async def test_upcoming_capped_at_five(test_db):
+    user = await _a_user(test_db)
+    appointments = AppointmentService(test_db)
+    for hour in (8, 9, 10, 11, 12, 13, 14):
+        await appointments.create(user, _tomorrow_at(hour), None)
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert len(ctx.upcoming) == 5
+
+
+async def test_recent_visits_capped_at_three(test_db):
+    user = await _a_user(test_db)
+    appointments = AppointmentService(test_db)
+    for days_ago in (1, 2, 3, 4):
+        past = to_local(now_utc()) - _timedelta(days=days_ago)
+        await appointments.repo.collection.insert_one({
+            "user_id": str(user.id),
+            "start_at": past.astimezone(),
+            "duration_minutes": 60,
+            "slot_keys": [f"test-recent-visit-{days_ago}"],
+            "note": None,
+            "status": "booked",
+            "created_via": "chat",
+            "created_at": past,
+            "updated_at": past,
+        })
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert len(ctx.recent_visits) <= 3
+
+
+async def test_open_question_comes_from_previous_clarify_turn(test_db):
+    user = await _a_user(test_db)
+    ledger = TurnLedger(test_db)
+    asked_at = now_utc()
+    first_asked = asked_at - _timedelta(minutes=2)
+    await ledger.start(turn_id="prev", user_id=str(user.id), route="orchestrate",
+                       rule="R5", asked_at=first_asked)
+    await ledger.set_ask("prev", "time")
+    await ledger.finish("prev", ended_by="ask_customer", reply_kind="clarify")
+
+    ctx = await load_turn_context(test_db, user, turn_id="t2", asked_at=asked_at)
+
+    assert ctx.open_question is not None
+    assert ctx.open_question.field == "time"
+    assert ctx.open_question.times == 1
+
+
+async def test_open_question_times_two_after_two_consecutive_same_field(test_db):
+    user = await _a_user(test_db)
+    ledger = TurnLedger(test_db)
+    asked_at = now_utc()
+    t_minus_2 = asked_at - _timedelta(minutes=4)
+    t_minus_1 = asked_at - _timedelta(minutes=2)
+
+    await ledger.start(turn_id="turn-a", user_id=str(user.id), route="orchestrate",
+                       rule="R5", asked_at=t_minus_2)
+    await ledger.set_ask("turn-a", "time")
+    await ledger.finish("turn-a", ended_by="ask_customer", reply_kind="clarify")
+
+    await ledger.start(turn_id="turn-b", user_id=str(user.id), route="orchestrate",
+                       rule="R5", asked_at=t_minus_1)
+    await ledger.set_ask("turn-b", "time")
+    await ledger.finish("turn-b", ended_by="ask_customer", reply_kind="clarify")
+
+    ctx = await load_turn_context(test_db, user, turn_id="t3", asked_at=asked_at)
+
+    assert ctx.open_question is not None
+    assert ctx.open_question.field == "time"
+    assert ctx.open_question.times == 2
+
+
+async def test_no_open_question_when_last_turn_reply_kind_is_not_clarify(test_db):
+    user = await _a_user(test_db)
+    ledger = TurnLedger(test_db)
+    asked_at = now_utc()
+    await ledger.start(turn_id="prev", user_id=str(user.id), route="orchestrate",
+                       rule="R5", asked_at=asked_at - _timedelta(minutes=2))
+    await ledger.set_ask("prev", "time")
+    await ledger.finish("prev", ended_by="finish", reply_kind="answer")
+
+    ctx = await load_turn_context(test_db, user, turn_id="t2", asked_at=asked_at)
+
+    assert ctx.open_question is None
+
+
+async def test_unannounced_is_loaded_from_ledger(test_db):
+    user = await _a_user(test_db)
+    ledger = TurnLedger(test_db)
+    asked_at = now_utc()
+    await ledger.start(turn_id="prev", user_id=str(user.id), route="orchestrate",
+                       rule="R2", asked_at=asked_at - _timedelta(minutes=1))
+    await ledger.set_pending_outcome("prev", PendingOutcome(
+        outcome="approved", proposal_id="507f1f77bcf86cd799439011",
+        kind="book", spoken="3 giờ chiều mai",
+    ))
+    await ledger.finish("prev", ended_by="forced", reply_kind=None)
+
+    ctx = await load_turn_context(test_db, user, turn_id="t2", asked_at=asked_at)
+
+    assert ctx.unannounced is not None
+    assert ctx.unannounced.proposal_id == "507f1f77bcf86cd799439011"
+    assert ctx.unannounced.outcome == "approved"
+
+
+async def test_customer_ref_uses_address_phrase_and_staff_note(test_db):
+    user = await _a_user(test_db, phone="0923456789", name="Cô Mai")
+    await test_db["users"].update_one({"_id": user.id}, {"$set": {"staff_note": "khách quen"}})
+    user = user.model_copy(update={"staff_note": "khách quen"})
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert ctx.customer.id == str(user.id)
+    assert "Mai" in ctx.customer.address_phrase or ctx.customer.address_phrase == "anh chị"
+    assert ctx.customer.staff_note == "khách quen"
+
+
+async def test_goal_defaults_when_state_has_none(test_db):
+    user = await _a_user(test_db)
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert ctx.goal == GoalProgress()
+
+
+async def test_digest_text_rendered_from_state(test_db):
+    user = await _a_user(test_db)
+    state_service = ConversationStateService(test_db)
+    await state_service.record_goal_progress(str(user.id), GoalProgress(goal_id="g1"))
+    await test_db["conversations"].update_one(
+        {"user_id": str(user.id)},
+        {"$set": {"state.digest": {"wants": ["cắt tóc"], "settled": [], "declined": [],
+                                   "constraints": [], "open": []}}},
+    )
+
+    ctx = await load_turn_context(test_db, user, turn_id="t1", asked_at=now_utc())
+
+    assert "cắt tóc" in ctx.digest_text
+    assert ctx.goal.goal_id == "g1"
