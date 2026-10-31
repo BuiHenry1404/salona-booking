@@ -9,10 +9,14 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.agents.booking.context import CustomerRef, TurnContext
+from app.agents.booking.schemas import AppointmentArgs, ShopArgs, TaskSpec
 from app.core.clock import now_utc, to_local
 from app.core.vi_format import _WEEKDAYS
 from app.models.conversation import GoalProgress
 from app.models.shop import ShopHours, ShopStatusView
+
+_APPOINTMENT_ARGS_FIELDS = ("time", "service", "appointment_id", "for_whom", "also")
+_SHOP_ARGS_FIELDS = ("time",)
 
 
 def _calendar_14d(today) -> list[tuple]:
@@ -57,3 +61,13 @@ def make_ctx(**overrides) -> TurnContext:
     )
     defaults.update(overrides)
     return TurnContext(**defaults)
+
+
+def make_spec(agent="appointment", action="resolve_time", task_id="t1.0", **args) -> TaskSpec:
+    """Dựng `TaskSpec` hợp lệ cho test — mọi field của `AppointmentArgs`/`ShopArgs`
+    bắt buộc có mặt (strict-safe, §12.17) nhưng không mang default, nên factory
+    phải tự điền `None` cho field không được truyền qua `**args`."""
+    fields = _APPOINTMENT_ARGS_FIELDS if agent == "appointment" else _SHOP_ARGS_FIELDS
+    model = AppointmentArgs if agent == "appointment" else ShopArgs
+    filled = {name: args.get(name) for name in fields}
+    return TaskSpec(task_id=task_id, agent=agent, action=action, args=model(**filled))

@@ -13,6 +13,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any, List, Optional
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -124,5 +125,18 @@ def scripted(replies, tags=("respond",)):
     return ScriptedChatModel(replies=list(replies), calls=[], bind_kwargs=[], tags=list(tags))
 
 
-def tool_call(name, args, id="c1"):
-    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id}])
+def tool_call(name: str, args: dict, id: Optional[str] = None) -> AIMessage:
+    """Một AIMessage với đúng một tool call. `id` mặc định duy nhất mỗi lần gọi
+    (không bao giờ lặp lại giữa các lần gọi) — khác bản cũ `id="c1"` cố định."""
+    if id is None:
+        id = uuid4().hex
+    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id, "type": "tool_call"}])
+
+
+def tool_calls(*pairs: tuple) -> AIMessage:
+    """Nhiều tool call trong MỘT AIMessage — dùng để test chuỗi parallel/serial."""
+    calls = [
+        {"name": name, "args": args, "id": uuid4().hex, "type": "tool_call"}
+        for name, args in pairs
+    ]
+    return AIMessage(content="", tool_calls=calls)
