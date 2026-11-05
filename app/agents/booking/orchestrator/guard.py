@@ -80,6 +80,10 @@ MAX_STATED = 2
 # Trường chỉ để log/giải thích, không thuộc "khoá" của call (và có thể chứa
 # chữ khách do model trích) — bỏ khỏi `args_norm`.
 _DROP_KEYS = frozenset({"reason", "hint"})
+# Log `orch_call` còn bỏ thêm các trường lấy từ lời khách (§11: không log chữ
+# khách ngoài `turn_ledger`) — `args_norm` đầy đủ vẫn là khoá trùng và nằm
+# trong `CallRecord` của ledger.
+_LOG_DROP_KEYS = _DROP_KEYS | {"stated", "for_whom", "service"}
 
 REJECT_HINTS: dict[str, str] = {
     "unknown_tool": (
@@ -155,11 +159,11 @@ _ARG_MODELS: dict[str, type[BaseModel]] = {
 # ---------------------------------------------------------------------------
 
 
-def _drop_keys(value: Any) -> Any:
+def _drop_keys(value: Any, keys: frozenset[str] = _DROP_KEYS) -> Any:
     if isinstance(value, dict):
-        return {k: _drop_keys(v) for k, v in value.items() if k not in _DROP_KEYS}
+        return {k: _drop_keys(v, keys) for k, v in value.items() if k not in keys}
     if isinstance(value, list):
-        return [_drop_keys(v) for v in value]
+        return [_drop_keys(v, keys) for v in value]
     return value
 
 
@@ -168,6 +172,16 @@ def normalize_args(tool: str, args: dict) -> str:
     `reason`/`hint` ở mọi tầng (chỉ là ghi chú của model, có thể trích chữ
     khách — không được vào log)."""
     return json.dumps(_drop_keys(args or {}), sort_keys=True, ensure_ascii=False, default=str)
+
+
+def log_args(args_norm: str) -> str:
+    """Bản `args_norm` dùng cho LOG: bỏ thêm `stated`/`for_whom`/`service`
+    (chữ khách, kể cả khi model diễn đạt lại)."""
+    try:
+        value = json.loads(args_norm)
+    except (TypeError, ValueError):
+        return ""
+    return json.dumps(_drop_keys(value, _LOG_DROP_KEYS), sort_keys=True, ensure_ascii=False, default=str)
 
 
 def is_duplicate(calls: list[dict], tool: str, action: str | None, args_norm: str) -> bool:
@@ -231,11 +245,14 @@ def _is_sequential(call: dict) -> bool:
     return name in ENDING_TOOLS or name == "decide_pending" or is_propose(name, call.get("args") or {})
 
 
-def _index_of(call: dict, sibs: list[dict]) -> int:
+def _index_of(call: dict, sibs: list[dict]) -> int | None:
+    """Vị trí của call trong `siblings`; `None` khi id không có trong
+    AIMessage cuối (không nên xảy ra) — các luật coi như KHÔNG phải index nhỏ
+    nhất (an toàn: chặn, không cho lọt)."""
     for i, s in enumerate(sibs):
         if s.get("id") == call.get("id"):
             return i
-    return 0
+    return None
 
 
 def rule_g(call: dict, sibs: list[dict]) -> str | None:
@@ -252,11 +269,15 @@ def rule_g(call: dict, sibs: list[dict]) -> str | None:
     - anh em NGOÀI nhóm (`resolve_time`, `find_slots`, `list_appointments`,
       `shop_info_task`) không bao giờ chặn, và chính chúng không bị (g).
     """
-    if len(sibs) <= 1 or not _is_sequential(call):
+    if not _is_sequential(call):
+        return None
+    index = _index_of(call, sibs)
+    if index is None:  # không biết vị trí → không coi là index nhỏ nhất
+        return "serialize_required"
+    if len(sibs) <= 1:
         return None
     if call.get("name") in ENDING_TOOLS:
         return "serialize_required"
-    index = _index_of(call, sibs)
     if any(_is_sequential(s) for s in sibs[:index]):
         return "serialize_required"
     return None
@@ -271,7 +292,8 @@ def rule_e(call: dict, sibs: list[dict], proposals_created: int) -> str | None:
     if proposals_created >= 1:
         return "one_proposal_per_turn"
     index = _index_of(call, sibs)
-    if any(is_propose(s.get("name"), s.get("args") or {}) for s in sibs[:index]):
+    earlier = sibs if index is None else sibs[:index]
+    if any(is_propose(s.get("name"), s.get("args") or {}) for s in earlier if s.get("id") != call.get("id")):
         return "one_proposal_per_turn"
     return None
 
@@ -395,7 +417,7 @@ class OrchestratorGuard(AgentMiddleware):
                 "call_index": record.index,
                 "tool": record.tool,
                 "action": record.action,
-                "args_norm": record.args_norm,
+                "args_norm": log_args(record.args_norm),
                 "allowed": record.allowed,
                 "reject_code": record.reject_code,
             },
@@ -404,7 +426,9 @@ class OrchestratorGuard(AgentMiddleware):
 
     # -- luật ------------------------------------------------------------------
 
-    def _check(self, call: dict, state: dict, sibs: list[dict], index: int, action, args_norm) -> tuple[str | None, Any]:
+    def _check(
+        self, call: dict, state: dict, sibs: list[dict], index: int | None, action, args_norm
+    ) -> tuple[str | None, Any]:
         """Thứ tự kiểm đúng brief: (a) (b) too_many (c) (d) (g) (h) (k) (j) (e) (f)."""
         tool = call["name"]
         raw = call.get("args") or {}
@@ -418,7 +442,7 @@ class OrchestratorGuard(AgentMiddleware):
             return "bad_args", None
         if _out_of_range(tool, parsed):
             return "bad_args", parsed
-        if index >= self.max_calls_per_round:
+        if index is not None and index >= self.max_calls_per_round:
             return "too_many_calls", parsed
 
         hints = _time_hints(tool, parsed)
@@ -469,10 +493,15 @@ class OrchestratorGuard(AgentMiddleware):
         sibs = siblings(messages)
         index = _index_of(call, sibs)
         tool = call["name"]
+        if index is None:
+            logger.warning("orch_call_not_in_siblings", extra={**self._base_extra(request), "tool": tool})
         raw = call.get("args") or {}
         action = raw.get("action") if tool in TASK_TOOLS and isinstance(raw.get("action"), str) else None
         args_norm = normalize_args(tool, raw)
-        base = dict(round=_round_number(messages), index=index, tool=tool, action=action, args_norm=args_norm)
+        base = dict(
+            round=_round_number(messages), index=-1 if index is None else index,
+            tool=tool, action=action, args_norm=args_norm,
+        )
 
         code, parsed = self._check(call, state, sibs, index, action, args_norm)
         if code is not None:
@@ -487,23 +516,34 @@ class OrchestratorGuard(AgentMiddleware):
     async def _rejected(self, request, state: dict, base: dict, code: str) -> Command:
         call = request.tool_call
         update: dict[str, Any] = {"messages": [reject(call, code)]}
-        if code in STREAK_CODES:
-            update["no_progress_streak"] = 1
-            if (state.get("no_progress_streak") or 0) + 1 >= self.no_progress_limit:
-                update["force_end"] = True
+        markers: list[str] = []
         if code == "must_decide_pending":
             consecutive = _consecutive_must_decide(state.get("calls") or []) + 1
             update["must_decide_rejections"] = consecutive
             if consecutive >= MUST_DECIDE_LIMIT:
                 # (h): model bỏ qua decide_pending 2 lần liền → code tự giữ đề
-                # xuất (`kept`, không đụng DB) để lượt không kẹt.
+                # xuất (`kept`, không đụng DB) để lượt không kẹt. Đây là TIẾN
+                # TRIỂN (marker + streak về 0), không phải lần lặp thứ hai —
+                # nếu không, chính call này đẩy streak tới trần và vòng mà
+                # luật này mở khoá không bao giờ tới.
                 outcome = await apply_decision(self.deps, "none")
                 update["pending_decided"] = True
                 update["pending_outcome"] = outcome.model_dump(mode="json")
+                known = set(state.get("progress_markers") or [])
+                markers = [m for m in markers_for("decide_pending", None, outcome) if m not in known]
                 self._log_pending_decided(
                     request, label=None, aside=None, outcome=outcome, veto_reason="must_decide_twice"
                 )
-        record = CallRecord(**base, allowed=False, reject_code=code, at=now_utc())
+        if "pending_decided" in update:
+            update["no_progress_streak"] = STREAK_RESET
+            if markers:
+                update["progress_markers"] = markers
+        elif code in STREAK_CODES:
+            # Chỉ cộng delta; quyết định ép dừng nằm ở `abefore_model` trên
+            # streak ĐÃ gộp cả vòng (snapshot không biết anh em cùng vòng có
+            # sinh marker hay không, mà `force_end` OR thì không gỡ được).
+            update["no_progress_streak"] = 1
+        record = CallRecord(**base, allowed=False, reject_code=code, markers=markers, at=now_utc())
         update["calls"] = [await self._record(request, record)]
         return Command(update=update)
 

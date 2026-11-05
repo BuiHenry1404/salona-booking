@@ -28,7 +28,7 @@ from app.agents.booking.orchestrator.guard import (
     rule_e,
     rule_g,
 )
-from app.agents.booking.orchestrator.state import STREAK_RESET
+from app.agents.booking.orchestrator.state import STREAK_RESET, add_streak
 from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
 from app.agents.booking.schemas import (
     AppointmentList,
@@ -404,6 +404,8 @@ _R = call("appointment_task", _appt("resolve_time", time=_time(hour=9)), id="r")
         (_P0, [_D, _P0], "serialize_required"),    # decide trước, propose sau
         (_D, [_P0, _D], "serialize_required"),
         (_S, [_P0, _S], None),                     # call ngoài nhóm không bị (g)
+        (_P0, [_S, _R], "serialize_required"),     # id không có trong AIMessage → không coi là nhỏ nhất
+        (_D, [], "serialize_required"),
     ],
 )
 def test_g_rule_table(this, sibs, expected):
@@ -454,6 +456,28 @@ async def test_h_two_rejections_in_a_row_record_kept():
     assert cmd.update["pending_decided"] is True
     assert cmd.update["pending_outcome"]["outcome"] == "kept"
     assert [o.outcome for o in deps.ledger.outcomes] == ["kept"]
+    # Auto-`kept` là tiến triển: marker mới, streak về 0, KHÔNG ép dừng —
+    # nếu không, vòng mà luật (h) mở khoá không bao giờ tới.
+    assert cmd.update["progress_markers"] == ["pending_decided:kept"]
+    assert cmd.update["no_progress_streak"] == STREAK_RESET
+    assert "force_end" not in cmd.update
+    assert deps.ledger.appended[0].markers == ["pending_decided:kept"]
+
+
+async def test_h_finish_three_times_ends_with_kept_and_finish():
+    """create_agent thật: finish → finish → finish khi có đề xuất chờ. Lần 2
+    code tự ghi `kept`, lần 3 `finish` được phép và kết thúc bình thường."""
+    deps = make_deps(ctx=make_ctx(pending=_pending()))
+    agent, model = _agent(deps, [_ai(call("finish", _finish())) for _ in range(3)])
+
+    out = await agent.ainvoke({"messages": [HumanMessage("x")]})
+
+    assert [(c["tool"], c["reject_code"]) for c in out["calls"]] == [
+        ("finish", "must_decide_pending"), ("finish", "must_decide_pending"), ("finish", None),
+    ]
+    assert out["ended_by"] == "finish"
+    assert out["pending_outcome"]["outcome"] == "kept"
+    assert model.replies == []
 
 
 async def test_i_veto_result_flows_through_decide_pending():
@@ -572,12 +596,38 @@ async def test_streak_of_two_sets_force_end():
     previous = _record("appointment_task", "find_slots", normalize_args("appointment_task", args))
     handler = RecordingHandler()
 
-    cmd = await make_guard(deps).awrap_tool_call(
-        request_for(c, state_for(c, calls=[previous], no_progress_streak=1)), handler
-    )
+    guard = make_guard(deps)
+    state = state_for(c, calls=[previous], no_progress_streak=1)
 
+    cmd = await guard.awrap_tool_call(request_for(c, state), handler)
+
+    # Guard chỉ cộng delta; ép dừng là việc của `abefore_model` trên streak
+    # đã gộp cả vòng (1 + 1 = 2 ≥ trần).
     assert error_code(cmd) == "duplicate_call"
-    assert cmd.update["force_end"] is True
+    assert cmd.update["no_progress_streak"] == 1
+    assert "force_end" not in cmd.update
+    after = {
+        "messages": [*state["messages"], *cmd.update["messages"]],
+        "no_progress_streak": add_streak(1, cmd.update["no_progress_streak"]),
+    }
+    update = await guard.abefore_model(after, None)
+    assert update["jump_to"] == "end" and update["ended_by"] == "forced"
+
+
+async def test_round_with_new_marker_and_a_duplicate_is_not_forced():
+    """create_agent thật, streak đang 1: vòng [find_slots ngày mới (marker),
+    find_slots trùng] vẫn có tiến triển → không ép dừng; `finish` sau đó
+    kết thúc bình thường."""
+    deps = make_deps(run_appointment=_find_slots_runner())
+    d1 = lambda: call("appointment_task", _appt("find_slots", time=_time(day_offset=1)))  # noqa: E731
+    d2 = call("appointment_task", _appt("find_slots", time=_time(day_offset=2)))
+    agent, model = _agent(deps, [_ai(d1()), _ai(d1()), _ai(d2, d1()), _ai(call("finish", _finish()))])
+
+    out = await agent.ainvoke({"messages": [HumanMessage("x")]})
+
+    assert [c["reject_code"] for c in out["calls"]] == [None, "duplicate_call", None, "duplicate_call", None]
+    assert out["ended_by"] == "finish"
+    assert model.replies == []
 
 
 # ---------------------------------------------------------------------------
@@ -802,21 +852,25 @@ async def test_every_call_logs_orch_call_with_round_index_tool_allowed_and_rejec
     guard = make_guard(deps)
     decide = call("decide_pending", _decide(label="none", reason=CUSTOMER_WORDS))
     bad = call("book_now", {"q": 1})
+    fin = call("finish", {"kind_hint": "answer", "service": CUSTOMER_WORDS, "stated": [CUSTOMER_WORDS]})
 
     with structlog.testing.capture_logs() as logs:
         await guard.awrap_tool_call(request_for(decide, state_for(decide)), RecordingHandler(_outcome_json("kept")))
         await guard.awrap_tool_call(request_for(bad, state_for(bad)), RecordingHandler())
+        await guard.awrap_tool_call(request_for(fin, state_for(fin, pending_decided=True)), RecordingHandler())
 
     orch = [e for e in logs if e["event"] == "orch_call"]
-    assert len(orch) == 2
+    assert len(orch) == 3
     for entry in orch:
         extra = entry["extra"]
         assert {"user_id", "turn_id", "thread_id", "round", "call_index", "tool", "action", "args_norm",
                 "allowed", "reject_code"} <= set(extra)
         assert extra["thread_id"] == "thread-1" and extra["round"] == 1 and extra["call_index"] == 0
     assert [(e["extra"]["tool"], e["extra"]["allowed"], e["extra"]["reject_code"]) for e in orch] == [
-        ("decide_pending", True, None), ("book_now", False, "unknown_tool"),
+        ("decide_pending", True, None), ("book_now", False, "unknown_tool"), ("finish", True, None),
     ]
+    # Ledger vẫn giữ `args_norm` đầy đủ (khoá trùng); chỉ LOG bị lược.
+    assert CUSTOMER_WORDS in deps.ledger.appended[-1].args_norm
     decided = [e for e in logs if e["event"] == "pending_decided"]
     assert len(decided) == 1 and decided[0]["extra"]["outcome"] == "kept"
     # Không bao giờ log chữ khách (câu hỏi, hay `reason` model trích từ câu khách).
