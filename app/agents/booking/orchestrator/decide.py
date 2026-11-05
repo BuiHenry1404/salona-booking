@@ -10,7 +10,7 @@ trên nhãn mà model gửi lên.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -23,7 +23,7 @@ from app.agents.booking.schemas import (
     Moment,
     PendingOutcome,
 )
-from app.agents.booking_graph.reply import other_time
+from app.agents.booking_graph.reply import other_time, restates_proposal_time
 from app.agents.booking_graph.tools import WHOLE_DAY, nearest_slots
 from app.core.clock import to_local
 from app.core.vi_format import format_vi_datetime
@@ -53,12 +53,12 @@ class Veto(BaseModel):
     reject_code: str | None = None
 
 
-def _as_other_time_mapping(pending: PendingProposal) -> dict:
-    """`other_time` (gói cũ) nhận một Mapping có `start_at`/`queued` — không
-    có hàng chờ nào ở tầm nhìn của `veto()` (chữ ký §5.5 chỉ nhận
-    `PendingProposal`, không nhận `TurnContext.queued_requests`), nên `queued`
-    luôn rỗng ở đây."""
-    return {"start_at": pending.start_at, "queued": []}
+def _as_other_time_mapping(pending: PendingProposal, queued: Sequence[datetime]) -> dict:
+    """`other_time`/`restates_proposal_time` (gói cũ) nhận một Mapping có
+    `start_at`/`queued` — `queued` cho `veto()` biết các giờ ĐANG CHỜ (lịch
+    đặt lần lượt) để KHÔNG hiểu nhầm câu chỉ nói về lịch chờ ("ừ, còn lịch 2
+    giờ thì để sau") thành khách đang đổi giờ đề xuất hiện tại."""
+    return {"start_at": pending.start_at, "queued": list(queued)}
 
 
 def veto(
@@ -67,23 +67,25 @@ def veto(
     question: str,
     pending: PendingProposal,
     now: datetime,
+    queued: Sequence[datetime] = (),
 ) -> Veto:
     """§9.3 (i) nguyên văn — chỉ HẠ cấp nhãn hoặc từ chối, không bao giờ nâng.
 
     Thứ tự luật (đúng bảng §5.5/§9.3):
     1. `approve` mà câu khách nêu giờ/ngày KHÁC đề xuất -> `change`.
-    2. `change` mà câu khách KHÔNG nêu giờ khác (trùng đề xuất hoặc không nêu
-       giờ nào) -> từ chối `same_time_as_pending` (model nói đổi nhưng không
-       chỉ ra đổi sang đâu).
+    2. `change` mà câu khách NHẮC LẠI đúng giờ đề xuất (restate, không phải
+       "không nêu giờ khác" nói chung — "thôi đổi lịch khác đi"/"lùi lại 30
+       phút" không nêu giờ cụ thể nào nên KHÔNG bị từ chối, chỉ câu lặp lại
+       đúng giờ đang chờ mới bị) -> từ chối `same_time_as_pending`.
     3. `approve` + `aside == "relative_free"` -> `unclear`.
     4. `approve` + `aside` hoãn (`defer_only`/`defer_with_request`) -> `none`.
     5. Còn lại: giữ nguyên nhãn model gửi lên.
     """
-    mapping = _as_other_time_mapping(pending)
+    mapping = _as_other_time_mapping(pending, queued)
 
     if label == "approve" and other_time(question, mapping, now):
         return Veto(label="change", reason="other_time")
-    if label == "change" and not other_time(question, mapping, now):
+    if label == "change" and restates_proposal_time(question, mapping, now):
         return Veto(label=label, reject_code="same_time_as_pending")
     if label == "approve" and aside == "relative_free":
         return Veto(label="unclear", reason="relative_free")
@@ -154,8 +156,18 @@ async def _apply_approve(
 async def _apply_unclear(
     db: AsyncIOMotorDatabase, user: User, pending: PendingProposal
 ) -> PendingOutcome:
-    proposal = await ProposalService(db).mark_unclear(user, pending.id)
-    if proposal is not None and proposal.unclear_count >= UNCLEAR_LIMIT:
+    proposals = ProposalService(db)
+    proposal = await proposals.mark_unclear(user, pending.id)
+    if proposal is None:
+        # `mark_unclear` chỉ tăng được khi đề xuất CÒN pending — None nghĩa là
+        # nó đã bị đóng ở đâu đó khác (nút bấm, lượt khác, hết hạn) ngay trước
+        # khi `decide_pending` chạy tới đây. Tái dùng đúng quy ước `reason`
+        # của `ProposalService._not_claimed` (chuỗi trạng thái thật, hoặc
+        # "not_found"), không bịa "clarify" cho một đề xuất không còn đó.
+        current = await proposals.get(user, pending.id)
+        reason = current.status if current is not None else "not_found"
+        return _outcome("not_approvable", pending, reason=reason)
+    if proposal.unclear_count >= UNCLEAR_LIMIT:
         return _outcome("rejected", pending)
     return _outcome("clarify", pending)
 

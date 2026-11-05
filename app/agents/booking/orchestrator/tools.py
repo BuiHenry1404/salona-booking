@@ -211,7 +211,14 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
         # cứ") — `OrchestratorGuard` (Task 3.3) ghi nguyên văn args tool vào
         # `CallRecord.args_norm`, nên `reason` không cần truyền tiếp xuống
         # `veto`/`apply_decision`.
-        v = veto(label, aside, deps.question, deps.ctx.pending, deps.ctx.asked_at)
+        if deps.ctx.pending is None:
+            # Phòng vệ TRƯỚC `veto()`: `veto` đọc thẳng `pending.start_at`,
+            # không tự kiểm `None` — gọi khi không có đề xuất đang chờ (lẽ ra
+            # guard (h) của Task 3.3 đã chặn từ trước) phải dừng ở đây, không
+            # để `AttributeError` văng lên từ bên trong `veto`.
+            raise DecideRejected("no_pending")
+        queued = [q.start_at for q in deps.ctx.queued_requests]
+        v = veto(label, aside, deps.question, deps.ctx.pending, deps.ctx.asked_at, queued=queued)
         if v.reject_code:
             raise DecideRejected(v.reject_code)
         outcome = await apply_decision(deps, v.label)

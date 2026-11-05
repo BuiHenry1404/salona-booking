@@ -9,15 +9,14 @@ ghi duy nhất (§5.5) của Orchestrator.
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
-from app.agents.booking.context import AppointmentRef, PendingProposal, TurnContext
-from app.agents.booking.ledger import TurnLedger
+from app.agents.booking.context import PendingProposal, TurnContext
 from app.agents.booking.orchestrator.decide import DecideRejected, apply_decision, veto
-from app.agents.booking.orchestrator.tools import OrchestratorDeps
-from app.core.clock import now_utc
+from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
+from app.core.clock import TZ, now_utc, to_local
 from app.core.vi_format import format_vi_datetime
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
@@ -25,8 +24,17 @@ from app.services.proposal import PROPOSAL_MAX_AGE_MINUTES, UNCLEAR_LIMIT, Propo
 from tests.factories import make_ctx
 
 
+def _tomorrow_at(hour: int, minute: int = 0) -> datetime:
+    """Mốc giờ Việt Nam CỐ ĐỊNH (mai, `hour`:`minute`) — không lệ thuộc giờ
+    chạy test thật: review M3 chỉ ra `now_utc() + timedelta(hours=5)` rơi
+    ngoài giờ mở cửa (08:00-19:00) tuỳ lúc chạy CI, làm các test approve/veto
+    flaky theo đồng hồ."""
+    tomorrow = (to_local(now_utc()) + timedelta(days=1)).date()
+    return datetime(tomorrow.year, tomorrow.month, tomorrow.day, hour, minute, tzinfo=TZ)
+
+
 def _pending(**overrides) -> PendingProposal:
-    start = now_utc() + timedelta(days=1, hours=5)
+    start = _tomorrow_at(15)
     defaults = dict(
         id="p1",
         kind="book",
@@ -58,6 +66,36 @@ def test_veto_rejects_change_that_restates_the_same_time():
     # Dùng chính `spoken` của pending để chắc chắn cùng giờ, không lệ thuộc múi giờ.
     v = veto("change", None, f"đổi qua {pending.spoken} nha", pending, now_utc())
     assert v.reject_code == "same_time_as_pending"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "thôi đổi lịch khác đi",  # muốn đổi nhưng không nêu giờ nào
+        "đổi giờ khác nha",
+        "lùi lại 30 phút",  # tương đối, không phải một mốc giờ cụ thể
+    ],
+)
+def test_veto_keeps_change_that_names_no_concrete_time(text):
+    """Review M3 finding 1: §9.3 (i) chỉ từ chối khi câu khách NHẮC LẠI đúng
+    giờ đề xuất (`restates_proposal_time`), không phải mọi câu "change" không
+    nêu giờ khác (`not other_time`) — nếu không, "đổi giờ khác đi" (không nêu
+    giờ nào) cũng bị từ chối oan, dù khách rõ ràng muốn đổi."""
+    pending = _pending()
+    v = veto("change", None, text, pending, now_utc())
+    assert v.label == "change"
+    assert v.reject_code is None
+
+
+def test_veto_ignores_a_time_that_belongs_to_a_queued_request():
+    """Review M3 finding 4: một giờ chỉ thuộc về lịch ĐANG CHỜ (hàng chờ,
+    `ctx.queued_requests`) không được hiểu nhầm là khách đang đổi giờ của
+    chính đề xuất đang chờ duyệt."""
+    pending = _pending()
+    queued = [_tomorrow_at(14)]
+    v = veto("approve", None, "ừ, còn lịch 2 giờ thì để sau nha", pending, now_utc(), queued=queued)
+    assert v.label == "approve"
+    assert v.reject_code is None
 
 
 def test_veto_downgrades_approve_with_relative_free_to_unclear():
@@ -124,7 +162,7 @@ def _deps(db, user, ctx, ledger=None) -> OrchestratorDeps:
 
 
 async def _make_pending_proposal(db, user, *, start_at=None):
-    start = start_at or (now_utc() + timedelta(days=1, hours=5))
+    start = start_at or _tomorrow_at(15)
     proposal = await ProposalService(db).create(user, "book", start, None)
     return proposal
 
@@ -166,7 +204,7 @@ async def test_approve_writes_the_appointment_and_the_ledger(test_db, clean_db):
 async def test_approve_on_a_taken_slot_is_failed_with_nearest(test_db, clean_db):
     user = await a_user(test_db)
     other = await a_user(test_db, name="Co Hoa")
-    start = now_utc() + timedelta(days=1, hours=5)
+    start = _tomorrow_at(15)
     # Lịch của NGƯỜI KHÁC chiếm đúng giờ pending sẽ xin duyệt.
     await AppointmentService(test_db).create(other, start, None)
 
@@ -213,6 +251,22 @@ async def test_unclear_first_time_is_clarify_second_time_rejects(test_db, clean_
 
     second = await apply_decision(deps, "unclear")
     assert second.outcome == "rejected"
+
+
+async def test_unclear_on_an_already_closed_proposal_is_not_approvable(test_db, clean_db):
+    """Review M3 finding 3: `mark_unclear` không tìm thấy đề xuất PENDING (đã
+    bị đóng bởi nút bấm, lượt khác, hoặc hết hạn) phải báo `not_approvable`,
+    không phải `clarify` cho một đề xuất không còn tồn tại để hỏi lại."""
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    ctx = _ctx_with_pending(user, proposal)
+    deps = _deps(test_db, user, ctx)
+    assert await ProposalService(test_db).reject(user, str(proposal.id))
+
+    outcome = await apply_decision(deps, "unclear")
+
+    assert outcome.outcome == "not_approvable"
+    assert outcome.reason == "rejected"
 
 
 async def test_none_keeps_the_proposal_untouched(test_db, clean_db):
@@ -272,9 +326,17 @@ async def test_change_supersedes_the_proposal(test_db, clean_db):
     assert stored.status == "superseded"
 
 
-async def test_apply_decision_raises_when_no_pending():
-    user_ctx = make_ctx(pending=None)
-    deps = _deps(db=None, user=None, ctx=user_ctx)
+async def test_decide_pending_rejects_before_veto_when_nothing_is_pending():
+    """Review M3 finding 5: `veto()` đọc thẳng `pending.start_at` — gọi nó
+    khi `ctx.pending is None` (lẽ ra guard (h) của Task 3.3 đã chặn từ trước)
+    phải dừng ở `decide_pending`, KHÔNG để lọt xuống `veto()`/`apply_decision`
+    rồi văng `AttributeError`."""
+    ctx = make_ctx(pending=None)
+    deps = _deps(db=None, user=None, ctx=ctx)
+    tools = {t.name: t for t in make_orchestrator_tools(deps)}
 
-    with pytest.raises(DecideRejected):
-        await apply_decision(deps, "approve")
+    with pytest.raises(DecideRejected) as exc_info:
+        await tools["decide_pending"].ainvoke(
+            {"label": "approve", "aside": None, "reason": "khách nói ừ"}
+        )
+    assert exc_info.value.reject_code == "no_pending"
