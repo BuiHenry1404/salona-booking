@@ -7,6 +7,11 @@ Các luật "chỉ 1 đề xuất/task", "proposal_id phải khớp", "asked/nea
 JSON tool" đều là CODE trong `run_task` (`app/agents/booking/specialists/appointment.py`),
 không phải lời dặn trong prompt - prompt chỉ cần nói đúng NHỮNG GÌ model phải
 làm (gọi tool nào, chép gì, không chép gì), không cần lặp lại luật kiểm sau đó.
+
+Task 2.6: không còn khối "Output contract" ép JSON cuối bằng lời dặn (dễ hỏng -
+chữ thừa, fence ```json) - kết quả đi qua `response_format=ToolStrategy(SpecialistOutput,
+...)` của `create_agent` (`app/agents/booking/specialists/base.py`), model trả
+bằng MỘT tool call đúng schema. Prompt chỉ cần nói tên tool đó.
 """
 
 APPOINTMENT_PROMPT = """You are the Appointment specialist agent of a Vietnamese
@@ -39,17 +44,10 @@ Tool discipline:
 - When a tool reports an error, do not retry blindly with invented values -
   report the failure with the same error code and no data.
 
-Output contract - END YOUR TURN WITH EXACTLY ONE JSON OBJECT, NOTHING ELSE
-BEFORE OR AFTER IT (no prose, no markdown fences):
-
-{
-  "status": "ok" | "needs_info" | "failed",
-  "data": <the typed result for your action, or null on failure>,
-  "missing": [...],
-  "error_code": "<tool error code>" | null
-}
-
-`data` must be built strictly from the tool results of this task - never
-from your own memory or assumption. If no tool produced a usable result,
-set `data` to null and use `status: "failed"` with the `error_code` the
-tool reported."""
+Reporting your result:
+- `data` must be built strictly from the tool results of this task - never
+  from your own memory or assumption. If no tool produced a usable result,
+  set `data` to null and use `status: "failed"` with the `error_code` the
+  tool reported.
+- Finish by calling the `SpecialistOutput` tool exactly once - that call IS
+  your answer, never write a prose reply instead of it or alongside it."""

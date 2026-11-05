@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.booking.schemas import (
+    ACTION_DATA_TYPE,
     AppointmentArgs,
     AppointmentList,
     AppointmentRefOut,
@@ -34,7 +35,10 @@ from app.agents.booking.schemas import (
     TaskSpec,
     TimeHint,
     appointment_args_model,
+    specialist_output_model,
 )
+from app.agents.booking.specialists.appointment import ALLOWLIST as APPOINTMENT_ALLOWLIST
+from app.agents.booking.specialists.shop_info import ALLOWLIST as SHOP_INFO_ALLOWLIST
 
 TOOL_FACING = [TimeHint, ExtraRequest, AppointmentArgs, ShopArgs, DecideArgs, AskCustomerArgs, FinishArgs]
 
@@ -167,6 +171,44 @@ def test_task_spec_rejects_an_action_outside_the_known_literals():
     assert TaskSpec.model_validate({**base, "action": "resolve_time"})
     with pytest.raises(ValidationError):
         TaskSpec.model_validate({**base, "action": "delete_everything"})
+
+
+_ALL_SPECIALIST_ACTIONS = sorted(set(APPOINTMENT_ALLOWLIST) | set(SHOP_INFO_ALLOWLIST))
+
+_RESOLVED_TIME_PAYLOAD = {
+    "start_at": {"iso": "2026-10-30T10:00:00+07:00", "spoken": "10 giờ sáng thứ Sáu"},
+    "partial_date": None,
+    "missing": [],
+    "day_from": None,
+}
+
+
+def test_action_data_type_covers_every_action_in_both_allowlists():
+    """Task 2.6 (ruling sau probe Azure thật): mỗi `action` của cả hai
+    specialist phải có một kiểu `data` hẹp trong `ACTION_DATA_TYPE` — thiếu
+    một action là lỗi lập trình (`specialist_output_model` sẽ `KeyError`)."""
+    missing = set(_ALL_SPECIALIST_ACTIONS) - ACTION_DATA_TYPE.keys()
+    assert missing == set(), f"thiếu ánh xạ cho: {missing}"
+
+
+@pytest.mark.parametrize("action", _ALL_SPECIALIST_ACTIONS)
+def test_specialist_output_model_tool_name_is_specialistoutput_for_every_action(action):
+    """Tên lớp (và do đó tên tool `ToolStrategy` sinh ra) PHẢI là
+    "SpecialistOutput" cho mọi action — prompt và test fake (`tests/fakes.py::
+    final_output`) không cần biết action đang chạy là gì."""
+    assert specialist_output_model(action).__name__ == "SpecialistOutput"
+
+
+def test_specialist_output_model_rejects_another_actions_data_shape():
+    """Ruling sau probe Azure thật: `data` hẹp theo action phải từ chối payload
+    đúng kiểu của một action KHÁC (ở đây `ResolvedTime` — kiểu của
+    `resolve_time` — đưa vào model của `is_open_at`) thay vì âm thầm validate
+    nhầm, như union rộng `TaskData` từng để lọt (1/8 lần probe)."""
+    model = specialist_output_model("is_open_at")
+    with pytest.raises(ValidationError):
+        model.model_validate({
+            "status": "ok", "data": _RESOLVED_TIME_PAYLOAD, "missing": [], "error_code": None,
+        })
 
 
 def test_pending_outcome_round_trips_with_tz_aware_expiry():

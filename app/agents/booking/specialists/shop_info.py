@@ -17,7 +17,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.booking.context import TurnContext
 from app.agents.booking.prompts.shop_info import SHOP_INFO_PROMPT
 from app.agents.booking.schemas import (ShopHoursOut, ShopOpenOut, ShopStatusOut,
-                                         TaskData, TaskResult, TaskSpec)
+                                         TaskData, TaskResult, TaskSpec,
+                                         specialist_output_model)
 from app.agents.booking.specialists.base import build_specialist, run_specialist
 from app.agents.booking.specialists.guard import allowlist
 from app.agents.booking_graph.tools import _CLOSED_DAY_NAMES, make_shop_tools
@@ -83,7 +84,10 @@ async def run_task(
     # (1) dựng agent MỖI task: chỉ đúng tool theo action - không lưới đề xuất
     # nào cần ở đây, không tool nào ghi.
     tools = allowlist(make_shop_tools(db, user), ALLOWLIST[spec.action])
-    agent = build_specialist(prompt=SHOP_INFO_PROMPT, tools=tools, tag="shop_info")
+    agent = build_specialist(
+        prompt=SHOP_INFO_PROMPT, tools=tools, tag="shop_info",
+        output_model=specialist_output_model(spec.action),
+    )
     result, _messages = await run_specialist(
         agent, spec, ctx, question, timeout=settings.orch_task_timeout_seconds,
     )

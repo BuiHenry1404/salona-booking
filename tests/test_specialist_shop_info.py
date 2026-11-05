@@ -3,10 +3,10 @@ model trả với dữ liệu THẬT đọc lại từ `ShopService`, không tin
 Dùng model giả (không gọi Azure thật)."""
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 import pytest
@@ -14,13 +14,14 @@ import pytest
 from app.agents.booking.schemas import ShopHoursOut, ShopOpenOut, ShopStatusOut
 from app.agents.booking.specialists.shop_info import ALLOWLIST, check_facts, run_task
 from app.agents.booking.prompts.shop_info import SHOP_INFO_PROMPT
-from app.core.clock import TZ, now_utc
-from app.core.vi_format import format_vi_datetime, format_vi_hhmm
+from app.core.clock import TZ
+from app.core.vi_format import format_vi_hhmm
 from app.models.shop import ShopHours, ShopStatusView
+from app.services import shop as shop_module
 from app.services.auth import AuthService
 from app.services.shop import ShopService
 from tests.factories import make_ctx, make_spec
-from tests.fakes import scripted, tool_call
+from tests.fakes import final_output, scripted, tool_call
 
 
 def _patch_build_chat_model(monkeypatch, model):
@@ -66,8 +67,7 @@ class _EchoShopOpen(BaseChatModel):
         if ai_rounds == 2:
             return tool_call("is_open_at", {"at": self.at})
         tool_json = json.loads(messages[-1].content)
-        output = {"status": "ok", "data": tool_json, "missing": [], "error_code": None}
-        return AIMessage(content=json.dumps(output, ensure_ascii=False))
+        return final_output(status="ok", data=tool_json, missing=[], error_code=None)
 
     def _generate(self, messages, stop=None, run_manager=None, **kw):
         return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
@@ -90,7 +90,7 @@ async def test_get_hours_returns_hours_out_matching_the_shop(test_db, monkeypatc
     }
     model = scripted([
         tool_call("get_shop_hours", {}),
-        AIMessage(content=json.dumps(output, ensure_ascii=False)),
+        final_output(**output),
     ], tags=["shop_info"])
     _patch_build_chat_model(monkeypatch, model)
     spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.0")
@@ -131,8 +131,15 @@ async def test_open_hours_but_owner_busy_is_ok_not_fact_mismatch(test_db, monkey
     shop = ShopService(test_db)
     # Mở cả ngày để không phụ thuộc giờ chạy test thật.
     await shop.set_hours("00:00", "23:59", [])
+    # Khoá đồng hồ của `app.services.shop` vào giữa trưa VN (giờ cố định, xa
+    # biên nửa đêm) — fix flaky: `at = now_utc()+30min` theo giờ máy THẬT rơi
+    # sau giờ đóng "23:59" (is_within so `minutes < close`, 23:59 không <
+    # 23:59) đúng lúc giờ VN thật nằm trong khoảng ~23:29-23:59, biến
+    # owner_busy thành after_close một cách ngẫu nhiên theo giờ chạy test.
+    fixed_now = datetime(2026, 1, 5, 5, 0, tzinfo=timezone.utc)  # 12h trưa giờ VN
+    monkeypatch.setattr(shop_module, "now_utc", lambda: fixed_now)
     await shop.set_busy(90)
-    at = now_utc() + timedelta(minutes=30)
+    at = fixed_now + timedelta(minutes=30)
 
     model = _EchoShopOpen(at=at.isoformat())
     _patch_build_chat_model(monkeypatch, model)
@@ -162,7 +169,7 @@ async def test_fabricated_closing_time_is_fact_mismatch_and_not_retried(test_db,
     }
     model = scripted([
         tool_call("get_shop_hours", {}),
-        AIMessage(content=json.dumps(output, ensure_ascii=False)),
+        final_output(**output),
     ], tags=["shop_info"])
     _patch_build_chat_model(monkeypatch, model)
     spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.0")

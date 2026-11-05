@@ -133,6 +133,14 @@ def tool_call(name: str, args: dict, id: Optional[str] = None) -> AIMessage:
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id, "type": "tool_call"}])
 
 
+def final_output(**fields) -> AIMessage:
+    """AIMessage với một tool call tên `SpecialistOutput` và args là `fields`
+    - thay cho câu JSON chữ specialist từng trả ở lượt cuối (Task 2.6:
+    `response_format=ToolStrategy(SpecialistOutput, ...)` của `create_agent`
+    bắt kết quả đi qua đúng tool call này, tên tool mặc định là tên class)."""
+    return tool_call("SpecialistOutput", fields)
+
+
 def tool_calls(*pairs: tuple) -> AIMessage:
     """Nhiều tool call trong MỘT AIMessage — dùng để test chuỗi parallel/serial."""
     calls = [

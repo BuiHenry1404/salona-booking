@@ -24,7 +24,8 @@ from pymongo.errors import PyMongoError
 
 from app.agents.booking.context import TurnContext
 from app.agents.booking.prompts.appointment import APPOINTMENT_PROMPT
-from app.agents.booking.schemas import Moment, ProposalCreated, TaskResult, TaskSpec
+from app.agents.booking.schemas import (Moment, ProposalCreated, TaskResult, TaskSpec,
+                                         specialist_output_model)
 from app.agents.booking.specialists.base import build_specialist, run_specialist
 from app.agents.booking.specialists.guard import (OneProposalPerTaskMiddleware,
                                                     PROPOSAL_TOOLS, allowlist)
@@ -145,6 +146,7 @@ async def run_task(
     tools = allowlist(make_booking_tools(db, user), ALLOWLIST[spec.action])
     agent = build_specialist(
         prompt=APPOINTMENT_PROMPT, tools=tools, tag="appointment",
+        output_model=specialist_output_model(spec.action),
         extra_middleware=[OneProposalPerTaskMiddleware()],
     )
     result, messages = await run_specialist(

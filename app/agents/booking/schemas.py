@@ -12,6 +12,7 @@ middleware, không ở đây.
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Literal, Sequence
 
 from pydantic import BaseModel, Field, create_model
@@ -245,12 +246,64 @@ class TaskResult(BaseModel):
 
 
 class SpecialistOutput(BaseModel):
-    """JSON mà AIMessage cuối của specialist PHẢI là (M2)."""
+    """JSON mà AIMessage cuối của specialist PHẢI là (M2). Từ Task 2.6, model
+    không trả chữ JSON này nữa — nó trả bằng MỘT tool call đúng schema
+    (`response_format=ToolStrategy(...)` của `create_agent`); schema dùng khi
+    gọi THẬT là bản HẸP theo action — xem `specialist_output_model` bên dưới.
+    Lớp này giữ lại cho `TaskData` union rộng (chỗ khác còn dùng để đọc)."""
 
     status: Literal["ok", "needs_info", "failed"]
     data: TaskData | None = None
     missing: list[Missing] = []
     error_code: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# SpecialistOutput HẸP THEO ACTION (Task 2.6, ruling sau probe Azure thật)
+# ---------------------------------------------------------------------------
+#
+# `data: TaskData | None` ở `SpecialistOutput` là union KHÔNG GẮN NHÃN của 7
+# kiểu — probe Azure thật cho thấy model chọn sai: 4/8 lần `is_open_at` ném
+# `StructuredOutputValidationError`, 1/8 lần validate "thành công" nhưng ra
+# nhầm `ResolvedTime` thay vì `ShopOpenOut` (sai thầm lặng, nguy hiểm hơn lỗi
+# ném ra). Hẹp `data` về ĐÚNG MỘT kiểu cho từng `action` sửa cả hai: cùng probe
+# với `data: ShopOpenOut | None` cho 6/6 lần đúng. `get_hours` đúng ở cả hai
+# cách (không đổi hành vi với action đó).
+#
+# Tên tool `ToolStrategy` sinh ra vẫn là "SpecialistOutput" cho MỌI action
+# (giữ nguyên tên lớp qua `create_model`) — prompt ("Finish by calling the
+# `SpecialistOutput` tool...") và test fake (`tests/fakes.py::final_output`)
+# không cần biết action đang chạy là gì.
+ACTION_DATA_TYPE: dict[str, type[BaseModel]] = {
+    "resolve_time": ResolvedTime,
+    "find_slots": FreeSlots,
+    "propose_book": ProposalCreated,
+    "propose_move": ProposalCreated,
+    "propose_cancel": ProposalCreated,
+    "list_appointments": AppointmentList,
+    "get_hours": ShopHoursOut,
+    "get_status": ShopStatusOut,
+    "is_open_at": ShopOpenOut,
+}
+
+
+@lru_cache(maxsize=None)
+def specialist_output_model(action: str) -> type[BaseModel]:
+    """Dựng (và cache — `create_model` mỗi lần gọi ra MỘT lớp mới, không cache
+    thì mỗi task con của cùng một action lại dựng lại lớp, tốn vô ích) một
+    `SpecialistOutput` RIÊNG cho `action`: `data` hẹp về ĐÚNG MỘT kiểu theo
+    `ACTION_DATA_TYPE`, các trường còn lại giống hệt `SpecialistOutput` gốc.
+    `action` không có trong bảng là lỗi lập trình (allowlist thiếu ánh xạ) —
+    `KeyError`, không âm thầm rơi về union rộng."""
+    data_type = ACTION_DATA_TYPE[action]
+    return create_model(
+        "SpecialistOutput",
+        __base__=BaseModel,
+        status=(Literal["ok", "needs_info", "failed"], ...),
+        data=(data_type | None, None),
+        missing=(list[Missing], []),
+        error_code=(str | None, None),
+    )
 
 
 # ---------------------------------------------------------------------------

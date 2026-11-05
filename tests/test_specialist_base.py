@@ -1,7 +1,7 @@
-"""Test cho `app/agents/booking/specialists/base.py` (Task 2.3) — dựng agent,
-chạy task, đọc `TaskResult`. Dùng `ScriptedChatModel` (không gọi Azure thật)."""
-import json
-
+"""Test cho `app/agents/booking/specialists/base.py` (Task 2.3; Task 2.6
+chuyển kết quả cuối sang `response_format=ToolStrategy(<output_model hẹp theo
+action>, ...)`) — dựng agent, chạy task, đọc `TaskResult`. Dùng
+`ScriptedChatModel` (không gọi Azure thật)."""
 import httpx
 import openai
 import pytest
@@ -9,12 +9,11 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from app.agents.booking.context import UNTRUSTED, render_context
-from app.agents.booking.schemas import ShopHoursOut
-from app.agents.booking.specialists.base import (build_specialist, parse_task_result,
-                                                   run_specialist, task_message)
+from app.agents.booking.schemas import ShopHoursOut, specialist_output_model
+from app.agents.booking.specialists.base import build_specialist, run_specialist, task_message
 from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
 from tests.factories import make_ctx, make_spec
-from tests.fakes import Hang, scripted, tool_call
+from tests.fakes import Hang, final_output, scripted, tool_call
 
 
 def _patch_build_chat_model(monkeypatch, model):
@@ -57,18 +56,25 @@ def test_task_message_has_context_then_task_then_untrusted_question():
     assert message.content[untrusted_idx + len(UNTRUSTED):].startswith(question)
 
 
-def test_parse_valid_output_becomes_ok_result_with_typed_data():
-    spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.1")
-    text = json.dumps({
-        "status": "ok",
-        "data": {
+async def test_structured_output_becomes_ok_result_with_typed_data(monkeypatch):
+    output = final_output(
+        status="ok",
+        data={
             "open": {"iso": "2026-11-05T08:00:00+07:00", "spoken": "8 giờ sáng"},
             "close": {"iso": "2026-11-05T19:00:00+07:00", "spoken": "7 giờ tối"},
             "closed_days": [],
         },
-    })
+        missing=[],
+        error_code=None,
+    )
+    _patch_build_chat_model(monkeypatch, scripted([output], tags=["shop_info"]))
+    agent = build_specialist(
+        prompt="test", tools=[], tag="shop_info", output_model=specialist_output_model("get_hours")
+    )
+    spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.1")
+    ctx = make_ctx()
 
-    result = parse_task_result(text, spec, attempts=1)
+    result, _messages = await run_specialist(agent, spec, ctx, "may gio mo cua", timeout=5)
 
     assert result.status == "ok"
     assert isinstance(result.data, ShopHoursOut)
@@ -76,19 +82,46 @@ def test_parse_valid_output_becomes_ok_result_with_typed_data():
     assert result.attempts == 1
 
 
-def test_parse_garbage_is_schema_invalid_not_retryable():
+async def test_invalid_structured_output_args_is_schema_invalid_not_retried(monkeypatch):
+    bad = tool_call("SpecialistOutput", {"status": "not_a_real_status"})
+    model = scripted([bad], tags=["shop_info"])
+    _patch_build_chat_model(monkeypatch, model)
+    agent = build_specialist(
+        prompt="test", tools=[], tag="shop_info", output_model=specialist_output_model("get_hours")
+    )
     spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.1")
+    ctx = make_ctx()
 
-    result = parse_task_result("không phải JSON", spec, attempts=1)
+    result, _messages = await run_specialist(agent, spec, ctx, "may gio mo cua", timeout=5)
 
     assert result.status == "failed"
     assert result.error_code == "schema_invalid"
     assert result.retryable is False
+    # handle_errors=False: schema sai không được LangChain tự gửi lỗi lại
+    # cho model thử lại trong cùng task.
+    assert len(model.calls) == 1
+
+
+async def test_plain_text_without_tool_call_is_schema_invalid(monkeypatch):
+    model = scripted([AIMessage(content="khong lam duoc")], tags=["shop_info"])
+    _patch_build_chat_model(monkeypatch, model)
+    agent = build_specialist(
+        prompt="test", tools=[], tag="shop_info", output_model=specialist_output_model("get_hours")
+    )
+    spec = make_spec(agent="shop_info", action="get_hours", task_id="t1.1")
+    ctx = make_ctx()
+
+    result, _messages = await run_specialist(agent, spec, ctx, "may gio mo cua", timeout=5)
+
+    assert result.status == "failed"
+    assert result.error_code == "schema_invalid"
 
 
 async def test_run_specialist_times_out_as_tool_timeout(monkeypatch):
     _patch_build_chat_model(monkeypatch, scripted([Hang(100)], tags=["appointment"]))
-    agent = build_specialist(prompt="test", tools=[], tag="appointment")
+    agent = build_specialist(
+        prompt="test", tools=[], tag="appointment", output_model=specialist_output_model("resolve_time")
+    )
     spec = make_spec(task_id="t1.0")
     ctx = make_ctx()
 
@@ -123,7 +156,10 @@ async def test_tool_round_limit_is_four_per_task(monkeypatch):
     replies = [tool_call("noop", {"x": "a"}) for _ in range(5)]
     model = scripted(replies, tags=["appointment"])
     _patch_build_chat_model(monkeypatch, model)
-    agent = build_specialist(prompt="test", tools=[noop], tag="appointment")
+    agent = build_specialist(
+        prompt="test", tools=[noop], tag="appointment",
+        output_model=specialist_output_model("resolve_time"),
+    )
     spec = make_spec(task_id="t1.0")
     ctx = make_ctx()
 

@@ -22,7 +22,7 @@ from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.conversation_state import ConversationStateService
 from tests.factories import make_ctx, make_spec
-from tests.fakes import scripted, tool_call
+from tests.fakes import final_output, scripted, tool_call
 
 
 def _patch_build_chat_model(monkeypatch, model):
@@ -65,7 +65,7 @@ class _EchoTool(BaseChatModel):
     def _reply(self, messages) -> AIMessage:
         if messages and isinstance(messages[-1], ToolMessage):
             tool_json = json.loads(messages[-1].content)
-            return AIMessage(content=json.dumps(self.build_output(tool_json), ensure_ascii=False))
+            return final_output(**self.build_output(tool_json))
         return AIMessage(content="", tool_calls=[{
             "name": self.tool_name, "args": self.tool_args, "id": uuid4().hex, "type": "tool_call",
         }])
@@ -123,7 +123,7 @@ class _TwoProposeAttempts(BaseChatModel):
             },
             "missing": [], "error_code": None,
         }
-        return AIMessage(content=json.dumps(output, ensure_ascii=False))
+        return final_output(**output)
 
     def _generate(self, messages, stop=None, run_manager=None, **kw):
         return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
@@ -293,7 +293,7 @@ async def test_slot_unavailable_fills_asked_and_nearest_from_the_tool_json(test_
 
     model = scripted([
         tool_call("propose_appointment", {"start_at": taken.isoformat(), "note": None}),
-        AIMessage(content=json.dumps({"status": "failed", "error_code": "slot_unavailable"})),
+        final_output(status="failed", error_code="slot_unavailable"),
     ], tags=["appointment"])
     _patch_build_chat_model(monkeypatch, model)
     spec = make_spec(agent="appointment", action="propose_book", task_id="t1.0")
