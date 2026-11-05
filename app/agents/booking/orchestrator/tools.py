@@ -4,8 +4,12 @@ Orchestrator không bao giờ tự tạo/ghi gì: nó chỉ chọn `action`/`arg
 `appointment_task`/`shop_info_task` giao việc cho hai specialist (hàm thuần
 `run_task(db, user, spec, ctx, question) -> TaskResult`), `decide_pending`
 giao cho `decide.apply_decision` (Task 3.2 lấp đầy — chữ ký đã cố định),
-`ask_customer`/`finish` chỉ đánh dấu kết thúc vòng (`return_direct=True`,
-§5.6) — không tool nào ở đây chạm `ProposalService`/`AppointmentService`
+`ask_customer`/`finish` chỉ đánh dấu kết thúc vòng — KHÔNG `return_direct`:
+cạnh tools→END của `create_agent` (`factory.py` `_make_tools_to_model_edge`)
+xét theo TÊN tool, bỏ qua `ToolMessage.status`, nên một `finish` bị guard TỪ
+CHỐI (vd. `must_decide_pending`) vẫn sẽ kết thúc lượt. Thay vào đó
+`OrchestratorGuard` ghi `ended_by` khi call được phép và `abefore_model` của
+nó nhảy END (ruling Task 3.3) — không tool nào ở đây chạm `ProposalService`/`AppointmentService`
 trực tiếp (`tests/test_write_fence.py`).
 
 `turn_ledger.calls` chỉ có MỘT người ghi: `OrchestratorGuard.awrap_tool_call`
@@ -224,7 +228,7 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
         outcome = await apply_decision(deps, v.label)
         return outcome.model_dump_json()
 
-    @tool(return_direct=True)
+    @tool
     async def ask_customer(field: QuestionField, hint: str | None) -> str:
         """End the turn by asking the customer one clarifying question.
 
@@ -238,7 +242,7 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
         verbatim."""
         return json.dumps({"ok": True})
 
-    @tool(return_direct=True)
+    @tool
     async def finish(
         kind_hint: Literal["answer", "unsupported", "social"],
         service: str | None,

@@ -22,7 +22,6 @@ from app.models.conversation import QueuedRequest
 from tests.factories import make_ctx
 
 EXPECTED_NAMES = {"appointment_task", "shop_info_task", "decide_pending", "ask_customer", "finish"}
-RETURN_DIRECT_NAMES = {"ask_customer", "finish"}
 
 _VI_DIACRITICS = re.compile(
     r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.I
@@ -103,7 +102,10 @@ def test_five_tools_with_expected_names_and_return_direct_flags():
 
     assert set(by_name) == EXPECTED_NAMES
     for name, t in by_name.items():
-        assert t.return_direct == (name in RETURN_DIRECT_NAMES), name
+        # Không tool nào `return_direct` (ruling Task 3.3): kết thúc lượt do
+        # `OrchestratorGuard.abefore_model` nhảy END, để một `finish` bị từ
+        # chối không thoát vòng theo tên tool.
+        assert not t.return_direct, name
 
 
 def test_orchestrator_tool_schemas_are_strict_safe():
