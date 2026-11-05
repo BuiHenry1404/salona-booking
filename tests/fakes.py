@@ -148,3 +148,40 @@ def tool_calls(*pairs: tuple) -> AIMessage:
         for name, args in pairs
     ]
     return AIMessage(content="", tool_calls=calls)
+
+
+class FakeSpecialists:
+    """Hai specialist giả dùng làm `deps.run_appointment`/`deps.run_shop` của
+    Orchestrator (Task 3.4) — không chạy `create_agent` thật, không gọi Azure.
+
+    `plan` ánh xạ `(label, action)` → một `TaskResult`/`Exception` cố định,
+    hoặc một `list` các giá trị lấy LẦN LƯỢT (mỗi lần gọi đúng key lại pop
+    phần tử đầu) — cho test kịch bản "lần đầu needs_info, lần hai ok" không
+    cần hai entry riêng trong `plan`. `label` là "appointment" hoặc "shop" —
+    đúng tên hai phương thức dưới đây, không phải `TaskSpec.agent` (vốn mang
+    giá trị "shop_info", không phải "shop" — hai tầng tên khác nhau cố ý,
+    tránh gõ nhầm giữa test và code tool)."""
+
+    def __init__(self, plan: dict) -> None:
+        self.plan = {key: (list(value) if isinstance(value, list) else value) for key, value in plan.items()}
+        self.received: list = []
+
+    async def _run(self, label: str, spec, ctx, question: str):
+        self.received.append(spec)
+        key = (label, spec.action)
+        if key not in self.plan:
+            raise AssertionError(f"FakeSpecialists: khong co plan cho {key}")
+        value = self.plan[key]
+        if isinstance(value, list):
+            if not value:
+                raise AssertionError(f"FakeSpecialists: het plan cho {key}")
+            value = value.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def appointment(self, spec, ctx, question: str):
+        return await self._run("appointment", spec, ctx, question)
+
+    async def shop(self, spec, ctx, question: str):
+        return await self._run("shop", spec, ctx, question)
