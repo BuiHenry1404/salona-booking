@@ -16,6 +16,7 @@ import pytest
 
 from app.agents.booking.context import PendingProposal, TurnContext
 from app.agents.booking.ledger import TurnLedger
+import app.agents.booking.orchestrator.decide as decide_module
 from app.agents.booking.orchestrator.decide import DecideRejected, apply_decision, veto
 from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
 from app.core.clock import TZ, now_utc, to_local
@@ -617,3 +618,80 @@ async def test_move_in_one_transaction_cancels_old_and_books_new(test_db, spy_ch
         [("created", outcome.appointment.id), ("cancelled", str(old.id))])
     record = await ledger.record_of("turn-1")
     assert record["pending_outcome"]["outcome"] == "approved"
+
+
+async def test_owner_notice_survives_a_cancel_right_after_commit(test_db):
+    """Lịch đã commit thì báo tin chủ tiệm không được mất vì lượt bị huỷ đúng
+    lúc đang gửi — `send_notices` chạy nền dưới `shield`. Chờ bằng điều kiện."""
+    from app.services.notifications import notifications
+
+    class _SlowChannel(_SpyChannel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reached = asyncio.Event()
+            self.release = asyncio.Event()
+            self.delivered = asyncio.Event()
+
+        async def appointment_created(self, appointment) -> None:
+            self.reached.set()
+            await self.release.wait()
+            await super().appointment_created(appointment)
+            self.delivered.set()
+
+    saved = list(notifications.channels)
+    slow = _SlowChannel()
+    notifications.register(slow)
+    try:
+        user = await a_user(test_db)
+        proposal = await _make_pending_proposal(test_db, user)
+        deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+
+        task = asyncio.create_task(apply_decision(deps, "approve"))
+        await slow.reached.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Đã commit đủ trước khi bị huỷ.
+        assert await _snapshot(test_db, user, proposal, ledger) == {
+            "appointments": 1, "proposal": "approved", "outcome": "approved", "booking_hits": 1}
+        slow.release.set()
+        await asyncio.wait_for(slow.delivered.wait(), timeout=5)
+        assert [kind for kind, _ in slow.sent] == ["created"]
+    finally:
+        notifications.channels = saved
+
+
+async def test_failed_outcome_is_written_even_if_the_proposal_closed_meanwhile(
+    test_db, monkeypatch
+):
+    """Giữa transaction duyệt (abort) và transaction ghi `failed`, đề xuất bị
+    đóng ở nơi khác: `mark_failed` không lật được gì -> cảnh báo, outcome
+    `failed` vẫn ghi cho lượt này."""
+    import structlog
+
+    user = await a_user(test_db)
+    other = await a_user(test_db, name="Co Hoa")
+    start = _tomorrow_at(15)
+    await AppointmentService(test_db).create(other, start, None)
+    proposal = await _make_pending_proposal(test_db, user, start_at=start)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+
+    real_nearest = decide_module._nearest_slots_around
+
+    async def nearest_after_closing(db, pending):
+        await ProposalService(db).reject(user, pending.id)
+        return await real_nearest(db, pending)
+
+    monkeypatch.setattr(decide_module, "_nearest_slots_around", nearest_after_closing)
+
+    with structlog.testing.capture_logs() as logs:
+        outcome = await apply_decision(deps, "approve")
+
+    assert outcome.outcome == "failed"
+    warnings = [e for e in logs if e["event"] == "approve_failed_not_recorded"]
+    assert [w["extra"] for w in warnings] == [
+        {"user_id": str(user.id), "turn_id": "turn-1", "proposal_id": str(proposal.id)}]
+    stored = await test_db["proposals"].find_one({"_id": proposal.id})
+    record = await ledger.record_of("turn-1")
+    assert (stored["status"], record["pending_outcome"]["outcome"]) == ("rejected", "failed")

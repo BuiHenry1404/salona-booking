@@ -98,6 +98,8 @@ arrives without one.
 
 ## Gotchas
 
+- Mongo runs as a single-node replica set (`rs0`, needed for transactions); every client URI
+  needs `?directConnection=true` (`.env`, tests, scripts, bench) or it hangs on server selection.
 - LLM failure at startup is a **warning**, not an error — app runs, chat returns `error`
   events. Check logs before assuming the app is broken.
 - `langfuse.langchain` needs the full `langchain` package, not just `langchain-core`;

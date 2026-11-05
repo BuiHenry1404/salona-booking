@@ -9,6 +9,7 @@ trên nhãn mà model gửi lên.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Awaitable, Callable, Sequence, TypeVar
 
@@ -26,6 +27,7 @@ from app.agents.booking.schemas import (
 from app.agents.booking_graph.reply import other_time, restates_proposal_time
 from app.agents.booking_graph.tools import WHOLE_DAY, nearest_slots
 from app.core.clock import to_local
+from app.core.logging import get_logger
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
 from app.services.appointment import AppointmentService, send_notices
@@ -33,6 +35,13 @@ from app.services.proposal import UNCLEAR_LIMIT, ApprovalFailed, ApprovalResult,
 
 if TYPE_CHECKING:  # tránh vòng import thật: tools.py import module này
     from app.agents.booking.orchestrator.tools import OrchestratorDeps
+
+logger = get_logger(__name__)
+
+# Báo tin chủ tiệm đang gửi nền sau commit (shield). Giữ tham chiếu mạnh: event
+# loop chỉ giữ weak-ref, task không ai giữ có thể bị GC giữa chừng — cùng mẫu
+# `_INFLIGHT_APPROVALS` của `app/services/proposal.py`.
+_INFLIGHT_NOTICES: set = set()
 
 
 class DecideRejected(Exception):
@@ -234,8 +243,29 @@ async def apply_decision(deps: "OrchestratorDeps", label: DecideLabel) -> Pendin
         outcome = await _in_transaction(db, _write)
     except ApprovalFailed as exc:
         return await _record_failure(deps, pending, exc.result)
-    await send_notices(notices)
+    if notices:
+        await _send_notices_shielded(list(notices), turn_id=deps.turn_id, user_id=str(user.id))
     return outcome
+
+
+async def _send_notices_shielded(notices: list, *, turn_id: str, user_id: str) -> None:
+    """Lịch đã COMMIT — báo tin chủ tiệm không được mất vì lượt bị huỷ
+    (`asyncio.timeout` của `run_orchestrate`) đúng lúc đang gửi: chạy thành
+    task riêng + `shield`; huỷ chỉ cắt chỗ chờ, task vẫn gửi xong."""
+    task = asyncio.ensure_future(send_notices(notices))
+    _INFLIGHT_NOTICES.add(task)
+    task.add_done_callback(_INFLIGHT_NOTICES.discard)
+    task.add_done_callback(lambda t: _log_notice_failure(t, turn_id=turn_id, user_id=user_id))
+    await asyncio.shield(task)
+
+
+def _log_notice_failure(task: asyncio.Future, *, turn_id: str, user_id: str) -> None:
+    if task.cancelled() or task.exception() is None:
+        return
+    logger.warning(
+        "owner_notice_failed",
+        extra={"user_id": user_id, "turn_id": turn_id, "error": type(task.exception()).__name__},
+    )
 
 
 async def _record_failure(
@@ -248,7 +278,15 @@ async def _record_failure(
     outcome = _outcome("failed", pending, error=result.error, nearest=nearest)
 
     async def _write(session) -> PendingOutcome:
-        await ProposalService(db).mark_failed(user, pending.id, error, session=session)
+        flipped = await ProposalService(db).mark_failed(user, pending.id, error, session=session)
+        if not flipped:
+            # Đề xuất đã bị đóng ở nơi khác giữa hai transaction (nút bấm, lượt
+            # khác, hết hạn) — vẫn ghi outcome `failed` cho lượt này như cũ.
+            logger.warning(
+                "approve_failed_not_recorded",
+                extra={"user_id": str(user.id), "turn_id": deps.turn_id,
+                       "proposal_id": pending.id},
+            )
         await deps.ledger.set_pending_outcome(deps.turn_id, outcome, session=session)
         return outcome
 
