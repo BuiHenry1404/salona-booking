@@ -30,6 +30,28 @@ dụng là hiểu nhầm phổ biến nhất ở đây.
 khởi động, kèm tên trường bị thiếu. Thêm thiết lập mới phải sửa cả `config.py`,
 `.env.example` và `.env`.
 
+### Mongo: replica set một node (bắt buộc)
+
+`decide_pending` ghi lịch và `turn_ledger` trong **một transaction Mongo**
+(Task 3.6) — transaction chỉ chạy trên replica set, standalone sẽ lỗi
+`Transaction numbers are only allowed on a replica set member or mongos`.
+Compose chạy `mongod --replSet rs0`; healthcheck tự `rs.initiate` lần đầu (đã
+khởi tạo thì bỏ qua) với thành viên `mongo:27017`, healthy = đã là PRIMARY.
+
+Chuỗi kết nối **phải** kèm `directConnection=true` — máy host không phân giải
+được tên `mongo`, thiếu tham số này thì driver đi khám phá thành viên rồi treo
+tới `ServerSelectionTimeoutError` ("Could not reach any servers in [('mongo', 27017)]"):
+
+| Nơi | `MONGO_URI` |
+|---|---|
+| `.env` (máy host: uvicorn dev, script) | `mongodb://localhost:27017/?directConnection=true` |
+| `.env.docker` (container `app`) | `mongodb://mongo:27017/?directConnection=true` |
+| `tests/conftest.py` | `TEST_MONGO_URI` đã kèm sẵn |
+
+Máy đang có container Mongo standalone cũ: `docker compose up -d --wait mongo`
+tạo lại container với cấu hình mới (volume `mongo_data` giữ nguyên dữ liệu),
+rồi kiểm: `docker compose exec mongo mongosh --quiet --eval "rs.status().ok"` → `1`.
+
 Bốn khoá Azure hay điền sai:
 
 | Khoá | Điền gì | Sai thì |
@@ -129,8 +151,8 @@ docker compose up -d mongo
 .venv/bin/python -m pytest -q
 ```
 
-Cần Mongo ở `localhost:27017`; test dùng database riêng `chatbot_test_db` và tự dọn
-sau mỗi test.
+Cần Mongo ở `localhost:27017`, chạy replica set (mục 3); test dùng database riêng
+`chatbot_test_db` và tự dọn sau mỗi test.
 
 Kiểm đầu-cuối trên server đang chạy — HTTP + Socket.IO thật, gọi Azure thật,
 không mock gì (31 case: xác thực, phân quyền, bận/rảnh, đặt/huỷ lịch, hai lượt
@@ -318,3 +340,5 @@ Mỗi file truyền vào phải đúng định dạng dòng `BOT   : ...` của
 | Mọi trace hiện 0đ | Chưa seed đơn giá model, xem mục 8. Đơn giá chỉ áp cho trace **mới** |
 | Test đỏ hàng loạt với `ServerSelectionTimeoutError` | Mongo chưa chạy, hoặc mongod chết vì hết file descriptor (compose đã set `nofile` 64000) |
 | `307` khi gọi health | Thiếu dấu `/` cuối |
+| `ServerSelectionTimeoutError` nhắc tới `('mongo', 27017)` | `MONGO_URI` thiếu `?directConnection=true` (mục 3) |
+| `Transaction numbers are only allowed on a replica set member` | Container Mongo còn là standalone cũ — `docker compose up -d --wait mongo` |

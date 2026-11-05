@@ -8,8 +8,11 @@ services:
     # Máy reboot hoặc app crash thì tự lên lại. `unless-stopped` chứ không phải
     # `always`: đã chủ động `docker compose stop` thì đừng tự bật lại.
     restart: unless-stopped
+    # Chờ Mongo thành PRIMARY (replica set đã khởi tạo) — trước lúc đó mọi
+    # lệnh ghi đều bị từ chối và lifespan fail-hard.
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     volumes:
       - .:/app
       # Settings chỉ đọc file, không đọc biến môi trường — nên không có khối
@@ -20,6 +23,9 @@ services:
   mongo:
     image: mongo:7.0
     restart: unless-stopped
+    # Replica set MỘT node: transaction Mongo (ghi lịch + `turn_ledger` cùng
+    # commit, Task 3.6) chỉ chạy trên replica set, không chạy trên standalone.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
@@ -35,6 +41,27 @@ services:
       nofile:
         soft: 64000
         hard: 64000
+    # Healthcheck kiêm luôn khởi tạo: lần đầu `rs.status()` lỗi (chưa có cấu
+    # hình) thì gọi `rs.initiate`; đã khởi tạo thì bỏ qua. Healthy = node đã là
+    # PRIMARY. Thành viên khai báo `mongo:27017` (tên service trong network
+    # compose — container khác, kể cả mongo-express, khám phá được); máy host
+    # không phân giải được tên này nên client ngoài compose (pytest, uvicorn dev)
+    # PHẢI dùng `?directConnection=true` (xem RUNBOOK).
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - >-
+          try { rs.status() } catch (e) {
+          rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) };
+          quit(db.hello().isWritablePrimary ? 0 : 1)
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
 
   # Dedupe tin nhắn (Task 10) — tuỳ chọn. Không publish cổng ra host: chỉ app
   # trong cùng network compose gọi tới qua REDIS_URL=redis://redis:6379/0.
@@ -55,7 +82,8 @@ services:
       - ME_CONFIG_BASICAUTH_USERNAME=admin
       - ME_CONFIG_BASICAUTH_PASSWORD=admin
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
 
 volumes:
   mongo_data:

@@ -12,7 +12,9 @@ from app.infrastructure.database import ensure_indexes
 pytest_plugins = ("pytest_asyncio",)
 
 # Test database settings
-TEST_MONGO_URI = "mongodb://localhost:27017"
+# Replica set một node (docker-compose): `directConnection=true` bắt buộc —
+# thành viên khai báo `mongo:27017`, máy host không phân giải được tên đó.
+TEST_MONGO_URI = "mongodb://localhost:27017/?directConnection=true"
 TEST_DB_NAME = "chatbot_test_db"
 
 
