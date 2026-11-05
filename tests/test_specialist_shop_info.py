@@ -121,6 +121,32 @@ async def test_is_open_at_combines_hours_and_status(test_db, monkeypatch):
     assert result.data.reason == "open"
 
 
+async def test_open_hours_but_owner_busy_is_ok_not_fact_mismatch(test_db, monkeypatch):
+    """Fix round 1: `is_open_at` của ShopService chỉ xét giờ mở cửa, không
+    biết chủ tiệm đang bận — `run_task` phải tự cộng thêm điều kiện bận
+    (đúng luật tool `is_open_at` đã dùng) trước khi so `open_at`, nếu không
+    mọi câu TRẢ LỜI ĐÚNG "trong giờ nhưng chủ đang bận" sẽ bị bắt nhầm
+    fact_mismatch."""
+    user = await a_user(test_db)
+    shop = ShopService(test_db)
+    # Mở cả ngày để không phụ thuộc giờ chạy test thật.
+    await shop.set_hours("00:00", "23:59", [])
+    await shop.set_busy(90)
+    at = now_utc() + timedelta(minutes=30)
+
+    model = _EchoShopOpen(at=at.isoformat())
+    _patch_build_chat_model(monkeypatch, model)
+    spec = make_spec(agent="shop_info", action="is_open_at", task_id="t1.0")
+    ctx = make_ctx()
+
+    result = await run_task(test_db, user, spec, ctx, "30 phut nua tiem con mo khong")
+
+    assert result.status == "ok"
+    assert isinstance(result.data, ShopOpenOut)
+    assert result.data.open is False
+    assert result.data.reason == "owner_busy"
+
+
 async def test_fabricated_closing_time_is_fact_mismatch_and_not_retried(test_db, monkeypatch):
     user = await a_user(test_db)
     hours = await ShopService(test_db).get_hours()

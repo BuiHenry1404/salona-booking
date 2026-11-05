@@ -99,7 +99,18 @@ async def run_task(
     open_at: bool | None = None
     if isinstance(result.data, ShopOpenOut):
         at = ensure_aware(datetime.fromisoformat(result.data.at.iso))
-        open_at = await shop.is_open_at(at)
+        # `ShopService.is_open_at` chỉ xét giờ mở cửa - nó KHÔNG biết chủ
+        # tiệm đang bận (fix round 1: mọi câu "trong giờ mở cửa nhưng chủ
+        # đang bận" thật đều bị bắt nhầm fact_mismatch). Lặp lại đúng điều
+        # kiện `owner_busy` mà `is_open_at` tool đã dùng
+        # (`app/agents/booking_graph/tools.py`): bận VÀ có `busy_until` VÀ
+        # mốc hỏi còn trước `busy_until` đó - dùng lại `status` đã đọc ở
+        # trên, không gọi `get_status` lần hai.
+        within_hours = await shop.is_open_at(at)
+        owner_busy = bool(
+            status.is_busy and status.busy_until and at < ensure_aware(status.busy_until)
+        )
+        open_at = within_hours and not owner_busy
 
     if not check_facts(result.data, hours=hours, status=status, open_at=open_at):
         return _fact_mismatch(spec, attempts=result.attempts)
