@@ -11,6 +11,10 @@ sinh ra ở MỌI độ sâu, khẳng định không còn khoá `default`/`minim
 marker `llm`, bị loại khỏi lần chạy mặc định bởi addopts
 (`-m "not llm"` trong pyproject.toml). Chỉ chạy khi chủ dự án đã cho phép,
 bằng `pytest tests/test_strict_schema_llm.py -m llm`.
+
+Task 3.5: `test_real_orchestrator_tools_are_accepted_strict` lặp lại kiểm
+tra đó với 5 tool THẬT của Orchestrator (`make_orchestrator_tools`, §5.1)
+thay vì tool probe giả — cũng `llm`, cũng chỉ chạy một lần khi có phép.
 """
 from datetime import date
 from typing import Any, List, Literal, Optional
@@ -21,7 +25,11 @@ from langchain_core.tools import BaseTool, tool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel
 
+from app.agents.booking.context import AppointmentRef
+from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
 from app.agents.llm import build_chat_model
+from app.core.clock import now_utc
+from tests.factories import make_ctx
 
 
 class ProbeHint(BaseModel):
@@ -75,6 +83,56 @@ def test_probe_schema_is_strict_safe():
     assert forbidden == set(), (
         f"Schema vẫn còn khoá strict-mode từ chối: {forbidden}\n{schema}"
     )
+
+
+class _FakeLedger:
+    """Ghi lại `append_call` — không chạm Mongo (test này không gọi tool thật,
+    chỉ cần `make_orchestrator_tools` dựng được 5 tool để bind strict)."""
+
+    def __init__(self) -> None:
+        self.appended: list[tuple[str, object]] = []
+
+    async def append_call(self, turn_id: str, call) -> None:
+        self.appended.append((turn_id, call))
+
+
+def _noop_run(*_a, **_kw):
+    raise AssertionError("run_appointment/run_shop không nên được gọi trong test này")
+
+
+def _real_orchestrator_deps() -> OrchestratorDeps:
+    """`ctx` có đúng 1 lịch hẹn sắp tới (§12.17: enum `appointment_id` của
+    `appointment_task.args` phải khớp `ctx.upcoming`) — mô phỏng lượt thật
+    mà Orchestrator (M3) sẽ gửi cho deployment."""
+    ctx = make_ctx(upcoming=[AppointmentRef(id="a1", start_at=now_utc(), spoken="mai 9h")])
+    return OrchestratorDeps(
+        db=None,
+        user=None,
+        ctx=ctx,
+        ledger=_FakeLedger(),
+        turn_id="turn-1",
+        question="chào em",
+        max_rounds=8,
+        run_appointment=_noop_run,
+        run_shop=_noop_run,
+    )
+
+
+@pytest.mark.llm
+@pytest.mark.asyncio
+async def test_real_orchestrator_tools_are_accepted_strict():
+    """Gọi Azure thật đúng MỘT lần (có phép chủ dự án — Task 3.5 Step 2) để
+    xác nhận deployment hiện tại không trả 400 cho 5 tool THẬT của
+    Orchestrator khi `strict=True` (thay vì tool probe giả của Task 0.6)."""
+    deps = _real_orchestrator_deps()
+    tools = make_orchestrator_tools(deps)
+    model = build_chat_model(tags=["orchestrate"], streaming=False, max_retries=0).bind_tools(
+        tools, strict=True, tool_choice="required"
+    )
+    reply = await model.ainvoke(
+        [HumanMessage("Everything needed has been gathered; end the turn now by calling finish.")]
+    )
+    assert reply.tool_calls and reply.tool_calls[0]["name"] == "finish"
 
 
 @pytest.mark.llm

@@ -240,6 +240,6 @@ def test_orchestrator_prompt_is_english_and_names_the_two_ending_tools()
 **Files:**
 - Modify: `tests/test_strict_schema_llm.py` (thêm test dùng `make_orchestrator_tools(deps giả với ctx có 1 upcoming)`)
 
-- [ ] **Step 1:** Thêm `test_real_orchestrator_tools_are_accepted_strict()` cùng mẫu Task 0.6 (yêu cầu model gọi `finish`).
-- [ ] **Step 2: DỪNG — hỏi chủ dự án** cho một lời gọi Azure. Có đồng ý → chạy → ghi kết quả vào checkbox. 400 → theo Task 0.6 Step 4.
-- [ ] **Step 3: Commit** `test(llm): strict probe with the real orchestrator tools`
+- [x] **Step 1:** Thêm `test_real_orchestrator_tools_are_accepted_strict()` cùng mẫu Task 0.6 (yêu cầu model gọi `finish`).
+- [x] **Step 2: DỪNG — hỏi chủ dự án** cho một lời gọi Azure. Có đồng ý → chạy → ghi kết quả vào checkbox. 400 → theo Task 0.6 Step 4. **Kết quả: PASS** — `pytest tests/test_strict_schema_llm.py -m llm -k real_orchestrator -v` → `1 passed` (deployment chấp nhận `strict=True` với 5 tool thật của Orchestrator, không 400).
+- [x] **Step 3: Commit** `test(llm): strict probe with the real orchestrator tools`
