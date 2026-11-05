@@ -32,8 +32,9 @@ call instead of calling appointment_task a second time to propose again.
 
 decide_pending returns a PendingOutcome that tells you what happened to the
 pending proposal and what you should do next:
-- approved: the appointment is booked, moved or cancelled already - finish and
-  tell the customer, do not propose again.
+- approved: the appointment is booked, moved or cancelled already - call
+  finish (do not propose again); the reply that tells the customer is
+  written separately, not by you.
 - rejected or superseded: the old proposal is gone - continue with whatever
   the customer is asking for now.
 - clarify: the customer's reply was not clear enough to decide - ask_customer
@@ -44,9 +45,10 @@ pending proposal and what you should do next:
   action=find_slots to offer the nearest alternatives instead of proposing
   blindly again.
 - not_approvable: the proposal can no longer be approved (expired or already
-  closed) - finish and tell the customer, they can ask again if they still
-  want something.
+  closed) - call finish; the customer can ask again if they still want
+  something.
 
 Read the context block first - it already states today's date, the pending
-proposal (if any), upcoming appointments, queued requests and the last turns.
-Do not ask the customer something that block already answers."""
+proposal (if any), upcoming appointments and queued requests. The turns right
+before this one are listed separately, right after that block. Do not ask the
+customer something either section already answers."""

@@ -8,11 +8,13 @@ ghi duy nhất (§5.5) của Orchestrator.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
 
 import pytest
 
+import app.agents.booking.orchestrator.decide as decide_module
 from app.agents.booking.context import PendingProposal, TurnContext
 from app.agents.booking.orchestrator.decide import DecideRejected, apply_decision, veto
 from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
@@ -199,6 +201,44 @@ async def test_approve_writes_the_appointment_and_the_ledger(test_db, clean_db):
     appts = await AppointmentService(test_db).upcoming_for(user)
     assert any(str(a.id) == outcome.appointment.id for a in appts)
     assert ledger.calls and ledger.calls[0][1] is outcome
+
+
+async def test_approve_survives_cancellation_right_after_it_starts(test_db, clean_db, monkeypatch):
+    """Fix round 1, Minor: huỷ TASK NGOÀI (như `asyncio.timeout` cắt lượt ở
+    `run_orchestrate`) ngay SAU khi ghi lịch bắt đầu không được làm mất đề
+    xuất đã ghi mà `turn_ledger` không bao giờ nghe — anti-goal "lịch đã ghi
+    mà khách không được báo". `apply_decision` bọc đoạn ghi lịch + ghi ledger
+    bằng `asyncio.shield` nên phần đó chạy tới nơi tới chốn dù awaiter của nó
+    (ở đây là `task`) bị huỷ giữa chừng."""
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    ctx = _ctx_with_pending(user, proposal)
+    ledger = FakeLedger()
+    deps = _deps(test_db, user, ctx, ledger)
+
+    started = asyncio.Event()
+    original_apply_approve = decide_module._apply_approve
+
+    async def slow_apply_approve(db, user, ctx, pending):
+        started.set()
+        await asyncio.sleep(0.05)
+        return await original_apply_approve(db, user, ctx, pending)
+
+    monkeypatch.setattr(decide_module, "_apply_approve", slow_apply_approve)
+
+    task = asyncio.create_task(apply_decision(deps, "approve"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Nhường event loop để coroutine được `shield` (chạy nền, không bị huỷ
+    # theo `task`) kịp ghi xong lịch + ledger.
+    await asyncio.sleep(0.1)
+
+    assert ledger.calls and ledger.calls[0][1].outcome == "approved"
+    appts = await AppointmentService(test_db).upcoming_for(user)
+    assert appts, "lich van phai duoc ghi du luot goi no bi huy"
 
 
 async def test_approve_on_a_taken_slot_is_failed_with_nearest(test_db, clean_db):

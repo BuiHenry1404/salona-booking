@@ -106,7 +106,10 @@ def build_orchestrator(deps: OrchestratorDeps):
 
 
 def _render_turn(message: BaseMessage) -> str:
-    role = "Customer" if isinstance(message, HumanMessage) else "Assistant"
+    # Chữ khách của các lượt TRƯỚC cũng là chữ khách — gắn nhãn untrusted
+    # từng dòng (review M3.4 vòng 1, finding 3), không chỉ câu hỏi lượt này
+    # (nhãn `UNTRUSTED` riêng, xem `orchestrator_message`).
+    role = "Customer (untrusted)" if isinstance(message, HumanMessage) else "Assistant"
     content = message.content if isinstance(message.content, str) else str(message.content)
     return f"{role}: {content}"
 
@@ -147,21 +150,51 @@ def _outcome_from_state(state: dict) -> OrchestrateOutcome:
     )
 
 
-async def _outcome_from_ledger(deps: OrchestratorDeps, ended_by: EndedBy) -> OrchestrateOutcome:
+# Vòng `finish`/`ask_customer` không bao giờ được `OrchestratorGuard` tính
+# vào `rounds_executed` (nó tự nhảy END trước khi tới nhánh đếm vòng của
+# `abefore_model` — xem `guard.py`) — dựng lại từ ledger phải khớp đúng, nên
+# loại hai tool này khỏi tập "vòng" khi đếm lại (review M3.4 vòng 1, Minor).
+_TERMINAL_TOOLS = frozenset({"finish", "ask_customer"})
+
+
+async def _outcome_from_ledger(deps: OrchestratorDeps, *, reason: str, thread_id: str | None) -> OrchestrateOutcome:
     """Timeout hay lỗi model cắt ngang `agent.ainvoke` trước khi có state
     cuối — không có `Command` nào để đọc `finish_args`/`ask_args`/`rounds_executed`
     nữa (chúng chỉ sống trong state LangGraph đã mất), nhưng `OrchestratorGuard`
     đã `await` ghi mỗi `CallRecord` vào `turn_ledger` TRƯỚC khi trả kết quả
-    cho model (§5.3/C1) — dựng lại outcome từ đó, không bịa phần đã mất."""
+    cho model (§5.3/C1) — dựng lại outcome từ đó, không bịa phần đã mất.
+
+    Ruling review M3.4 vòng 1 (§5.3(4)/§8.4/§10): `ended_by="error"` CHỈ khi
+    ledger của lượt này KHÔNG có `CallRecord` nào `allowed=True` — nghĩa là
+    chưa có gì xảy ra (kể cả KHÔNG có đề xuất đã ghi), lúc đó coi như lỗi
+    "vòng đầu" đúng nghĩa spec. Ngược lại (đã có ít nhất một call được phép —
+    ví dụ `decide_pending` vừa duyệt một lịch, hay `appointment_task` vừa tạo
+    đề xuất) phải là `"limit"`: `"error"` ngụ ý A sẽ coi `pending_outcome` là
+    "kept"/chưa có gì xảy ra, mâu thuẫn với một lịch ĐÃ ghi mà khách chưa
+    được báo (anti-goal "lịch đã ghi mà khách không được báo" — `unannounced`
+    ở lượt sau chỉ cứu được nếu `pending_outcome` đọc đúng). Áp dụng CÙNG
+    luật cho cả timeout lẫn lỗi model (`reason` chỉ khác nhau để LOG, không
+    đổi cách suy `ended_by`) — đây là chỗ reconcile spec §10 ("lỗi vòng đầu
+    → error") với "timeout → limit" của brief Task 3.4: cả hai chỉ đúng khi
+    chưa có call nào chạy được; có rồi thì luôn là `"limit"`."""
     doc = await deps.ledger.record_of(deps.turn_id)
     calls = [CallRecord.model_validate(c) for c in (doc or {}).get("calls") or []]
     pending_raw = (doc or {}).get("pending_outcome")
+    has_allowed_call = any(c.allowed for c in calls)
+    ended_by: EndedBy = "limit" if has_allowed_call else "error"
+
+    user_id = str(deps.user.id) if deps.user is not None else deps.ctx.customer.id
+    logger.error(
+        "orchestrate_failed",
+        extra={"reason": reason, "user_id": user_id, "turn_id": deps.turn_id, "thread_id": thread_id},
+    )
+
     proposals_created = sum(
         1
         for c in calls
         if c.allowed and isinstance(c.result, TaskResult) and isinstance(c.result.data, ProposalCreated)
     )
-    rounds_executed = len({c.round for c in calls if c.allowed})
+    rounds_executed = len({c.round for c in calls if c.allowed and c.tool not in _TERMINAL_TOOLS})
     return OrchestrateOutcome(
         calls=calls,
         pending_outcome=PendingOutcome.model_validate(pending_raw) if pending_raw else None,
@@ -173,14 +206,25 @@ async def _outcome_from_ledger(deps: OrchestratorDeps, ended_by: EndedBy) -> Orc
     )
 
 
-async def run_orchestrate(deps: OrchestratorDeps, recent: list[BaseMessage]) -> OrchestrateOutcome:
+async def run_orchestrate(
+    deps: OrchestratorDeps, recent: list[BaseMessage], *, thread_id: str | None = None
+) -> OrchestrateOutcome:
     """Chạy Orchestrator đúng MỘT lượt, dưới trần `orch_orchestrate_timeout_seconds`.
 
-    Timeout cắt ngang `agent.ainvoke` (model/tool đang treo) → `ended_by="limit"`.
-    Model ném lỗi (vd. lỗi lập trình, hay `ModelRetryMiddleware` hết lượt thử
-    lại và `on_failure="error"` ném lại) ở BẤT KỲ vòng nào, kể cả vòng đầu
-    (chưa có `ToolMessage` nào) → `ended_by="error"`. Cả hai nhánh đọc lại
-    những gì `turn_ledger` đã kịp ghi thay vì bịa ra một state không hề có."""
+    `thread_id` (nếu có) đi vào `config["configurable"]` của `agent.ainvoke`
+    — đây là cách DUY NHẤT `OrchestratorGuard` (đọc `request.runtime.config`)
+    gắn được `thread_id` vào log `orch_call`/`pending_decided` (§11).
+
+    Timeout cắt ngang `agent.ainvoke` (model/tool đang treo), hoặc model ném
+    lỗi (lỗi lập trình, hay `ModelRetryMiddleware` hết lượt thử lại và
+    `on_failure="error"` ném lại) ở BẤT KỲ vòng nào — cả hai nhánh đọc lại
+    `turn_ledger` để quyết `ended_by` theo CÙNG một luật (xem
+    `_outcome_from_ledger`), không bịa ra một state không hề có.
+
+    `cm.expired()` phân biệt timeout CỦA CHÍNH `asyncio.timeout` này với một
+    `TimeoutError` khác bay ra từ bên trong (vd. một `asyncio.wait_for` nội
+    bộ nào đó của specialist) — chỉ cái đầu mới được log `reason="timeout"`,
+    còn lại coi như lỗi model (`reason="model_error"`)."""
     agent = build_orchestrator(deps)
     message = orchestrator_message(deps.ctx, recent, deps.question)
     # Mỗi vòng tốn NHIỀU bước đồ thị (before_model của guard, before_model của
@@ -188,17 +232,15 @@ async def run_orchestrate(deps: OrchestratorDeps, recent: list[BaseMessage]) -> 
     # nhân rộng rãi để `recursion_limit` không bao giờ cắt ngang trước trần
     # vòng THẬT của guard (§7.1); timeout ở trên mới là lưới cắt lượt treo.
     recursion_limit = deps.max_rounds * 20 + 20
+    config = {"recursion_limit": recursion_limit, "configurable": {"thread_id": thread_id}}
 
     try:
-        async with asyncio.timeout(settings.orch_orchestrate_timeout_seconds):
-            state = await agent.ainvoke(
-                {"messages": [message]}, {"recursion_limit": recursion_limit}
-            )
+        async with asyncio.timeout(settings.orch_orchestrate_timeout_seconds) as cm:
+            state = await agent.ainvoke({"messages": [message]}, config)
     except TimeoutError:
-        logger.warning("orchestrate_timeout", extra={"turn_id": deps.turn_id})
-        return await _outcome_from_ledger(deps, "limit")
+        reason = "timeout" if cm.expired() else "model_error"
+        return await _outcome_from_ledger(deps, reason=reason, thread_id=thread_id)
     except Exception:
-        logger.exception("orchestrate_model_error", extra={"turn_id": deps.turn_id})
-        return await _outcome_from_ledger(deps, "error")
+        return await _outcome_from_ledger(deps, reason="model_error", thread_id=thread_id)
 
     return _outcome_from_state(state)

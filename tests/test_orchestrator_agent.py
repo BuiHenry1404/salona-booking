@@ -13,14 +13,13 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+import structlog
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.booking.context import PendingProposal, TurnContext
+from app.agents.booking.context import PendingProposal
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.orchestrator.agent import (
-    RECENT_TURNS,
     OrchestrateOutcome,
-    build_orchestrator,
     orchestrator_message,
     run_orchestrate,
 )
@@ -119,16 +118,6 @@ def _decide(label="approve", aside=None, reason="khach noi") -> dict:
 
 def _finish(stated=None) -> dict:
     return {"kind_hint": "answer", "service": None, "stated": stated or []}
-
-
-def _pending(**overrides) -> PendingProposal:
-    start = _tomorrow_at(15)
-    defaults = dict(
-        id="p1", kind="book", start_at=start, spoken=format_vi_datetime(start), note=None,
-        expires_at=now_utc() + timedelta(minutes=10), unclear_count=0, target=None,
-    )
-    defaults.update(overrides)
-    return PendingProposal(**defaults)
 
 
 def _shop_hours_result() -> TaskResult:
@@ -247,6 +236,13 @@ async def test_two_proposes_in_one_message_leave_one_proposal(test_db, clean_db,
     assert out.ended_by == "finish"
     assert out.proposals_created == 1
     assert len(fake.received) == 1
+    # (g): call index 1 (anh em có index NHỎ HƠN cũng là `propose_*`) bị
+    # chặn TRƯỚC khi tới luật (e) — `serialize_required`, không phải
+    # `one_proposal_per_turn`.
+    rejected = [c for c in out.calls if not c.allowed]
+    assert len(rejected) == 1
+    assert rejected[0].index == 1
+    assert rejected[0].reject_code == "serialize_required"
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +305,12 @@ async def test_limit_ends_after_eight_executed_rounds_not_counting_rejected_ones
 
 
 # ---------------------------------------------------------------------------
-# Lỗi model
+# Lỗi model — ruling review M3.4 vòng 1: "error" CHỈ khi ledger KHÔNG có call
+# nào được phép (chưa ghi gì); đã có call được phép (vd. `decide_pending`
+# approve đã ghi lịch) thì lỗi model ở vòng SAU phải là "limit", không phải
+# "error" — nếu không, `apply_decision`'s pending_outcome="kept" mặc định của
+# nhánh error (chưa áp dụng ở agent.py, nhưng ngữ nghĩa "error" dành cho A)
+# sẽ mâu thuẫn với lịch ĐÃ ghi mà khách không được báo (anti-goal §10).
 # ---------------------------------------------------------------------------
 
 
@@ -324,6 +325,37 @@ async def test_model_error_on_first_round_is_ended_by_error(test_db, clean_db, m
     assert out.ended_by == "error"
     assert out.calls == []
     assert out.finish is None and out.ask is None
+
+
+async def test_model_error_after_an_allowed_call_is_ended_by_limit_not_error(test_db, clean_db, monkeypatch):
+    """Vòng 1 `decide_pending(approve)` ghi lịch thật (được phép, vào ledger);
+    vòng 2 model ném lỗi → `ended_by` phải là "limit" (đã có tiến triển ghi
+    được), KHÔNG phải "error" — và `pending_outcome` vẫn đọc được "approved"
+    từ ledger, không bị bịa lại thành "kept"."""
+    user = await a_user(test_db)
+    start = _tomorrow_at(15)
+    proposal = await ProposalService(test_db).create(user, "book", start, None)
+    pending = PendingProposal(
+        id=str(proposal.id), kind="book", start_at=proposal.start_at,
+        spoken=format_vi_datetime(start), note=None, expires_at=proposal.expires_at,
+        unclear_count=0, target=None,
+    )
+    deps = await make_deps(test_db, user, ctx=make_ctx(pending=pending))
+    model = scripted(
+        [
+            tool_call("decide_pending", _decide(label="approve", reason="khach dong y")),
+            RuntimeError("model hong o vong 2"),
+        ],
+        tags=("orchestrate",),
+    )
+    patch_model(monkeypatch, model)
+
+    out = await run_orchestrate(deps, recent=[])
+
+    assert out.ended_by == "limit"
+    assert out.pending_outcome is not None and out.pending_outcome.outcome == "approved"
+    allowed = [c for c in out.calls if c.allowed]
+    assert len(allowed) == 1 and allowed[0].tool == "decide_pending"
 
 
 # ---------------------------------------------------------------------------
@@ -359,22 +391,29 @@ def test_orchestrator_message_has_at_most_two_recent_pairs_and_untrusted_questio
 
     assert isinstance(msg, HumanMessage)
     content = msg.content
-    assert RECENT_TURNS == 2
     # Chỉ 2 cặp GẦN NHẤT lọt vào — cặp xa nhất bị cắt.
     assert "cau hoi 1" not in content and "tra loi 1" not in content
     assert "cau hoi 2" in content and "tra loi 2" in content
     assert "cau hoi 3" in content and "tra loi 3" in content
-    # Câu khách lượt này luôn đứng SAU nhãn UNTRUSTED.
+    # Câu khách của các lượt TRƯỚC cũng phải gắn nhãn untrusted từng dòng
+    # (review M3.4 vòng 1, finding 3) — không phải bare "Customer: ...".
+    assert "Customer (untrusted): cau hoi 2" in content
+    assert "Customer (untrusted): cau hoi 3" in content
+    assert "Assistant: tra loi 3" in content
+    # Câu khách lượt NÀY luôn đứng SAU nhãn UNTRUSTED riêng (nhãn khác với
+    # nhãn từng dòng ở trên, nhưng cùng ý nghĩa: chữ khách không bao giờ
+    # đứng trước nhãn của nó).
     assert "Customer said (untrusted):\ncau hoi hien tai" in content
     assert content.index("Customer said (untrusted):") > content.index("tra loi 3")
 
 
 # ---------------------------------------------------------------------------
-# Timeout
+# Timeout — cùng ruling (e): không call nào được phép → "error"; đã có call
+# được phép (đề xuất đã tạo) → "limit", đúng như lỗi model.
 # ---------------------------------------------------------------------------
 
 
-async def test_orchestrate_timeout_is_ended_by_limit(test_db, clean_db, monkeypatch):
+async def test_timeout_before_any_allowed_call_is_ended_by_error(test_db, clean_db, monkeypatch):
     user = await a_user(test_db)
     deps = await make_deps(test_db, user)
     model = scripted([Hang(seconds=5)], tags=("orchestrate",))
@@ -383,8 +422,63 @@ async def test_orchestrate_timeout_is_ended_by_limit(test_db, clean_db, monkeypa
 
     out = await run_orchestrate(deps, recent=[])
 
-    assert out.ended_by == "limit"
+    assert out.ended_by == "error"
     assert out.calls == []
+
+
+async def test_timeout_after_an_allowed_call_is_ended_by_limit(test_db, clean_db, monkeypatch):
+    user = await a_user(test_db)
+    fake = FakeSpecialists({("appointment", "propose_book"): _propose_result()})
+    deps = await make_deps(test_db, user, run_appointment=fake.appointment)
+    model = scripted(
+        [
+            tool_call("appointment_task", _appt("propose_book", time=_time(day_offset=1, hour=9))),
+            Hang(seconds=5),
+        ],
+        tags=("orchestrate",),
+    )
+    patch_model(monkeypatch, model)
+    monkeypatch.setattr(settings, "orch_orchestrate_timeout_seconds", 0.1)
+
+    out = await run_orchestrate(deps, recent=[])
+
+    assert out.ended_by == "limit"
+    assert out.proposals_created == 1
+    allowed = [c for c in out.calls if c.allowed]
+    assert len(allowed) == 1 and allowed[0].tool == "appointment_task"
+
+
+async def test_orchestrate_failed_log_has_reason_and_ids(test_db, clean_db, monkeypatch):
+    """§11: một sự kiện DUY NHẤT `orchestrate_failed`, `reason` phân biệt
+    "timeout"/"model_error", `extra` mang đủ `user_id`/`turn_id`/`thread_id`."""
+    user = await a_user(test_db)
+    deps = await make_deps(test_db, user)
+    model = scripted([RuntimeError("model hong")], tags=("orchestrate",))
+    patch_model(monkeypatch, model)
+
+    with structlog.testing.capture_logs() as logs:
+        await run_orchestrate(deps, recent=[], thread_id="thread-abc")
+
+    failed = [e for e in logs if e["event"] == "orchestrate_failed"]
+    assert len(failed) == 1
+    extra = failed[0]["extra"]
+    assert extra["reason"] == "model_error"
+    assert extra["user_id"] == str(user.id)
+    assert extra["turn_id"] == deps.turn_id
+    assert extra["thread_id"] == "thread-abc"
+
+
+async def test_run_orchestrate_passes_thread_id_into_guard_logs(test_db, clean_db, monkeypatch):
+    user = await a_user(test_db)
+    deps = await make_deps(test_db, user)
+    model = scripted([tool_call("finish", _finish())], tags=("orchestrate",))
+    patch_model(monkeypatch, model)
+
+    with structlog.testing.capture_logs() as logs:
+        await run_orchestrate(deps, recent=[], thread_id="thread-xyz")
+
+    orch = [e for e in logs if e["event"] == "orch_call"]
+    assert orch and orch[0]["extra"]["thread_id"] == "thread-xyz"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ trên nhãn mà model gửi lên.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Sequence
 
@@ -174,24 +175,37 @@ async def _apply_unclear(
 
 async def apply_decision(deps: "OrchestratorDeps", label: DecideLabel) -> PendingOutcome:
     """§5.5 — nhãn ở đây đã qua `veto()` (`reject_code` đã bị chặn trước đó
-    trong `decide_pending`, chưa bao giờ tới hàm này)."""
+    trong `decide_pending`, chưa bao giờ tới hàm này).
+
+    Fix round 1, Minor: đoạn ghi (DB lịch nếu `approve`, rồi `turn_ledger`)
+    chạy trong `asyncio.shield` — `run_orchestrate` bọc cả lượt bằng
+    `asyncio.timeout`; nếu trần đó hết hạn ĐÚNG lúc `ProposalService.approve`
+    đang ghi, `await` của `apply_decision` bị huỷ nhưng KHÔNG được phép làm
+    mất phần ghi đang dở (anti-goal "lịch đã ghi mà khách không được báo" —
+    `turn_ledger` là nơi lượt SAU đọc `unannounced` để cứu lại). `shield`
+    biến phần `_execute()` thành một Task độc lập: lệnh huỷ ở `apply_decision`
+    chỉ cắt đứt chỗ nó đang CHỜ, Task bên trong vẫn chạy tới khi ghi xong cả
+    hai, dù không còn ai `await` nó nữa."""
     db, user, ctx = deps.db, deps.user, deps.ctx
     pending = ctx.pending
     if pending is None:
         raise DecideRejected("no_pending")
 
-    if label == "approve":
-        outcome = await _apply_approve(db, user, ctx, pending)
-    elif label == "reject":
-        await ProposalService(db).reject(user, pending.id)
-        outcome = _outcome("rejected", pending)
-    elif label == "change":
-        await ProposalService(db).supersede(user, pending.id)
-        outcome = _outcome("superseded", pending)
-    elif label == "unclear":
-        outcome = await _apply_unclear(db, user, pending)
-    else:  # "none"
-        outcome = _outcome("kept", pending, expires_at=pending.expires_at)
+    async def _execute() -> PendingOutcome:
+        if label == "approve":
+            outcome = await _apply_approve(db, user, ctx, pending)
+        elif label == "reject":
+            await ProposalService(db).reject(user, pending.id)
+            outcome = _outcome("rejected", pending)
+        elif label == "change":
+            await ProposalService(db).supersede(user, pending.id)
+            outcome = _outcome("superseded", pending)
+        elif label == "unclear":
+            outcome = await _apply_unclear(db, user, pending)
+        else:  # "none"
+            outcome = _outcome("kept", pending, expires_at=pending.expires_at)
 
-    await deps.ledger.set_pending_outcome(deps.turn_id, outcome)
-    return outcome
+        await deps.ledger.set_pending_outcome(deps.turn_id, outcome)
+        return outcome
+
+    return await asyncio.shield(_execute())
