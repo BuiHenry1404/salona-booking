@@ -14,11 +14,13 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from app.agents.booking.schemas import ProposalCreated, ResolvedTime
 from app.agents.booking.specialists.appointment import ALLOWLIST, run_task
 from app.agents.booking.prompts.appointment import APPOINTMENT_PROMPT
-from app.core.clock import TZ
+from app.core.clock import TZ, now_utc
 from app.core.vi_format import format_vi_datetime
+from app.models.conversation import QueuedRequest
 from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
+from app.services.conversation_state import ConversationStateService
 from tests.factories import make_ctx, make_spec
 from tests.fakes import scripted, tool_call
 
@@ -343,6 +345,46 @@ async def test_queued_requests_are_persisted_via_set_queued(test_db, monkeypatch
     assert len(state.queued) == 1
     assert state.queued[0].queue_id == "q1"
     assert state.queued[0].spoken == result.data.queued[0].spoken
+
+
+async def test_an_emptied_queue_from_the_tool_clears_previously_queued_requests(test_db, monkeypatch):
+    """`propose_appointment(queued=[])` là cách khách RÚT hết hàng chờ cũ (tài
+    liệu của tool) — `"queued": []` trong JSON tool phải xoá `state.queued`,
+    không được coi falsy như "không có gì để làm" (fix round 1)."""
+    user = await a_user(test_db)
+    now = now_utc()
+    await ConversationStateService(test_db).set_queued(str(user.id), [
+        QueuedRequest(queue_id="q1", start_at=tomorrow_at(17), spoken="5 gio chieu mai",
+                      note="lam toc", queued_at=now),
+    ])
+
+    when = tomorrow_at(15)
+    model = _EchoTool(
+        tool_name="propose_appointment",
+        tool_args={"start_at": when.isoformat(), "note": "lam mong", "queued": []},
+        build_output=lambda j: {
+            "status": "ok",
+            "data": {
+                "proposal_id": j["proposal_id"], "kind": "book",
+                "start_at": j["held"], "note": j.get("note"),
+                "replaces": None, "queued": [],
+            },
+            "missing": [], "error_code": None,
+        },
+    )
+    _patch_build_chat_model(monkeypatch, model)
+    spec = make_spec(agent="appointment", action="propose_book", task_id="t1.0")
+    ctx = make_ctx()
+
+    result = await run_task(test_db, user, spec, ctx, "dat mai 3h chieu, bo gio 5h chieu di")
+
+    assert result.status == "ok"
+    assert isinstance(result.data, ProposalCreated)
+    assert result.data.queued == []
+
+    state = await ConversationService(test_db).get_state(str(user.id))
+    assert state is not None
+    assert state.queued == []
 
 
 def test_appointment_prompt_is_english_and_mentions_anchor_precedence():

@@ -124,12 +124,11 @@ async def _persist_queued(db: AsyncIOMotorDatabase, user: User, queued_json: lis
             queued_at=now,
         ))
 
-    if requests:
-        try:
-            await ConversationStateService(db).set_queued(str(user.id), requests)
-        except PyMongoError as exc:
-            logger.warning("queued_persist_failed",
-                           extra={"user_id": str(user.id), "count": len(requests), "error": str(exc)})
+    try:
+        await ConversationStateService(db).set_queued(str(user.id), requests)
+    except PyMongoError as exc:
+        logger.warning("queued_persist_failed",
+                       extra={"user_id": str(user.id), "count": len(requests), "error": str(exc)})
     return moments
 
 
@@ -165,8 +164,13 @@ async def run_task(
         if ensure_aware(stored.start_at) != reported:
             return _schema_invalid(spec, attempts=result.attempts)
 
-        # (4) hàng chờ (nếu có) — ghi và trả lại từ JSON tool, không từ model.
-        if created.get("queued"):
+        # (4) hàng chờ — ghi và trả lại từ JSON tool, không từ model. Kiểm
+        # SỰ CÓ MẶT của khoá `queued`, không phải giá trị: `queued: []` là
+        # cách propose_appointment báo khách đã RÚT hết hàng chờ cũ — bỏ qua
+        # (coi falsy = "không đổi gì") sẽ để hàng chờ cũ nằm lại
+        # `conversations.state.queued` mãi mãi, vì `set_queued` không có nơi
+        # gọi nào khác xoá nó.
+        if "queued" in created:
             moments = await _persist_queued(db, user, created["queued"])
             result = result.model_copy(
                 update={"data": result.data.model_copy(update={"queued": moments})}
