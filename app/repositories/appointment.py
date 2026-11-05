@@ -25,9 +25,16 @@ class AppointmentRepository(BaseRepository[Appointment]):
         duration_minutes: int,
         note: Optional[str],
         created_via: CreatedVia,
+        *,
+        session=None,
     ) -> Appointment:
         """Ghi lịch mới. Chặn trùng do chính MongoDB làm qua unique partial index
-        trên slot_keys — nguyên tử, không cần transaction, không cần khóa."""
+        trên slot_keys — nguyên tử, không cần transaction, không cần khóa.
+
+        Trong transaction (`session`), DuplicateKeyError làm Mongo ABORT cả
+        transaction phía server: mọi lệnh sau đó trên session này lỗi
+        NoSuchTransaction (nhãn TransientTransactionError) — xem
+        `ProposalService.approve`."""
         try:
             return await self.create({
                 "user_id": user_id,
@@ -39,13 +46,14 @@ class AppointmentRepository(BaseRepository[Appointment]):
                 "note": note,
                 "status": "booked",
                 "created_via": created_via,
-            })
+            }, session=session)
         except DuplicateKeyError as exc:
             raise SlotTakenError() from exc
 
-    async def find_active_at(self, user_id: str, start_at: datetime) -> Optional[Appointment]:
+    async def find_active_at(self, user_id: str, start_at: datetime, *,
+                             session=None) -> Optional[Appointment]:
         doc = await self.collection.find_one(
-            {"user_id": user_id, "start_at": start_at, "status": "booked"}
+            {"user_id": user_id, "start_at": start_at, "status": "booked"}, session=session
         )
         return Appointment(**doc) if doc else None
 
@@ -57,7 +65,7 @@ class AppointmentRepository(BaseRepository[Appointment]):
         )
         return Appointment(**doc) if doc else None
 
-    async def cancel(self, appointment_id: str) -> bool:
+    async def cancel(self, appointment_id: str, *, session=None) -> bool:
         """Chỉ đổi status. Document tự rơi khỏi partial index nên slot được giải
         phóng ngay, còn slot_keys giữ nguyên để tra cứu lịch sử."""
         if not ObjectId.is_valid(appointment_id):
@@ -65,6 +73,7 @@ class AppointmentRepository(BaseRepository[Appointment]):
         result = await self.collection.update_one(
             {"_id": ObjectId(appointment_id), "status": "booked"},
             {"$set": {"status": "cancelled"}},
+            session=session,
         )
         return result.modified_count == 1
 

@@ -9,14 +9,13 @@ trên nhãn mà model gửi lên.
 """
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Awaitable, Callable, Sequence, TypeVar
 
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking.context import PendingProposal, TurnContext
+from app.agents.booking.context import PendingProposal
 from app.agents.booking.schemas import (
     AppointmentRefOut,
     Aside,
@@ -29,8 +28,8 @@ from app.agents.booking_graph.tools import WHOLE_DAY, nearest_slots
 from app.core.clock import to_local
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
-from app.services.appointment import AppointmentService
-from app.services.proposal import UNCLEAR_LIMIT, ProposalService
+from app.services.appointment import AppointmentService, send_notices
+from app.services.proposal import UNCLEAR_LIMIT, ApprovalFailed, ApprovalResult, ProposalService
 
 if TYPE_CHECKING:  # tránh vòng import thật: tools.py import module này
     from app.agents.booking.orchestrator.tools import OrchestratorDeps
@@ -129,18 +128,27 @@ async def _nearest_slots_around(db: AsyncIOMotorDatabase, pending: PendingPropos
     return [Moment(iso=s.isoformat(), spoken=format_vi_datetime(s)) for s in nearest]
 
 
-async def _apply_approve(
-    db: AsyncIOMotorDatabase, user: User, ctx: TurnContext, pending: PendingProposal
-) -> PendingOutcome:
-    result = await ProposalService(db).approve(user, pending.id, turn_at=ctx.asked_at)
+T = TypeVar("T")
 
+
+async def _in_transaction(db: AsyncIOMotorDatabase, write: Callable[..., Awaitable[T]]) -> T:
+    """Chạy `write(session)` trong MỘT transaction Mongo (replica set một
+    node, Task 3.6). `with_transaction` của Motor: lỗi thường -> abort rồi ném
+    lại; lỗi mang nhãn TransientTransactionError -> chạy lại CẢ callback (nên
+    `write` chỉ được gồm lệnh Mongo trong session — không báo tin, không đọc
+    ngoài DB); huỷ task (CancelledError) giữa callback -> context của
+    `start_transaction` abort. Không có `asyncio.shield`: huỷ lượt = không ghi gì."""
+    async with await db.client.start_session() as session:
+        return await session.with_transaction(write)
+
+
+def _approved_outcome(pending: PendingProposal, result: ApprovalResult) -> PendingOutcome:
+    if result.outcome == "failed":
+        # `approve` có session báo lỗi nghiệp vụ bằng `ApprovalFailed`, không
+        # trả "failed" — phòng vệ: đi đúng đường abort + transaction riêng.
+        raise ApprovalFailed(result)
     if result.outcome == "not_approvable":
         return _outcome("not_approvable", pending, reason=result.reason)
-
-    if result.outcome == "failed":
-        nearest = await _nearest_slots_around(db, pending)
-        return _outcome("failed", pending, error=result.error, nearest=nearest)
-
     appointment_ref = None
     if result.appointment is not None:
         appointment_ref = AppointmentRefOut(
@@ -155,17 +163,17 @@ async def _apply_approve(
 
 
 async def _apply_unclear(
-    db: AsyncIOMotorDatabase, user: User, pending: PendingProposal
+    db: AsyncIOMotorDatabase, user: User, pending: PendingProposal, session
 ) -> PendingOutcome:
     proposals = ProposalService(db)
-    proposal = await proposals.mark_unclear(user, pending.id)
+    proposal = await proposals.mark_unclear(user, pending.id, session=session)
     if proposal is None:
         # `mark_unclear` chỉ tăng được khi đề xuất CÒN pending — None nghĩa là
         # nó đã bị đóng ở đâu đó khác (nút bấm, lượt khác, hết hạn) ngay trước
         # khi `decide_pending` chạy tới đây. Tái dùng đúng quy ước `reason`
         # của `ProposalService._not_claimed` (chuỗi trạng thái thật, hoặc
         # "not_found"), không bịa "clarify" cho một đề xuất không còn đó.
-        current = await proposals.get(user, pending.id)
+        current = await proposals.get(user, pending.id, session=session)
         reason = current.status if current is not None else "not_found"
         return _outcome("not_approvable", pending, reason=reason)
     if proposal.unclear_count >= UNCLEAR_LIMIT:
@@ -177,35 +185,71 @@ async def apply_decision(deps: "OrchestratorDeps", label: DecideLabel) -> Pendin
     """§5.5 — nhãn ở đây đã qua `veto()` (`reject_code` đã bị chặn trước đó
     trong `decide_pending`, chưa bao giờ tới hàm này).
 
-    Fix round 1, Minor: đoạn ghi (DB lịch nếu `approve`, rồi `turn_ledger`)
-    chạy trong `asyncio.shield` — `run_orchestrate` bọc cả lượt bằng
-    `asyncio.timeout`; nếu trần đó hết hạn ĐÚNG lúc `ProposalService.approve`
-    đang ghi, `await` của `apply_decision` bị huỷ nhưng KHÔNG được phép làm
-    mất phần ghi đang dở (anti-goal "lịch đã ghi mà khách không được báo" —
-    `turn_ledger` là nơi lượt SAU đọc `unannounced` để cứu lại). `shield`
-    biến phần `_execute()` thành một Task độc lập: lệnh huỷ ở `apply_decision`
-    chỉ cắt đứt chỗ nó đang CHỜ, Task bên trong vẫn chạy tới khi ghi xong cả
-    hai, dù không còn ai `await` nó nữa."""
+    Task 3.6 (quyết định chủ dự án 05/11, thay `asyncio.shield` của Fix round
+    1): đổi đề xuất (kể cả ghi lịch của `approve`) và `pending_outcome` trong
+    `turn_ledger` là MỘT transaction Mongo — cả hai cùng có hoặc cùng không,
+    dù lượt bị huỷ (`asyncio.timeout` của `run_orchestrate`), server sập giữa
+    chừng, hay một lệnh ghi lỗi. Lỗi ghi ledger nổi lên caller, không nuốt.
+
+    Đường thất bại nghiệp vụ của `approve` (giờ vừa bị lấy -> DuplicateKeyError
+    đã làm Mongo abort transaction): `ApprovalFailed` thoát ra, transaction 1
+    abort (đề xuất về `pending`); `nearest` đọc NGOÀI transaction (không nằm
+    trong callback có thể chạy lại); rồi transaction 2 ghi `failed` + outcome.
+    Báo tin chủ tiệm (lịch mới/huỷ) chỉ gửi SAU commit."""
     db, user, ctx = deps.db, deps.user, deps.ctx
     pending = ctx.pending
     if pending is None:
         raise DecideRejected("no_pending")
 
-    async def _execute() -> PendingOutcome:
-        if label == "approve":
-            outcome = await _apply_approve(db, user, ctx, pending)
-        elif label == "reject":
-            await ProposalService(db).reject(user, pending.id)
-            outcome = _outcome("rejected", pending)
-        elif label == "change":
-            await ProposalService(db).supersede(user, pending.id)
-            outcome = _outcome("superseded", pending)
-        elif label == "unclear":
-            outcome = await _apply_unclear(db, user, pending)
-        else:  # "none"
-            outcome = _outcome("kept", pending, expires_at=pending.expires_at)
-
+    if label == "none":
+        # Không đụng đề xuất — một lệnh ghi ledger duy nhất, tự nó đã nguyên tử.
+        outcome = _outcome("kept", pending, expires_at=pending.expires_at)
         await deps.ledger.set_pending_outcome(deps.turn_id, outcome)
         return outcome
 
-    return await asyncio.shield(_execute())
+    notices: list = []
+
+    async def _write(session) -> PendingOutcome:
+        # Callback có thể chạy lại (TransientTransactionError): mỗi lần là một
+        # `ProposalService` mới, báo tin của lần bị abort bỏ đi.
+        notices.clear()
+        if label == "approve":
+            result = await ProposalService(db).approve(
+                user, pending.id, turn_at=ctx.asked_at, session=session
+            )
+            notices.extend(result.notices)
+            outcome = _approved_outcome(pending, result)
+        elif label == "reject":
+            await ProposalService(db).reject(user, pending.id, session=session)
+            outcome = _outcome("rejected", pending)
+        elif label == "change":
+            await ProposalService(db).supersede(user, pending.id, session=session)
+            outcome = _outcome("superseded", pending)
+        else:  # "unclear"
+            outcome = await _apply_unclear(db, user, pending, session)
+        await deps.ledger.set_pending_outcome(deps.turn_id, outcome, session=session)
+        return outcome
+
+    try:
+        outcome = await _in_transaction(db, _write)
+    except ApprovalFailed as exc:
+        return await _record_failure(deps, pending, exc.result)
+    await send_notices(notices)
+    return outcome
+
+
+async def _record_failure(
+    deps: "OrchestratorDeps", pending: PendingProposal, result: ApprovalResult
+) -> PendingOutcome:
+    """Transaction 2 của đường thất bại: transaction duyệt đã abort sạch."""
+    db, user = deps.db, deps.user
+    error = result.error or ""
+    nearest = await _nearest_slots_around(db, pending)
+    outcome = _outcome("failed", pending, error=result.error, nearest=nearest)
+
+    async def _write(session) -> PendingOutcome:
+        await ProposalService(db).mark_failed(user, pending.id, error, session=session)
+        await deps.ledger.set_pending_outcome(deps.turn_id, outcome, session=session)
+        return outcome
+
+    return await _in_transaction(db, _write)

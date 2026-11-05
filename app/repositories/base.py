@@ -16,24 +16,24 @@ class BaseRepository(Generic[T]):
         self.collection: AsyncIOMotorCollection = db[collection_name]
         self.model_class = model_class
     
-    async def create(self, data: Dict) -> T:
-        """Create a new document."""
+    async def create(self, data: Dict, *, session=None) -> T:
+        """Create a new document. `session`: chạy trong transaction của caller."""
         now = now_utc()
         data.update({
             "created_at": now,
             "updated_at": now
         })
         
-        result = await self.collection.insert_one(data)
+        result = await self.collection.insert_one(data, session=session)
         data["_id"] = result.inserted_id
         return self.model_class(**data)
     
-    async def get_by_id(self, doc_id: str) -> Optional[T]:
+    async def get_by_id(self, doc_id: str, *, session=None) -> Optional[T]:
         """Get document by ID."""
         if not ObjectId.is_valid(doc_id):
             return None
             
-        doc = await self.collection.find_one({"_id": ObjectId(doc_id)})
+        doc = await self.collection.find_one({"_id": ObjectId(doc_id)}, session=session)
         if doc:
             return self.model_class(**doc)
         return None

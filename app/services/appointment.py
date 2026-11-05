@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -24,6 +24,17 @@ class AppointmentService:
         self.repo = AppointmentRepository(db)
         self.shop = ShopService(db)
         self.rate_limit = RateLimitService(db)
+        # Báo tin của các lệnh ghi chạy TRONG transaction (`session`): chưa
+        # commit thì chưa được báo chủ tiệm — transaction có thể abort (lịch
+        # biến mất) hoặc chạy lại callback (báo hai lần). Caller gửi sau commit
+        # bằng `send_notices` (Task 3.6). Không có session thì báo ngay như cũ.
+        self.deferred_notices: List[Tuple[str, Appointment]] = []
+
+    async def _notify(self, method: str, appointment: Appointment, session) -> None:
+        if session is None:
+            await getattr(notifications, method)(appointment)
+        else:
+            self.deferred_notices.append((method, appointment))
 
     async def create(
         self,
@@ -31,23 +42,29 @@ class AppointmentService:
         start_at: datetime,
         note: Optional[str],
         created_via: CreatedVia = "chat",
+        *,
+        session=None,
     ) -> Appointment:
+        """`session`: mọi đọc/ghi Mongo đi trong transaction của caller (chỉ
+        `ProposalService.approve` dùng); None = hành vi cũ (REST, Telegram)."""
         start = quantize(start_at)
         duration = settings.booking_slot_minutes
+        # Giờ mở cửa đọc ngoài session (qua cache) — cấu hình, không phải dữ
+        # liệu transaction cần cô lập.
         await self._validate_time(start, duration)
 
         user_id = str(user.id)
 
         # Idempotency: AI gọi tool hai lần cho cùng một yêu cầu thì lần thứ hai
         # trả về chính lịch đã tạo, thay vì báo trùng cho chính khách vừa đặt.
-        existing = await self.repo.find_active_at(user_id, start)
+        existing = await self.repo.find_active_at(user_id, start, session=session)
         if existing:
             return existing
 
         # Hạn mức đặt SAU nhánh idempotency: lượt gọi lặp lại trả về lịch cũ
         # thì không được tính là một lần đặt mới.
         await self.rate_limit.check_and_hit(
-            f"booking:user:{user_id}", settings.booking_max_per_hour, 3600
+            f"booking:user:{user_id}", settings.booking_max_per_hour, 3600, session=session
         )
 
         try:
@@ -59,16 +76,21 @@ class AppointmentService:
                 duration_minutes=duration,
                 note=note,
                 created_via=created_via,
+                session=session,
             )
         except SlotTakenError:
             # Index đã chặn xong, việc còn lại chỉ là nói cho đúng người. Lịch
             # 60 phút lúc 9:00 của chính khách làm 9:15 bị trùng: bảo "đã có
             # người đặt" thì khách tưởng người lạ giành mất giờ của mình.
+            # CỐ Ý không truyền `session`: DuplicateKeyError đã làm Mongo abort
+            # transaction, đọc trong session đó lỗi NoSuchTransaction (nhãn
+            # TransientTransactionError -> `with_transaction` chạy lại mãi).
+            # Lịch chiếm chỗ là dữ liệu ĐÃ commit nên đọc ngoài session thấy.
             clash = await self.repo.find_conflicting(slot_keys_for(start, duration))
             if clash and clash.user_id == user_id:
                 raise SlotTakenError("Giờ này trùng với lịch bạn đã đặt rồi")
             raise
-        await notifications.appointment_created(appointment)
+        await self._notify("appointment_created", appointment, session)
         return appointment
 
     async def _validate_time(self, start: datetime, duration: int) -> None:
@@ -77,9 +99,9 @@ class AppointmentService:
         if not fits_before_closing(await self.shop.get_hours(), start, duration):
             raise OutsideShopHoursError()
 
-    async def own_booked(self, user: User, appointment_id: str) -> Appointment:
+    async def own_booked(self, user: User, appointment_id: str, *, session=None) -> Appointment:
         """Lịch còn hiệu lực của chính khách (admin thì của ai cũng được)."""
-        appt = await self.repo.get_by_id(appointment_id)
+        appt = await self.repo.get_by_id(appointment_id, session=session)
         if not appt or appt.status != "booked":
             raise NotFoundError("Không tìm thấy lịch này")
         if appt.user_id != str(user.id) and user.role != "admin":
@@ -93,8 +115,13 @@ class AppointmentService:
         new_start_at: datetime,
         note: Optional[str],
         created_via: CreatedVia = "chat",
+        *,
+        session=None,
     ) -> Appointment:
         """Dời một lịch sang giờ khác. Kết quả LUÔN là đúng một lịch.
+
+        `session`: như `create` — trong transaction thì hai bước đặt/huỷ cùng
+        commit hoặc cùng mất.
 
         Trước đây không có luồng này: "chuyển giùm anh qua 10 giờ" thành
         `create` ở 10 giờ, lịch 9 giờ vẫn nằm đó — hai lịch, bot vẫn "Xong rồi
@@ -111,7 +138,7 @@ class AppointmentService:
         TRƯỚC khi nhả — sau đó chỉ còn race thuần, và không ai khác giữ được
         các mốc đó vì chúng vừa mới thuộc về chính khách.
         """
-        old = await self.own_booked(user, appointment_id)
+        old = await self.own_booked(user, appointment_id, session=session)
         start = quantize(new_start_at)
         if start == old.start_at:
             return old
@@ -122,19 +149,20 @@ class AppointmentService:
         if overlaps_itself:
             await self._validate_time(start, duration)
             await self.rate_limit.check(
-                f"booking:user:{old.user_id}", settings.booking_max_per_hour, 3600
+                f"booking:user:{old.user_id}", settings.booking_max_per_hour, 3600,
+                session=session,
             )
-            await self.repo.cancel(appointment_id)
-            appointment = await self.create(user, start, note, created_via)
+            await self.repo.cancel(appointment_id, session=session)
+            appointment = await self.create(user, start, note, created_via, session=session)
         else:
-            appointment = await self.create(user, start, note, created_via)
-            await self.repo.cancel(appointment_id)
+            appointment = await self.create(user, start, note, created_via, session=session)
+            await self.repo.cancel(appointment_id, session=session)
 
-        await notifications.appointment_cancelled(old)
+        await self._notify("appointment_cancelled", old, session)
         return appointment
 
-    async def cancel(self, user: User, appointment_id: str) -> None:
-        appt = await self.repo.get_by_id(appointment_id)
+    async def cancel(self, user: User, appointment_id: str, *, session=None) -> None:
+        appt = await self.repo.get_by_id(appointment_id, session=session)
         if not appt or appt.status != "booked":
             raise NotFoundError("Không tìm thấy lịch này")
         if appt.user_id != str(user.id) and user.role != "admin":
@@ -143,9 +171,9 @@ class AppointmentService:
         # repo.cancel lọc status="booked" ngay trong câu update, nên nếu lịch bị
         # hủy xen vào giữa get_by_id và update_one thì không có gì đổi. Bỏ qua
         # giá trị trả về là báo "đã hủy" cho một thao tác chưa hủy được gì.
-        if not await self.repo.cancel(appointment_id):
+        if not await self.repo.cancel(appointment_id, session=session):
             raise NotFoundError("Không tìm thấy lịch này")
-        await notifications.appointment_cancelled(appt)
+        await self._notify("appointment_cancelled", appt, session)
 
     async def upcoming_for(self, user: User) -> List[Appointment]:
         return await self.repo.upcoming_for_user(str(user.id), now=now_utc())
@@ -200,3 +228,10 @@ class AppointmentService:
         return any(
             candidate + timedelta(minutes=SLOT_MINUTES * i) in taken for i in range(steps)
         )
+
+
+async def send_notices(notices: Sequence[Tuple[str, Appointment]]) -> None:
+    """Gửi các báo tin đã hoãn (`AppointmentService.deferred_notices`) — gọi
+    SAU khi transaction đã commit, đúng một lần."""
+    for method, appointment in notices:
+        await getattr(notifications, method)(appointment)

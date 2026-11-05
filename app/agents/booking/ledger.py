@@ -161,10 +161,15 @@ class TurnLedger:
         )
         _warn_if_missing(result, turn_id, "append_call")
 
-    async def set_pending_outcome(self, turn_id: str, outcome: PendingOutcome) -> None:
+    async def set_pending_outcome(
+        self, turn_id: str, outcome: PendingOutcome, *, session=None
+    ) -> None:
+        """`session`: `decide.apply_decision` ghi outcome CHUNG transaction với
+        lệnh ghi lịch/đề xuất (Task 3.6) — cả hai cùng có hoặc cùng không."""
         result = await self._collection.update_one(
             {"turn_id": turn_id},
             {"$set": {"pending_outcome": outcome.model_dump(mode="json")}},
+            session=session,
         )
         _warn_if_missing(result, turn_id, "set_pending_outcome")
 

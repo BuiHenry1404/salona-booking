@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-import app.agents.booking.orchestrator.decide as decide_module
 from app.agents.booking.context import PendingProposal, TurnContext
+from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.orchestrator.decide import DecideRejected, apply_decision, veto
 from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
 from app.core.clock import TZ, now_utc, to_local
@@ -140,7 +140,7 @@ class FakeLedger:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
-    async def set_pending_outcome(self, turn_id: str, outcome) -> None:
+    async def set_pending_outcome(self, turn_id: str, outcome, *, session=None) -> None:
         self.calls.append((turn_id, outcome))
 
 
@@ -203,42 +203,255 @@ async def test_approve_writes_the_appointment_and_the_ledger(test_db, clean_db):
     assert ledger.calls and ledger.calls[0][1] is outcome
 
 
-async def test_approve_survives_cancellation_right_after_it_starts(test_db, clean_db, monkeypatch):
-    """Fix round 1, Minor: huỷ TASK NGOÀI (như `asyncio.timeout` cắt lượt ở
-    `run_orchestrate`) ngay SAU khi ghi lịch bắt đầu không được làm mất đề
-    xuất đã ghi mà `turn_ledger` không bao giờ nghe — anti-goal "lịch đã ghi
-    mà khách không được báo". `apply_decision` bọc đoạn ghi lịch + ghi ledger
-    bằng `asyncio.shield` nên phần đó chạy tới nơi tới chốn dù awaiter của nó
-    (ở đây là `task`) bị huỷ giữa chừng."""
+# ---------------------------------------------------------------------------
+# Task 3.6: ghi lịch + `pending_outcome` là MỘT transaction Mongo thật
+# (replica set một node). Dùng `TurnLedger` thật để kiểm cả hai phía cùng
+# có hoặc cùng không trên DB.
+# ---------------------------------------------------------------------------
+
+
+class _Hold:
+    """Chặn một coroutine tại chỗ cho tới khi task bị huỷ — test chờ bằng
+    điều kiện `reached`, không bằng `sleep` cố định."""
+
+    def __init__(self) -> None:
+        self.reached = asyncio.Event()
+        self._never = asyncio.Event()
+
+    async def here(self) -> None:
+        self.reached.set()
+        await self._never.wait()
+
+
+class _SpyChannel:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def appointment_created(self, appointment) -> None:
+        self.sent.append(("created", str(appointment.id)))
+
+    async def appointment_cancelled(self, appointment) -> None:
+        self.sent.append(("cancelled", str(appointment.id)))
+
+    async def shop_status_changed(self, status) -> None:
+        pass
+
+
+@pytest.fixture
+def spy_channel():
+    from app.services.notifications import notifications
+
+    saved = list(notifications.channels)
+    spy = _SpyChannel()
+    notifications.register(spy)
+    try:
+        yield spy
+    finally:
+        notifications.channels = saved
+
+
+async def _real_ledger_deps(db, user, proposal, ledger_cls=TurnLedger):
+    ctx = _ctx_with_pending(user, proposal)
+    ledger = ledger_cls(db)
+    await ledger.start(turn_id="turn-1", user_id=str(user.id), route="orchestrate",
+                       rule="", asked_at=ctx.asked_at)
+    return _deps(db, user, ctx, ledger), ledger
+
+
+async def _snapshot(db, user, proposal, ledger) -> dict:
+    """Ba phía phải đi cùng nhau: lịch, trạng thái đề xuất, outcome ledger
+    (+ dấu hạn mức đặt lịch, cũng ghi trong đường approve)."""
+    stored = await db["proposals"].find_one({"_id": proposal.id})
+    record = await ledger.record_of("turn-1")
+    return {
+        "appointments": await db["appointments"].count_documents({"user_id": str(user.id)}),
+        "proposal": stored["status"],
+        "outcome": (record["pending_outcome"] or {}).get("outcome"),
+        "booking_hits": await db["rate_limits"].count_documents(
+            {"key": f"booking:user:{user.id}"}),
+    }
+
+
+NOTHING_WRITTEN = {"appointments": 0, "proposal": "pending", "outcome": None, "booking_hits": 0}
+
+
+async def test_approve_commits_appointment_proposal_and_outcome_together(test_db, spy_channel):
     user = await a_user(test_db)
     proposal = await _make_pending_proposal(test_db, user)
-    ctx = _ctx_with_pending(user, proposal)
-    ledger = FakeLedger()
-    deps = _deps(test_db, user, ctx, ledger)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal)
 
-    started = asyncio.Event()
-    original_apply_approve = decide_module._apply_approve
+    outcome = await apply_decision(deps, "approve")
 
-    async def slow_apply_approve(db, user, ctx, pending):
-        started.set()
-        await asyncio.sleep(0.05)
-        return await original_apply_approve(db, user, ctx, pending)
+    assert outcome.outcome == "approved"
+    assert await _snapshot(test_db, user, proposal, ledger) == {
+        "appointments": 1, "proposal": "approved", "outcome": "approved", "booking_hits": 1}
+    assert spy_channel.sent == [("created", outcome.appointment.id)]
 
-    monkeypatch.setattr(decide_module, "_apply_approve", slow_apply_approve)
+
+class _LedgerDown(TurnLedger):
+    """Ghi THẬT (trong session) rồi mới lỗi — để chắc rollback xoá cả lệnh
+    ghi ledger lẫn lịch, không chỉ là ledger chưa kịp ghi."""
+
+    async def set_pending_outcome(self, turn_id, outcome, *, session=None) -> None:
+        await super().set_pending_outcome(turn_id, outcome, session=session)
+        raise RuntimeError("ledger down")
+
+
+async def test_ledger_failure_rolls_back_the_appointment(test_db, spy_channel):
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal, _LedgerDown)
+
+    with pytest.raises(RuntimeError, match="ledger down"):
+        await apply_decision(deps, "approve")
+
+    assert await _snapshot(test_db, user, proposal, ledger) == NOTHING_WRITTEN
+    assert spy_channel.sent == [], "không báo chủ tiệm một lịch đã rollback"
+
+
+@pytest.mark.parametrize("cut_at", ["after_claim", "after_ledger_write"])
+async def test_cancelling_the_turn_mid_write_leaves_nothing_half_done(
+    test_db, spy_channel, monkeypatch, cut_at
+):
+    """`run_orchestrate` cắt lượt bằng `asyncio.timeout` = huỷ task đang chạy
+    `apply_decision`. Huỷ trước commit -> transaction abort -> không còn gì."""
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    hold = _Hold()
+
+    class _LedgerHangs(TurnLedger):
+        async def set_pending_outcome(self, turn_id, outcome, *, session=None) -> None:
+            await super().set_pending_outcome(turn_id, outcome, session=session)
+            await hold.here()
+
+    if cut_at == "after_claim":
+        # `_validate_time` đọc giờ mở cửa ngay sau khi claim pending -> approving.
+        from app.services.shop import ShopService
+
+        async def hours_hang(self):
+            await hold.here()
+
+        monkeypatch.setattr(ShopService, "get_hours", hours_hang)
+        deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+    else:
+        deps, ledger = await _real_ledger_deps(test_db, user, proposal, _LedgerHangs)
 
     task = asyncio.create_task(apply_decision(deps, "approve"))
-    await started.wait()
+    await hold.reached.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # Nhường event loop để coroutine được `shield` (chạy nền, không bị huỷ
-    # theo `task`) kịp ghi xong lịch + ledger.
-    await asyncio.sleep(0.1)
+    assert await _snapshot(test_db, user, proposal, ledger) == NOTHING_WRITTEN
+    assert spy_channel.sent == []
 
-    assert ledger.calls and ledger.calls[0][1].outcome == "approved"
-    appts = await AppointmentService(test_db).upcoming_for(user)
-    assert appts, "lich van phai duoc ghi du luot goi no bi huy"
+
+async def test_transient_retry_writes_exactly_once(test_db, spy_channel):
+    """`with_transaction` chạy lại callback khi gặp TransientTransactionError —
+    lần chạy lại không được tạo lịch thứ hai, ghi thêm dấu hạn mức, hay báo
+    chủ tiệm hai lần."""
+    from pymongo.errors import OperationFailure
+
+    attempts: list[int] = []
+
+    class _LedgerFlaky(TurnLedger):
+        async def set_pending_outcome(self, turn_id, outcome, *, session=None) -> None:
+            await super().set_pending_outcome(turn_id, outcome, session=session)
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OperationFailure("simulated write conflict", code=112,
+                                       details={"errorLabels": ["TransientTransactionError"]})
+
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal, _LedgerFlaky)
+
+    outcome = await apply_decision(deps, "approve")
+
+    assert len(attempts) == 2
+    assert outcome.outcome == "approved"
+    assert await _snapshot(test_db, user, proposal, ledger) == {
+        "appointments": 1, "proposal": "approved", "outcome": "approved", "booking_hits": 1}
+    assert spy_channel.sent == [("created", outcome.appointment.id)]
+
+
+async def test_taken_slot_records_failed_status_and_outcome(test_db, spy_channel):
+    """DuplicateKeyError trong transaction làm Mongo abort cả transaction —
+    trạng thái `failed` + outcome `failed` phải vẫn được ghi (transaction
+    riêng), đúng như kết quả quan sát được của Task 3.2."""
+    user = await a_user(test_db)
+    other = await a_user(test_db, name="Co Hoa")
+    start = _tomorrow_at(15)
+    await AppointmentService(test_db).create(other, start, None)
+    spy_channel.sent.clear()
+    proposal = await _make_pending_proposal(test_db, user, start_at=start)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+
+    outcome = await apply_decision(deps, "approve")
+
+    assert outcome.outcome == "failed"
+    assert outcome.error
+    assert 1 <= len(outcome.nearest) <= 3
+    assert all(m.iso != start.isoformat() for m in outcome.nearest)
+    stored = await test_db["proposals"].find_one({"_id": proposal.id})
+    assert stored["error"] == outcome.error
+    snap = await _snapshot(test_db, user, proposal, ledger)
+    assert (snap["appointments"], snap["proposal"], snap["outcome"]) == (0, "failed", "failed")
+    assert spy_channel.sent == []
+
+
+async def test_failed_status_rolls_back_with_its_ledger_write(test_db, spy_channel):
+    user = await a_user(test_db)
+    other = await a_user(test_db, name="Co Hoa")
+    start = _tomorrow_at(15)
+    await AppointmentService(test_db).create(other, start, None)
+    proposal = await _make_pending_proposal(test_db, user, start_at=start)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal, _LedgerDown)
+
+    with pytest.raises(RuntimeError, match="ledger down"):
+        await apply_decision(deps, "approve")
+
+    snap = await _snapshot(test_db, user, proposal, ledger)
+    assert (snap["appointments"], snap["proposal"], snap["outcome"]) == (0, "pending", None)
+
+
+async def test_expired_records_status_and_not_approvable_together(test_db):
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    await test_db["proposals"].update_one(
+        {"_id": proposal.id}, {"$set": {"expires_at": now_utc() - timedelta(minutes=1)}})
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+
+    outcome = await apply_decision(deps, "approve")
+
+    assert (outcome.outcome, outcome.reason) == ("not_approvable", "expired")
+    snap = await _snapshot(test_db, user, proposal, ledger)
+    assert (snap["appointments"], snap["proposal"], snap["outcome"]) == (0, "expired", "not_approvable")
+
+
+@pytest.mark.parametrize("label, status, recorded", [
+    ("reject", "rejected", "rejected"),
+    ("change", "superseded", "superseded"),
+    ("unclear", "pending", "clarify"),
+])
+async def test_other_labels_roll_back_with_a_failed_ledger_write(test_db, label, status, recorded):
+    """Đóng đề xuất (reject/change/unclear) cũng đi chung transaction với
+    ledger: ledger lỗi -> đề xuất giữ nguyên `pending`, `unclear_count` không tăng."""
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal, _LedgerDown)
+
+    with pytest.raises(RuntimeError, match="ledger down"):
+        await apply_decision(deps, label)
+
+    stored = await test_db["proposals"].find_one({"_id": proposal.id})
+    assert (stored["status"], stored["unclear_count"]) == ("pending", 0)
+
+    deps_ok, ledger_ok = await _real_ledger_deps(test_db, user, proposal)
+    await apply_decision(deps_ok, label)
+    stored = await test_db["proposals"].find_one({"_id": proposal.id})
+    record = await ledger_ok.record_of("turn-1")
+    assert (stored["status"], record["pending_outcome"]["outcome"]) == (status, recorded)
 
 
 async def test_approve_on_a_taken_slot_is_failed_with_nearest(test_db, clean_db):
@@ -330,7 +543,7 @@ async def test_ledger_has_the_outcome_before_apply_returns(test_db, clean_db):
     order: list[str] = []
 
     class OrderingLedger:
-        async def set_pending_outcome(self, turn_id, outcome):
+        async def set_pending_outcome(self, turn_id, outcome, *, session=None):
             order.append("ledger")
 
     deps = _deps(test_db, user, ctx, OrderingLedger())
@@ -380,3 +593,27 @@ async def test_decide_pending_rejects_before_veto_when_nothing_is_pending():
             {"label": "approve", "aside": None, "reason": "khách nói ừ"}
         )
     assert exc_info.value.reject_code == "no_pending"
+
+
+@pytest.mark.parametrize("new_minute", [15, 0])
+async def test_move_in_one_transaction_cancels_old_and_books_new(test_db, spy_channel, new_minute):
+    """Dời lịch trong transaction: huỷ cũ + đặt mới cùng commit. `15` = giờ mới
+    chồng lên chính lịch cũ (nhả cũ trước — index partial phải thấy lệnh huỷ
+    chưa commit của CHÍNH transaction); `0` (17:00) = không chồng."""
+    user = await a_user(test_db)
+    old = await AppointmentService(test_db).create(user, _tomorrow_at(15), "sơn gel")
+    spy_channel.sent.clear()
+    new_start = _tomorrow_at(15, new_minute) if new_minute else _tomorrow_at(17)
+    proposal = await ProposalService(test_db).create(user, "move", new_start, None, target=old)
+    deps, ledger = await _real_ledger_deps(test_db, user, proposal)
+
+    outcome = await apply_decision(deps, "approve")
+
+    assert outcome.outcome == "approved"
+    booked = await test_db["appointments"].find(
+        {"user_id": str(user.id), "status": "booked"}).to_list(None)
+    assert [b["start_at"] for b in booked] == [new_start]
+    assert sorted(spy_channel.sent) == sorted(
+        [("created", outcome.appointment.id), ("cancelled", str(old.id))])
+    record = await ledger.record_of("turn-1")
+    assert record["pending_outcome"]["outcome"] == "approved"

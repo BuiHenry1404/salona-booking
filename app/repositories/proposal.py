@@ -16,7 +16,8 @@ def _oid(proposal_id: str) -> Optional[ObjectId]:
 
 class ProposalRepository(BaseRepository[Proposal]):
     """Mọi lệnh đổi trạng thái đều có ĐIỀU KIỆN trạng thái cũ trong câu lọc —
-    nguyên tử trên một document, không cần transaction (mongo standalone)."""
+    nguyên tử trên một document. `session` (tuỳ chọn): chạy trong transaction
+    của caller (`decide.apply_decision`, Task 3.6); None = như cũ."""
 
     def __init__(self, db: AsyncIOMotorDatabase):
         super().__init__(db, Proposal, "proposals")
@@ -41,15 +42,16 @@ class ProposalRepository(BaseRepository[Proposal]):
                                              sort=[("created_at", -1)])
         return Proposal(**doc) if doc else None
 
-    async def get_owned(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
+    async def get_owned(self, user_id: str, proposal_id: str, *,
+                        session=None) -> Optional[Proposal]:
         oid = _oid(proposal_id)
         if oid is None:
             return None
-        doc = await self.collection.find_one({"_id": oid, "user_id": user_id})
+        doc = await self.collection.find_one({"_id": oid, "user_id": user_id}, session=session)
         return Proposal(**doc) if doc else None
 
     async def claim(self, user_id: str, proposal_id: str, *, now: datetime,
-                    turn_at: datetime) -> Optional[Proposal]:
+                    turn_at: datetime, session=None) -> Optional[Proposal]:
         """pending → approving, chỉ khi: đúng chủ, còn hạn, và tạo TRƯỚC lượt duyệt.
         Hai lần duyệt chạy chồng thì đúng một lần claim được."""
         oid = _oid(proposal_id)
@@ -60,12 +62,13 @@ class ProposalRepository(BaseRepository[Proposal]):
              "expires_at": {"$gt": now}, "created_at": {"$lt": turn_at}},
             {"$set": {"status": "approving", "approving_at": now}},
             return_document=ReturnDocument.AFTER,
+            session=session,
         )
         return Proposal(**doc) if doc else None
 
     async def transition(self, proposal_id, from_status: str, to_status: str,
                          extra: Optional[Dict[str, Any]] = None,
-                         match: Optional[Dict[str, Any]] = None) -> bool:
+                         match: Optional[Dict[str, Any]] = None, *, session=None) -> bool:
         oid = proposal_id if isinstance(proposal_id, ObjectId) else _oid(proposal_id)
         if oid is None:
             return False
@@ -74,6 +77,7 @@ class ProposalRepository(BaseRepository[Proposal]):
             # `updated_at` = lúc đổi trạng thái: khối bối cảnh dùng nó để biết
             # khách KHÔNG chốt từ khi nào (dòng "[declined: …]", lỗi live 3/6).
             {"$set": {"status": to_status, "updated_at": now_utc(), **(extra or {})}},
+            session=session,
         )
         return result.modified_count == 1
 
@@ -96,7 +100,8 @@ class ProposalRepository(BaseRepository[Proposal]):
         })
         return [Proposal(**doc) async for doc in cursor]
 
-    async def increment_unclear(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
+    async def increment_unclear(self, user_id: str, proposal_id: str, *,
+                                session=None) -> Optional[Proposal]:
         oid = _oid(proposal_id)
         if oid is None:
             return None
@@ -104,5 +109,6 @@ class ProposalRepository(BaseRepository[Proposal]):
             {"_id": oid, "user_id": user_id, "status": "pending"},
             {"$inc": {"unclear_count": 1}},
             return_document=ReturnDocument.AFTER,
+            session=session,
         )
         return Proposal(**doc) if doc else None

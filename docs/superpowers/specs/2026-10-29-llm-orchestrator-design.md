@@ -72,8 +72,18 @@ Kiến trúc mới nhắm vào B và C: tách hiểu/điều phối (Orchestrato
 | `AGENTS.md` | mô tả `complete.proposal` mới (§6) | giao thức giữ tên, đổi định nghĩa |
 | `scripts/probe_supervisor.py`, `scripts/probe_repeats.py` | **xoá** | thuộc kiến trúc cũ |
 | `scripts/test_live_10_turns.py` | sửa import | chủ dự án giữ script dev |
+| `docker-compose.yml` | `mongo` chạy `--replSet rs0`, healthcheck tự `rs.initiate` (thành viên `mongo:27017`); `app`/`mongo-express` chờ `service_healthy` | Task 3.6 — transaction cần replica set |
+| `.env.example`, `.env`, `.env.docker`, `tests/conftest.py` | `MONGO_URI`/`TEST_MONGO_URI` thêm `?directConnection=true` (chỉ query string) | máy host không phân giải `mongo` |
+| `app/services/proposal.py` | `approve`/`reject`/`supersede`/`mark_unclear`/`get` nhận `session=None`; `approve` có session thì không shield, ném `ApprovalFailed` khi lỗi nghiệp vụ lúc ghi; thêm `mark_failed` | Task 3.6 |
+| `app/services/appointment.py`, `app/services/rate_limit.py`, `app/repositories/{base,appointment,proposal}.py` | tham số tuỳ chọn `session=None` cho các lệnh đọc/ghi trong đường approve; có session thì báo tin chủ tiệm hoãn tới sau commit (`send_notices`) | Task 3.6 |
+| `RUNBOOK.md` | đoạn replica set một node + chuỗi kết nối | Task 3.6 |
 
-Không chạm: REST, Socket.IO handler, frontend, `ProposalService`, `AppointmentService`, `ShopService`.
+Không chạm: REST, Socket.IO handler, frontend, `ShopService`. **Quyết định chủ
+dự án 05/11 (Task 3.6): transaction thật** — `ProposalService`/`AppointmentService`
+(và repository/rate limit chúng gọi) được nới đúng như các dòng trên: chỉ thêm
+`session=None`; không session thì hành vi cũ giữ nguyên cho REST/Telegram/nút
+bấm cũ. `decide.apply_decision` chạy đổi đề xuất + `pending_outcome` trong
+`with_transaction` (bỏ `asyncio.shield`).
 
 ---
 
