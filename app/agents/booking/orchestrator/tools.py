@@ -8,6 +8,13 @@ giao cho `decide.apply_decision` (Task 3.2 lấp đầy — chữ ký đã cố 
 §5.6) — không tool nào ở đây chạm `ProposalService`/`AppointmentService`
 trực tiếp (`tests/test_write_fence.py`).
 
+`turn_ledger.calls` chỉ có MỘT người ghi: `OrchestratorGuard.awrap_tool_call`
+(Task 3.3) — nó `await handler(...)` rồi `append_call` một `CallRecord` với
+`round`/`index` thật trước khi trả `ToolMessage` cho model, đúng §5.3/C1
+("ghi ngay trong vòng, trước khi trả"). Không tool nào ở đây tự gọi
+`append_call` — làm vậy sẽ ghi trùng mỗi đề xuất (một dòng của tool, một
+dòng của guard), và `previous_turns` (Task 1.3) sẽ đọc thấy hai lần.
+
 Tham số thứ hai của `appointment_task`/`shop_info_task` PHẢI tên "args" theo
 §5.1 (prompt sẽ gọi đúng tên này) — `@tool` suy luận chữ ký từ signature
 Python coi tham số tên "args" như `*args` (va chạm với
@@ -32,9 +39,7 @@ from app.agents.booking.orchestrator.decide import apply_decision
 from app.agents.booking.schemas import (
     AppointmentAction,
     Aside,
-    CallRecord,
     DecideLabel,
-    ProposalCreated,
     QuestionField,
     ShopAction,
     ShopArgs,
@@ -44,7 +49,6 @@ from app.agents.booking.schemas import (
 )
 from app.agents.booking.specialists.appointment import run_task as _appointment_run_task
 from app.agents.booking.specialists.shop_info import run_task as _shop_info_run_task
-from app.core.clock import now_utc
 from app.models.user import User
 
 RunTask = Callable[[TaskSpec, TurnContext, str], Awaitable[TaskResult]]
@@ -120,16 +124,20 @@ This tool never reads or changes the customer's own appointments — use
 DECIDE_PENDING_DESCRIPTION = """Resolve the one pending proposal for this turn, if any.
 
 Call this FIRST, before any other tool, whenever a proposal is pending for
-this customer — the pending proposal must be decided before anything else
-can move forward (a new `appointment_task` call while one is pending gets
-rejected). Usable once per turn; it always targets the proposal that was
-pending when this turn started, never a proposal created earlier in this
-same turn.
+this customer — while it is undecided, a `propose_book`/`propose_move`/
+`propose_cancel` call, `ask_customer`, or `finish` is rejected
+(`must_decide_pending`); `resolve_time`, `find_slots`, `list_appointments`
+and `shop_info_task` are unaffected and may still run. Usable once per turn;
+it always targets the proposal that was pending when this turn started,
+never a proposal created earlier in this same turn.
 
-`label` is your read of the customer's reply after any structural veto has
-already been applied for you: "approve", "reject", "change" (they want a
-different time — expect a following `appointment_task` call), "unclear", or
-"none" (they did not address it at all, e.g. a greeting or an aside).
+`label` is your read of the customer's reply: "approve", "reject", "change"
+(they want a different time — expect a following `appointment_task` call),
+"unclear", or "none" (they did not address it at all, e.g. a greeting or an
+aside). Code may override your label after this call based on the proposal
+and the customer's exact words (e.g. naming a different time turns an
+"approve" into a "change") — pick the label that best matches what the
+customer said, not what you think the final outcome should be.
 `aside`, when the customer set the proposal aside instead of answering,
 downgrades `label`: "relative_free" ("whenever is free" is too vague to
 count as approval), "defer_only" or "defer_with_request" (they will decide
@@ -168,27 +176,9 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
             args=args.model_dump(),
         )
         result = await deps.run_appointment(spec, deps.ctx, deps.question)
-        if isinstance(result.data, ProposalCreated):
-            # §5.3 (C1): ghi ngay trong vòng, trước khi trả JSON cho model —
-            # một lịch đã approve sau đó không bao giờ mất dù lượt bị huỷ.
-            # `round`/`index` thật là việc của `OrchestratorGuard` (task
-            # sau, nó ghi lại `calls` của state mỗi vòng); ở đây chỉ cần một
-            # dòng ledger tồn tại sớm, nên dùng số thứ tự task làm `index`
-            # và `round=0` làm giá trị trung tính, không bịa một con số vòng
-            # không có nghĩa.
-            await deps.ledger.append_call(
-                deps.turn_id,
-                CallRecord(
-                    round=0,
-                    index=int(spec.task_id[1:]),
-                    tool="appointment_task",
-                    action=action,
-                    args_norm=args.model_dump_json(),
-                    allowed=True,
-                    result=result,
-                    at=now_utc(),
-                ),
-            )
+        # Không ghi `turn_ledger` ở đây dù `result.data` là `ProposalCreated`:
+        # `OrchestratorGuard` (Task 3.3) là người ghi DUY NHẤT (xem docstring
+        # module) — ghi thêm ở đây sẽ tạo hai dòng cho cùng một đề xuất.
         return result.model_dump_json()
 
     appointment_task = StructuredTool.from_function(
@@ -228,10 +218,12 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
 
         Call this alone — never alongside `appointment_task`, `shop_info_task`
         or `decide_pending` in the same round; asking a question always ends
-        the turn immediately. `field` names what is missing ("day", "time",
-        "part_of_day", "service", "which_appointment", "week", "confirm");
-        `hint`, if given, is a short note for why you are asking, not a
-        sentence to read verbatim."""
+        the turn immediately. Rejected with `must_decide_pending` while a
+        proposal is pending and undecided — call `decide_pending` first.
+        `field` names what is missing ("day", "time", "part_of_day",
+        "service", "which_appointment", "week", "confirm"); `hint`, if given,
+        is a short note for why you are asking, not a sentence to read
+        verbatim."""
         return json.dumps({"ok": True})
 
     @tool(return_direct=True)
@@ -243,8 +235,10 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
         """End the turn: everything needed to answer the customer has been gathered.
 
         Call this alone — never alongside `appointment_task`, `shop_info_task`
-        or `decide_pending` in the same round. `kind_hint` is your best guess
-        at the shape of the final reply ("answer": you have what is needed;
+        or `decide_pending` in the same round. Rejected with
+        `must_decide_pending` while a proposal is pending and undecided —
+        call `decide_pending` first. `kind_hint` is your best guess at the
+        shape of the final reply ("answer": you have what is needed;
         "unsupported": the customer asked for something this salon does not
         do; "social": pure small talk, nothing to look up). `service`, when
         known, is the service the customer is asking about. `stated` lists,

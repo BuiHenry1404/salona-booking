@@ -18,6 +18,7 @@ from app.agents.booking.context import AppointmentRef
 from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
 from app.agents.booking.schemas import AppointmentArgs, Moment, ProposalCreated, TaskResult, TaskSpec
 from app.core.clock import now_utc
+from app.models.conversation import QueuedRequest
 from tests.factories import make_ctx
 
 EXPECTED_NAMES = {"appointment_task", "shop_info_task", "decide_pending", "ask_customer", "finish"}
@@ -133,6 +134,29 @@ def test_appointment_id_enum_follows_turn_context():
     assert _literal_values(appointment_id_annotation) == {"a1", "a2"}
 
 
+def test_queue_id_enum_follows_turn_context():
+    now = now_utc()
+    ctx = make_ctx(
+        queued_requests=[
+            QueuedRequest(queue_id="q1", start_at=now, spoken="mai 9h", queued_at=now),
+            QueuedRequest(queue_id="q2", start_at=now, spoken="mai 10h", queued_at=now),
+        ]
+    )
+    deps = make_deps(ctx=ctx)
+    tools = make_orchestrator_tools(deps)
+    appointment_task = _by_name(tools)["appointment_task"]
+
+    args_cls = appointment_task.args_schema.model_fields["args"].annotation
+    time_hint_cls = args_cls.model_fields["time"].annotation
+    # `time` is `TimeHint | None` — unwrap to the actual TimeHint model.
+    time_hint_cls = next(
+        a for a in typing.get_args(time_hint_cls) if a is not type(None)
+    )
+    queue_id_annotation = time_hint_cls.model_fields["queue_id"].annotation
+
+    assert _literal_values(queue_id_annotation) == {"q1", "q2"}
+
+
 def test_tool_docstrings_are_english():
     deps = make_deps()
     tools = make_orchestrator_tools(deps)
@@ -173,7 +197,13 @@ async def test_appointment_task_builds_spec_and_calls_the_specialist():
     assert received["ctx"] is deps.ctx
 
 
-async def test_proposal_created_is_written_to_the_ledger_before_returning():
+async def test_appointment_task_itself_does_not_write_call_records():
+    """`turn_ledger.calls` has a single writer: `OrchestratorGuard`
+    (Task 3.3), which `append_call`s with the real round/index right after
+    `awrap_tool_call`'s `handler(...)` returns, before the `ToolMessage`
+    reaches the model (§5.3/C1). If `appointment_task` also wrote here, every
+    proposal would be recorded twice and `previous_turns` would read it
+    twice."""
     moment = _moment()
 
     async def fake_run_appointment(spec: TaskSpec, ctx, question: str) -> TaskResult:
@@ -191,12 +221,7 @@ async def test_proposal_created_is_written_to_the_ledger_before_returning():
 
     out = await appointment_task.ainvoke({"action": "propose_book", "args": args.model_dump()})
 
-    assert len(ledger.appended) == 1
-    turn_id, call = ledger.appended[0]
-    assert turn_id == deps.turn_id
-    assert isinstance(call.result, TaskResult)
-    assert isinstance(call.result.data, ProposalCreated)
-    assert call.result.data.proposal_id == "p1"
+    assert ledger.appended == []
 
     payload = json.loads(out)
     assert payload["data"]["proposal_id"] == "p1"
