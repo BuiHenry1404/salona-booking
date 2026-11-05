@@ -1,32 +1,185 @@
-"""`apply_decision` — thân thật của tool `decide_pending` (§5.5).
+"""`apply_decision` — thân thật của tool `decide_pending` (§5.5) và veto có
+cấu trúc trên nhãn model đọc được (§9.3 (i)).
 
-Task 3.1 chỉ cần CHỮ KÝ ổn định để `tools.py` import được ngay (seam): tool
-`decide_pending` gọi thẳng `apply_decision`, không biết/không cần biết cách
-nó cài đặt. Task 3.2 lấp nội dung: veto (i) trước khi gọi tới đây, rồi bảng
-§5.5 (approve/reject/change/unclear/none) gọi `ProposalService` đúng một chỗ
-— đây sẽ là module DUY NHẤT ngoài `button_path` được phép gọi
-`ProposalService.approve` (`tests/test_write_fence.py`, cập nhật ở Task 3.2).
-
-Test của Task 3.1 không phụ thuộc hành vi thật của hàm này (ledger/schema
-test dùng `run_appointment`/`run_shop` giả, không chạm `decide_pending`).
+Đây là module DUY NHẤT ngoài `booking_graph/confirm.py` (gói cũ, M6 gỡ) được
+phép gọi `ProposalService.approve` — xem `tests/test_write_fence.py`. Khách
+xác nhận ở LƯỢT SAU; `decide_pending` là cách DUY NHẤT một lượt chat có thể
+ghi lịch, và veto() là nơi CODE (không phải model) có tiếng nói cuối cùng
+trên nhãn mà model gửi lên.
 """
 from __future__ import annotations
 
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking.context import TurnContext
-from app.agents.booking.schemas import Aside, DecideLabel, PendingOutcome
+from app.agents.booking.context import PendingProposal, TurnContext
+from app.agents.booking.schemas import (
+    AppointmentRefOut,
+    Aside,
+    DecideLabel,
+    Moment,
+    PendingOutcome,
+)
+from app.agents.booking_graph.reply import other_time
+from app.agents.booking_graph.tools import WHOLE_DAY, nearest_slots
+from app.core.clock import to_local
+from app.core.vi_format import format_vi_datetime
 from app.models.user import User
+from app.services.appointment import AppointmentService
+from app.services.proposal import UNCLEAR_LIMIT, ProposalService
+
+if TYPE_CHECKING:  # tránh vòng import thật: tools.py import module này
+    from app.agents.booking.orchestrator.tools import OrchestratorDeps
 
 
-async def apply_decision(
-    db: AsyncIOMotorDatabase,
-    user: User,
-    ctx: TurnContext,
-    *,
+class DecideRejected(Exception):
+    """Veto có cấu trúc (§9.3 (i)) từ chối hẳn lời gọi `decide_pending` — Task
+    3.3's `OrchestratorGuard` bắt exception này và biến nó thành một
+    `ToolMessage(status="error")`, không phải lỗi hệ thống."""
+
+    def __init__(self, reject_code: str) -> None:
+        super().__init__(reject_code)
+        self.reject_code = reject_code
+
+
+class Veto(BaseModel):
+    """Kết quả của `veto()` — CODE quyết định, không phải model."""
+
+    label: DecideLabel
+    reason: str | None = None
+    reject_code: str | None = None
+
+
+def _as_other_time_mapping(pending: PendingProposal) -> dict:
+    """`other_time` (gói cũ) nhận một Mapping có `start_at`/`queued` — không
+    có hàng chờ nào ở tầm nhìn của `veto()` (chữ ký §5.5 chỉ nhận
+    `PendingProposal`, không nhận `TurnContext.queued_requests`), nên `queued`
+    luôn rỗng ở đây."""
+    return {"start_at": pending.start_at, "queued": []}
+
+
+def veto(
     label: DecideLabel,
     aside: Aside | None,
-    reason: str,
+    question: str,
+    pending: PendingProposal,
+    now: datetime,
+) -> Veto:
+    """§9.3 (i) nguyên văn — chỉ HẠ cấp nhãn hoặc từ chối, không bao giờ nâng.
+
+    Thứ tự luật (đúng bảng §5.5/§9.3):
+    1. `approve` mà câu khách nêu giờ/ngày KHÁC đề xuất -> `change`.
+    2. `change` mà câu khách KHÔNG nêu giờ khác (trùng đề xuất hoặc không nêu
+       giờ nào) -> từ chối `same_time_as_pending` (model nói đổi nhưng không
+       chỉ ra đổi sang đâu).
+    3. `approve` + `aside == "relative_free"` -> `unclear`.
+    4. `approve` + `aside` hoãn (`defer_only`/`defer_with_request`) -> `none`.
+    5. Còn lại: giữ nguyên nhãn model gửi lên.
+    """
+    mapping = _as_other_time_mapping(pending)
+
+    if label == "approve" and other_time(question, mapping, now):
+        return Veto(label="change", reason="other_time")
+    if label == "change" and not other_time(question, mapping, now):
+        return Veto(label=label, reject_code="same_time_as_pending")
+    if label == "approve" and aside == "relative_free":
+        return Veto(label="unclear", reason="relative_free")
+    if label == "approve" and aside in ("defer_only", "defer_with_request"):
+        return Veto(label="none", reason="defer")
+    return Veto(label=label)
+
+
+def _outcome(
+    outcome: str,
+    pending: PendingProposal,
+    *,
+    appointment: AppointmentRefOut | None = None,
+    error: str | None = None,
+    reason: str | None = None,
+    nearest: list[Moment] | None = None,
+    expires_at: datetime | None = None,
 ) -> PendingOutcome:
-    """Chưa cài đặt — Task 3.2 lấp đầy theo §5.5 (veto, bảng nhãn, `ProposalService`)."""
-    raise NotImplementedError("Task 3.2 lấp đầy apply_decision (§5.5)")
+    return PendingOutcome(
+        outcome=outcome,  # type: ignore[arg-type]
+        proposal_id=pending.id,
+        kind=pending.kind,
+        spoken=pending.spoken,
+        appointment=appointment,
+        error=error,
+        reason=reason,
+        nearest=nearest or [],
+        expires_at=expires_at,
+    )
+
+
+async def _nearest_slots_around(db: AsyncIOMotorDatabase, pending: PendingProposal) -> list[Moment]:
+    """3 mốc còn trống GẦN `pending.start_at` nhất, cùng ngày — dùng khi
+    `approve` thất bại vì giờ vừa bị người khác lấy mất."""
+    ignore_id = pending.target.id if pending.target is not None else None
+    free = await AppointmentService(db).find_free_slots(
+        to_local(pending.start_at).date(), limit=WHOLE_DAY, ignore_appointment_id=ignore_id,
+    )
+    nearest = nearest_slots(free, pending.start_at)
+    return [Moment(iso=s.isoformat(), spoken=format_vi_datetime(s)) for s in nearest]
+
+
+async def _apply_approve(
+    db: AsyncIOMotorDatabase, user: User, ctx: TurnContext, pending: PendingProposal
+) -> PendingOutcome:
+    result = await ProposalService(db).approve(user, pending.id, turn_at=ctx.asked_at)
+
+    if result.outcome == "not_approvable":
+        return _outcome("not_approvable", pending, reason=result.reason)
+
+    if result.outcome == "failed":
+        nearest = await _nearest_slots_around(db, pending)
+        return _outcome("failed", pending, error=result.error, nearest=nearest)
+
+    appointment_ref = None
+    if result.appointment is not None:
+        appointment_ref = AppointmentRefOut(
+            id=str(result.appointment.id),
+            at=Moment(
+                iso=result.appointment.start_at.isoformat(),
+                spoken=format_vi_datetime(result.appointment.start_at),
+            ),
+            note=result.appointment.note,
+        )
+    return _outcome("approved", pending, appointment=appointment_ref)
+
+
+async def _apply_unclear(
+    db: AsyncIOMotorDatabase, user: User, pending: PendingProposal
+) -> PendingOutcome:
+    proposal = await ProposalService(db).mark_unclear(user, pending.id)
+    if proposal is not None and proposal.unclear_count >= UNCLEAR_LIMIT:
+        return _outcome("rejected", pending)
+    return _outcome("clarify", pending)
+
+
+async def apply_decision(deps: "OrchestratorDeps", label: DecideLabel) -> PendingOutcome:
+    """§5.5 — nhãn ở đây đã qua `veto()` (`reject_code` đã bị chặn trước đó
+    trong `decide_pending`, chưa bao giờ tới hàm này)."""
+    db, user, ctx = deps.db, deps.user, deps.ctx
+    pending = ctx.pending
+    if pending is None:
+        raise DecideRejected("no_pending")
+
+    if label == "approve":
+        outcome = await _apply_approve(db, user, ctx, pending)
+    elif label == "reject":
+        await ProposalService(db).reject(user, pending.id)
+        outcome = _outcome("rejected", pending)
+    elif label == "change":
+        await ProposalService(db).supersede(user, pending.id)
+        outcome = _outcome("superseded", pending)
+    elif label == "unclear":
+        outcome = await _apply_unclear(db, user, pending)
+    else:  # "none"
+        outcome = _outcome("kept", pending, expires_at=pending.expires_at)
+
+    await deps.ledger.set_pending_outcome(deps.turn_id, outcome)
+    return outcome

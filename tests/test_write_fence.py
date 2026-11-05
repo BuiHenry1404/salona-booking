@@ -20,6 +20,9 @@ ALLOWED = {
     ("app/agents/booking_graph/confirm.py", "ProposalService(db)", "approve"),
     # Huỷ asyncio.Task của lượt cũ (supersede), không phải huỷ lịch.
     ("app/agents/booking_graph/events.py", "previous", "cancel"),
+    # Cổng ghi duy nhất của Orchestrator mới (M3) — decide_pending's apply_decision,
+    # sau khi veto() đã lọc nhãn; gói booking_graph bị gỡ ở M6.
+    ("app/agents/booking/orchestrator/decide.py", "ProposalService(db)", "approve"),
 }
 
 

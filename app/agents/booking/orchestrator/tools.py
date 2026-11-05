@@ -35,7 +35,7 @@ from pydantic import create_model
 
 from app.agents.booking.context import TurnContext
 from app.agents.booking.ledger import TurnLedger
-from app.agents.booking.orchestrator.decide import apply_decision
+from app.agents.booking.orchestrator.decide import DecideRejected, apply_decision, veto
 from app.agents.booking.schemas import (
     AppointmentAction,
     Aside,
@@ -207,9 +207,14 @@ def make_orchestrator_tools(deps: OrchestratorDeps) -> list[BaseTool]:
 
     @tool(description=DECIDE_PENDING_DESCRIPTION)
     async def decide_pending(label: DecideLabel, aside: Aside | None, reason: str) -> str:
-        outcome = await apply_decision(
-            deps.db, deps.user, deps.ctx, label=label, aside=aside, reason=reason
-        )
+        # `reason` chỉ phục vụ log (§5.5: "nội bộ, trích cụm chữ khách làm căn
+        # cứ") — `OrchestratorGuard` (Task 3.3) ghi nguyên văn args tool vào
+        # `CallRecord.args_norm`, nên `reason` không cần truyền tiếp xuống
+        # `veto`/`apply_decision`.
+        v = veto(label, aside, deps.question, deps.ctx.pending, deps.ctx.asked_at)
+        if v.reject_code:
+            raise DecideRejected(v.reject_code)
+        outcome = await apply_decision(deps, v.label)
         return outcome.model_dump_json()
 
     @tool(return_direct=True)
