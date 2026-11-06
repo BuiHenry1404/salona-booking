@@ -169,13 +169,29 @@ def _forbidden_verb_claim(draft: str, must_not_claim: list[str]) -> bool:
     return False
 
 
+def _without_must_say(draft: str, must_say: Sequence[str]) -> str:
+    """Bản `normalize` của `draft` đã bỏ MỌI lần xuất hiện của từng câu
+    `must_say` — câu đó do CODE viết từ sự thật (vd. dòng R0 "đã đặt xong
+    ..."), không bao giờ là lời nhận vơ của model (fix round 2, Task 5.3).
+    Các phép kiểm claim đều tự hạ chữ thường, nên chạy trên bản normalize
+    không đổi kết quả với phần còn lại của câu."""
+    text = normalize(draft)
+    for line in must_say:
+        needle = normalize(line)
+        if needle:
+            text = text.replace(needle, " ")
+    return text
+
+
 def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) -> list[str]:
     """Ba phép kiểm SỰ THẬT (§9.8): `claim` (nhận vơ), `missing_fact` (thiếu
     câu bắt buộc), `repeat` (lặp câu đáp gần đây — vẫn tất định, không phải
-    luật giọng)."""
+    luật giọng). `claim` chỉ xét phần câu NGOÀI các dòng `must_say` (code
+    viết, luôn đúng); `missing_fact` vẫn xét trên toàn bộ `draft`."""
     violations: list[str] = []
     facts = facts_from_brief(brief)
-    if _claim_violation(draft, facts) or _forbidden_verb_claim(draft, brief.must_not_claim):
+    claim_text = _without_must_say(draft, brief.must_say)
+    if _claim_violation(claim_text, facts) or _forbidden_verb_claim(claim_text, brief.must_not_claim):
         violations.append("claim")
     normalized_draft = normalize(draft)
     if any(normalize(s) not in normalized_draft for s in brief.must_say):

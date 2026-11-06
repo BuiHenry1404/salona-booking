@@ -111,6 +111,10 @@ class UnannouncedOutcome(BaseModel):
     # `mark_announced` đúng lượt đó sau khi khách đã nghe (fix Task 5.3).
     # Sổ sách nội bộ, không render cho model.
     turn_id: str | None = None
+    # Mốc giờ THẬT của lịch đã ghi (`PendingOutcome.appointment.at.iso`) —
+    # guard đọc giờ của dòng R0 từ đây (fix round 2, Task 5.3). None khi lượt
+    # trước không ghi được gì (`failed`).
+    iso: str | None = None
 
 
 class TurnContext(BaseModel):

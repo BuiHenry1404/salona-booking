@@ -10,9 +10,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
+import pytest
 import structlog.testing
 
-from app.agents.booking.guard import apply_guard, check_reply, facts_from_brief, normalize
+from app.agents.booking.guard import (
+    apply_guard,
+    check_reply,
+    facts_from_brief,
+    normalize,
+)
 from app.agents.booking.schemas import Fact, ReplyBrief
 
 REWRITE_ONCE = "app.agents.booking_graph.rewrite.rewrite_once"
@@ -325,3 +331,38 @@ async def test_code_source_is_passed_through_untouched():
     assert result.answer == draft
     assert result.source == "code"
     assert result.violations == []
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (Task 5.3): câu `must_say` do CODE viết không bao giờ là claim sai
+# ---------------------------------------------------------------------------
+
+_R0_MOVED = "đã dời xong 3 giờ chiều mai"
+_R0_BOOKED = "đã đặt xong 3 giờ chiều mai"
+
+
+@pytest.mark.parametrize(
+    "kind, r0_line, draft, expected_claim",
+    [
+        # R0 approved (book) trên lượt xã giao — câu code viết, không phải claim sai.
+        ("social", _R0_BOOKED, f"Dạ chị Lan, em {_R0_BOOKED} rồi ạ.", False),
+        # Lượt limit cấm MỌI claim, nhưng dòng R0 "đã dời xong" vẫn là sự thật code viết.
+        ("limit_reached", _R0_MOVED, f"Dạ chị Lan, em {_R0_MOVED} rồi ạ.", False),
+        # Cùng câu đó mà bịa thêm một lịch không có trong must_say/facts → vẫn bắt.
+        ("limit_reached", _R0_MOVED,
+         f"Dạ chị Lan, em {_R0_MOVED} rồi ạ. Em đã đặt 5 giờ chiều cho chị rồi.", True),
+    ],
+)
+def test_must_say_lines_are_never_flagged_as_claims(kind, r0_line, draft, expected_claim):
+    all_claims = ["booked", "cancelled", "moved"]
+    brief = make_brief(
+        kind=kind,
+        facts=[Fact(key="prior_outcome", text="approved", spoken="3 giờ chiều mai")],
+        must_say=[r0_line],
+        must_not_claim=all_claims if kind == "limit_reached" else [],
+    )
+
+    codes = check_reply(draft, brief, [])
+
+    assert ("claim" in codes) is expected_claim
+    assert "missing_fact" not in codes

@@ -24,7 +24,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.agents.booking import graph as graph_module
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.llm_budget import LLM_KEY, BudgetMiddleware, LlmBudget
-from app.agents.booking.schemas import FreeSlots, Moment, PendingOutcome, ResolvedTime, TaskResult
+from app.agents.booking.schemas import (
+    AppointmentRefOut,
+    FreeSlots,
+    Moment,
+    PendingOutcome,
+    ResolvedTime,
+    TaskResult,
+)
 from app.agents.booking_graph.button import ButtonReply
 from app.agents.booking_graph.context import address_phrase
 from app.agents.booking_graph.history import stamp
@@ -401,40 +408,52 @@ async def test_structured_logs_carry_user_turn_and_thread_ids(test_db, user, mod
     assert not any("chào em" in str(entry) for entry in logs)
 
 
-async def _seed_unannounced_turn(test_db, user, asked_at: datetime) -> tuple[str, str]:
-    """Lượt TRƯỚC (cùng ngày) có kết quả khách chưa được báo (C1). Dùng
-    `failed`: dòng R0 của `approved` ("đã đặt xong <giờ>") hiện bị guard gỡ
-    như một claim sai vì `prior_outcome` không mang `iso` — xem báo cáo
-    fix round 1 Task 5.3."""
+async def _seed_unannounced_turn(test_db, user, asked_at: datetime, outcome: str) -> tuple[str, str]:
+    """Lượt TRƯỚC (cùng ngày) có kết quả khách chưa được báo (C1)."""
     ledger = TurnLedger(test_db)
-    spoken = format_vi_datetime(_tomorrow_at(15))
+    start = _tomorrow_at(15)
+    spoken = format_vi_datetime(start)
     await ledger.start(
         turn_id="prev-turn", user_id=str(user.id), route="orchestrate", rule="R2",
         asked_at=asked_at - timedelta(seconds=1),
     )
-    await ledger.set_pending_outcome(
-        "prev-turn", PendingOutcome(
+    if outcome == "approved":
+        pending = PendingOutcome(
+            outcome="approved", proposal_id="p-prev", kind="book", spoken=spoken,
+            appointment=AppointmentRefOut(id="a-prev", at=Moment(iso=start.isoformat(), spoken=spoken)),
+        )
+    else:
+        pending = PendingOutcome(
             outcome="failed", proposal_id="p-prev", kind="book", spoken=spoken, error="slot_taken",
-        ),
-    )
+        )
+    await ledger.set_pending_outcome("prev-turn", pending)
     return "prev-turn", spoken
 
 
-async def test_reported_r0_line_names_the_turn_to_mark_announced(test_db, user, models):
+_R0_REPLIES = {
+    "approved": "Dạ chị Lan, em đã đặt xong {spoken} rồi ạ.",
+    "failed": "Dạ chị Lan, {spoken} em chưa ghi được ạ.",
+}
+
+
+@pytest.mark.parametrize("outcome", ["approved", "failed"])
+async def test_reported_r0_line_names_the_turn_to_mark_announced(test_db, user, models, outcome):
     asked_at = now_ms()
-    prev_turn, spoken = await _seed_unannounced_turn(test_db, user, asked_at)
+    prev_turn, spoken = await _seed_unannounced_turn(test_db, user, asked_at, outcome)
     models.orchestrator.replies = [_finish("social")]
-    models.conversation.replies = [AIMessage(content=f"Dạ chị Lan, {spoken} em chưa ghi được ạ.")]
+    models.conversation.replies = [AIMessage(content=_R0_REPLIES[outcome].format(spoken=spoken))]
 
     state, _graph, _config = await run_turn(test_db, user, "alo em", asked_at=asked_at)
 
     assert state["resolve"]["must_announce"] is True
     assert state["announced_turn_id"] == prev_turn
+    assert state["violations"] == []
+    assert models.rewrite.calls == []
 
 
 async def test_r0_line_missing_from_the_answer_leaves_the_turn_unannounced(test_db, user, models):
     asked_at = now_ms()
-    await _seed_unannounced_turn(test_db, user, asked_at)
+    await _seed_unannounced_turn(test_db, user, asked_at, "approved")
     # Lỗi vòng đầu → câu cứng (không có dòng R0) → lượt trước vẫn chưa báo.
     models.orchestrator.replies = [ValueError("model hong"), ValueError("model hong")]
 

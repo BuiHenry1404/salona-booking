@@ -323,10 +323,14 @@ def test_orchestrator_finish_social_maps_directly_to_social_kind():
 def test_unannounced_outcome_leads_must_say():
     ctx = make_ctx(unannounced=UnannouncedOutcome(
         proposal_id="p0", outcome="approved", kind="book", spoken="2 giờ chiều mai",
+        iso="2026-11-07T14:00:00+07:00",
     ))
     outcome = _outcome()
     brief = build_reply_brief(ctx, outcome, previous_reply=None, now=now_utc())
     assert brief.must_say[0] == "đã đặt xong 2 giờ chiều mai"
+    # Fix round 2 Task 5.3: guard biết mốc giờ của dòng R0 (đọc từ `iso`).
+    prior = [f for f in brief.facts if f.key == "prior_outcome"]
+    assert prior and prior[0].iso == "2026-11-07T14:00:00+07:00"
 
 
 def test_unannounced_failed_outcome_uses_the_failed_line():

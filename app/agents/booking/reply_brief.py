@@ -423,7 +423,9 @@ def build_reply_brief(
     # R0 — câu chưa báo của lượt trước, luôn đứng ĐẦU `must_say`.
     if ctx.unannounced is not None:
         unannounced = ctx.unannounced
-        facts.append(Fact(key="prior_outcome", text=unannounced.outcome, spoken=unannounced.spoken))
+        facts.append(Fact(
+            key="prior_outcome", text=unannounced.outcome, spoken=unannounced.spoken, iso=unannounced.iso,
+        ))
         must_say.append(unannounced_line(unannounced))
 
     if isinstance(outcome, OrchestrateOutcome):

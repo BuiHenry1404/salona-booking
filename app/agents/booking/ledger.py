@@ -234,6 +234,7 @@ class TurnLedger:
             spoken=outcome.spoken,
             error=outcome.error,
             turn_id=doc["turn_id"],
+            iso=outcome.appointment.at.iso if outcome.appointment is not None else None,
         )
 
     async def record_of(self, turn_id: str) -> dict | None:

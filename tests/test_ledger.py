@@ -335,6 +335,24 @@ async def test_unannounced_only_for_approved_or_failed_not_announced(test_db, ou
         assert result.turn_id == "t1"
 
 
+async def test_unannounced_carries_the_appointment_iso(test_db):
+    """Fix round 2 Task 5.3: mốc giờ THẬT của lịch vừa ghi đi theo
+    `UnannouncedOutcome.iso` (guard cần nó để biết giờ của dòng R0)."""
+    ledger = TurnLedger(test_db)
+    now = now_utc()
+    iso = "2026-11-07T15:00:00+07:00"
+    await ledger.start(turn_id="t1", user_id="u1", route="button", rule="R1", asked_at=now)
+    po = PendingOutcome(
+        outcome="approved", proposal_id="p1", kind="book", spoken="3h chiều",
+        appointment=AppointmentRefOut(id="a1", at=Moment(iso=iso, spoken="3h chiều")),
+    )
+    await ledger.set_pending_outcome("t1", po)
+
+    result = await ledger.unannounced("u1", today=to_local(now).date())
+
+    assert result is not None and result.iso == iso
+
+
 async def test_mark_announced_clears_unannounced(test_db):
     ledger = TurnLedger(test_db)
     now = now_utc()
