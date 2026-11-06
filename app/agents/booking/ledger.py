@@ -233,6 +233,7 @@ class TurnLedger:
             kind=outcome.kind,
             spoken=outcome.spoken,
             error=outcome.error,
+            turn_id=doc["turn_id"],
         )
 
     async def record_of(self, turn_id: str) -> dict | None:

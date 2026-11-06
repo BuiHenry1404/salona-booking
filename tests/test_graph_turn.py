@@ -24,8 +24,9 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.agents.booking import graph as graph_module
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.llm_budget import LLM_KEY, BudgetMiddleware, LlmBudget
-from app.agents.booking.schemas import FreeSlots, Moment, ResolvedTime, TaskResult
+from app.agents.booking.schemas import FreeSlots, Moment, PendingOutcome, ResolvedTime, TaskResult
 from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking_graph.context import address_phrase
 from app.agents.booking_graph.history import stamp
 from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
 from app.core.clock import TZ, now_ms, now_utc, to_local
@@ -226,6 +227,30 @@ async def test_r1_button_yes_writes_and_speaks_the_confirmation(test_db, user, m
     assert len(models.conversation.calls) == 1
     appointments = await AppointmentService(test_db).upcoming_for(user)
     assert len(appointments) == 1
+    # Fix round 1: nút của lượt này không được rò sang lượt gõ chữ sau.
+    assert state["button"] is None
+
+
+@pytest.mark.parametrize("decision", ["yes", "no"])
+async def test_button_decision_closes_the_goal(test_db, user, models, decision):
+    await ConversationStateService(test_db).record_goal_progress(
+        str(user.id), GoalProgress(goal_id="g1", turns_without_progress=settings.orch_goal_turns_limit - 1),
+    )
+    start = _tomorrow_at(15)
+    proposal = await ProposalService(test_db).create(user, "book", start, None)
+    spoken = format_vi_datetime(start)
+    reply = f"Dạ em đặt xong {spoken} cho chị Lan rồi nhé." if decision == "yes" else "Dạ vâng chị Lan."
+    models.conversation.replies = [AIMessage(content=reply)]
+    button = ButtonReply(decision=decision, proposal_id=str(proposal.id), label="Đồng ý")
+
+    state, _graph, _config = await run_turn(
+        test_db, user, "Đồng ý", button=button,
+        asked_at=proposal.created_at + timedelta(seconds=1),
+    )
+
+    assert state["goal_limit_hit"] is False
+    saved = await ConversationStateService(test_db).conversations.get_state(str(user.id))
+    assert saved.goal == GoalProgress()
 
 
 async def test_stale_button_speaks_the_template_without_a_model_call(test_db, user, models):
@@ -315,7 +340,8 @@ async def test_goal_limit_turns_kind_into_limit_reached_with_the_phone(test_db, 
         tool_call("appointment_task", _appt("resolve_time", time=_time(part_of_day="chieu"))),
         _finish(),
     ]
-    models.conversation.replies = [AIMessage(content="Dạ chị gọi tiệm giúp em nhé.")]
+    phone_line = graph_module.limit_line(address_phrase(user))
+    models.conversation.replies = [AIMessage(content=f"Dạ em xin lỗi. {phone_line}")]
 
     state, _graph, _config = await run_turn(test_db, user, "chiều chiều gì đó em")
 
@@ -323,6 +349,10 @@ async def test_goal_limit_turns_kind_into_limit_reached_with_the_phone(test_db, 
     assert state["brief"]["kind"] == "limit_reached"
     phones = [f for f in state["brief"]["facts"] if f["key"] == "shop_phone"]
     assert phones and phones[0]["text"] == settings.shop_phone
+    # §7.2: lời mời gọi tiệm là câu bắt buộc, và cũng là câu chốt của guard.
+    assert state["brief"]["must_say"][-1] == phone_line
+    assert state["brief"]["fallback"] == phone_line
+    assert phone_line in state["answer"]
     record = await TurnLedger(test_db).record_of(state["turn_id"])
     assert record["reply_kind"] == "limit_reached"
     saved = await ConversationStateService(test_db).conversations.get_state(str(user.id))
@@ -369,3 +399,61 @@ async def test_structured_logs_carry_user_turn_and_thread_ids(test_db, user, mod
         assert extra["thread_id"] == thread_id
     # Không log nguyên văn câu khách ngoài turn_ledger (§11).
     assert not any("chào em" in str(entry) for entry in logs)
+
+
+async def _seed_unannounced_turn(test_db, user, asked_at: datetime) -> tuple[str, str]:
+    """Lượt TRƯỚC (cùng ngày) có kết quả khách chưa được báo (C1). Dùng
+    `failed`: dòng R0 của `approved` ("đã đặt xong <giờ>") hiện bị guard gỡ
+    như một claim sai vì `prior_outcome` không mang `iso` — xem báo cáo
+    fix round 1 Task 5.3."""
+    ledger = TurnLedger(test_db)
+    spoken = format_vi_datetime(_tomorrow_at(15))
+    await ledger.start(
+        turn_id="prev-turn", user_id=str(user.id), route="orchestrate", rule="R2",
+        asked_at=asked_at - timedelta(seconds=1),
+    )
+    await ledger.set_pending_outcome(
+        "prev-turn", PendingOutcome(
+            outcome="failed", proposal_id="p-prev", kind="book", spoken=spoken, error="slot_taken",
+        ),
+    )
+    return "prev-turn", spoken
+
+
+async def test_reported_r0_line_names_the_turn_to_mark_announced(test_db, user, models):
+    asked_at = now_ms()
+    prev_turn, spoken = await _seed_unannounced_turn(test_db, user, asked_at)
+    models.orchestrator.replies = [_finish("social")]
+    models.conversation.replies = [AIMessage(content=f"Dạ chị Lan, {spoken} em chưa ghi được ạ.")]
+
+    state, _graph, _config = await run_turn(test_db, user, "alo em", asked_at=asked_at)
+
+    assert state["resolve"]["must_announce"] is True
+    assert state["announced_turn_id"] == prev_turn
+
+
+async def test_r0_line_missing_from_the_answer_leaves_the_turn_unannounced(test_db, user, models):
+    asked_at = now_ms()
+    await _seed_unannounced_turn(test_db, user, asked_at)
+    # Lỗi vòng đầu → câu cứng (không có dòng R0) → lượt trước vẫn chưa báo.
+    models.orchestrator.replies = [ValueError("model hong"), ValueError("model hong")]
+
+    state, _graph, _config = await run_turn(test_db, user, "alo em", asked_at=asked_at)
+
+    assert state["answer"] == FALLBACK_ANSWER
+    assert state["announced_turn_id"] is None
+
+
+async def test_failed_set_ask_still_finishes_the_ledger(test_db, user, models, monkeypatch):
+    async def broken_set_ask(self, turn_id, field):
+        raise RuntimeError("mongo hong")
+
+    monkeypatch.setattr(TurnLedger, "set_ask", broken_set_ask)
+    models.orchestrator.replies = [tool_call("ask_customer", {"field": "day", "hint": None})]
+    models.conversation.replies = [AIMessage(content="Dạ chị muốn hẹn hôm nào ạ?")]
+
+    state, _graph, _config = await run_turn(test_db, user, "em ơi cho chị hẹn")
+
+    record = await TurnLedger(test_db).record_of(state["turn_id"])
+    assert record["ended_by"] == "ask_customer"
+    assert record["reply_kind"] == "clarify"

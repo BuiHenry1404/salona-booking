@@ -38,13 +38,18 @@ from typing_extensions import TypedDict
 from app.agents.booking import conversation
 from app.agents.booking.button_path import run_button
 from app.agents.booking.context import TurnContext, load_turn_context
-from app.agents.booking.guard import apply_guard
+from app.agents.booking.guard import apply_guard, normalize
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.llm_budget import BudgetMiddleware, LlmBudget, count_model_call
 from app.agents.booking.orchestrator.agent import OrchestrateOutcome, run_orchestrate
 from app.agents.booking.orchestrator.tools import OrchestratorDeps
 from app.agents.booking.progress import step_goal
-from app.agents.booking.reply_brief import ButtonOutcome, TurnOutcome, build_reply_brief
+from app.agents.booking.reply_brief import (
+    ButtonOutcome,
+    TurnOutcome,
+    build_reply_brief,
+    unannounced_line,
+)
 from app.agents.booking.resolver import ResolveResult
 from app.agents.booking.resolver import resolve as resolve_route
 from app.agents.booking.schemas import Fact, ReplyBrief
@@ -72,6 +77,14 @@ _ALL_CLAIMS = ["booked", "cancelled", "moved"]
 # Lượt nút bấm không có `ended_by` của Orchestrator — kết thúc bình thường.
 BUTTON_ENDED_BY = "finish"
 
+# Nút Đồng ý/Không đã quyết dứt khoát — đóng mục tiêu (§7.2), như
+# `approved`/`rejected` của `decide_pending` trong `step_goal`.
+_GOAL_CLOSING_BUTTON_KINDS = frozenset({"approved", "rejected"})
+
+# §7.2: chạm ngưỡng mục tiêu → mời khách gọi tiệm. Câu bắt buộc + câu chốt.
+LIMIT_PHONE_LINE = "{address} gọi giúp em số {phone} nhé."
+LIMIT_NO_PHONE_LINE = "{address} gọi điện cho tiệm giúp em nhé."
+
 
 class GraphState(TypedDict, total=False):
     """State một lượt. `messages` (thread) chỉ chứa Human/AI của câu khách và
@@ -96,6 +109,9 @@ class GraphState(TypedDict, total=False):
     ended_by: str | None
     goal_limit_hit: bool
     goal: dict | None            # GoalProgress sau `step_goal` — `record` ghi
+    # Lượt TRƯỚC có kết quả vừa được báo trong câu đáp này (R0) — events.py
+    # `mark_announced` lượt đó. None khi câu đáp cuối không chứa dòng R0.
+    announced_turn_id: str | None
 
 
 # Khoá của MỘT lượt — đặt lại ở `resolve` (thread giữ giá trị lượt trước).
@@ -110,6 +126,7 @@ _TURN_RESET = {
     "ended_by": None,
     "goal_limit_hit": False,
     "goal": None,
+    "announced_turn_id": None,
 }
 
 
@@ -143,17 +160,29 @@ def _history(state: GraphState) -> list[AnyMessage]:
     )
 
 
+def limit_line(address: str) -> str:
+    """Câu mời gọi tiệm (§7.2) — có số thì đọc số, không có thì nói chung."""
+    spoken_address = address[:1].upper() + address[1:]
+    if settings.shop_phone:
+        return LIMIT_PHONE_LINE.format(address=spoken_address, phone=settings.shop_phone)
+    return LIMIT_NO_PHONE_LINE.format(address=spoken_address)
+
+
 def _limit_reached(brief: ReplyBrief) -> ReplyBrief:
-    """§7.2: chạm ngưỡng `GoalProgress` → mời gọi tiệm. Lượt không có tiến
-    triển nào nên cấm mọi claim (như dòng `limit` §5.4); bỏ `ask` — hỏi lại
-    đúng câu đang bế tắc là thứ ngưỡng này sinh ra để chặn."""
+    """§7.2: chạm ngưỡng `GoalProgress` → mời gọi tiệm. Câu mời là `must_say`
+    VÀ `fallback`, để guard bắt buộc nó. Lượt không có tiến triển nào nên cấm
+    mọi claim (như dòng `limit` §5.4); bỏ `ask` — hỏi lại đúng câu đang bế
+    tắc là thứ ngưỡng này sinh ra để chặn."""
     claims = list(brief.must_not_claim)
     claims.extend(c for c in _ALL_CLAIMS if c not in claims)
+    line = limit_line(brief.address)
     return brief.model_copy(update={
         "kind": "limit_reached",
         "facts": [*brief.facts, Fact(key="shop_phone", text=settings.shop_phone)],
+        "must_say": [*brief.must_say, line],
         "must_not_claim": claims,
         "ask": None,
+        "fallback": line,
     })
 
 
@@ -268,6 +297,10 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         )
         orchestrated = outcome if isinstance(outcome, OrchestrateOutcome) else None
         goal, limit_hit = step_goal(ctx.goal, orchestrated, rr, ctx)
+        if isinstance(outcome, ButtonOutcome) and outcome.kind in _GOAL_CLOSING_BUTTON_KINDS:
+            # `step_goal` chỉ đọc OrchestrateOutcome — nút quyết dứt khoát
+            # cũng đóng mục tiêu (fix round 1, Task 5.3).
+            goal, limit_hit = GoalProgress(), False
         if limit_hit:
             reply = _limit_reached(reply)
         if ctx.unannounced is not None:
@@ -288,7 +321,8 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         outcome = _outcome(state.get("outcome"))
         ids = _ids(user, state, config)
         orchestrator_failed = isinstance(outcome, OrchestrateOutcome) and outcome.ended_by == "error"
-        if reply.kind == "stale_button" or orchestrator_failed:
+        hard_fallback = reply.kind == "stale_button" or orchestrator_failed
+        if hard_fallback:
             # §5.3/§10: câu mẫu/câu cứng, không gọi model (pending coi là kept).
             draft, source = reply.fallback, "code"
         else:
@@ -299,11 +333,22 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         guarded = await apply_guard(
             draft, reply, state.get("previous_replies") or [], source=source, log_extra=ids,
         )
+        # R0: chỉ coi là đã báo khi câu đáp CUỐI thật sự chứa dòng R0 — câu
+        # cứng/câu chốt code hay bản nháp guard giữ lại có thể thiếu nó.
+        announced_turn_id = None
+        unannounced = _ctx(state).unannounced
+        if (
+            unannounced is not None
+            and not hard_fallback
+            and normalize(unannounced_line(unannounced)) in normalize(guarded.answer)
+        ):
+            announced_turn_id = unannounced.turn_id
         return {
             "draft": draft,
             "answer": guarded.answer,
             "answer_source": guarded.source,
             "violations": guarded.violations,
+            "announced_turn_id": announced_turn_id,
         }
 
     async def record(state: GraphState, config: RunnableConfig) -> dict:
@@ -318,9 +363,12 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         reply_kind = state.get("reply_kind")
         ledger = TurnLedger(db)
 
-        try:
-            if isinstance(outcome, OrchestrateOutcome) and outcome.ask is not None:
+        if isinstance(outcome, OrchestrateOutcome) and outcome.ask is not None:
+            try:
                 await ledger.set_ask(turn_id, outcome.ask.field)
+            except Exception as exc:
+                logger.warning("ledger_set_ask_failed", extra={**ids, "error_type": type(exc).__name__})
+        try:
             await ledger.finish(turn_id, ended_by=ended_by, reply_kind=reply_kind)
         except Exception as exc:
             logger.warning("ledger_finish_failed", extra={**ids, "error_type": type(exc).__name__})
@@ -337,10 +385,12 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
 
         logger.info("turn_ended", extra={**ids, **_turn_ended_extra(outcome, ended_by)})
 
+        # Nút của lượt này không được rò sang lượt gõ chữ sau (thread giữ khoá).
+        fields: dict = {"button": None}
         answer = state.get("answer") or ""
-        if not answer:
-            return {}
-        return {"messages": [stamp(AIMessage(content=answer), now_ms())]}
+        if answer:
+            fields["messages"] = [stamp(AIMessage(content=answer), now_ms())]
+        return fields
 
     graph = StateGraph(GraphState)
     graph.add_node("resolve", resolve)

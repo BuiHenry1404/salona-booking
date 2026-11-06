@@ -25,7 +25,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.agents.booking.context import TurnContext
+from app.agents.booking.context import TurnContext, UnannouncedOutcome
 from app.agents.booking.orchestrator.agent import OrchestrateOutcome
 from app.agents.booking.schemas import (
     AppointmentList,
@@ -70,6 +70,15 @@ _ALL_CLAIMS: list[Literal["booked", "cancelled", "moved"]] = ["booked", "cancell
 HELD_FACT_KEYS = frozenset({"held_at", "will_cancel", "booked_at", "moved_to", "cancelled_at"})
 
 _HOURS_ERROR_CODES = frozenset({"outside_hours", "closed_day", "time_passed"})
+
+
+def unannounced_line(unannounced: UnannouncedOutcome) -> str:
+    """Câu R0 bắt buộc (`must_say`) cho kết quả lượt trước khách chưa được
+    báo — graph dùng lại đúng câu này để biết câu đáp cuối đã báo hay chưa."""
+    if unannounced.outcome == "approved":
+        verb = _VERB_FOR_KIND.get(unannounced.kind, "")
+        return UNANNOUNCED_LINE["approved"].format(verb=verb, when=unannounced.spoken)
+    return UNANNOUNCED_LINE["failed"].format(when=unannounced.spoken)
 
 
 class ButtonOutcome(BaseModel):
@@ -415,11 +424,7 @@ def build_reply_brief(
     if ctx.unannounced is not None:
         unannounced = ctx.unannounced
         facts.append(Fact(key="prior_outcome", text=unannounced.outcome, spoken=unannounced.spoken))
-        if unannounced.outcome == "approved":
-            verb = _VERB_FOR_KIND.get(unannounced.kind, "")
-            must_say.append(UNANNOUNCED_LINE["approved"].format(verb=verb, when=unannounced.spoken))
-        else:
-            must_say.append(UNANNOUNCED_LINE["failed"].format(when=unannounced.spoken))
+        must_say.append(unannounced_line(unannounced))
 
     if isinstance(outcome, OrchestrateOutcome):
         for record in outcome.calls:

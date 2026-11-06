@@ -107,6 +107,10 @@ class UnannouncedOutcome(BaseModel):
     kind: str
     spoken: str
     error: str | None = None
+    # Lượt (ledger) mang kết quả này — graph báo lại để events.py
+    # `mark_announced` đúng lượt đó sau khi khách đã nghe (fix Task 5.3).
+    # Sổ sách nội bộ, không render cho model.
+    turn_id: str | None = None
 
 
 class TurnContext(BaseModel):

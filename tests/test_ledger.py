@@ -331,6 +331,8 @@ async def test_unannounced_only_for_approved_or_failed_not_announced(test_db, ou
         assert isinstance(result, UnannouncedOutcome)
         assert result.proposal_id == "p1"
         assert result.outcome == outcome
+        # Fix round 1 Task 5.3: lượt nào cần `mark_announced` sau khi báo.
+        assert result.turn_id == "t1"
 
 
 async def test_mark_announced_clears_unannounced(test_db):
