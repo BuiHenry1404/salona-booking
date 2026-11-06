@@ -6,12 +6,16 @@ Conversation Agent (Task 4.2) là agent DUY NHẤT nói với khách; nó chỉ 
 những gì `OrchestrateOutcome`/`ButtonOutcome`/`ClassifyOutcome` đã ghi và suy
 ra sự thật để Conversation Agent không được bịa.
 
-`facts_for(record)` ứng với ĐÚNG MỘT dòng bảng ánh xạ §5.4 — nó chỉ đọc
-`record.result` (một `TaskResult` của `appointment_task`/`shop_info_task`,
+`facts_for(record, ctx, now)` ứng với ĐÚNG MỘT dòng bảng ánh xạ §5.4 — nó chỉ
+đọc `record.result` (một `TaskResult` của `appointment_task`/`shop_info_task`,
 hoặc một `PendingOutcome` của `decide_pending`), không biết gì về các
-`CallRecord` khác trong lượt. `build_reply_brief` gộp `facts_for` của mọi
-`CallRecord.allowed` lại, rồi thêm các dòng không gắn với MỘT call cụ thể
-(`unannounced` R0, `recently_declined`, `shop_phone` của `unsupported`)."""
+`CallRecord` khác trong lượt; `ctx`/`now` chỉ dùng cho hai dòng cần dữ kiện
+KHÔNG nằm trong `TaskResult`/`PendingOutcome` (`ctx.shop_hours` cho
+`outside_hours`/`closed_day`/`time_passed`, `now` để tính phút còn lại của
+`PendingOutcome{kept}.expires_at`). `build_reply_brief` gộp `facts_for` của
+mọi `CallRecord.allowed` lại, rồi thêm các dòng không gắn với MỘT call cụ thể
+(`unannounced` R0, `recently_declined`, `shop_phone` của `unsupported`,
+`error_reason`/cấm mọi claim của `limit_reached`)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -40,6 +44,7 @@ from app.agents.booking.schemas import (
 )
 from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
 from app.agents.booking_graph.phrase import code_phrase
+from app.core.clock import ensure_aware
 from app.core.config import settings
 
 # ---------------------------------------------------------------------------
@@ -141,7 +146,7 @@ def _facts_for_shop_open(data: ShopOpenOut) -> tuple[list[Fact], list[str], list
     return facts, must_say, []
 
 
-def _facts_for_failed_task(result: TaskResult) -> tuple[list[Fact], list[str], list[str]]:
+def _facts_for_failed_task(result: TaskResult, ctx: TurnContext) -> tuple[list[Fact], list[str], list[str]]:
     code = result.error_code
     if code == "slot_unavailable":
         facts: list[Fact] = []
@@ -152,7 +157,14 @@ def _facts_for_failed_task(result: TaskResult) -> tuple[list[Fact], list[str], l
         facts.extend(Fact(key="nearest", spoken=m.spoken, iso=m.iso) for m in result.nearest)
         return facts, must_say, []
     if code in _HOURS_ERROR_CODES:
-        facts = [Fact(key="reason", text=code)]
+        # Fix round 1 (ruling 3): `TaskResult` của lỗi này không mang giờ mở
+        # cửa — khối bối cảnh (`ctx.shop_hours`) là nguồn thật DUY NHẤT, không
+        # đổi schema `TaskResult` cho việc này.
+        facts = [
+            Fact(key="reason", text=code),
+            Fact(key="open", text=ctx.shop_hours.open_time),
+            Fact(key="close", text=ctx.shop_hours.close_time),
+        ]
         must_say = []
         if result.asked is not None:
             facts.append(Fact(key="asked", spoken=result.asked.spoken, iso=result.asked.iso))
@@ -171,7 +183,7 @@ def _facts_for_failed_task(result: TaskResult) -> tuple[list[Fact], list[str], l
     return [Fact(key="error_reason", text=code or "unknown")], [], list(_ALL_CLAIMS)
 
 
-def _facts_for_task_result(result: TaskResult) -> tuple[list[Fact], list[str], list[str]]:
+def _facts_for_task_result(result: TaskResult, ctx: TurnContext) -> tuple[list[Fact], list[str], list[str]]:
     data = result.data
     if isinstance(data, ProposalCreated):
         return _facts_for_proposal(data)
@@ -190,11 +202,16 @@ def _facts_for_task_result(result: TaskResult) -> tuple[list[Fact], list[str], l
         # (`ask`) đến từ `ask_customer` của Orchestrator, không phải ở đây.
         return [], [], []
     if result.status == "failed":
-        return _facts_for_failed_task(result)
+        return _facts_for_failed_task(result, ctx)
     return [], [], []
 
 
-def _facts_for_pending(pending: PendingOutcome) -> tuple[list[Fact], list[str], list[str]]:
+def _minutes_left(expires_at: datetime, now: datetime) -> int:
+    delta = ensure_aware(expires_at) - ensure_aware(now)
+    return max(0, round(delta.total_seconds() / 60))
+
+
+def _facts_for_pending(pending: PendingOutcome, now: datetime) -> tuple[list[Fact], list[str], list[str]]:
     claim = _CLAIM_FOR_KIND.get(pending.kind)
     claims = [claim] if claim else []
 
@@ -210,7 +227,17 @@ def _facts_for_pending(pending: PendingOutcome) -> tuple[list[Fact], list[str], 
         return [Fact(key="pending", text=pending.kind, spoken=pending.spoken)], [pending.spoken], claims
 
     if pending.outcome == "kept":
-        return [Fact(key="pending", text=pending.kind, spoken=pending.spoken)], [], claims
+        facts = [Fact(key="pending", text=pending.kind, spoken=pending.spoken)]
+        if pending.expires_at is not None:
+            # Fix round 1 (ruling 2): `expires_at` tồn tại trên `PendingOutcome`
+            # đúng cho dòng này (§5.4 "kept{kind, spoken, expires_in}") — dòng
+            # cũ bỏ sót nó.
+            facts.append(Fact(
+                key="expires_in",
+                iso=pending.expires_at.isoformat(),
+                text=str(_minutes_left(pending.expires_at, now)),
+            ))
+        return facts, [], claims
 
     if pending.outcome == "failed":
         facts = [Fact(key="asked", spoken=pending.spoken)]
@@ -238,14 +265,17 @@ def _facts_for_pending(pending: PendingOutcome) -> tuple[list[Fact], list[str], 
     return [], [], []
 
 
-def facts_for(record: CallRecord) -> tuple[list[Fact], list[str], list[str]]:
+def facts_for(
+    record: CallRecord, ctx: TurnContext, now: datetime
+) -> tuple[list[Fact], list[str], list[str]]:
     """`(facts, must_say, must_not_claim)` cho MỘT dòng bảng §5.4 — đọc
-    đúng `record.result`, không biết gì về các `CallRecord` khác."""
+    đúng `record.result`, không biết gì về các `CallRecord` khác. `ctx`/`now`
+    chỉ dùng cho hai dòng cần dữ kiện ngoài `record` (xem docstring module)."""
     result = record.result
     if isinstance(result, PendingOutcome):
-        return _facts_for_pending(result)
+        return _facts_for_pending(result, now)
     if isinstance(result, TaskResult):
-        return _facts_for_task_result(result)
+        return _facts_for_task_result(result, ctx)
     return [], [], []
 
 
@@ -398,12 +428,12 @@ def build_reply_brief(
         for record in outcome.calls:
             if not record.allowed:
                 continue
-            f, say, claim = facts_for(record)
+            f, say, claim = facts_for(record, ctx, now)
             facts.extend(f)
             must_say.extend(say)
             _add_claims(claim)
     elif isinstance(outcome, ButtonOutcome) and outcome.outcome is not None:
-        f, say, claim = _facts_for_pending(outcome.outcome)
+        f, say, claim = _facts_for_pending(outcome.outcome, now)
         facts.extend(f)
         must_say.extend(say)
         _add_claims(claim)
@@ -420,6 +450,14 @@ def build_reply_brief(
 
     if kind == "unsupported":
         facts.append(Fact(key="shop_phone", text=settings.shop_phone))
+
+    if kind == "limit_reached" and isinstance(outcome, OrchestrateOutcome):
+        # Fix round 1 (ruling 1): §5.4 "failed khác / limit" cấm MỌI claim ở
+        # mức lượt, không chỉ claim của từng call — một lượt limit chỉ có một
+        # `find_slots` thành công (không claim gì) không được để
+        # `must_not_claim` rỗng, Conversation Agent vẫn có thể bịa "đã đặt".
+        facts.append(Fact(key="error_reason", text=outcome.ended_by))
+        _add_claims(list(_ALL_CLAIMS))
 
     tone_context = _tone_context(ctx, pending, has_new_proposal)
 

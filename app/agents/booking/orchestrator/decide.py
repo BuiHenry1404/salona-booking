@@ -183,6 +183,31 @@ async def _apply_unclear(
         # của `ProposalService._not_claimed` (chuỗi trạng thái thật, hoặc
         # "not_found"), không bịa "clarify" cho một đề xuất không còn đó.
         current = await proposals.get(user, pending.id, session=session)
+        if current is not None and current.status == "approved":
+            # Ruling fix round 1 (review M4/Task 4.1 reply_brief, controller
+            # 2026-11-06): đề xuất đã được DUYỆT ở nơi khác (nút bấm, lượt
+            # khác) đúng lúc này — idempotent CÙNG KIỂU
+            # `ProposalService._not_claimed`: báo `approved` với lịch THẬT,
+            # không phải `not_approvable`. `reply_brief._facts_for_pending`
+            # chỉ có MỘT dòng chung cho `not_approvable` (§5.4 không tách
+            # theo `reason`) — báo `not_approvable` ở đây sẽ khiến
+            # `ReplyBrief` nói "chưa ghi được" cho một lịch ĐÃ ghi thật, mâu
+            # thuẫn với sự thật. Sửa tại NGUỒN (ở đây) để `reply_brief`
+            # không bao giờ thấy `reason="approved"` nữa.
+            appointment = await AppointmentService(db).repo.get_by_id(
+                current.result_appointment_id or "", session=session,
+            )
+            appointment_ref = None
+            if appointment is not None:
+                appointment_ref = AppointmentRefOut(
+                    id=str(appointment.id),
+                    at=Moment(
+                        iso=appointment.start_at.isoformat(),
+                        spoken=format_vi_datetime(appointment.start_at),
+                    ),
+                    note=appointment.note,
+                )
+            return _outcome("approved", pending, appointment=appointment_ref)
         reason = current.status if current is not None else "not_found"
         return _outcome("not_approvable", pending, reason=reason)
     if proposal.unclear_count >= UNCLEAR_LIMIT:

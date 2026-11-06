@@ -6,6 +6,8 @@ giả và `TurnContext` qua `tests.factories.make_ctx`.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from app.agents.booking.context import PendingProposal, UnannouncedOutcome
@@ -126,7 +128,7 @@ def _case_slot_unavailable():
 
 def _case_outside_hours():
     result = _task_result("propose_book", status="failed", error_code="outside_hours", asked=_m("9 giờ tối mai", "2026-11-10T21:00:00+07:00"))
-    return _call("appointment_task", "propose_book", result), {"reason", "asked"}, ["9 giờ tối mai"], []
+    return _call("appointment_task", "propose_book", result), {"reason", "asked", "open", "close"}, ["9 giờ tối mai"], []
 
 
 def _case_already_yours():
@@ -201,6 +203,12 @@ def _case_pending_not_approvable_not_found():
     return _call("decide_pending", None, pending), {"error_reason"}, [], ["booked", "cancelled", "moved"]
 
 
+def _case_pending_kept_with_expiry():
+    expires_at = now_utc() + timedelta(minutes=7)
+    pending = _pending("kept", kind="cancel", spoken="5 giờ chiều mai", expires_at=expires_at)
+    return _call("decide_pending", None, pending), {"pending", "expires_in"}, [], ["cancelled"]
+
+
 @pytest.mark.parametrize(
     "build_case",
     [
@@ -209,17 +217,41 @@ def _case_pending_not_approvable_not_found():
         _case_resolved_time_missing, _case_appointment_list, _case_shop_hours,
         _case_shop_status, _case_shop_open, _case_pending_approved,
         _case_pending_rejected, _case_pending_clarify, _case_pending_kept,
-        _case_pending_failed, _case_pending_not_approvable_expired,
-        _case_pending_not_approvable_not_found,
+        _case_pending_kept_with_expiry, _case_pending_failed,
+        _case_pending_not_approvable_expired, _case_pending_not_approvable_not_found,
     ],
     ids=lambda f: f.__name__,
 )
 def test_facts_for_table(build_case):
     record, expected_keys, expected_must_say, expected_must_not_claim = build_case()
-    facts, must_say, must_not_claim = facts_for(record)
+    facts, must_say, must_not_claim = facts_for(record, CTX, now_utc())
     assert {f.key for f in facts} == expected_keys
     assert must_say == expected_must_say
     assert must_not_claim == expected_must_not_claim
+
+
+def test_kept_expiry_fact_carries_iso_and_minutes_left():
+    expires_at = now_utc() + timedelta(minutes=7)
+    pending = _pending("kept", kind="cancel", spoken="5 giờ chiều mai", expires_at=expires_at)
+    record = _call("decide_pending", None, pending)
+    now = now_utc()
+    facts, _say, _claim = facts_for(record, CTX, now)
+    expiry = next(f for f in facts if f.key == "expires_in")
+    assert expiry.iso == expires_at.isoformat()
+    assert expiry.text in ("6", "7")  # làm tròn phút còn lại, không lệ thuộc mili-giây lúc chạy test
+
+
+def test_outside_hours_includes_shop_open_and_close_from_ctx():
+    ctx = make_ctx()
+    result = _task_result("propose_book", status="failed", error_code="outside_hours", asked=_m("9 giờ tối mai", "2026-11-10T21:00:00+07:00"))
+    record = _call("appointment_task", "propose_book", result)
+    facts, _say, _claim = facts_for(record, ctx, now_utc())
+    keys = {f.key for f in facts}
+    assert {"reason", "asked", "open", "close"} <= keys
+    opened = next(f for f in facts if f.key == "open")
+    closed = next(f for f in facts if f.key == "close")
+    assert opened.text == ctx.shop_hours.open_time
+    assert closed.text == ctx.shop_hours.close_time
 
 
 def test_rejected_calls_never_contribute_facts():
@@ -377,6 +409,8 @@ def test_limit_reached_still_lists_facts_gathered_so_far():
     brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
     assert brief.kind == "limit_reached"
     assert any(f.key == "slot" for f in brief.facts)
+    assert any(f.key == "error_reason" and f.text == "limit" for f in brief.facts)
+    assert brief.must_not_claim == ["booked", "cancelled", "moved"]
     assert brief.fallback == FALLBACK_ANSWER
 
 
@@ -384,7 +418,35 @@ def test_limit_reached_from_error_also_uses_the_hard_fallback():
     outcome = _outcome(ended_by="error", finish=None, rounds_executed=0)
     brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
     assert brief.kind == "limit_reached"
+    assert any(f.key == "error_reason" and f.text == "error" for f in brief.facts)
+    assert brief.must_not_claim == ["booked", "cancelled", "moved"]
     assert brief.fallback == FALLBACK_ANSWER
+
+
+def test_limit_reached_keeps_confirmed_precedence_when_pending_approved():
+    """Precedence stays per ruling 1: dù ended_by rơi vào limit, một
+    `pending_outcome` đã `approved` vẫn phải thắng — `limit_reached` không
+    được đè lên một lịch đã ghi thật."""
+    pending = _pending("approved", kind="book", spoken="3 giờ chiều mai")
+    outcome = _outcome(
+        calls=[_call("decide_pending", None, pending)], pending_outcome=pending,
+        ended_by="limit", finish=None, rounds_executed=settings.orch_max_tool_rounds,
+    )
+    brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
+    assert brief.kind == "confirmed"
+    assert brief.must_not_claim == []
+
+
+def test_limit_reached_keeps_proposal_made_precedence_when_new_proposal_exists():
+    proposal = ProposalCreated(proposal_id="p2", kind="book", start_at=_m("8 giờ tối mai", "2026-11-10T20:00:00+07:00"), note=None, replaces=None, queued=[])
+    calls = [_call("appointment_task", "propose_book", _task_result("propose_book", data=proposal))]
+    outcome = _outcome(
+        calls=calls, ended_by="limit", finish=None, proposals_created=1,
+        rounds_executed=settings.orch_max_tool_rounds,
+    )
+    brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
+    assert brief.kind == "proposal_made"
+    assert brief.must_not_claim == ["booked"]
 
 
 def test_queued_adds_then_and_blocks_booked_claim_for_queued_time():

@@ -204,6 +204,28 @@ async def test_approve_writes_the_appointment_and_the_ledger(test_db, clean_db):
     assert ledger.calls and ledger.calls[0][1] is outcome
 
 
+async def test_unclear_on_an_already_approved_proposal_reports_approved_idempotently(test_db, clean_db):
+    """Fix round 1 (ruling 4): nếu đề xuất đã được DUYỆT ở nơi khác (nút bấm,
+    lượt khác) ngay trước khi `decide_pending(unclear)` chạy tới `mark_unclear`
+    (tăng không được vì đề xuất không còn `pending`), kết quả phải là
+    `approved` với lịch THẬT — giống `ProposalService._not_claimed` xử lý
+    `approve` lặp — KHÔNG phải `not_approvable` (sẽ mâu thuẫn với lịch đã ghi
+    thật, xem ghi chú review M4/Task 4.1)."""
+    user = await a_user(test_db)
+    proposal = await _make_pending_proposal(test_db, user)
+    ctx = _ctx_with_pending(user, proposal)
+    deps = _deps(test_db, user, ctx)
+
+    approved = await ProposalService(test_db).approve(user, str(proposal.id), turn_at=ctx.asked_at)
+    assert approved.outcome == "approved"
+
+    outcome = await apply_decision(deps, "unclear")
+
+    assert outcome.outcome == "approved"
+    assert outcome.appointment is not None
+    assert outcome.appointment.id == str(approved.appointment.id)
+
+
 # ---------------------------------------------------------------------------
 # Task 3.6: ghi lịch + `pending_outcome` là MỘT transaction Mongo thật
 # (replica set một node). Dùng `TurnLedger` thật để kiểm cả hai phía cùng
