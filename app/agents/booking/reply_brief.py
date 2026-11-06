@@ -62,6 +62,11 @@ _VERB_FOR_KIND = {"book": "đặt", "move": "dời", "cancel": "huỷ"}
 _CLAIM_FOR_KIND = {"book": "booked", "move": "moved", "cancel": "cancelled"}
 _ALL_CLAIMS: list[Literal["booked", "cancelled", "moved"]] = ["booked", "cancelled", "moved"]
 
+# Khoá `Fact` mang mốc giờ ĐANG/ĐÃ giữ thật (không phải mọi fact có `iso` —
+# ví dụ `slot`/`queued_at` chỉ là giờ trống). `guard.py` import hằng số này
+# thay vì chép lại danh sách khoá — một nguồn sự thật duy nhất cho tên khoá.
+HELD_FACT_KEYS = frozenset({"held_at", "will_cancel", "booked_at", "moved_to", "cancelled_at"})
+
 _HOURS_ERROR_CODES = frozenset({"outside_hours", "closed_day", "time_passed"})
 
 

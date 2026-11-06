@@ -13,14 +13,17 @@ hẳn vào đây, lúc đó `booking_graph` bị gỡ.
 toàn bộ `state` của graph cũ."""
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from typing import Literal, Sequence
 
 from pydantic import BaseModel
 
+from app.agents.booking.reply_brief import HELD_FACT_KEYS
 from app.agents.booking.schemas import ReplyBrief
 from app.agents.booking_graph import guard as old_guard
 from app.agents.booking_graph import rewrite
+from app.agents.booking_graph import tokens
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.vi_format import _clock_phrase
@@ -29,9 +32,16 @@ logger = get_logger(__name__)
 
 _ALL_CLAIMS = frozenset({"booked", "cancelled", "moved"})
 
-# Khoá `Fact` mang mốc giờ ĐANG/ĐÃ giữ thật (không phải mọi fact có `iso` —
-# ví dụ `slot`/`queued_at` chỉ là giờ trống, không phải giờ đã cam kết).
-_HELD_FACT_KEYS = frozenset({"held_at", "booked_at", "moved_to", "cancelled_at", "will_cancel"})
+# Động từ cam kết (`_CLAIM_VERBS` của gói cũ) ánh xạ sang claim nó nói lên.
+# `has_false_claim`/`_is_claimed_clause` cũ chỉ có từ vựng cho "đặt" (giữ/đặt/
+# ghi/chốt) — "huỷ"/"dời"/"đổi" không nằm trong `_CLAIM_PHRASES` của nó, nên
+# nó không bao giờ bắt được câu "đã huỷ ... rồi"/"đã dời ... rồi". Phải kiểm
+# riêng cho hai claim còn lại (Fix round 1, concern đã xác nhận Important).
+_CLAIM_FOR_VERB = {
+    "đặt": "booked", "chốt": "booked", "ghi": "booked",
+    "dời": "moved", "đổi": "moved",
+    "hủy": "cancelled", "huỷ": "cancelled",
+}
 
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
@@ -65,15 +75,19 @@ def facts_from_brief(brief: ReplyBrief) -> dict:
             keys = old_guard.clock_keys(_clock_phrase(local.hour, local.minute))
             if keys:
                 clocks.add(keys[0])
-            if fact.key in _HELD_FACT_KEYS:
+            if fact.key in HELD_FACT_KEYS:
                 held_iso = fact.iso
     allowed_claims = _ALL_CLAIMS - set(brief.must_not_claim)
     return {"clocks": clocks, "held_iso": held_iso, "allowed_claims": allowed_claims}
 
 
 def normalize(text: str) -> str:
-    """casefold + gộp khoảng trắng — không regex, chỉ `split`/`join`."""
-    return " ".join((text or "").casefold().split())
+    """NFC + casefold + gộp khoảng trắng — không regex, chỉ `split`/`join`.
+
+    Fix round 1 (item 3): chữ Việt gõ dấu tổ hợp (NFD, vài bộ gõ/IME phát ra)
+    và dấu dựng sẵn (NFC, phổ biến hơn) KHÁC NHAU về byte dù hiển thị giống
+    hệt — so sánh thẳng sẽ trật dù mắt người không thấy khác biệt gì."""
+    return " ".join(unicodedata.normalize("NFC", text or "").casefold().split())
 
 
 def _claim_violation(draft: str, facts: dict) -> bool:
@@ -90,13 +104,45 @@ def _claim_violation(draft: str, facts: dict) -> bool:
     return old_guard.has_false_claim(draft, no_held_facts)
 
 
+def _clause_claims(clause: str) -> set[str]:
+    """Claim ('booked'/'moved'/'cancelled') mà MỆNH ĐỀ này nhận đã xong —
+    một động từ cam kết (`_CLAIM_FOR_VERB`) đi kèm dấu hiệu đã hoàn tất:
+    "đã" đứng ngay trước, hoặc "rồi" xuất hiện sau nó (cùng cách nhận biết
+    của `_is_claimed_clause` cũ, chỉ khác từ vựng)."""
+    words = tokens.words(clause)
+    claims: set[str] = set()
+    for i, word in enumerate(words):
+        claim = _CLAIM_FOR_VERB.get(word)
+        if claim is None:
+            continue
+        said_done = (i > 0 and words[i - 1] == "đã") or "rồi" in words[i + 1:]
+        if said_done:
+            claims.add(claim)
+    return claims
+
+
+def _forbidden_verb_claim(draft: str, must_not_claim: list[str]) -> bool:
+    """`has_false_claim` không có từ vựng cho "huỷ"/"dời" (xem comment
+    `_CLAIM_FOR_VERB`) — kiểm riêng câu "đã huỷ/dời ... rồi" khi claim đó nằm
+    trong `must_not_claim`. Giữ nguyên đường "booked" đã có (`_claim_violation`
+    qua `has_false_claim`), chỉ bù thêm hai claim còn lại."""
+    forbidden = set(must_not_claim) & {"cancelled", "moved"}
+    if not forbidden:
+        return False
+    for sentence in tokens.split_sentences(draft or ""):
+        for clause in tokens.split_clauses(sentence, break_words=("còn",), preserve_date_comma=True):
+            if _clause_claims(clause) & forbidden:
+                return True
+    return False
+
+
 def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) -> list[str]:
     """Ba phép kiểm SỰ THẬT (§9.8): `claim` (nhận vơ), `missing_fact` (thiếu
     câu bắt buộc), `repeat` (lặp câu đáp gần đây — vẫn tất định, không phải
     luật giọng)."""
     violations: list[str] = []
     facts = facts_from_brief(brief)
-    if _claim_violation(draft, facts):
+    if _claim_violation(draft, facts) or _forbidden_verb_claim(draft, brief.must_not_claim):
         violations.append("claim")
     normalized_draft = normalize(draft)
     if any(normalize(s) not in normalized_draft for s in brief.must_say):

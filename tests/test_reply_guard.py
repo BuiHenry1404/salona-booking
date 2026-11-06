@@ -108,6 +108,78 @@ def test_claim_is_allowed_when_the_clock_matches_a_known_fact():
     assert "claim" not in check_reply("Dạ chị ơi, em đã đặt lịch ba giờ chiều mai cho chị rồi ạ.", brief, [])
 
 
+def test_claim_cancelled_when_forbidden_is_a_violation():
+    """Fix round 1: huỷ/dời không có trong từ vựng nhận biết của `has_false_claim`
+    cũ (chỉ bắt 'đặt') — cần đường kiểm riêng cho hai động từ này."""
+    brief = make_brief(kind="failed", must_not_claim=["booked", "cancelled", "moved"])
+    draft = "Dạ em đã huỷ lịch 3 giờ chiều mai cho chị rồi ạ."
+
+    assert "claim" in check_reply(draft, brief, [])
+
+
+def test_claim_moved_when_forbidden_is_a_violation():
+    brief = make_brief(kind="limit_reached", must_not_claim=["booked", "cancelled", "moved"])
+    draft = "Dạ em dời sang 4 giờ rồi nhé."
+
+    assert "claim" in check_reply(draft, brief, [])
+
+
+def test_claim_cancelled_is_allowed_when_not_forbidden():
+    brief = make_brief(kind="confirmed", must_not_claim=["booked", "moved"])
+    draft = "Dạ em đã huỷ lịch 3 giờ chiều mai cho chị rồi ạ."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_verb_without_a_completion_marker_is_not_a_violation():
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Dạ chị muốn dời sang giờ khác không ạ?"
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+async def test_apply_guard_fixes_a_forbidden_cancel_claim_via_unclaim(monkeypatch):
+    """`unclaim` (tất định, đã có sẵn) đủ sức sửa câu "đã huỷ ... rồi" —
+    không cần tới rewrite (LLM)."""
+    mock = AsyncMock(side_effect=AssertionError("rewrite_once should not run"))
+    monkeypatch.setattr(REWRITE_ONCE, mock)
+    brief = make_brief(kind="failed", must_not_claim=["cancelled"])
+    draft = "Dạ em đã huỷ lịch ba giờ chiều mai cho chị rồi ạ."
+
+    result = await apply_guard(draft, brief, [], source="llm")
+
+    assert result.violations == []
+    assert result.source == "llm"
+    mock.assert_not_awaited()
+
+
+async def test_failed_cancel_claim_falls_back_when_unclaim_and_rewrite_cannot_fix_it(monkeypatch):
+    unfixed = "Chị ơi lịch đã huỷ rồi nha."
+    monkeypatch.setattr(REWRITE_ONCE, AsyncMock(return_value=unfixed))
+    brief = make_brief(kind="failed", must_not_claim=["cancelled"])
+
+    result = await apply_guard(unfixed, brief, [], source="llm")
+
+    assert result.source == "code"
+    assert result.answer == brief.fallback
+    assert "claim" in result.violations
+
+
+# ---------------------------------------------------------------------------
+# normalize() — NFC/NFD (fix round 1, item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_matches_nfc_and_nfd_forms_of_the_same_text():
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "ba giờ chiều mai")
+    nfd = unicodedata.normalize("NFD", "ba giờ chiều mai")
+    assert nfc != nfd  # mã byte khác nhau, cùng hiển thị
+
+    assert normalize(nfc) == normalize(nfd)
+
+
 # ---------------------------------------------------------------------------
 # apply_guard()
 # ---------------------------------------------------------------------------
