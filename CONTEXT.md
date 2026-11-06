@@ -30,7 +30,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Thư mục | Nhánh | Dùng cho |
 |---|---|---|
 | `salona-booking-harness-b/` | `feat/target-architecture` | **code app đang làm** (tách từ `main` @ `cdc7e35`), **chưa merge, chưa push** |
-| `salona-booking/` | `bench/harness-benchmark` | benchmark (`bench/`) — **không chạy nữa** (xem dưới) |
+| `salona-booking/` | `bench/harness-benchmark` | benchmark (`bench/`) — **không chạy nữa** (xem dưới); `bench/` đã xoá khỏi `feat/llm-orchestrator` (06/11) |
 
 `main` = Harness B (LangChain `create_agent` + middleware + `interrupt` + checkpointer
 Mongo), đã push. Mọi việc mới đi `feat/... → henry/develop → main`, không commit
