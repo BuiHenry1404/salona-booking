@@ -1,8 +1,11 @@
 # Kiến trúc đích trên nền Harness B — thiết kế
 
 Ngày: 2026-10-20. Nhánh: `feat/target-architecture` (tách từ `main` @ `cdc7e35`,
-tức Harness B đã gộp). Sơ đồ: `docs/research/Architech.md` (bản 20/10). Thước đo:
-`bench/` trên nhánh `bench/harness-benchmark`.
+tức Harness B đã gộp). Sơ đồ: `docs/research/Architech.md` (bản 20/10) — **đã xoá 06/11**
+(lỗi thời, owner quyết; kiến trúc hiện tại nay nằm ở
+`docs/superpowers/specs/2026-10-29-llm-orchestrator-architecture.md`). Thước đo:
+`bench/` trên nhánh `bench/harness-benchmark` — thư mục `bench/` cũng đã xoá khỏi
+`feat/llm-orchestrator` (06/11).
 
 ## Vì sao
 
@@ -292,7 +295,7 @@ Nút:       Command(resume={"button","proposal_id"}) → confirm
 Code trên `feat/target-architecture`, mỗi mục một mốc commit + tag `target/m<k>`;
 `.env.example` thêm `REDIS_URL`, `CONFIRM_VETO_MODE`, `GUARD_VOICE_RULES`; CONTEXT.md
 ghi kết quả đo và quyết định cờ; AGENTS.md cập nhật event Socket.IO mới; Architech.md
-sửa theo cái đã làm nếu lệch.
+sửa theo cái đã làm nếu lệch — **đã xoá 06/11 thay vì sửa** (lỗi thời, owner quyết).
 
 ## Để builder quyết
 

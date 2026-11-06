@@ -1,7 +1,7 @@
 # Harness cho mỗi lượt chat của agent — thiết kế
 
-Ngày: 2026-10-04. Nguồn: [`docs/AGENT_GRAPH_REVIEW.md`](../../AGENT_GRAPH_REVIEW.md),
-[`docs/ARCH_SECURITY_REVIEW.md`](../../ARCH_SECURITY_REVIEW.md).
+Ngày: 2026-10-04. Nguồn: `docs/AGENT_GRAPH_REVIEW.md` (**đã xoá 06/11**, lỗi thời — luật từ
+khóa nó review không còn tồn tại), [`docs/ARCH_SECURITY_REVIEW.md`](../../ARCH_SECURITY_REVIEW.md).
 
 ## Vì sao
 

@@ -63,7 +63,9 @@
 - Modify: `AGENTS.md` (mục *Layout*: `app/agents/booking/  LangGraph: resolve → orchestrate (create_agent, 5 tool) | button → brief → respond → record; 8 tool đọc/đề xuất, không tool ghi`; mục *Hard constraints* "Agent has NO create/write tool": thay đoạn mô tả `ConfirmMiddleware`/`confirm`/`interrupt()` bằng: đề xuất tạo bởi `propose_appointment`/`cancel_appointment` trong Appointment Agent (1/task, 1/lượt); quyết định ở lượt sau đi qua `decide_pending` với veto giờ bằng code (`timecheck.other_time`) rồi `ProposalService.approve(user, id, turn_at)`; nút bấm đi cùng cổng; `tests/test_write_fence.py` canh `orchestrator/decide.py`. Mục *Socket.IO protocol*: `proposal` khác `None` **khi cuối lượt còn một đề xuất `pending` chưa hết hạn** (không còn nhắc `interrupt()`); *Only stream tokens tagged respond*: liệt kê tag mới (`orchestrate`, `appointment`, `shop_info`, `rewrite` không stream — `classify` bỏ 06/11, Task 4.4b). Thêm vào *Read first* dòng spec mới.)
 - Modify: `CONTEXT.md` (đầu file: mục "Kiến trúc hiện tại (30/10)" trỏ spec + plan; các "chốt cứng" bị §0 thay thế gạch ngang với chú "thay bởi spec 2026-10-29 §0"; bẫy liên quan interrupt/supervisor đánh dấu "lịch sử")
 - Modify: `RUNBOOK.md` chỉ nếu có lệnh/biến mới cần người vận hành biết (`ORCH_*` — một đoạn ngắn)
-- Delete: `docs/superpowers/plans/2026-10-29-review-fixes-ee60723.md` (plan cũ đã xong và kiến trúc nó vá đã bị thay) — **hỏi chủ dự án một câu** trước khi xoá; không đồng ý thì giữ
+- ~~Delete: `docs/superpowers/plans/2026-10-29-review-fixes-ee60723.md` (plan cũ đã xong và kiến trúc nó vá đã bị thay) — **hỏi chủ dự án một câu** trước khi xoá; không đồng ý thì giữ~~ —
+  **đã xoá 06/11 theo quyết định chủ dự án**, trong đợt dọn tài liệu (không phải Task 6.4;
+  làm sớm hơn vì file không còn liên kết nào ngoài milestone này)
 
 - [ ] **Step 1:** Sửa 3 file; đọc lại AGENTS.md một lượt với mắt người mới: không còn từ `interrupt`, `supervisor`, `ConfirmMiddleware`, `booking_graph`.
 - [ ] **Step 2: Commit** `docs: describe the orchestrator architecture`
