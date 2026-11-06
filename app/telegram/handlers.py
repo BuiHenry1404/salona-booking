@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 GREETING = (
     "Dạ chào chủ tiệm. Bấm nút bên dưới để xem lịch hoặc đổi trạng thái bận rảnh ạ."
 )
-NUDGE = "Dạ chủ tiệm bấm một trong bốn nút bên dưới giúp con ạ."
+NUDGE = "Dạ chủ tiệm bấm một trong bốn nút bên dưới giúp em ạ."
 
 
 class TelegramHandlers:
