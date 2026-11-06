@@ -140,7 +140,7 @@ say("cháu bán bảo hiểm không")                // bị từ chối lịch 
 Đúng thì lượt 1 hiện `tool_started parse_time` → `propose_appointment` → nhiều
 `token` → `complete`, mà `GET /api/v1/appointments/mine` vẫn rỗng. Lượt 2 không có
 tool nào: run_turn resume node `confirm` đang chờ (interrupt), lưới code + bộ phân
-loại (tag `classify`, không stream) quyết đồng ý, `ProposalService.approve` ghi lịch,
+loại (tag `analyze`, không stream) quyết đồng ý, `ProposalService.approve` ghi lịch,
 `phrase` viết câu chốt — và lịch xuất hiện. Đề xuất nằm ở collection `proposals`
 (`status` pending → approved/rejected/expired/superseded/failed).
 

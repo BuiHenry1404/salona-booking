@@ -7,7 +7,7 @@ Hệ thống backend đặt lịch làm đẹp (nail/hair) cho tiệm nhỏ tạ
 
 ### Must fix
 
-1. **Xưng hô sai giọng ở câu báo lỗi mất kết nối Mongo** — **vẫn còn mở** (đối chiếu
+1. **Xưng hô sai giọng ở câu báo lỗi mất kết nối Mongo** — **đã sửa** trong commit `fix(api): address customers as anh chị in the Mongo-down message` (trước đó: vẫn còn mở; đối chiếu
    06/11, lệnh y nguyên ở `main.py:202`, chỉ lệch số dòng so với lúc viết review; chủ
    động KHÔNG sửa code ứng dụng trong đợt dọn tài liệu này) ([`main.py:168`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/main.py#L168))
    - **What this is:** Exception handler bắt `PyMongoError` trả về mã HTTP 503 khi server mất kết nối tới cơ sở dữ liệu.

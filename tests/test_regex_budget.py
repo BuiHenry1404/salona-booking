@@ -1,6 +1,6 @@
 """Hàng rào số lượng regex (`re.compile`) trong tầng AI Agent.
 
-Spec `2026-10-28-llm-context-input-design.md`: `app/agents/booking_graph/` cắt
+Spec `2026-10-29-llm-orchestrator-design.md`: `app/agents/booking_graph/` cắt
 xuống còn đúng 2 regex:
 - `guard.py`: 2 (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`)
 - Mọi module khác (kể cả `timeparse.py`): 0 regex.

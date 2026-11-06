@@ -166,6 +166,55 @@ async def test_mongo_down_returns_503_with_shop_phone(async_client, user_headers
     assert "ServerSelection" not in body["detail"]
 
 
+async def test_mongo_down_message_addresses_customer_as_anh_chi(async_client, user_headers, monkeypatch):
+    """Câu 503 đi theo quy ước xưng hô: bot xưng "em", gọi khách "anh chị".
+
+    Không được xưng "con" hay gọi "cô chú" — dự án không đoán tuổi/giới khách.
+    """
+    import re
+
+    from pymongo.errors import ServerSelectionTimeoutError
+
+    from app.core.config import settings
+    from app.services.shop import ShopService
+
+    async def _die(self):
+        raise ServerSelectionTimeoutError("no primary available")
+
+    monkeypatch.setattr(ShopService, "get_status", _die)
+    monkeypatch.setattr(settings, "shop_phone", "0287654321")
+
+    resp = await async_client.get("/api/v1/shop/status", headers=user_headers)
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "Anh chị" in detail
+    assert "0287654321" in detail
+    assert "Cô chú" not in detail
+    assert not re.search(r"\bcon\b", detail, re.IGNORECASE)
+
+
+async def test_mongo_down_message_without_shop_phone_tells_customer_to_call_shop(
+    async_client, user_headers, monkeypatch
+):
+    """Thiếu SĐT trong .env thì câu không được ghép chữ "tiệm" làm số điện thoại."""
+    from pymongo.errors import ServerSelectionTimeoutError
+
+    from app.core.config import settings
+    from app.services.shop import ShopService
+
+    async def _die(self):
+        raise ServerSelectionTimeoutError("no primary available")
+
+    monkeypatch.setattr(ShopService, "get_status", _die)
+    monkeypatch.setattr(settings, "shop_phone", None)
+
+    resp = await async_client.get("/api/v1/shop/status", headers=user_headers)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == (
+        "Dạ máy của tiệm đang trục trặc ạ. Anh chị gọi điện cho tiệm giúp em nhé."
+    )
+
+
 async def test_creating_a_duplicate_phone_returns_409_not_503(async_client, admin_headers):
     """DuplicateKeyError là con của PyMongoError; lọt ra thì khách bị báo
     'máy của tiệm đang hỏng' cho một lỗi nhập liệu bình thường."""

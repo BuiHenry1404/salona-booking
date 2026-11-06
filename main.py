@@ -195,11 +195,19 @@ async def mongo_error_handler(request: Request, exc: PyMongoError):
     khi thật ra chỉ là trùng giờ.
     """
     logger.exception("mongo_unavailable", path=request.url.path)
-    phone = settings.shop_phone or "tiệm"
+    # Xưng "em", gọi khách "anh chị" (không đoán tuổi/giới). Thiếu SĐT trong .env
+    # thì không ghép chữ "tiệm" làm số điện thoại.
+    if settings.shop_phone:
+        detail = (
+            "Dạ máy của tiệm đang trục trặc ạ. "
+            f"Anh chị gọi giúp em số {settings.shop_phone} nhé."
+        )
+    else:
+        detail = "Dạ máy của tiệm đang trục trặc ạ. Anh chị gọi điện cho tiệm giúp em nhé."
     return JSONResponse(
         status_code=503,
         content={
-            "detail": f"Máy của tiệm đang hỏng ạ. Cô chú gọi giúp con số {phone} nhé.",
+            "detail": detail,
             "shop_phone": settings.shop_phone,
         },
     )
