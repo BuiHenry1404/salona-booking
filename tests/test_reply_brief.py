@@ -331,6 +331,8 @@ def test_unannounced_outcome_leads_must_say():
     # Fix round 2 Task 5.3: guard biết mốc giờ của dòng R0 (đọc từ `iso`).
     prior = [f for f in brief.facts if f.key == "prior_outcome"]
     assert prior and prior[0].iso == "2026-11-07T14:00:00+07:00"
+    # Fix round 3: dòng R0 được chỉ ra tường minh cho guard.
+    assert brief.announced_line == brief.must_say[0]
 
 
 def test_unannounced_failed_outcome_uses_the_failed_line():
@@ -340,6 +342,7 @@ def test_unannounced_failed_outcome_uses_the_failed_line():
     outcome = _outcome()
     brief = build_reply_brief(ctx, outcome, previous_reply=None, now=now_utc())
     assert brief.must_say[0] == "2 giờ chiều mai em chưa ghi được"
+    assert brief.announced_line == "2 giờ chiều mai em chưa ghi được"
 
 
 def test_recently_declined_blocks_claim_when_appointment_task_called():

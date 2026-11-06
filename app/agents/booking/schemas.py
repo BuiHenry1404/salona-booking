@@ -373,6 +373,9 @@ class ReplyBrief(BaseModel):
     staff_note: str | None
     now_local: datetime
     fallback: str  # confirmed/failed: câu chốt CODE viết, không phải câu chung
+    # Dòng R0 (kết quả lượt trước chưa báo) nguyên văn như trong `must_say`, None
+    # khi không có — câu `must_say` DUY NHẤT guard miễn kiểm claim (Task 5.3).
+    announced_line: str | None = None
 
 
 class TurnFacts(BaseModel):

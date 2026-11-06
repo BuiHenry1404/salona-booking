@@ -334,35 +334,75 @@ async def test_code_source_is_passed_through_untouched():
 
 
 # ---------------------------------------------------------------------------
-# Fix round 2 (Task 5.3): câu `must_say` do CODE viết không bao giờ là claim sai
+# Fix round 2–3 (Task 5.3): CHỈ dòng R0 (`announced_line`, code viết) được miễn
+# kiểm claim; mọi câu `must_say` khác (giờ trần) vẫn nằm trong câu được kiểm.
 # ---------------------------------------------------------------------------
 
-_R0_MOVED = "đã dời xong 3 giờ chiều mai"
+_R0_ISO = "2026-11-07T15:00:00+07:00"
 _R0_BOOKED = "đã đặt xong 3 giờ chiều mai"
+_R0_MOVED = "đã dời xong 3 giờ chiều mai"
+_PRIOR = Fact(key="prior_outcome", text="approved", spoken="3 giờ chiều mai", iso=_R0_ISO)
+_ALL = ["booked", "cancelled", "moved"]
+
+
+def _r0_brief(kind: str, line: str, *, must_not_claim=(), extra_must_say=()) -> ReplyBrief:
+    return make_brief(
+        kind=kind, facts=[_PRIOR], must_say=[line, *extra_must_say],
+        must_not_claim=list(must_not_claim), announced_line=line,
+    )
+
+
+_CANCEL_BRIEF = make_brief(
+    kind="proposal_made",
+    facts=[Fact(key="will_cancel", spoken="Thứ Bảy 7/11, 3 giờ chiều", iso=_R0_ISO)],
+    must_say=["Thứ Bảy 7/11, 3 giờ chiều"],
+    must_not_claim=["cancelled"],
+)
+_MOVE_BRIEF = make_brief(
+    kind="proposal_made",
+    facts=[
+        Fact(key="held_at", spoken="3 giờ chiều mai", iso=_R0_ISO),
+        Fact(key="replaces", spoken="9 giờ sáng mai", iso="2026-11-07T09:00:00+07:00"),
+    ],
+    must_say=["3 giờ chiều mai"],
+    must_not_claim=["moved"],
+)
 
 
 @pytest.mark.parametrize(
-    "kind, r0_line, draft, expected_claim",
+    "brief, draft, expected_claim",
     [
-        # R0 approved (book) trên lượt xã giao — câu code viết, không phải claim sai.
-        ("social", _R0_BOOKED, f"Dạ chị Lan, em {_R0_BOOKED} rồi ạ.", False),
+        # Dòng R0 approved một mình trên lượt xã giao — câu code viết, không phải claim.
+        (_r0_brief("social", _R0_BOOKED), f"Dạ chị Lan, em {_R0_BOOKED} rồi ạ.", False),
         # Lượt limit cấm MỌI claim, nhưng dòng R0 "đã dời xong" vẫn là sự thật code viết.
-        ("limit_reached", _R0_MOVED, f"Dạ chị Lan, em {_R0_MOVED} rồi ạ.", False),
-        # Cùng câu đó mà bịa thêm một lịch không có trong must_say/facts → vẫn bắt.
-        ("limit_reached", _R0_MOVED,
+        (_r0_brief("limit_reached", _R0_MOVED, must_not_claim=_ALL),
+         f"Dạ chị Lan, em {_R0_MOVED} rồi ạ.", False),
+        # Cùng câu đó mà bịa thêm một lịch không có trong facts → vẫn bắt.
+        (_r0_brief("limit_reached", _R0_MOVED, must_not_claim=_ALL),
          f"Dạ chị Lan, em {_R0_MOVED} rồi ạ. Em đã đặt 5 giờ chiều cho chị rồi.", True),
+        # Ké giờ khác vào CÂU của dòng R0 → claim theo động từ R0.
+        (_r0_brief("social", _R0_BOOKED),
+         f"Dạ em {_R0_BOOKED} và 5 giờ chiều ngày kia cho chị rồi.", True),
+        # Giờ trần trong must_say (không phải dòng R0) KHÔNG được miễn kiểm.
+        (_CANCEL_BRIEF, "Dạ em đã huỷ Thứ Bảy 7/11, 3 giờ chiều cho chị rồi ạ.", True),
+        (_MOVE_BRIEF, "Dạ em đã dời sang 3 giờ chiều mai cho chị rồi ạ.", True),
     ],
 )
-def test_must_say_lines_are_never_flagged_as_claims(kind, r0_line, draft, expected_claim):
-    all_claims = ["booked", "cancelled", "moved"]
-    brief = make_brief(
-        kind=kind,
-        facts=[Fact(key="prior_outcome", text="approved", spoken="3 giờ chiều mai")],
-        must_say=[r0_line],
-        must_not_claim=all_claims if kind == "limit_reached" else [],
-    )
-
+def test_only_the_announced_line_is_exempt_from_claim_checks(brief, draft, expected_claim):
     codes = check_reply(draft, brief, [])
 
     assert ("claim" in codes) is expected_claim
     assert "missing_fact" not in codes
+
+
+async def test_limit_reached_still_missing_the_phone_after_rewrite_falls_back_to_it(monkeypatch):
+    phone_line = "Chị Lan gọi giúp em số 0900000000 nhé."
+    monkeypatch.setattr(REWRITE_ONCE, AsyncMock(return_value="Dạ em xin lỗi chị ạ."))
+    brief = make_brief(
+        kind="limit_reached", must_say=[phone_line], must_not_claim=_ALL, fallback=phone_line,
+    )
+
+    result = await apply_guard("Dạ em xin lỗi chị nhé.", brief, [], source="llm")
+
+    assert result.answer == phone_line
+    assert result.source == "code"

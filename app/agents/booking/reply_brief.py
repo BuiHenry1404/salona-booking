@@ -420,13 +420,15 @@ def build_reply_brief(
             if claim not in must_not_claim:
                 must_not_claim.append(claim)
 
+    announced_line: str | None = None
     # R0 — câu chưa báo của lượt trước, luôn đứng ĐẦU `must_say`.
     if ctx.unannounced is not None:
         unannounced = ctx.unannounced
         facts.append(Fact(
             key="prior_outcome", text=unannounced.outcome, spoken=unannounced.spoken, iso=unannounced.iso,
         ))
-        must_say.append(unannounced_line(unannounced))
+        announced_line = unannounced_line(unannounced)
+        must_say.append(announced_line)
 
     if isinstance(outcome, OrchestrateOutcome):
         for record in outcome.calls:
@@ -487,4 +489,5 @@ def build_reply_brief(
         staff_note=ctx.customer.staff_note,
         now_local=now,
         fallback=fallback,
+        announced_line=announced_line,
     )

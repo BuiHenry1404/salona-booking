@@ -22,8 +22,7 @@ from pydantic import BaseModel
 from app.agents.booking.reply_brief import HELD_FACT_KEYS
 from app.agents.booking.schemas import ReplyBrief
 from app.agents.booking_graph import guard as old_guard
-from app.agents.booking_graph import rewrite
-from app.agents.booking_graph import tokens
+from app.agents.booking_graph import rewrite, tokens
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.vi_format import _clock_phrase
@@ -51,7 +50,9 @@ _CLAIM_OBJ_WORDS = frozenset(o.strip() for o in old_guard._CLAIM_OBJS)
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
 _FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim"})
-_FALLBACK_KINDS = frozenset({"confirmed", "failed", "proposal_made"})
+# `limit_reached` (Task 5.3 fix round 3): câu chốt là lời mời gọi tiệm (§7.2)
+# — thiếu nó sau rewrite thì dùng thẳng câu đó.
+_FALLBACK_KINDS = frozenset({"confirmed", "failed", "proposal_made", "limit_reached"})
 
 
 class GuardResult(BaseModel):
@@ -169,29 +170,66 @@ def _forbidden_verb_claim(draft: str, must_not_claim: list[str]) -> bool:
     return False
 
 
-def _without_must_say(draft: str, must_say: Sequence[str]) -> str:
-    """Bản `normalize` của `draft` đã bỏ MỌI lần xuất hiện của từng câu
-    `must_say` — câu đó do CODE viết từ sự thật (vd. dòng R0 "đã đặt xong
-    ..."), không bao giờ là lời nhận vơ của model (fix round 2, Task 5.3).
-    Các phép kiểm claim đều tự hạ chữ thường, nên chạy trên bản normalize
-    không đổi kết quả với phần còn lại của câu."""
+def _announced_clock(brief: ReplyBrief) -> tuple | None:
+    """Mốc giờ của dòng R0, đọc từ `iso` của Fact `prior_outcome` (máy viết)."""
+    for fact in brief.facts:
+        if fact.key == "prior_outcome" and fact.iso:
+            local = to_local(datetime.fromisoformat(fact.iso))
+            keys = old_guard.clock_keys(_clock_phrase(local.hour, local.minute))
+            return keys[0] if keys else None
+    return None
+
+
+def _piggybacks_on_announced(sentences: list[str], needle: str, brief: ReplyBrief) -> bool:
+    """Câu CHỨA dòng R0 mà phần còn lại nêu thêm một mốc giờ KHÁC giờ R0 —
+    "đã đặt xong <giờ R0> và 5 giờ chiều ngày kia rồi" — là nhận vơ theo đúng
+    động từ của dòng R0 (dòng R0 `failed` phủ định, không có động từ claim
+    nào -> không áp)."""
+    if not _clause_claims(needle):
+        return False
+    r0_clock = _announced_clock(brief)
+    for sentence in sentences:
+        if needle not in sentence:
+            continue
+        rest = sentence.replace(needle, " ")
+        for said in old_guard.clock_keys(rest):
+            if r0_clock is None or not old_guard._same_clock(said, r0_clock):
+                return True
+    return False
+
+
+def _claim_text(draft: str, brief: ReplyBrief) -> tuple[str, bool]:
+    """`(câu đem kiểm claim, có ké giờ vào dòng R0 không)`.
+
+    CHỈ dòng R0 (`brief.announced_line`, code viết từ sự thật lượt trước) được
+    gỡ khỏi câu trước hai phép kiểm claim — các câu `must_say` khác (giờ trần
+    của `held_at`/`will_cancel`/`slot`...) vẫn nằm nguyên, vì thiếu giờ thì
+    `_mentions_appointment` và đường "booked" mù (Task 5.3 fix round 3). Mọi
+    phép kiểm claim tự hạ chữ thường nên chạy trên bản `normalize` không đổi
+    kết quả với phần còn lại."""
+    needle = normalize(brief.announced_line or "")
+    if not needle:
+        return draft, False
     text = normalize(draft)
-    for line in must_say:
-        needle = normalize(line)
-        if needle:
-            text = text.replace(needle, " ")
-    return text
+    if needle not in text:
+        return draft, False
+    piggyback = _piggybacks_on_announced(tokens.split_sentences(text), needle, brief)
+    return text.replace(needle, " "), piggyback
 
 
 def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) -> list[str]:
     """Ba phép kiểm SỰ THẬT (§9.8): `claim` (nhận vơ), `missing_fact` (thiếu
     câu bắt buộc), `repeat` (lặp câu đáp gần đây — vẫn tất định, không phải
-    luật giọng). `claim` chỉ xét phần câu NGOÀI các dòng `must_say` (code
-    viết, luôn đúng); `missing_fact` vẫn xét trên toàn bộ `draft`."""
+    luật giọng). `claim` xét câu đã gỡ riêng dòng R0 (`_claim_text`);
+    `missing_fact` vẫn xét trên toàn bộ `draft`."""
     violations: list[str] = []
     facts = facts_from_brief(brief)
-    claim_text = _without_must_say(draft, brief.must_say)
-    if _claim_violation(claim_text, facts) or _forbidden_verb_claim(claim_text, brief.must_not_claim):
+    claim_text, piggyback = _claim_text(draft, brief)
+    if (
+        piggyback
+        or _claim_violation(claim_text, facts)
+        or _forbidden_verb_claim(claim_text, brief.must_not_claim)
+    ):
         violations.append("claim")
     normalized_draft = normalize(draft)
     if any(normalize(s) not in normalized_draft for s in brief.must_say):

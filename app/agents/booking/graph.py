@@ -48,7 +48,6 @@ from app.agents.booking.reply_brief import (
     ButtonOutcome,
     TurnOutcome,
     build_reply_brief,
-    unannounced_line,
 )
 from app.agents.booking.resolver import ResolveResult
 from app.agents.booking.resolver import resolve as resolve_route
@@ -339,8 +338,9 @@ def build_graph(db: AsyncIOMotorDatabase, user: User, checkpointer=None):
         unannounced = _ctx(state).unannounced
         if (
             unannounced is not None
+            and reply.announced_line
             and not hard_fallback
-            and normalize(unannounced_line(unannounced)) in normalize(guarded.answer)
+            and normalize(reply.announced_line) in normalize(guarded.answer)
         ):
             announced_turn_id = unannounced.turn_id
         return {
