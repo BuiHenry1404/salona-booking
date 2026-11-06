@@ -17,7 +17,6 @@ from app.agents.booking.reply_brief import (
     PROPOSAL_FALLBACK,
     BUTTON_STALE_REPLY,
     ButtonOutcome,
-    ClassifyOutcome,
     build_reply_brief,
     facts_for,
     reply_kind_for,
@@ -309,9 +308,11 @@ def test_button_outcome_approved_maps_to_confirmed():
     assert reply_kind_for(outcome, CTX) == "confirmed"
 
 
-def test_classify_outcome_maps_route_directly():
-    assert reply_kind_for(ClassifyOutcome(route="social"), CTX) == "social"
-    assert reply_kind_for(ClassifyOutcome(route="unsupported"), CTX) == "unsupported"
+def test_orchestrator_finish_social_maps_directly_to_social_kind():
+    """Task 4.4b: không còn `classify_only`/`ClassifyOutcome` — `social` đến
+    thẳng từ `finish(kind_hint="social")` của Orchestrator."""
+    outcome = _outcome(finish=FinishArgs(kind_hint="social", service=None, stated=[]))
+    assert reply_kind_for(outcome, CTX) == "social"
 
 
 # ---------------------------------------------------------------------------
@@ -356,10 +357,6 @@ def test_unsupported_carries_the_shop_phone():
     brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
     assert brief.kind == "unsupported"
     assert any(f.key == "shop_phone" and f.text == settings.shop_phone for f in brief.facts)
-
-    brief2 = build_reply_brief(CTX, ClassifyOutcome(route="unsupported"), previous_reply=None, now=now_utc())
-    assert brief2.kind == "unsupported"
-    assert any(f.key == "shop_phone" for f in brief2.facts)
 
 
 # ---------------------------------------------------------------------------

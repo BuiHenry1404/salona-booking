@@ -48,7 +48,7 @@ class LlmBudget:
     async def hit(self) -> None                       # RateLimitService.hit(LLM_KEY, 3600)
     async def over(self) -> bool                      # RateLimitService.check(LLM_KEY, settings.orch_llm_calls_per_user_per_hour, 3600) ném RateLimitError → True
 class BudgetMiddleware(AgentMiddleware):              # awrap_model_call: await budget.hit() rồi handler — gắn vào Orchestrator, hai specialist
-async def count_model_call(budget: LlmBudget) -> None  # Conversation/classify gọi thẳng trước ainvoke
+async def count_model_call(budget: LlmBudget) -> None  # Conversation gọi thẳng trước ainvoke (classify.py bỏ 06/11, Task 4.4b)
 ```
 
 Quá trần → `OrchestratorDeps.max_rounds = 2` (graph node `orchestrate` quyết, Task 5.3). Lượt vẫn chạy.
@@ -73,13 +73,12 @@ class GraphState(TypedDict, total=False):
     turn_id: str; asked_at: datetime; history_after: Optional[datetime]
     customer_text: str; button: Optional[dict]            # ButtonReply dump
     turn_context: dict; resolve: dict                     # TurnContext / ResolveResult dump
-    classify_route: Optional[str]
-    outcome: Optional[dict]                               # OrchestrateOutcome | ButtonOutcome | ClassifyOutcome dump (+ "type")
+    outcome: Optional[dict]                               # OrchestrateOutcome | ButtonOutcome dump (+ "type"); classify_route/ClassifyOutcome bỏ 06/11 (Task 4.4b)
     brief: Optional[dict]; draft: str; answer: str; answer_source: str; violations: List[str]
     previous_replies: List[str]; reply_kind: Optional[str]; ended_by: Optional[str]
     goal_limit_hit: bool
 def build_graph(db, user: User, checkpointer=None)
-# nodes: resolve → (button_path | classify_only | orchestrate) → brief → respond → record → END ; classify social/unsupported → brief
+# nodes: resolve → (button_path | orchestrate) → brief → respond → record → END ; orchestrate finish(kind_hint=social/unsupported) → brief (classify_only node bỏ 06/11, Task 4.4b)
 # resolve: load_turn_context + resolver.resolve + TurnLedger.start ; budget.over() → ghi vào state "max_rounds"
 # orchestrate: deps = OrchestratorDeps(..., run_appointment=partial(appointment.run_task, db, user), run_shop=..., max_rounds=2 nếu quá trần) ; run_orchestrate(deps, recent=model_history(messages, after=history_after, now=asked_at)[-4:])
 # brief: build_reply_brief ; limit_hit (step_goal) → kind "limit_reached" + Fact shop_phone
@@ -88,12 +87,13 @@ def build_graph(db, user: User, checkpointer=None)
 # record: messages += [stamp(AIMessage(answer), now_ms())] ; ledger.finish(ended_by, reply_kind) ; ledger.set_ask khi outcome.ask ; record_goal_progress ; conversations.append KHÔNG ở đây (events.py, như cũ)
 ```
 
-Cạnh có điều kiện đọc `state["resolve"]["route"]` và `state["classify_route"]`. Agent con `checkpointer=False`; graph ngoài `checkpointer or get_checkpointer()` (không tham số mặc định — như gói cũ).
+Cạnh có điều kiện đọc `state["resolve"]["route"]`. Agent con `checkpointer=False`; graph ngoài `checkpointer or get_checkpointer()` (không tham số mặc định — như gói cũ). (`state["classify_route"]` bỏ 06/11 — Task 4.4b.)
 
-- [ ] **Step 1: Test đỏ** (fixture `models(monkeypatch)` cắm scripted vào 5 module: `classify`, `orchestrator.agent`, `conversation`, `specialists.base`, `booking_graph.rewrite`; `FakeSpecialists` qua monkeypatch `graph.appointment.run_task`/`graph.shop_info.run_task`):
+- [ ] **Step 1: Test đỏ** (fixture `models(monkeypatch)` cắm scripted vào 4 module: `orchestrator.agent`, `conversation`, `specialists.base`, `booking_graph.rewrite`; `FakeSpecialists` qua monkeypatch `graph.appointment.run_task`/`graph.shop_info.run_task`; `classify` bỏ 06/11, Task 4.4b):
 
 ```python
-async def test_r4_social_goes_classify_then_respond_without_orchestrator(test_db, user, models)
+async def test_r4_social_goes_orchestrate_then_finish_social_then_respond(test_db, user, models)
+    # "chào em" (lượt sạch) → R5/orchestrate (R4 gộp vào R5, Task 4.4b) → model gọi finish(kind_hint="social") → brief kind "social" → respond, không specialist nào chạy
 async def test_r5_runs_orchestrator_then_brief_then_respond_once(test_db, user, models)      # conversation model gọi đúng 1 lần
 async def test_r1_button_yes_writes_and_speaks_the_confirmation(test_db, user, models)
 async def test_stale_button_speaks_the_template_without_a_model_call(test_db, user, models)
@@ -101,7 +101,7 @@ async def test_record_appends_only_question_and_answer_to_the_thread(test_db, us
 async def test_ledger_is_finished_with_ended_by_and_reply_kind(test_db, user, models)
 async def test_over_budget_caps_rounds_at_two(test_db, user, models)
 async def test_goal_limit_turns_kind_into_limit_reached_with_the_phone(test_db, user, models)
-async def test_graph_has_exactly_the_planned_nodes()      # {"resolve","button_path","classify_only","orchestrate","brief","respond","record"}
+async def test_graph_has_exactly_the_planned_nodes()      # {"resolve","button_path","orchestrate","brief","respond","record"} ("classify_only" bỏ 06/11, Task 4.4b)
 async def test_orchestrator_error_on_first_round_speaks_the_hard_fallback_without_the_conversation_model(test_db, user, models)
 async def test_structured_logs_carry_user_turn_and_thread_ids(test_db, user, models, caplog)   # resolve_done và turn_ended có đủ 3 khoá extra
 ```
@@ -174,7 +174,7 @@ test_unclear_forces_end_no_call_after
 test_approve_failed_slot_taken_reply_names_the_time_and_three_nearest
 test_approve_not_approvable_reply_says_expired
 test_defer_with_agreement_keeps_the_proposal             # "ừ để chú hỏi con đã" + approve/defer_only → kept, complete.proposal còn
-test_unsupported_service_goes_classify_unsupported_no_tool_runs
+test_unsupported_service_goes_orchestrator_finish_unsupported_no_tool_runs   # Orchestrator finish(kind_hint="unsupported"), "classify_only" bỏ 06/11 (Task 4.4b)
 test_rejected_only_rounds_do_not_count_toward_the_limit
 test_fourth_call_in_a_round_is_too_many_calls
 test_schema_strict_safe_for_the_five_tools                # đã có ở M3 — tham chiếu, không lặp
@@ -203,7 +203,7 @@ async def test_conversation_error_after_approve_falls_back_to_code_phrase(test_d
 async def test_restart_does_not_resume_and_stale_button_is_safe(test_db, user, models)
     # đề xuất pending; checkpoint xoá (memory_checkpointer mới); "ừ" chạy từ START → R2; nút với id cũ sau khi đề xuất bị supersede → stale
 def test_turn_time_budget_inequality()
-    # orch_orchestrate_timeout_seconds + RESPOND_TIMEOUT_SECONDS + CLASSIFY_TIMEOUT_SECONDS + 5 <= orch_turn_timeout_seconds
+    # orch_orchestrate_timeout_seconds + RESPOND_TIMEOUT_SECONDS + 5 <= orch_turn_timeout_seconds  (CLASSIFY_TIMEOUT_SECONDS bỏ 06/11, Task 4.4b)
     # và orch_task_timeout_seconds * 2 + LLM_TIMEOUT_SECONDS <= orch_orchestrate_timeout_seconds  (một vòng: 2 specialist song song + 1 lượt model)
 ```
 

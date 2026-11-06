@@ -1,8 +1,8 @@
-# M4 — Nói với khách: `ReplyBrief`, Conversation Agent, guard sự thật, `classify_only`, nút bấm
+# M4 — Nói với khách: `ReplyBrief`, Conversation Agent, guard sự thật, nút bấm
 
 Đọc `README.md` trước. Conversation Agent là agent **duy nhất** nói với khách và stream (`respond`); nó chỉ nhận `ReplyBrief` + cửa sổ lịch sử (forked, §8.3). Guard chỉ còn kiểm **sự thật** (§9.8).
 
-**Giao:** `reply_brief.py`, `conversation.py` + `prompts/conversation.py`, `guard.py`, `classify.py` + `prompts/classify.py`, `button_path.py`.
+**Giao:** `reply_brief.py`, `conversation.py` + `prompts/conversation.py`, `guard.py`, `button_path.py`. (`classify.py`/`classify_only`, giao ban đầu của Task 4.4, bỏ 06/11 — Task 4.4b, quyết định chủ dự án.)
 
 ---
 
@@ -17,8 +17,8 @@
 
 ```python
 class ButtonOutcome(BaseModel): kind: Literal["approved","rejected","failed","not_approvable","stale"]; outcome: PendingOutcome | None
-class ClassifyOutcome(BaseModel): route: Literal["social","unsupported"]
-TurnOutcome = OrchestrateOutcome | ButtonOutcome | ClassifyOutcome
+TurnOutcome = OrchestrateOutcome | ButtonOutcome
+# `ClassifyOutcome` (route: Literal["social","unsupported"]) bỏ 06/11 — Task 4.4b, quyết định chủ dự án.
 
 FAILED_FALLBACK = "Dạ {address}, {when} em chưa ghi được, {address} nhắn lại giờ khác giúp em nhé."
 BUTTON_STALE_REPLY = "Đề xuất lúc nãy hết hạn rồi, anh chị nhắn lại giờ giúp em nhé."   # sao nguyên văn từ confirm.py cũ; "anh chị" → address lúc dùng
@@ -30,7 +30,7 @@ def facts_for(record: CallRecord) -> tuple[list[Fact], list[str], list[str]]    
 def reply_kind_for(outcome: TurnOutcome, ctx: TurnContext) -> ReplyKind
 ```
 
-Luật chọn `kind` (code, theo thứ tự): `ClassifyOutcome` → route; `ButtonOutcome.stale` → `stale_button`; `PendingOutcome.approved` → `confirmed`; `failed`/`not_approvable` → `failed`; `rejected`/`superseded` **không** kèm `ProposalCreated` mới → `declined`; có `ProposalCreated` trong `calls` → `proposal_made`; `clarify` hoặc `ask` → `clarify`; `ended_by ∈ {limit, forced, error}` → `limit_reached` nếu `rounds_executed ≥ max` hoặc `error`, còn `forced` không clarify → `answer`; `finish.kind_hint` → `answer`/`unsupported`/`social`. `must_say`/`must_not_claim`/`facts` = hợp của `facts_for` trên mọi `CallRecord.allowed` theo bảng §5.4 + dòng `unannounced` (R0, đứng đầu `must_say`) + `recently_declined` khi có call `appointment_task`. `tone_context`: `after_decline` nếu `ctx.recently_declined` hoặc outcome rejected/superseded; `changed_time` nếu superseded + proposal mới; `returning` nếu `ctx.recent_visits`; còn lại `first_time`. `fallback`: `confirmed` → `code_phrase({"kind": booked|moved|cancelled, "address", "when": spoken, "context": tone_context}, [previous_reply] )`; `failed` → `FAILED_FALLBACK`; `proposal_made` → `PROPOSAL_FALLBACK`; `stale_button` → `BUTTON_STALE_REPLY` với "anh chị" thay bằng `address`; `limit_reached` khi `ended_by == "error"` → `FALLBACK_ANSWER` (câu cứng §10); khác → `FALLBACK_ANSWER`. `then` = "Sau giờ này em sẽ hỏi tiếp {queued[0].spoken}" khi `ProposalCreated.queued` khác rỗng. `unsupported` thêm `Fact(key="shop_phone", text=settings.shop_phone)`.
+Luật chọn `kind` (code, theo thứ tự): `ButtonOutcome.stale` → `stale_button`; `PendingOutcome.approved` → `confirmed`; `failed`/`not_approvable` → `failed`; `rejected`/`superseded` **không** kèm `ProposalCreated` mới → `declined`; có `ProposalCreated` trong `calls` → `proposal_made`; `clarify` hoặc `ask` → `clarify`; `ended_by ∈ {limit, forced, error}` → `limit_reached` nếu `rounds_executed ≥ max` hoặc `error`, còn `forced` không clarify → `answer`; `finish.kind_hint` → `answer`/`unsupported`/`social`. `must_say`/`must_not_claim`/`facts` = hợp của `facts_for` trên mọi `CallRecord.allowed` theo bảng §5.4 + dòng `unannounced` (R0, đứng đầu `must_say`) + `recently_declined` khi có call `appointment_task`. `tone_context`: `after_decline` nếu `ctx.recently_declined` hoặc outcome rejected/superseded; `changed_time` nếu superseded + proposal mới; `returning` nếu `ctx.recent_visits`; còn lại `first_time`. `fallback`: `confirmed` → `code_phrase({"kind": booked|moved|cancelled, "address", "when": spoken, "context": tone_context}, [previous_reply] )`; `failed` → `FAILED_FALLBACK`; `proposal_made` → `PROPOSAL_FALLBACK`; `stale_button` → `BUTTON_STALE_REPLY` với "anh chị" thay bằng `address`; `limit_reached` khi `ended_by == "error"` → `FALLBACK_ANSWER` (câu cứng §10); khác → `FALLBACK_ANSWER`. `then` = "Sau giờ này em sẽ hỏi tiếp {queued[0].spoken}" khi `ProposalCreated.queued` khác rỗng. `unsupported` thêm `Fact(key="shop_phone", text=settings.shop_phone)`.
 
 - [ ] **Step 1: Test đỏ** — **một test mỗi dòng bảng §5.4** (parametrize theo `CallRecord` giả → `(facts keys, must_say, must_not_claim)` mong đợi), cộng:
 
@@ -131,7 +131,13 @@ async def test_code_source_is_passed_through_untouched()
 
 ---
 
-### Task 4.4: `classify.py` — `classify_only`
+### Task 4.4: `classify.py` — `classify_only` — **bỏ 06/11 (Task 4.4b, quyết định chủ dự án)**
+
+> Giữ nguyên bên dưới làm lịch sử: một bộ phân loại riêng trước Orchestrator có
+> rủi ro xếp nhầm câu đặt lịch không có giờ ("chị muốn làm móng") thành xã
+> giao; tiệm nhỏ nên tiết kiệm token không đáng. R4 gộp vào R5
+> (`resolver.py`), Orchestrator tự gọi `finish(kind_hint=social|unsupported|
+> answer)` thay cho `classify_only` — xem Task 4.4b.
 
 **Files:**
 - Create: `app/agents/booking/classify.py`, `app/agents/booking/prompts/classify.py`

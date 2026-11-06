@@ -15,7 +15,7 @@ import pytest
 
 from app.agents.booking import resolver as resolver_module
 from app.agents.booking.context import OpenQuestion, PendingProposal, UnannouncedOutcome
-from app.agents.booking.resolver import ResolveResult, is_short_time_answer, mentions_time_or_number, resolve
+from app.agents.booking.resolver import ResolveResult, is_short_time_answer, resolve
 from app.agents.booking_graph.button import ButtonReply
 
 from tests.factories import make_ctx
@@ -116,16 +116,16 @@ RULE_TABLE = [
     pytest.param(
         _ctx_plain,
         "chào em",
-        "classify_only",
-        "R4",
+        "orchestrate",
+        "R5",
         False,
         id="plain-chat-without-numbers",
     ),
     pytest.param(
         _ctx_plain,
         "ok",
-        "classify_only",
-        "R4",
+        "orchestrate",
+        "R5",
         False,
         id="bare-ok-without-numbers",
     ),
@@ -135,7 +135,7 @@ RULE_TABLE = [
         "orchestrate",
         "R5",
         False,
-        id="weekday-skips-classify",
+        id="weekday-is-r5",
     ),
     pytest.param(
         _ctx_plain,
@@ -143,7 +143,7 @@ RULE_TABLE = [
         "orchestrate",
         "R5",
         False,
-        id="day-offset-skips-classify",
+        id="day-offset-is-r5",
     ),
     pytest.param(
         _ctx_plain,
@@ -159,13 +159,13 @@ RULE_TABLE = [
         "orchestrate",
         "R5",
         False,
-        id="queued-request-disables-r4",
+        id="queued-request-is-r5",
     ),
     pytest.param(
         _ctx_plain,
         "",
-        "classify_only",
-        "R4",
+        "orchestrate",
+        "R5",
         False,
         id="empty-string",
     ),
@@ -181,8 +181,8 @@ def test_resolve_rule_table(ctx_factory, question, expected_route, expected_rule
     assert result.answers_open_question_hint == expected_hint
 
 
-def test_unannounced_disables_r4():
-    """`unannounced` khác None loại R4 — về R5 dù câu không có giờ/ngày/số."""
+def test_unannounced_still_goes_to_orchestrate():
+    """`unannounced` khác None vẫn ra `orchestrate`/R5 như lượt sạch bình thường."""
     ctx = make_ctx(unannounced=_unannounced())
     result = resolve(ctx, "chào em")
     assert result.route == "orchestrate"
@@ -198,7 +198,7 @@ def test_must_announce_true_with_unannounced_on_any_rule():
     ctx = make_ctx(unannounced=_unannounced())
     result = resolve(ctx, "chào em")
     assert result.must_announce is True
-    assert result.rule == "R5"  # unannounced cũng loại R4
+    assert result.rule == "R5"
 
 
 def test_must_announce_true_with_unannounced_even_on_button_path():
@@ -250,14 +250,6 @@ def test_is_short_time_answer_false_without_any_date_or_time():
     assert is_short_time_answer("chào em") is False
 
 
-def test_mentions_time_or_number_true_for_weekday():
-    assert mentions_time_or_number("thứ năm được không") is True
-
-
-def test_mentions_time_or_number_false_for_plain_chat():
-    assert mentions_time_or_number("chào em") is False
-
-
 # ---------------------------------------------------------------------------
 # AST: module không được chứa hằng chuỗi "trông giống" từ khoá ý định
 # ---------------------------------------------------------------------------
@@ -265,13 +257,11 @@ def test_mentions_time_or_number_false_for_plain_chat():
 # Hằng chuỗi hợp lệ DUY NHẤT: tên route/rule trong chữ ký kiểu Literal.
 _ALLOWED_STRING_LITERALS = {
     "button",
-    "classify_only",
     "orchestrate",
     "R0",
     "R1",
     "R2",
     "R3",
-    "R4",
     "R5",
 }
 

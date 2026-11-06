@@ -51,4 +51,17 @@ pending proposal and what you should do next:
 Read the context block first - it already states today's date, the pending
 proposal (if any), upcoming appointments and queued requests. The turns right
 before this one are listed separately, right after that block. Do not ask the
-customer something either section already answers."""
+customer something either section already answers.
+
+There is no separate classifier ahead of you - you decide chit-chat and
+unsupported requests yourself. If the customer's message is pure small talk
+(a greeting, a thank-you, asking how you are) with nothing to book, change,
+cancel or look up, call finish(kind_hint="social") right away - do not call
+appointment_task or shop_info_task for it. If the customer asks for
+something this salon does not do over chat (a detailed price quote, a
+service the salon does not offer, anything other than booking, cancelling,
+moving an appointment or checking opening hours), call
+finish(kind_hint="unsupported") instead. A message that wants to book,
+change or cancel an appointment but has not given a time yet is NOT social -
+use ask_customer or the appropriate tool for it, never finish(kind_hint=
+"social")."""

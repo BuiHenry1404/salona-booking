@@ -19,7 +19,7 @@
 | M1 | [`M1-context-resolver.md`](M1-context-resolver.md) | `schemas.py`, `context.py` (`TurnContext`, render lite/full, `load_turn_context`), `ledger.py` (`turn_ledger`), `resolver.py` (R0–R5) | có |
 | M2 | [`M2-specialists.md`](M2-specialists.md) | Appointment Agent, Shop Info Agent: allowlist theo action, `one_proposal_per_task`, `TaskResult`, `fact_mismatch` | có |
 | M3 | [`M3-orchestrator.md`](M3-orchestrator.md) | 5 tool, `OrchestratorState`, `decide_pending` (veto + `ProposalService`), `OrchestratorGuard` (a)–(k), `build_orchestrator`, `run_orchestrate` | có |
-| M4 | [`M4-reply.md`](M4-reply.md) | `ReplyBrief` (bảng ánh xạ), Conversation Agent, guard sự thật, `classify_only`, `button_path` | có |
+| M4 | [`M4-reply.md`](M4-reply.md) | `ReplyBrief` (bảng ánh xạ), Conversation Agent, guard sự thật, `button_path` (`classify_only` bỏ 06/11, Task 4.4b — Orchestrator tự `finish(kind_hint)`) | có |
 | M5 | [`M5-graph-run-turn.md`](M5-graph-run-turn.md) | `GoalProgress`/`TurnFacts`, trần chi phí LLM, `graph.py`, `events.run_turn`, kịch bản §13 | có (chưa nối) |
 | M6 | [`M6-cutover.md`](M6-cutover.md) | dời helper thuần, nối Socket.IO, xoá `booking_graph` + test cũ, write-fence/regex budget mới, AGENTS.md/CONTEXT.md, PR → `henry/develop` | **không** |
 
@@ -33,7 +33,7 @@ Mọi task ngầm bao gồm mục này.
 - **Regex**: `tests/test_regex_budget.py` quét `app/agents/booking_graph/` tới hết M5 (budget `{"guard.py": 2}`); M1 thêm quét `app/agents/booking/` với budget `{}` (0 regex, không `import re`); M6 đổi ROOT sang `app/agents/booking/` với budget `{"guard.py": 2}`.
 - **Không từ điển từ khoá ý định** (phủ định/hoãn/đồng ý/câu hỏi) ở bất kỳ module mới nào. Được phép: `tokens.scan_times/scan_weekdays/scan_day_offsets/has_slash_date/names_a_day/names_a_clock/digits_in`, `reply.other_time/restates_proposal_time`.
 - **Schema 5 tool Orchestrator strict-safe** (§12.17): không trường nào có `default`, không `conint`/`minimum`/`maximum`; tuỳ chọn = `| None`. Kiểm khoảng trong middleware (b). Chỉ 5 tool Orchestrator bind `strict=True`; tool specialist (có default) **không** strict.
-- **Tag model**: Orchestrator `orchestrate`, Appointment `appointment`, Shop Info `shop_info`, Conversation `respond` (**duy nhất** stream, `streaming=True`), classify `classify`, rewrite `rewrite`. Mọi model khác `streaming=False`. Model của agent (Orchestrator/specialist/Conversation) `max_retries=0` + `model_retry_middleware()`; các lời gọi đơn (classify/rewrite) bọc `asyncio.wait_for(…, 8)`.
+- **Tag model**: Orchestrator `orchestrate`, Appointment `appointment`, Shop Info `shop_info`, Conversation `respond` (**duy nhất** stream, `streaming=True`), rewrite `rewrite`. Mọi model khác `streaming=False`. Model của agent (Orchestrator/specialist/Conversation) `max_retries=0` + `model_retry_middleware()`; lời gọi đơn `rewrite` bọc `asyncio.wait_for(…, 8)`. (`classify` bỏ 06/11, Task 4.4b — không còn `classify_only`.)
 - **Giá trị cố định** (từ spec): `orch_max_tool_rounds=8` (chỉ đếm vòng có ≥1 call được chạy), `orch_max_calls_per_round=3`, `no_progress_streak≥2 → force_end`, 1 đề xuất/lượt **và** 1 đề xuất/task, `max_tool_rounds_per_task=4`, `max_retries_per_task=1`, GoalProgress ngưỡng 3, `orch_llm_calls_per_user_per_hour=150`, trần lượt 150 giây, `turn_ledger` TTL 7 ngày, `previous_turns ≤ 2`, `upcoming ≤ 5`, `slots ≤ 3`, `stated ≤ 2`, input ≤ 1000 ký tự, `UNCLEAR_LIMIT=2` (của service), `PROPOSAL_MAX_AGE_MINUTES=10` (của service).
 - **Không gọi Azure thật** ngoài hai lần kiểm `strict` (M0 Task 0.6, M3 Task 3.6), mỗi lần **hỏi chủ dự án trước**, không chạy bench.
 - **Prompt tiếng Anh**, không chứa câu mẫu tiếng Việt; docs/comment/chuỗi UI tiếng Việt; khách được gọi bằng `TurnContext.customer.address_phrase` (mặc định "anh chị", cố ý — không đoán giới tính từ tên).
@@ -88,20 +88,20 @@ app/agents/
     reply_brief.py    M4  build_reply_brief (bảng §5.4), fallback copy
     conversation.py   M4  render_brief, respond (tag respond)
     guard.py          M4  facts_from_brief, check_reply, apply_guard  (+ M6: strip_tool_names/unclaim/has_false_claim/repeats dời vào)
-    classify.py       M4  classify_only
     button_path.py    M4  run_button, BUTTON_STALE_REPLY
     progress.py       M5  step_goal, turn_facts
     llm_budget.py     M5  LlmBudget, BudgetMiddleware
     graph.py          M5  GraphState, build_graph
     events.py         M5  run_turn, AgentEvent, translate_langchain_event, pick_thread, pending_proposal_payload
-    prompts/          M2–M4  appointment.py, shop_info.py, orchestrator.py, conversation.py, classify.py; M6: digest.py, rewrite.py
+    prompts/          M2–M4  appointment.py, shop_info.py, orchestrator.py, conversation.py; M6: digest.py, rewrite.py
     tokens.py, timeparse.py, history.py, tools.py, middleware.py, timecheck.py, phrase.py, rewrite.py, button.py   M6: dời từ booking_graph
+    # classify.py + prompts/classify.py (classify_only, M4 Task 4.4) bỏ 06/11 — Task 4.4b, quyết định chủ dự án
 app/core/vi_format.py                    M0
 tests/
   test_schemas.py test_turn_context.py test_ledger.py test_resolver.py               M1
   test_specialist_appointment.py test_specialist_shop_info.py test_specialist_guard.py  M2
   test_orchestrator_tools.py test_orchestrator_decide.py test_orchestrator_guard.py test_orchestrator_agent.py  M3
-  test_reply_brief.py test_conversation_agent.py test_reply_guard.py test_classify.py test_button_path.py  M4
+  test_reply_brief.py test_conversation_agent.py test_reply_guard.py test_button_path.py  M4 (`test_classify.py` bỏ 06/11, Task 4.4b)
   test_progress.py test_llm_budget.py test_graph_turn.py test_run_turn.py test_scenarios.py  M5
   test_strict_schema_llm.py (marker llm)  M0/M3
 ```
@@ -109,6 +109,6 @@ tests/
 ## Quy ước test giả (dùng từ M2)
 
 - `tests/fakes.py` thêm `tool_call(name, args, id=None) -> AIMessage` và `tool_calls(*pairs) -> AIMessage` (nhiều tool call trong **một** AIMessage — mô phỏng song song).
-- Model giả cắm qua `monkeypatch.setattr("<module>.build_chat_model", lambda **kw: scripted)` đúng module gọi: `app.agents.booking.specialists.base`, `app.agents.booking.orchestrator.agent`, `app.agents.booking.conversation`, `app.agents.booking.classify`, `app.agents.booking_graph.rewrite` (M6: `app.agents.booking.rewrite`).
+- Model giả cắm qua `monkeypatch.setattr("<module>.build_chat_model", lambda **kw: scripted)` đúng module gọi: `app.agents.booking.specialists.base`, `app.agents.booking.orchestrator.agent`, `app.agents.booking.conversation`, `app.agents.booking_graph.rewrite` (M6: `app.agents.booking.rewrite`). (`app.agents.booking.classify` bỏ 06/11, Task 4.4b.)
 - Specialist giả cho test Orchestrator/graph: `FakeSpecialists` (M3 Task 3.4) — dict `action → TaskResult | Exception`, cắm vào `OrchestratorDeps.run_appointment/run_shop`.
 - Mongo test: fixture `test_db` (DB `chatbot_test_db`, xoá sau mỗi test), `memory_checkpointer` autouse.

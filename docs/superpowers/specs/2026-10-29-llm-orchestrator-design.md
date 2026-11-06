@@ -167,7 +167,7 @@ class TurnContext(BaseModel):
     slots: ConversationSlots | None; digest_text: str
 ```
 
-Render thành văn bản có nhãn; **mọi id/iso lấy từ object**. Hai mức: `lite` (cho `classify_only`: now, address, pending kind+giờ, open_question, số queued, goal) và `full` (Orchestrator vòng tool, specialist). Conversation chỉ nhận `ReplyBrief`.
+Render thành văn bản có nhãn; **mọi id/iso lấy từ object**. Hai mức: `lite` (now, address, pending kind+giờ, open_question, số queued, goal — dựng cho `classify_only`, Task 4.4b (06/11) bỏ `classify_only` nên mức này hiện không còn hàm nào gọi, giữ nguyên không xoá) và `full` (Orchestrator vòng tool, specialist). Conversation chỉ nhận `ReplyBrief`.
 
 ### 4.3 Luật định tuyến
 
@@ -177,8 +177,7 @@ Render thành văn bản có nhãn; **mọi id/iso lấy từ object**. Hai mứ
 | R1 | `ButtonReply` | `button_path` (code): id khớp `pending.id` → `approve`/`reject`; kết quả `approved`/`rejected`/`failed` → Conversation; không khớp/không pending → `stale_button` câu mẫu | `approved`/`rejected`/`failed` có (một lần mỗi đề xuất); `stale` không |
 | R2 | `pending` còn hạn, input chữ | `orchestrate`; middleware (h): **mọi** `propose_*`, `ask_customer`, `finish` bị từ chối cho tới khi `decide_pending` đã gọi | có |
 | R3 | `open_question` và câu ngắn (≤6 từ) chỉ chứa giờ/ngày/buổi (`tokens.scan_*`) | `orchestrate` với `answers_open_question_hint=True` | có |
-| R4 | không pending/open_question/queued/unannounced, câu không có số/giờ/ngày/thứ | `classify_only` → `route ∈ {social, unsupported, business}`; `social`/`unsupported` → `respond` với kind tương ứng; `business` → `orchestrate` | có, 1 lượt rẻ |
-| R5 | còn lại | `orchestrate` | có |
+| R5 | còn lại (gộp cả "lượt sạch" không pending/open_question/queued/unannounced, câu không có số/giờ/ngày/thứ — Task 4.4b (06/11) bỏ `classify_only`/R4 riêng) | `orchestrate`; Orchestrator tự nhận biết xã giao/không hỗ trợ bằng `finish(kind_hint=social|unsupported|answer)` | có |
 
 Resolver không gán consent, không đoán ý, không từ khoá, không ghi DB (trừ chuẩn hoá expired sẵn có của `ProposalService.get`).
 
@@ -264,10 +263,13 @@ Middleware ghi state bằng `Command(update=...)` **sau** mỗi call; vì các c
 
 ```
 START → resolve ──R1──→ button_path ─────────────────────────────┐
-          │ R4 ──→ classify_only ──social/unsupported──→           │
           │ R2/R3/R5                                               ↓
           └──→ orchestrate (create_agent + OrchestratorGuard) → brief (code) → respond (Conversation) → guard → record → END
 ```
+
+(Task 4.4b, 06/11: bỏ nhánh `classify_only` riêng — lượt "sạch" trước đây đi
+R4/`classify_only` nay đi R5/`orchestrate` như mọi lượt khác; Orchestrator tự
+gọi `finish(kind_hint=social|unsupported|answer)`.)
 
 - `orchestrate` dừng theo một trong bốn đường: (1) `finish`/`ask_customer` (`return_direct`); (2) `force_end` → `before_model` nhảy END; (3) `ToolRoundLimit`; (4) model lỗi vòng đầu → `ended_by=error`. Nếu model phát `finish` **song song** với tool khác, `all(return_direct)` sai → quay về model; luật (g) đã từ chối `finish` trong trường hợp đó nên vòng sau model gọi lại một mình.
 - **Ghi ledger ngay trong vòng** (C1): `decide_pending` ghi `pending_outcome` vào `turn_ledger` **trước khi trả về** cho model; `appointment_task` ghi `ProposalCreated` ngay khi có. Không chờ `record`.
@@ -313,7 +315,7 @@ class ReplyBrief(BaseModel):
 | **`TurnContext.unannounced`** (R0) | `prior_outcome{kind, spoken, outcome}` | `spoken` + "đã đặt/huỷ/dời xong" hoặc lý do lỗi | — |
 | `TurnContext.recently_declined` + route booking | `declined` "chưa ghi gì" | — | theo `kind` |
 | `failed` khác / `limit` | `error_reason` | — | mọi claim |
-| `finish(kind_hint=unsupported)` / `classify_only=unsupported` | `shop_phone` | — | — |
+| `finish(kind_hint=unsupported)` | `shop_phone` | — | — |
 
 ### 5.5 `decide_pending(label, aside, reason)`
 
@@ -520,9 +522,9 @@ Không log nguyên văn câu khách ngoài `turn_ledger` (TTL 7 ngày). Trace La
 
 | # | Câu hỏi | Lựa chọn | Lý do | Xem lại khi |
 |---|---|---|---|---|
-| 1 | Giữ bao nhiêu Analyzer/Router? | **Bỏ hẳn.** Orchestrator vòng tool thay cả route lẫn consent; `classify_only` cho xã giao/không hỗ trợ | hai model cùng đọc một câu là hai chỗ lệch | chi phí/lượt thành vấn đề |
-| 2 | Tin nào bypass Orchestrator? | chỉ **nút bấm** (R1); xã giao qua `classify_only` | code không đoán xã giao bằng từ khoá | có lớp phân loại rẻ hơn |
-| 3 | Conversation được resolver gọi thẳng? | có, sau `classify_only`, chỉ khi không pending/open_question/queued/unannounced | trạng thái tin cậy thắng câu chữ | — |
+| 1 | Giữ bao nhiêu Analyzer/Router? | **Bỏ hẳn.** Orchestrator vòng tool thay cả route lẫn consent; `classify_only` bỏ 06/11 theo quyết định chủ dự án — Orchestrator gọi finish(kind_hint) | hai model cùng đọc một câu là hai chỗ lệch | chi phí/lượt thành vấn đề |
+| 2 | Tin nào bypass Orchestrator? | chỉ **nút bấm** (R1); `classify_only` bỏ 06/11 theo quyết định chủ dự án — Orchestrator gọi finish(kind_hint) | code không đoán xã giao bằng từ khoá | có lớp phân loại rẻ hơn |
+| 3 | Conversation được resolver gọi thẳng? | không còn đường tắt riêng; `classify_only` bỏ 06/11 theo quyết định chủ dự án — Orchestrator gọi finish(kind_hint) rồi mới tới Conversation | trạng thái tin cậy thắng câu chữ | — |
 | 4 | Shop Info có vòng LLM? | **Có**, 3 tool đọc (chủ dự án 29/10) | cần ghép giờ mở cửa + bận + mốc hiện tại; Orchestrator không gọi tool nghiệp vụ | `fact_mismatch` đều → executor |
 | 5 | Task độc lập/phụ thuộc? | model phát nhiều tool call → LangChain chạy song song (trừ nhóm tuần tự); phụ thuộc thì gọi tuần tự | mẫu subagents | — |
 | 6 | Plan/evaluate? | không có node riêng; vòng tool của `create_agent` | hybrid | — |
@@ -563,7 +565,7 @@ Ma trận: giữ toàn bộ dòng bản trước (xã giao, pending thắng câu
 | approve → failed | `SlotTakenError` → `PendingOutcome(failed, nearest)`; reply nói giờ vừa mất + 3 giờ gần |
 | approve → not_approvable | expired giữa chừng → reply nói hết hạn, không approve |
 | Hoãn kèm "ừ" | "ừ để chú hỏi con đã", fake `approve` + `aside=defer_only` → `none`, đề xuất giữ |
-| Dịch vụ không hỗ trợ | "có làm móng gel không" → `classify_only=unsupported` → reply hướng gọi tiệm, không tool |
+| Dịch vụ không hỗ trợ | "có làm móng gel không" → Orchestrator `finish(kind_hint=unsupported)`, không tool nào chạy → reply hướng gọi tiệm |
 | Vòng toàn từ chối không tính trần | 3 vòng bị từ chối + 5 vòng chạy → không `limit` |
 | Schema strict-safe | không `default`/`minimum`/`maximum` trong JSON schema của 5 tool |
 | Call thứ 4 trong vòng | `too_many_calls` |

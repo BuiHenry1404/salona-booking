@@ -3,8 +3,10 @@
 
 Conversation Agent (Task 4.2) là agent DUY NHẤT nói với khách; nó chỉ nhận
 `ReplyBrief` này + cửa sổ lịch sử — module này KHÔNG gọi LLM, chỉ đọc lại
-những gì `OrchestrateOutcome`/`ButtonOutcome`/`ClassifyOutcome` đã ghi và suy
-ra sự thật để Conversation Agent không được bịa.
+những gì `OrchestrateOutcome`/`ButtonOutcome` đã ghi và suy ra sự thật để
+Conversation Agent không được bịa. Task 4.4b (quyết định chủ dự án 06/11): bỏ
+`classify_only`/`ClassifyOutcome` — `social`/`unsupported` giờ đến thẳng từ
+`finish(kind_hint=...)` của Orchestrator, cùng đường với `answer`.
 
 `facts_for(record, ctx, now)` ứng với ĐÚNG MỘT dòng bảng ánh xạ §5.4 — nó chỉ
 đọc `record.result` (một `TaskResult` của `appointment_task`/`shop_info_task`,
@@ -77,13 +79,7 @@ class ButtonOutcome(BaseModel):
     outcome: PendingOutcome | None
 
 
-class ClassifyOutcome(BaseModel):
-    """Kết quả `classify_only` (Task 4.4) khi lượt không chạm Orchestrator."""
-
-    route: Literal["social", "unsupported"]
-
-
-TurnOutcome = OrchestrateOutcome | ButtonOutcome | ClassifyOutcome
+TurnOutcome = OrchestrateOutcome | ButtonOutcome
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +296,7 @@ def _is_new_proposal_call(record: CallRecord) -> bool:
 def _unpack(outcome: TurnOutcome) -> tuple[PendingOutcome | None, list[CallRecord], object | None, bool]:
     """`(pending_outcome, calls, ask, có ProposalCreated mới)` — chung cho
     `reply_kind_for` và `build_reply_brief`, bất kể `outcome` tới từ
-    Orchestrator, nút bấm hay `classify_only`."""
-    if isinstance(outcome, ClassifyOutcome):
-        return None, [], None, False
+    Orchestrator hay nút bấm."""
     if isinstance(outcome, ButtonOutcome):
         return outcome.outcome, [], None, False
     calls = outcome.calls
@@ -311,8 +305,6 @@ def _unpack(outcome: TurnOutcome) -> tuple[PendingOutcome | None, list[CallRecor
 
 
 def reply_kind_for(outcome: TurnOutcome, ctx: TurnContext) -> ReplyKind:
-    if isinstance(outcome, ClassifyOutcome):
-        return outcome.route
     if isinstance(outcome, ButtonOutcome) and outcome.kind == "stale":
         return "stale_button"
 

@@ -8,12 +8,13 @@ scanner SỰ KIỆN của `tokens` (giờ/ngày/thứ) — đó là dữ kiện,
 
 Thứ tự luật (không đổi): R1 nút thắng mọi thứ, kể cả khi có `pending`. R2
 còn `pending` + câu chữ. R3 có `open_question` và câu ngắn chỉ nói giờ/ngày.
-R4 "lượt sạch" (không pending/open_question/hàng chờ/việc chưa báo) và câu
-không nhắc số/giờ/ngày/thứ nào → phân loại rẻ. R5: còn lại.
+R5: còn lại — kể cả "lượt sạch" (không pending/open_question/hàng chờ/việc
+chưa báo, câu không nhắc số/giờ/ngày/thứ nào); Orchestrator tự quyết xã giao/
+không hỗ trợ qua `finish(kind_hint=...)` (quyết định chủ dự án 06/11, bỏ
+`classify_only`/R4 — xem Task 4.4b).
 
 `R0` không phải một nhánh riêng: `unannounced` khác None chỉ gắn thêm cờ
-`must_announce=True` vào bất kỳ kết quả nào ở trên — nó CŨNG loại R4 (khách
-cần được báo tin trước, không thể coi là "lượt sạch" để đi tắt).
+`must_announce=True` vào bất kỳ kết quả nào ở trên.
 """
 from __future__ import annotations
 
@@ -24,7 +25,6 @@ from pydantic import BaseModel
 from app.agents.booking.context import TurnContext
 from app.agents.booking_graph.button import ButtonReply
 from app.agents.booking_graph.tokens import (
-    digits_in,
     has_slash_date,
     names_a_clock,
     names_a_day,
@@ -34,8 +34,8 @@ from app.agents.booking_graph.tokens import (
     words,
 )
 
-Route = Literal["button", "classify_only", "orchestrate"]
-Rule = Literal["R0", "R1", "R2", "R3", "R4", "R5"]
+Route = Literal["button", "orchestrate"]
+Rule = Literal["R0", "R1", "R2", "R3", "R5"]
 
 # R3: câu trả lời ngắn cho một câu hỏi mở — tối đa ngần này từ.
 _SHORT_ANSWER_MAX_WORDS = 6
@@ -48,11 +48,6 @@ class ResolveResult(BaseModel):
     rule: Rule
     must_announce: bool
     answers_open_question_hint: bool = False
-
-
-def mentions_time_or_number(text: str) -> bool:
-    """Câu có nhắc số, thứ, hoặc một mốc ngày/giờ nào đó không (R4/R5)."""
-    return bool(digits_in(text) or names_a_day(text) or names_a_clock(text) or scan_weekdays(text))
 
 
 def is_short_time_answer(text: str) -> bool:
@@ -89,17 +84,6 @@ def resolve(ctx: TurnContext, question: str | ButtonReply) -> ResolveResult:
             must_announce=must_announce,
             answers_open_question_hint=True,
         )
-
-    # R4: lượt "sạch" — không pending/open_question/hàng chờ/việc chưa báo —
-    # và câu không nhắc số/giờ/ngày/thứ nào → phân loại rẻ (classify_only).
-    is_clean_turn = (
-        ctx.pending is None
-        and ctx.open_question is None
-        and not ctx.queued_requests
-        and ctx.unannounced is None
-    )
-    if is_clean_turn and not mentions_time_or_number(question):
-        return ResolveResult(route="classify_only", rule="R4", must_announce=must_announce)
 
     # R5: còn lại.
     return ResolveResult(route="orchestrate", rule="R5", must_announce=must_announce)

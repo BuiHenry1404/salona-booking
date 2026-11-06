@@ -492,6 +492,33 @@ def test_orchestrator_prompt_is_english_and_names_the_two_ending_tools():
     assert "ask_customer" in ORCHESTRATOR_PROMPT
 
 
+def test_orchestrator_prompt_mentions_social_and_unsupported_kind_hints():
+    """Task 4.4b: không còn bộ phân loại riêng (`classify_only`) — prompt
+    phải tự nói Orchestrator khi nào gọi `finish(kind_hint="social")` và khi
+    nào `finish(kind_hint="unsupported")`. Chỉ kiểm có mặt, không ghim câu chữ."""
+    assert "kind_hint" in ORCHESTRATOR_PROMPT
+    assert "social" in ORCHESTRATOR_PROMPT
+    assert "unsupported" in ORCHESTRATOR_PROMPT
+
+
+async def test_social_chitchat_ends_by_finish_without_any_specialist_call(test_db, clean_db, monkeypatch):
+    """"chào em" kiểu thuần xã giao → model gọi thẳng `finish(kind_hint="social")`,
+    không specialist nào chạy (Task 4.4b thay cho `classify_only`/R4 cũ)."""
+    user = await a_user(test_db)
+    deps = await make_deps(test_db, user)
+    model = scripted(
+        [tool_call("finish", {"kind_hint": "social", "service": None, "stated": []})],
+        tags=("orchestrate",),
+    )
+    patch_model(monkeypatch, model)
+
+    out = await run_orchestrate(deps, recent=[])
+
+    assert out.ended_by == "finish"
+    assert out.finish is not None and out.finish.kind_hint == "social"
+    assert len(out.calls) == 1 and out.calls[0].tool == "finish"
+
+
 # ---------------------------------------------------------------------------
 # Ruling controller (sau Task 3.3): mỗi lượt dựng state MỚI
 # ---------------------------------------------------------------------------
