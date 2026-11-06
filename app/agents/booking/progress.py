@@ -113,17 +113,23 @@ def step_goal(
         return goal, False
 
     new_markers = [m for c in calls for m in c.markers]
+    if new_markers:
+        # TIẾN TRIỂN thật — reset về 0.
+        goal = goal.model_copy(update={"turns_without_progress": 0, "last_marker": new_markers[-1]})
+        return goal, False
+
+    # Ruling (review Task 5.1, round 2): hỏi field MỚI là TRUNG LẬP, không
+    # reset — `ctx.open_question` chỉ nhớ field của LƯỢT TRƯỚC, nên Orchestrator
+    # hỏi một field khác mỗi lượt sẽ reset mãi, đề tài không bao giờ tới
+    # `orch_goal_turns_limit` dù bế tắc thật. Không marker thì không reset, dù
+    # có hỏi field mới hay không — chỉ KHÔNG CỘNG (không phạt việc hỏi field
+    # mới, cũng không coi đó là tiến triển).
     first_ask_new_field = (
         outcome.ended_by == "ask_customer"
         and outcome.ask is not None
         and (ctx.open_question is None or outcome.ask.field != ctx.open_question.field)
     )
-
-    if new_markers or first_ask_new_field:
-        goal = goal.model_copy(update={
-            "turns_without_progress": 0,
-            "last_marker": new_markers[-1] if new_markers else goal.last_marker,
-        })
+    if first_ask_new_field:
         return goal, False
 
     turns_without_progress = goal.turns_without_progress + 1

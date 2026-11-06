@@ -162,9 +162,13 @@ def test_no_marker_turn_counts():
 
 
 def test_first_ask_for_a_new_field_does_not_count():
+    """Ruling (review Task 5.1, round 2): hỏi field MỚI là TRUNG LẬP — không
+    cộng, cũng KHÔNG reset. `ctx.open_question` chỉ nhớ field của lượt trước,
+    nên nếu field mới reset counter, Orchestrator hỏi field khác mỗi lượt sẽ
+    không bao giờ chạm `orch_goal_turns_limit` dù đang bế tắc thật."""
     from app.agents.booking.context import OpenQuestion
 
-    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="gội đầu")
+    goal = GoalProgress(goal_id="g1", turns_without_progress=2, service="gội đầu")
     ctx = make_ctx(goal=goal, open_question=OpenQuestion(field="day", asked_at=NOW, times=1))
     outcome = _outcome(
         [_appt_call(service="gội đầu", action="resolve_time")],
@@ -174,8 +178,37 @@ def test_first_ask_for_a_new_field_does_not_count():
 
     new_goal, limit_hit = step_goal(goal, outcome, _resolve(), ctx)
 
-    assert new_goal.turns_without_progress == 0
+    assert new_goal.turns_without_progress == 2
     assert limit_hit is False
+
+
+def test_new_field_ask_then_same_field_ask_reaches_limit():
+    """Nối tiếp ruling trên: field mới (trung lập, giữ 2) rồi lượt sau hỏi
+    LẠI đúng field đó (không còn "mới") thì cộng tiếp và chạm ngưỡng."""
+    from app.agents.booking.context import OpenQuestion
+
+    goal = GoalProgress(goal_id="g1", turns_without_progress=2, service="gội đầu")
+    ctx_new_field = make_ctx(goal=goal, open_question=OpenQuestion(field="day", asked_at=NOW, times=1))
+    outcome_new_field = _outcome(
+        [_appt_call(service="gội đầu", action="resolve_time")],
+        ended_by="ask_customer",
+        ask=AskCustomerArgs(field="time", hint=None),
+    )
+
+    goal, limit_hit = step_goal(goal, outcome_new_field, _resolve(), ctx_new_field)
+    assert goal.turns_without_progress == 2
+    assert limit_hit is False
+
+    ctx_same_field = make_ctx(goal=goal, open_question=OpenQuestion(field="time", asked_at=NOW, times=1))
+    outcome_same_field = _outcome(
+        [_appt_call(service="gội đầu", action="resolve_time")],
+        ended_by="ask_customer",
+        ask=AskCustomerArgs(field="time", hint=None),
+    )
+
+    goal, limit_hit = step_goal(goal, outcome_same_field, _resolve(), ctx_same_field)
+    assert goal.turns_without_progress == 0
+    assert limit_hit is True
 
 
 def test_repeat_ask_same_field_counts():
