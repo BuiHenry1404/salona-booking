@@ -608,12 +608,37 @@ async def test_record_goal_progress_roundtrips(test_db):
     svc = ConversationStateService(test_db)
     goal = GoalProgress(goal_id="g1", turns_without_progress=2,
                         last_marker="hour_proposed", service="làm móng gel",
-                        appointment_id="a1")
+                        appointment_id="a1", asked_fields=["day", "time"])
 
     await svc.record_goal_progress("u1", goal)
 
     state = await ConversationService(test_db).get_state("u1")
     assert state.goal == goal
+    assert state.goal.asked_fields == ["day", "time"]
+
+
+async def test_record_goal_progress_reads_back_old_document_without_asked_fields(test_db):
+    """Task 5.1 fix round 2: tài liệu Mongo đã ghi TRƯỚC khi có `asked_fields`
+    (dict `state.goal` thiếu khoá này) vẫn đọc được qua `ConversationService.get_state`
+    — mặc định `[]`, không migrate."""
+    svc = ConversationStateService(test_db)
+    now = now_utc()
+    await svc._set_today_fields(
+        "u1",
+        {
+            "state.goal": {
+                "goal_id": "g1", "turns_without_progress": 1, "last_marker": None,
+                "service": "làm tóc", "appointment_id": None,
+            },
+            "state.updated_at": now,
+        },
+        now,
+    )
+
+    state = await ConversationService(test_db).get_state("u1")
+
+    assert state.goal.goal_id == "g1"
+    assert state.goal.asked_fields == []
 
 
 async def test_set_queued_roundtrips_and_keeps_tz(test_db):

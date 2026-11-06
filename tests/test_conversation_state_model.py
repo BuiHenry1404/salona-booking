@@ -100,7 +100,7 @@ def test_goal_and_queued_default_to_none_and_empty_on_an_old_document():
 def test_goal_and_queued_round_trip_through_model_dump():
     goal = GoalProgress(goal_id="g1", turns_without_progress=2,
                         last_marker="hour_proposed", service="làm móng gel",
-                        appointment_id="a1")
+                        appointment_id="a1", asked_fields=["day", "time"])
     queued = QueuedRequest(queue_id="q1", start_at=datetime(2026, 10, 31, 9, 0,
                                                             tzinfo=timezone.utc),
                            spoken="9 giờ sáng mai", queued_at=datetime.now(timezone.utc))
@@ -109,5 +109,16 @@ def test_goal_and_queued_round_trip_through_model_dump():
                               goal=goal, queued=[queued])
     restored = ConversationState(**state.model_dump())
     assert restored.goal == goal
+    assert restored.goal.asked_fields == ["day", "time"]
     assert restored.queued[0].queue_id == "q1"
     assert restored.queued[0].start_at.tzinfo is not None
+
+
+def test_goal_asked_fields_defaults_to_empty_on_an_old_document():
+    """Task 5.1 fix round 2: `GoalProgress` đã lưu TRƯỚC khi có `asked_fields`
+    không có khoá này trong dict Mongo — vẫn đọc được, mặc định []."""
+    goal = GoalProgress(**{
+        "goal_id": "g1", "turns_without_progress": 1,
+        "last_marker": None, "service": "làm móng gel", "appointment_id": None,
+    })
+    assert goal.asked_fields == []

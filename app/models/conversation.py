@@ -117,6 +117,12 @@ class GoalProgress(BaseModel):
     last_marker: Optional[str] = None
     service: Optional[str] = None    # dùng để nhận "đổi mục tiêu" (§7.2)
     appointment_id: Optional[str] = None
+    # Các field đã hỏi TRONG mục tiêu này (Task 5.1 fix round 2) — đếm đúng
+    # một field bị hỏi LẶP LẠI dù Orchestrator xen kẽ nhiều field khác nhau;
+    # `ctx.open_question.field` chỉ nhớ field của LƯỢT NGAY TRƯỚC nên không đủ.
+    # Reset về [] khi mục tiêu mở mới/đóng. Document cũ không có field này ->
+    # mặc định [].
+    asked_fields: List[str] = Field(default_factory=list)
 
 
 class QueuedRequest(BaseModel):

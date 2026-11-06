@@ -108,6 +108,7 @@ def test_first_appointment_call_opens_a_goal():
 
     assert new_goal.goal_id is not None
     assert new_goal.service == "gội đầu"
+    assert new_goal.asked_fields == ["day"]
     assert limit_hit is False
 
 
@@ -161,71 +162,62 @@ def test_no_marker_turn_counts():
     assert limit_hit is False
 
 
-def test_first_ask_for_a_new_field_does_not_count():
-    """Ruling (review Task 5.1, round 2): hỏi field MỚI là TRUNG LẬP — không
-    cộng, cũng KHÔNG reset. `ctx.open_question` chỉ nhớ field của lượt trước,
-    nên nếu field mới reset counter, Orchestrator hỏi field khác mỗi lượt sẽ
-    không bao giờ chạm `orch_goal_turns_limit` dù đang bế tắc thật."""
-    from app.agents.booking.context import OpenQuestion
-
-    goal = GoalProgress(goal_id="g1", turns_without_progress=2, service="gội đầu")
-    ctx = make_ctx(goal=goal, open_question=OpenQuestion(field="day", asked_at=NOW, times=1))
-    outcome = _outcome(
-        [_appt_call(service="gội đầu", action="resolve_time")],
+def _ask_outcome(field: str, service: str = "gội đầu") -> OrchestrateOutcome:
+    return _outcome(
+        [_appt_call(service=service, action="resolve_time")],
         ended_by="ask_customer",
-        ask=AskCustomerArgs(field="time", hint=None),
+        ask=AskCustomerArgs(field=field, hint=None),
     )
 
-    new_goal, limit_hit = step_goal(goal, outcome, _resolve(), ctx)
+
+def test_first_ask_for_a_new_field_does_not_count():
+    """Ruling (review Task 5.1, round 2): hỏi một field CHƯA từng hỏi trong
+    mục tiêu này (`goal.asked_fields`) là TRUNG LẬP — không cộng, cũng KHÔNG
+    reset, chỉ ghi nhận field đó lại. Không còn đọc `ctx.open_question` (chỉ
+    nhớ field của lượt NGAY TRƯỚC — không đủ để bắt Orchestrator xen kẽ field
+    A/B/A/B, xem `test_alternating_field_asks_eventually_reach_limit`)."""
+    goal = GoalProgress(goal_id="g1", turns_without_progress=2, service="gội đầu")
+    ctx = make_ctx(goal=goal)
+
+    new_goal, limit_hit = step_goal(goal, _ask_outcome("time"), _resolve(), ctx)
 
     assert new_goal.turns_without_progress == 2
+    assert new_goal.asked_fields == ["time"]
     assert limit_hit is False
-
-
-def test_new_field_ask_then_same_field_ask_reaches_limit():
-    """Nối tiếp ruling trên: field mới (trung lập, giữ 2) rồi lượt sau hỏi
-    LẠI đúng field đó (không còn "mới") thì cộng tiếp và chạm ngưỡng."""
-    from app.agents.booking.context import OpenQuestion
-
-    goal = GoalProgress(goal_id="g1", turns_without_progress=2, service="gội đầu")
-    ctx_new_field = make_ctx(goal=goal, open_question=OpenQuestion(field="day", asked_at=NOW, times=1))
-    outcome_new_field = _outcome(
-        [_appt_call(service="gội đầu", action="resolve_time")],
-        ended_by="ask_customer",
-        ask=AskCustomerArgs(field="time", hint=None),
-    )
-
-    goal, limit_hit = step_goal(goal, outcome_new_field, _resolve(), ctx_new_field)
-    assert goal.turns_without_progress == 2
-    assert limit_hit is False
-
-    ctx_same_field = make_ctx(goal=goal, open_question=OpenQuestion(field="time", asked_at=NOW, times=1))
-    outcome_same_field = _outcome(
-        [_appt_call(service="gội đầu", action="resolve_time")],
-        ended_by="ask_customer",
-        ask=AskCustomerArgs(field="time", hint=None),
-    )
-
-    goal, limit_hit = step_goal(goal, outcome_same_field, _resolve(), ctx_same_field)
-    assert goal.turns_without_progress == 0
-    assert limit_hit is True
 
 
 def test_repeat_ask_same_field_counts():
-    from app.agents.booking.context import OpenQuestion
+    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="gội đầu", asked_fields=["time"])
+    ctx = make_ctx(goal=goal)
 
-    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="gội đầu")
-    ctx = make_ctx(goal=goal, open_question=OpenQuestion(field="time", asked_at=NOW, times=1))
-    outcome = _outcome(
-        [_appt_call(service="gội đầu", action="resolve_time")],
-        ended_by="ask_customer",
-        ask=AskCustomerArgs(field="time", hint=None),
-    )
-
-    new_goal, limit_hit = step_goal(goal, outcome, _resolve(), ctx)
+    new_goal, limit_hit = step_goal(goal, _ask_outcome("time"), _resolve(), ctx)
 
     assert new_goal.turns_without_progress == 2
+    assert new_goal.asked_fields == ["time"]
     assert limit_hit is False
+
+
+def test_alternating_field_asks_eventually_reach_limit():
+    """Ruling (review Task 5.1, round 2) — bảng nguyên văn: xen kẽ A, B, A, B
+    từ count 0: A (0, trung lập, asked [A]) -> B (0, trung lập, asked [A,B])
+    -> A (1) -> B (2) -> A (3, limit_hit, reset 0). `ctx.open_question` CHỈ
+    nhớ field lượt trước nên mỗi lượt đều "trông mới" nếu dùng nó — phải đọc
+    `goal.asked_fields` (xuyên lượt) mới bắt được bế tắc này."""
+    goal = GoalProgress(goal_id="g1", turns_without_progress=0, service="gội đầu")
+    ctx = make_ctx(goal=goal)
+    sequence = [
+        ("day", 0, False, ["day"]),
+        ("time", 0, False, ["day", "time"]),
+        ("day", 1, False, ["day", "time"]),
+        ("time", 2, False, ["day", "time"]),
+        ("day", 0, True, ["day", "time"]),
+    ]
+
+    for field, expected_count, expected_limit, expected_asked in sequence:
+        goal, limit_hit = step_goal(goal, _ask_outcome(field), _resolve(), ctx)
+        assert goal.turns_without_progress == expected_count
+        assert limit_hit is expected_limit
+        assert goal.asked_fields == expected_asked
 
 
 def test_marker_resets_count():
@@ -263,7 +255,7 @@ def test_approved_closes_goal(pending_outcome, aside):
 
 
 def test_service_change_opens_a_new_goal():
-    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="gội đầu")
+    goal = GoalProgress(goal_id="g1", turns_without_progress=1, service="gội đầu", asked_fields=["day"])
     ctx = make_ctx(goal=goal)
     outcome = _outcome([_appt_call(service="làm móng", action="propose_book")], ended_by="finish")
 
@@ -273,6 +265,7 @@ def test_service_change_opens_a_new_goal():
     assert new_goal.goal_id != "g1"
     assert new_goal.service == "làm móng"
     assert new_goal.turns_without_progress == 0
+    assert new_goal.asked_fields == []
     assert limit_hit is False
 
 

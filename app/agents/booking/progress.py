@@ -54,6 +54,7 @@ def _new_goal(goal_id: str, args: dict) -> GoalProgress:
         last_marker=None,
         service=args.get("service"),
         appointment_id=args.get("appointment_id"),
+        asked_fields=[],
     )
 
 
@@ -67,8 +68,11 @@ def step_goal(
 
     `outcome` là `None` ở đường nút bấm (R1, không chạy Orchestrator) — lượt
     đó không có call `appointment_task` nào để xét, nên trung lập (không
-    đổi `goal`, `limit_hit=False`). `resolve` không dùng trong luật §7.2 —
-    tham số giữ cho hợp đồng cân với `turn_facts` (cùng chữ ký đầu vào)."""
+    đổi `goal`, `limit_hit=False`). `resolve`/`ctx` không dùng trong thân hàm
+    — tham số giữ cho hợp đồng cân với `turn_facts` (cùng chữ ký đầu vào); từ
+    ruling round 2, việc đếm field hỏi lặp lại đọc `goal.asked_fields` (sống
+    xuyên lượt), không còn đọc `ctx.open_question` (chỉ nhớ field LƯỢT TRƯỚC,
+    không đủ để phát hiện A/B/A/B xen kẽ)."""
     if outcome is None:
         return goal, False
 
@@ -118,19 +122,18 @@ def step_goal(
         goal = goal.model_copy(update={"turns_without_progress": 0, "last_marker": new_markers[-1]})
         return goal, False
 
-    # Ruling (review Task 5.1, round 2): hỏi field MỚI là TRUNG LẬP, không
-    # reset — `ctx.open_question` chỉ nhớ field của LƯỢT TRƯỚC, nên Orchestrator
-    # hỏi một field khác mỗi lượt sẽ reset mãi, đề tài không bao giờ tới
-    # `orch_goal_turns_limit` dù bế tắc thật. Không marker thì không reset, dù
-    # có hỏi field mới hay không — chỉ KHÔNG CỘNG (không phạt việc hỏi field
-    # mới, cũng không coi đó là tiến triển).
-    first_ask_new_field = (
-        outcome.ended_by == "ask_customer"
-        and outcome.ask is not None
-        and (ctx.open_question is None or outcome.ask.field != ctx.open_question.field)
-    )
-    if first_ask_new_field:
-        return goal, False
+    # Ruling (review Task 5.1, round 2): đếm field bị hỏi LẶP LẠI trong CHÍNH
+    # mục tiêu này (`goal.asked_fields`), không phải so với `ctx.open_question`
+    # — câu đó chỉ nhớ field của LƯỢT NGAY TRƯỚC, nên Orchestrator xen kẽ
+    # nhiều field (A, B, A, B...) sẽ luôn trông "mới" nếu so với lượt trước,
+    # không bao giờ chạm `orch_goal_turns_limit` dù bế tắc thật. Field CHƯA
+    # từng hỏi trong mục tiêu này -> trung lập (không cộng), ghi nhận lại;
+    # field ĐÃ hỏi rồi -> coi như lượt không marker (+1).
+    if outcome.ended_by == "ask_customer" and outcome.ask is not None:
+        field = outcome.ask.field
+        if field not in goal.asked_fields:
+            goal = goal.model_copy(update={"asked_fields": [*goal.asked_fields, field]})
+            return goal, False
 
     turns_without_progress = goal.turns_without_progress + 1
     limit_hit = turns_without_progress >= settings.orch_goal_turns_limit
