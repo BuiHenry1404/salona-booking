@@ -122,29 +122,47 @@ def _clause_claims(clause: str) -> set[str]:
     ("đã" trong 2 từ trước, hoặc "rồi" trong 4 từ sau — cùng cách nhận biết
     của `_is_claimed_clause` cũ, chỉ khác từ vựng), VÀ mệnh đề thật sự đang
     nói về một lịch hẹn (`_mentions_appointment`) — không thì "đã đổi ý rồi"/
-    "đã đổi số điện thoại rồi" cũng bị bắt oan (Fix round 2)."""
+    "đã đổi số điện thoại rồi" cũng bị bắt oan (Fix round 2).
+
+    Fix round 3: một động từ có "chưa"/"không" trong 2 từ TRƯỚC nó (phủ định)
+    không phải lời nhận — "em chưa huỷ được lịch" không phải "em đã huỷ"."""
     words = tokens.words(clause)
     claims: set[str] = set()
     for i, word in enumerate(words):
         claim = _CLAIM_FOR_VERB.get(word)
         if claim is None:
             continue
-        near_da = "đã" in words[max(0, i - 2):i]
+        before = words[max(0, i - 2):i]
+        if "chưa" in before or "không" in before:
+            continue
+        near_da = "đã" in before
         near_roi = "rồi" in words[i + 1:i + 5]
         if (near_da or near_roi) and _mentions_appointment(clause, words):
             claims.add(claim)
     return claims
 
 
+def _is_question(sentence: str) -> bool:
+    """Câu hỏi KHÔNG BAO GIỜ là một lời nhận — kết thúc bằng "?" (sau khi bỏ
+    khoảng trắng cuối), hoặc mang cụm hỏi "không ạ"/"chưa ạ" (Fix round 3)."""
+    if sentence.rstrip().endswith("?"):
+        return True
+    return tokens.has_phrase(tokens.padded(sentence), ("không ạ", "chưa ạ"))
+
+
 def _forbidden_verb_claim(draft: str, must_not_claim: list[str]) -> bool:
     """`has_false_claim` không có từ vựng cho "huỷ"/"dời" (xem comment
     `_CLAIM_FOR_VERB`) — kiểm riêng câu "đã huỷ/dời ... rồi" khi claim đó nằm
     trong `must_not_claim`. Giữ nguyên đường "booked" đã có (`_claim_violation`
-    qua `has_false_claim`), chỉ bù thêm hai claim còn lại."""
+    qua `has_false_claim`), chỉ bù thêm hai claim còn lại. Câu hỏi
+    (`_is_question`) bị bỏ qua hoàn toàn — cả câu, không chỉ mệnh đề có dấu
+    hỏi (Fix round 3)."""
     forbidden = set(must_not_claim) & {"cancelled", "moved"}
     if not forbidden:
         return False
     for sentence in tokens.split_sentences(draft or ""):
+        if _is_question(sentence):
+            continue
         for clause in tokens.split_clauses(sentence, break_words=("còn",), preserve_date_comma=True):
             if _clause_claims(clause) & forbidden:
                 return True

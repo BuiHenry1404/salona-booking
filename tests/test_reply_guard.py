@@ -153,6 +153,55 @@ def test_claim_changing_a_phone_number_is_not_an_appointment_claim():
     assert "claim" not in check_reply(draft, brief, [])
 
 
+def test_claim_a_question_about_moving_is_not_a_claim():
+    """Fix round 3: câu hỏi (kết thúc '?') không phải lời nhận đã làm."""
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Chị muốn dời lịch sang 4 giờ không ạ?"
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_negated_with_chua_is_not_a_claim():
+    brief = make_brief(must_not_claim=["cancelled"])
+    draft = "Dạ em chưa huỷ được lịch 3 giờ chiều mai, chị chờ em xíu nhé."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_negated_with_khong_is_not_a_claim():
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Dạ em không dời lịch đâu ạ, lịch vẫn 3 giờ."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_negated_with_chua_right_next_to_a_marker_is_not_a_claim():
+    """Ca thật kiểm cơ chế phủ định: có cả 'chưa' VÀ 'rồi' quanh động từ —
+    round 2 (chưa có phủ định) sẽ bắt oan câu này."""
+    brief = make_brief(must_not_claim=["cancelled"])
+    draft = "Dạ em chưa huỷ lịch rồi ạ, chị đừng lo."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_negated_with_khong_right_next_to_a_marker_is_not_a_claim():
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Dạ em không dời lịch rồi nhé."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_cancelled_and_moved_still_flag_after_questions_and_negations_are_skipped():
+    """Round 3 không được làm mất lại hai ca bắt buộc của round 1."""
+    cancel_brief = make_brief(must_not_claim=["cancelled"])
+    assert "claim" in check_reply(
+        "Dạ em đã huỷ lịch 3 giờ chiều mai cho chị rồi ạ.", cancel_brief, []
+    )
+
+    move_brief = make_brief(must_not_claim=["moved"])
+    assert "claim" in check_reply("Dạ em dời sang 4 giờ rồi nhé.", move_brief, [])
+
+
 async def test_apply_guard_fixes_a_forbidden_cancel_claim_via_unclaim(monkeypatch):
     """`unclaim` (tất định, đã có sẵn) đủ sức sửa câu "đã huỷ ... rồi" —
     không cần tới rewrite (LLM)."""
