@@ -186,7 +186,8 @@ def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) 
 
 
 async def apply_guard(
-    draft: str, brief: ReplyBrief, previous_replies: Sequence[str], *, source: str
+    draft: str, brief: ReplyBrief, previous_replies: Sequence[str], *, source: str,
+    log_extra: dict | None = None,
 ) -> GuardResult:
     """Nơi DUY NHẤT quyết câu trả lời cuối cùng — `source="code"` (đã qua
     `brief.fallback`, câu chốt CODE viết) trả nguyên, không kiểm lại.
@@ -202,7 +203,11 @@ async def apply_guard(
       mới là câu lặp thật — trả bản gốc sẽ phát đúng lỗi vừa bắt);
     - còn lại (vi phạm không sửa được, lượt không có câu chốt) → trả bản GỐC
       (trước rewrite), ghi lại vi phạm để quan sát (§11 `guard_violation`).
+
+    `log_extra` (graph truyền `user_id`/`turn_id`/`thread_id`, §11) gộp vào
+    `extra` của mọi dòng `guard_violation`.
     """
+    ids = log_extra or {}
     if source == "code":
         return GuardResult(answer=draft, source="code", violations=[])
 
@@ -223,16 +228,16 @@ async def apply_guard(
     recheck = check_reply(checked_draft, brief, previous_replies)
 
     if not recheck:
-        logger.info("guard_violation", extra={"codes": codes, "fixed_by": "rewrite"})
+        logger.info("guard_violation", extra={**ids, "codes": codes, "fixed_by": "rewrite"})
         return GuardResult(answer=checked_draft, source="llm", violations=[])
 
     if brief.kind in _FALLBACK_KINDS and any(c in _FIXABLE_BY_FALLBACK for c in recheck):
-        logger.warning("guard_violation", extra={"codes": recheck, "fixed_by": "fallback"})
+        logger.warning("guard_violation", extra={**ids, "codes": recheck, "fixed_by": "fallback"})
         return GuardResult(answer=brief.fallback, source="code", violations=recheck)
 
     if set(recheck) == {"repeat"}:
-        logger.info("guard_violation", extra={"codes": recheck, "fixed_by": "rewrite"})
+        logger.info("guard_violation", extra={**ids, "codes": recheck, "fixed_by": "rewrite"})
         return GuardResult(answer=checked_draft, source="llm", violations=recheck)
 
-    logger.warning("guard_violation", extra={"codes": recheck, "fixed_by": "none"})
+    logger.warning("guard_violation", extra={**ids, "codes": recheck, "fixed_by": "none"})
     return GuardResult(answer=draft, source="llm", violations=recheck)

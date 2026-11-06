@@ -20,6 +20,7 @@ mã KHÔNG nằm trong `STREAK_CODES` — trường hợp lý thuyết, không n
 from __future__ import annotations
 
 import asyncio
+from typing import Sequence
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
@@ -77,6 +78,9 @@ class OrchestrateOutcome(BaseModel):
     ask: AskCustomerArgs | None
     proposals_created: int
     rounds_executed: int
+    # §11 `turn_ended.no_progress_streak` — chỉ đọc được từ state cuối của
+    # guard; đường dựng lại từ ledger (timeout/lỗi) không có, để 0.
+    no_progress_streak: int = 0
 
 
 # Quyết định chủ dự án 06/11: Orchestrator chạy reasoning_effort="low".
@@ -84,11 +88,15 @@ class OrchestrateOutcome(BaseModel):
 ORCH_REASONING_EFFORT = "low"
 
 
-def build_orchestrator(deps: OrchestratorDeps):
+def build_orchestrator(deps: OrchestratorDeps, *, extra_middleware: Sequence[AgentMiddleware] = ()):
     """Dựng `create_agent` của Orchestrator, mới hoàn toàn cho một lượt —
     `deps` (và 5 tool `make_orchestrator_tools` dựng từ nó) đã đóng sẵn
     `db`/`user`/`ctx`/`ledger` của lượt này, không có state nào tái dùng giữa
-    hai lượt (`checkpointer=False`)."""
+    hai lượt (`checkpointer=False`).
+
+    `extra_middleware` nối vào CUỐI danh sách — trong cùng nhất của chuỗi
+    `awrap_model_call`, nên `BudgetMiddleware` (graph, Task 5.3) đếm đúng
+    mỗi lần gọi model thật, kể cả lần `model_retry_middleware` thử lại."""
     model = build_chat_model(
         tags=["orchestrate"], streaming=False, max_retries=0,
         reasoning_effort=ORCH_REASONING_EFFORT,
@@ -108,6 +116,7 @@ def build_orchestrator(deps: OrchestratorDeps):
             StrictToolsMiddleware(),
             ToolRoundLimitMiddleware(deps.max_rounds * 2),
             model_retry_middleware(),
+            *extra_middleware,
         ],
         checkpointer=False,
     )
@@ -155,6 +164,7 @@ def _outcome_from_state(state: dict) -> OrchestrateOutcome:
         ask=AskCustomerArgs.model_validate(ask_raw) if ask_raw else None,
         proposals_created=state.get("proposals_created") or 0,
         rounds_executed=state.get("rounds_executed") or 0,
+        no_progress_streak=state.get("no_progress_streak") or 0,
     )
 
 
@@ -215,7 +225,11 @@ async def _outcome_from_ledger(deps: OrchestratorDeps, *, reason: str, thread_id
 
 
 async def run_orchestrate(
-    deps: OrchestratorDeps, recent: list[BaseMessage], *, thread_id: str | None = None
+    deps: OrchestratorDeps,
+    recent: list[BaseMessage],
+    *,
+    thread_id: str | None = None,
+    extra_middleware: Sequence[AgentMiddleware] = (),
 ) -> OrchestrateOutcome:
     """Chạy Orchestrator đúng MỘT lượt, dưới trần `orch_orchestrate_timeout_seconds`.
 
@@ -233,7 +247,7 @@ async def run_orchestrate(
     `TimeoutError` khác bay ra từ bên trong (vd. một `asyncio.wait_for` nội
     bộ nào đó của specialist) — chỉ cái đầu mới được log `reason="timeout"`,
     còn lại coi như lỗi model (`reason="model_error"`)."""
-    agent = build_orchestrator(deps)
+    agent = build_orchestrator(deps, extra_middleware=extra_middleware)
     message = orchestrator_message(deps.ctx, recent, deps.question)
     # Mỗi vòng tốn NHIỀU bước đồ thị (before_model của guard, before_model của
     # `ToolRoundLimitMiddleware`, model, tool...), không phải 1 bước/vòng —

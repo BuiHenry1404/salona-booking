@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Sequence
+
+from langchain.agents.middleware import AgentMiddleware
 
 from langchain_core.messages import ToolMessage
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -135,8 +138,13 @@ async def _persist_queued(db: AsyncIOMotorDatabase, user: User, queued_json: lis
 
 async def run_task(
     db: AsyncIOMotorDatabase, user: User, spec: TaskSpec, ctx: TurnContext, question: str,
+    *, extra_middleware: Sequence[AgentMiddleware] = (),
 ) -> TaskResult:
-    """Chạy đúng một task của Appointment Agent."""
+    """Chạy đúng một task của Appointment Agent.
+
+    `extra_middleware` nối thêm vào cuối lưới của specialist — graph (Task
+    5.3) truyền `BudgetMiddleware` của lượt qua đây để mỗi lời gọi model
+    của task cũng ghi một dấu ngân sách LLM."""
     # (1) propose_move không có appointment_id là lỗi lập đích của Orchestrator
     # — không có gì để model làm, không tốn một lượt gọi model.
     if spec.action == "propose_move" and spec.args.appointment_id is None:
@@ -147,7 +155,7 @@ async def run_task(
     agent = build_specialist(
         prompt=APPOINTMENT_PROMPT, tools=tools, tag="appointment",
         output_model=specialist_output_model(spec.action),
-        extra_middleware=[OneProposalPerTaskMiddleware()],
+        extra_middleware=[OneProposalPerTaskMiddleware(), *extra_middleware],
     )
     result, messages = await run_specialist(
         agent, spec, ctx, question, timeout=settings.orch_task_timeout_seconds,

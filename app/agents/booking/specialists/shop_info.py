@@ -11,6 +11,9 @@ vẫn chép sai, không khác gì)."""
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Sequence
+
+from langchain.agents.middleware import AgentMiddleware
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -79,14 +82,19 @@ def _fact_mismatch(spec: TaskSpec, *, attempts: int) -> TaskResult:
 
 async def run_task(
     db: AsyncIOMotorDatabase, user: User, spec: TaskSpec, ctx: TurnContext, question: str,
+    *, extra_middleware: Sequence[AgentMiddleware] = (),
 ) -> TaskResult:
-    """Chạy đúng một task của Shop Info Agent."""
+    """Chạy đúng một task của Shop Info Agent.
+
+    `extra_middleware`: như `appointment.run_task` — đường graph truyền
+    `BudgetMiddleware` của lượt xuống specialist (Task 5.3)."""
     # (1) dựng agent MỖI task: chỉ đúng tool theo action - không lưới đề xuất
     # nào cần ở đây, không tool nào ghi.
     tools = allowlist(make_shop_tools(db, user), ALLOWLIST[spec.action])
     agent = build_specialist(
         prompt=SHOP_INFO_PROMPT, tools=tools, tag="shop_info",
         output_model=specialist_output_model(spec.action),
+        extra_middleware=extra_middleware,
     )
     result, _messages = await run_specialist(
         agent, spec, ctx, question, timeout=settings.orch_task_timeout_seconds,

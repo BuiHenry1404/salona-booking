@@ -99,7 +99,7 @@ def render_brief(brief: ReplyBrief) -> str:
 
 
 async def respond(
-    brief: ReplyBrief, history: list[BaseMessage], question: str
+    brief: ReplyBrief, history: list[BaseMessage], question: str, *, log_extra: dict | None = None
 ) -> tuple[str, str]:
     """Gọi Conversation Agent cho một lượt. Trả `(draft, source)` — `source`
     là `"llm"` khi model trả chữ, `"code"` khi lỗi/timeout/rỗng buộc dùng
@@ -109,7 +109,9 @@ async def respond(
     `app.agents.booking_graph.agents.is_transient`) được thử lại ĐÚNG MỘT
     lần; lỗi khác, hoặc lỗi của lần thử lại, trả fallback ngay. Không bao giờ
     nuốt lỗi lặng lẽ — luôn log một sự kiện tên ổn định trước khi trả
-    fallback (không log chữ khách, §11)."""
+    fallback (không log chữ khách, §11). `log_extra` (graph truyền
+    `user_id`/`turn_id`/`thread_id`) gộp vào `extra` của hai dòng log đó."""
+    ids = log_extra or {}
     message = HumanMessage(content=f"{render_brief(brief)}\n\n{UNTRUSTED}{question}")
     messages: list[BaseMessage] = [SystemMessage(content=CONVERSATION_PROMPT), *history, message]
 
@@ -125,12 +127,12 @@ async def respond(
                 continue
             logger.warning(
                 "respond_failed",
-                extra={"reason": type(exc).__name__, "attempts": attempts, "kind": brief.kind},
+                extra={**ids, "reason": type(exc).__name__, "attempts": attempts, "kind": brief.kind},
             )
             return brief.fallback, "code"
 
         text = result.content if isinstance(result.content, str) else str(result.content)
         if not text.strip():
-            logger.warning("respond_empty", extra={"attempts": attempts, "kind": brief.kind})
+            logger.warning("respond_empty", extra={**ids, "attempts": attempts, "kind": brief.kind})
             return brief.fallback, "code"
         return text, "llm"
