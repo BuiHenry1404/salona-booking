@@ -16,7 +16,7 @@ Thư mục này chứa toàn bộ các kịch bản kiểm thử (Test Scenarios
 
 ## NGUYÊN TẮC CỐT LÕI KHI KIỂM THỬ HỘI THOẠI AI
 1. **Lễ tân luôn xưng "em", gọi khách theo danh xưng trong bối cảnh** (ví dụ "chị Lan", "anh Hùng", "anh Ba").
-2. **AI không có tool ghi lịch trực tiếp** — Lượt 1 kiểm tra & giữ chỗ (`propose_appointment`), nhắc lại mốc giờ rõ ràng; Lượt 2 khách "ừ" thì node `confirm` thực thi (0 lượt LLM, đọc dữ liệu tất định từ MongoDB).
+2. **AI không có tool ghi lịch trực tiếp** — Lượt 1 kiểm tra & giữ chỗ (`propose_appointment`), nhắc lại mốc giờ rõ ràng; Lượt 2 khách "ừ" thì node `confirm` thực thi, đọc dữ liệu tất định từ MongoDB. **0 lượt LLM chỉ đúng cho đường nút Đồng ý/Không** — gõ chữ ("ừ") từ Task 12 tốn đúng một lượt LLM (bộ phân tích câu khách, tag `analyze`, không stream — xem `CONTEXT.md` bẫy #8).
 3. **Mốc thời gian luôn diễn đạt bằng GIỜ TUYỆT ĐỐI** ("xong lúc 3:30 chiều"), không bao giờ dùng khoảng đếm ngược ("còn 30 phút").
 4. **Không đoán thời gian thiếu** — Thiếu ngày hỏi ngày, thiếu giờ hỏi giờ, thiếu buổi (sáng/chiều) hỏi buổi.
 5. **Chỉ stream token mang tag `respond`** — Token JSON của supervisor và parser thời gian bị chặn hoàn toàn.

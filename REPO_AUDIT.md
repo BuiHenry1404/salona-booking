@@ -29,18 +29,22 @@ lý trước khi mở cho khách thật, phần còn lại là LOW/INFO.
 | INFO     | 2 |
 | **Total**| **14** |
 
-**Top 5 ưu tiên:**
+> **Cập nhật 06/11** (xem per-finding bên dưới để biết commit): SEC-02 và REL-01 đã FIXED;
+> REL-02 đã FIXED; INFO-01 đã FIXED (gỡ sạch autogen). Danh sách "Top 5" dưới đây giữ
+> nguyên văn lúc audit — đọc là biên bản, không phải trạng thái hiện tại.
+
+**Top 5 ưu tiên (lúc audit — xem cập nhật per-finding bên dưới):**
 
 1. SEC-01 — Socket.IO KHÔNG kiểm `token_version`: đổi mật khẩu thu hồi token trên
    HTTP nhưng socket cũ vẫn sống tới hết hạn JWT.
-2. SEC-02 — Không có rate limit / tuần tự hóa cho `send_message`: một khách spam
-   sẽ kéo chi phí LLM và nghẽn bot Telegram long-polling (1 worker).
-3. REL-02 — `ShopHoursRequest.open_time/close_time` không validate định dạng;
-   chuỗi sai làm `_to_minutes` ném ValueError → hỏng mọi lượt đặt lịch.
+2. ~~SEC-02~~ — ~~Không có rate limit / tuần tự hóa cho `send_message`~~ — **FIXED**,
+   xem finding SEC-02 bên dưới.
+3. ~~REL-02~~ — ~~`ShopHoursRequest.open_time/close_time` không validate định dạng~~ —
+   **FIXED**, xem finding REL-02 bên dưới.
 4. SEC-03 — `docker-compose.yml` expose Mongo 27017 không auth + mongo-express
    admin/admin (đã ghi chú dev-only, chưa tách prod) — chặn triển khai ra ngoài.
 5. DEP-01 — `python-jose` đã bị bỏ hoang (CVE đã công bố), `passlib` ngừng bảo
-   trì, nhiều dependency pin cũ.
+   trì, nhiều dependency pin cũ. **Vẫn còn** (chưa làm).
 
 ## Repository Snapshot
 
@@ -63,20 +67,20 @@ lý trước khi mở cho khách thật, phần còn lại là LOW/INFO.
 
 | ID | Severity | Area | Finding | Status |
 |----|----------|------|---------|--------|
-| SEC-01 | MEDIUM | Socket.IO auth | Không kiểm `token_version` khi connect | CONFIRMED |
-| SEC-02 | MEDIUM | Socket.IO / LLM | `send_message` không rate limit, không tuần tự | CONFIRMED (code) |
-| SEC-03 | MEDIUM | Deploy | Mongo không auth + mongo-express admin/admin | CONFIRMED (dev-only) |
-| SEC-04 | LOW | CORS | `ALLOWED_ORIGINS` + credentials thiếu guard cho wildcard | LIKELY (cần cấu hình sai) |
-| REL-01 | MEDIUM | Concurrency | Hai lượt chat song song cùng user giẫm pending/stream | LIKELY |
-| REL-02 | MEDIUM | Validation | Giờ mở cửa không validate → ValueError dây chuyền | CONFIRMED |
-| DEP-01 | MEDIUM | Dependencies | python-jose/passlib hết bảo trì, pin cũ | CONFIRMED |
+| SEC-01 | MEDIUM | Socket.IO auth | Không kiểm `token_version` khi connect | CONFIRMED — vẫn mở |
+| SEC-02 | MEDIUM | Socket.IO / LLM | `send_message` không rate limit, không tuần tự | **FIXED** (`5703bed`, `chat_max_per_hour`) |
+| SEC-03 | MEDIUM | Deploy | Mongo không auth + mongo-express admin/admin | CONFIRMED (dev-only) — vẫn mở |
+| SEC-04 | LOW | CORS | `ALLOWED_ORIGINS` + credentials thiếu guard cho wildcard | LIKELY (cần cấu hình sai) — vẫn mở |
+| REL-01 | MEDIUM | Concurrency | Hai lượt chat song song cùng user giẫm pending/stream | **FIXED** (`42a28a2`, dedupe `message_id` + lượt mới huỷ lượt cũ qua `CancelledError`) |
+| REL-02 | MEDIUM | Validation | Giờ mở cửa không validate → ValueError dây chuyền | **FIXED** (`3f8998d`, `Field(pattern=_HHMM)` + `close > open`) |
+| DEP-01 | MEDIUM | Dependencies | python-jose/passlib hết bảo trì, pin cũ | CONFIRMED — vẫn mở |
 | SEC-05 | LOW | Auth | Reset-password công khai + phân biệt 204/404 (chấp nhận, có tài liệu) | CONFIRMED by design |
-| REL-03 | LOW | Telegram | `busy:N` không chặn N ngoài khoảng 5–480 | CONFIRMED |
-| REL-04 | LOW | Frontend | `VITE_SHOP_PHONE` không sanitize trước `tel:`/hiển thị | LIKELY |
-| REL-05 | LOW | Data growth | `conversations.messages` tăng vô hạn, không TTL | CONFIRMED |
-| REL-06 | LOW | Logging | Log full URL (query string) ở INFO | CONFIRMED |
-| INFO-01 | INFO | Kiến trúc | Lớp autogen `LLMManager` + deps liên quan là code chết | CONFIRMED |
-| INFO-02 | INFO | Vận hành | `main.py` còn endpoint/socket-info + test client template; health cần trailing slash | CONFIRMED |
+| REL-03 | LOW | Telegram | `busy:N` không chặn N ngoài khoảng 5–480 | CONFIRMED — vẫn mở |
+| REL-04 | LOW | Frontend | `VITE_SHOP_PHONE` không sanitize trước `tel:`/hiển thị | LIKELY — vẫn mở |
+| REL-05 | LOW | Data growth | `conversations.messages` tăng vô hạn, không TTL | CONFIRMED — vẫn mở |
+| REL-06 | LOW | Logging | Log full URL (query string) ở INFO | CONFIRMED — vẫn mở |
+| INFO-01 | INFO | Kiến trúc | Lớp autogen `LLMManager` + deps liên quan là code chết | **FIXED** (`8270cea`/`e265ac2`, đã gỡ sạch autogen) |
+| INFO-02 | INFO | Vận hành | `main.py` còn endpoint/socket-info + test client template; health cần trailing slash | CONFIRMED — vẫn mở |
 
 ## Detailed Findings
 
@@ -120,6 +124,11 @@ Trong `_authenticate`, thêm đúng dòng HTTP đang dùng:
 ---
 
 ### SEC-02 — `send_message` không có rate limit, không tuần tự hóa
+
+> **FIXED (06/11, `5703bed`):** `handle_message` nay gọi
+> `rate_limit.check_and_hit(f"chat:user:{user.id}", settings.chat_max_per_hour, 3600)`
+> trước khi chạy `run_turn`, vượt hạn mức thì emit `error` kèm `retry_after_seconds`.
+> `chat_max_per_hour` mặc định 30 (`app/core/config.py`).
 
 - **Severity:** MEDIUM
 - **Confidence:** CONFIRMED ở tầng code; mức độ thiệt hại chi phí cần runtime
@@ -228,6 +237,10 @@ khởi động ngay (fail-fast, đúng triết lý Mongo fail-hard).
 
 ### REL-01 — Hai lượt chat song song của cùng một user giẫm nhau
 
+> **FIXED (06/11, `42a28a2`):** dedupe `message_id` (Redis, dự phòng Mongo) chặn tin gửi
+> lại; lượt mới của cùng khách huỷ (`asyncio.CancelledError`) lượt cũ đang chạy thay vì
+> để hai lượt chạy song song — xem `app/services/socketio_service.py::handle_message`.
+
 - **Severity:** MEDIUM
 - **Confidence:** LIKELY (suy ra từ code; cần reproduce runtime)
 - **Category:** Concurrency / correctness
@@ -261,6 +274,10 @@ lượt thứ hai nhận event từ chối, không có interleaving.
 ---
 
 ### REL-02 — Giờ mở cửa không validate định dạng
+
+> **FIXED (06/11, `3f8998d`):** `ShopHoursRequest.open_time/close_time` nay
+> `Field(pattern=_HHMM)` + validator `close_time > open_time` — chuỗi rác trả 422 thay vì
+> hỏng `_to_minutes` sau đó.
 
 - **Severity:** MEDIUM
 - **Confidence:** CONFIRMED
@@ -449,6 +466,10 @@ Không cần; thay đổi một dòng.
 
 ### INFO-01 — Lớp AutoGen `LLMManager` là code chết
 
+> **FIXED (`8270cea`, merge `e265ac2`):** `LLMManager`, `get_llm_client`/
+> `get_autogen_llm_client` và `initialize_llm_clients` đã bị gỡ; `grep -rn "autogen"
+> app/` không còn hit nào.
+
 - **Severity:** INFO
 - **Category:** Maintainability
 
@@ -570,25 +591,26 @@ Không có lỗi P0. Repo an toàn để tiếp tục phát triển.
 
 ### P1 — Before merge/release (mở cho khách thật)
 
-1. SEC-01: thêm kiểm tra `token_version` vào `_authenticate` của Socket.IO + test.
-2. SEC-02: rate limit `send_message` bằng `RateLimitService` sẵn có.
-3. REL-02: validate giờ mở cửa (một cú gõ nhầm của admin hỏng cả luồng đặt lịch).
+1. SEC-01: thêm kiểm tra `token_version` vào `_authenticate` của Socket.IO + test. **Vẫn mở.**
+2. ~~SEC-02: rate limit `send_message` bằng `RateLimitService` sẵn có.~~ **FIXED** (`5703bed`).
+3. ~~REL-02: validate giờ mở cửa (một cú gõ nhầm của admin hỏng cả luồng đặt lịch).~~ **FIXED** (`3f8998d`).
 4. SEC-03: trước mọi deploy ra ngoài máy dev, tách compose prod (Mongo auth, bỏ
-   mongo-express).
+   mongo-express). **Vẫn mở** (Plan 5, chưa làm).
 
 ### P2 — Next iteration
 
-5. REL-01: tuần tự hóa lượt chat theo user (giải luôn phần còn lại của SEC-02).
-6. DEP-01: thay python-jose → PyJWT, nâng FastAPI/uvicorn/httpx, CI pip-audit.
-7. SEC-04: guard wildcard CORS ở prod.
-8. REL-03: clamp phút bận của Telegram về 5–480.
-9. REL-05: chiến lược giữ lịch sử (cap ngày hoặc tách collection).
+5. ~~REL-01: tuần tự hóa lượt chat theo user (giải luôn phần còn lại của SEC-02).~~ **FIXED** (`42a28a2`).
+6. DEP-01: thay python-jose → PyJWT, nâng FastAPI/uvicorn/httpx, CI pip-audit. **Vẫn mở.**
+7. SEC-04: guard wildcard CORS ở prod. **Vẫn mở.**
+8. REL-03: clamp phút bận của Telegram về 5–480. **Vẫn mở.**
+9. REL-05: chiến lược giữ lịch sử (cap ngày hoặc tách collection). **Vẫn mở.**
 
 ### P3 — Optional improvements
 
-10. INFO-01/02: dẹp code chết autogen và endpoint template.
-11. SEC-05: cân nhắc reset-password luôn trả 204.
-12. REL-04/REL-06: sanitize `VITE_SHOP_PHONE`, log path thay vì full URL.
+10. ~~INFO-01~~: dẹp code chết autogen. **FIXED** (`8270cea`). INFO-02 (endpoint template):
+    **vẫn mở.**
+11. SEC-05: cân nhắc reset-password luôn trả 204. **Vẫn mở** (chấp nhận by design).
+12. REL-04/REL-06: sanitize `VITE_SHOP_PHONE`, log path thay vì full URL. **Vẫn mở.**
 
 ## Final Assessment
 

@@ -1,11 +1,16 @@
 # AGENTS.md
 
-FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Backend only so far
-(Plan 1–2 done: 281 tests green). Next: Plan 3 (Telegram bot), Plan 4 (React frontend).
+FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Plans 1–4 done
+(Telegram bot in `app/telegram/`, React frontend in `frontend/`); test counts have grown well
+past the original 281 since. Two agent architectures currently coexist: the live Socket.IO
+traffic still runs on `app/agents/booking_graph/` while `app/agents/booking/` (the LLM
+orchestrator rewrite, plan `docs/superpowers/plans/2026-10-30-llm-orchestrator/`) is mid-build —
+M0–M4 done, M5 (graph + run_turn) and M6 (cutover, incl. rewriting this file) not done yet.
+Don't read the sections below as describing `app/agents/booking/`.
 
 ## Read first (in this order)
 
-1. `CONTEXT.md` — the *why*: locked decisions, 21 already-fixed traps (do NOT "clean them up"),
+1. `CONTEXT.md` — the *why*: locked decisions, 23 already-fixed traps (do NOT "clean them up"),
    UI constraints for elderly users, security audit results. Authoritative.
 2. `RUNBOOK.md` — the *how*: setup, test accounts, Azure/Langfuse config, troubleshooting.
 3. Before any plan task: the **Ràng buộc toàn cục** section in that plan's `README.md`
@@ -37,7 +42,7 @@ pytest tests/test_timeparse_llm.py -m llm -v     # calls real Azure ($$$); exclu
   (`Settings.settings_customise_sources`). Docker overrides go through a mounted
   `.env.docker`. Adding a setting = edit `config.py` + `.env.example` + `.env`.
   `Langfuse`/Telegram keys: comment the line out to disable; empty string ≠ disabled.
-- **All booking logic lives in `app/services/`.** Agent tools, REST routes, and the future
+- **All booking logic lives in `app/services/`.** Agent tools, REST routes, and the
   Telegram bot are thin wrappers around services. If you write scheduling logic anywhere
   else, you've duplicated it.
 - **Agent has NO create/write tool.** Flow: `propose_appointment` / `cancel_appointment`

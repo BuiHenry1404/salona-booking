@@ -7,7 +7,9 @@ Hệ thống backend đặt lịch làm đẹp (nail/hair) cho tiệm nhỏ tạ
 
 ### Must fix
 
-1. **Xưng hô sai giọng ở câu báo lỗi mất kết nối Mongo** ([`main.py:168`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/main.py#L168))
+1. **Xưng hô sai giọng ở câu báo lỗi mất kết nối Mongo** — **vẫn còn mở** (đối chiếu
+   06/11, lệnh y nguyên ở `main.py:202`, chỉ lệch số dòng so với lúc viết review; chủ
+   động KHÔNG sửa code ứng dụng trong đợt dọn tài liệu này) ([`main.py:168`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/main.py#L168))
    - **What this is:** Exception handler bắt `PyMongoError` trả về mã HTTP 503 khi server mất kết nối tới cơ sở dữ liệu.
    - **Problem:** Handler trả về câu `"Máy của tiệm đang hỏng ạ. Cô chú gọi giúp con số {phone} nhé."`, vi phạm trực tiếp quy tắc xưng hô cứng trong [`CONTEXT.md`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/CONTEXT.md#L71-L85) (cấm tiệt xưng "con" và gọi "cô chú" ở bất kỳ nơi nào khách nhìn thấy).
    - **Fix:** Đổi câu trả về thành: `"Máy của tiệm đang bận một chút ạ. Anh chị gọi giúp em số {phone} nhé."`.
@@ -23,7 +25,9 @@ Hệ thống backend đặt lịch làm đẹp (nail/hair) cho tiệm nhỏ tạ
    - **Fix:** Xóa endpoint `/socket-info`, bỏ lệnh mount `/static`, và tinh gọn endpoint `root()` trong [`main.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/main.py#L204-L215).
    - **If we skip it:** Codebase ôm 45 dòng code chết và để lộ schema tài liệu sai lệch ra ngoài môi trường chạy thật.
 
-3. **Dùng `datetime.utcnow` tạo datetime không có múi giờ (naive)** ([`app/models/base.py:40-41`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/models/base.py#L40-L41))
+3. **Dùng `datetime.utcnow` tạo datetime không có múi giờ (naive)** — **FIXED** (đối chiếu
+   06/11: `BaseDocument.created_at/updated_at` nay dùng `default_factory=now_utc`)
+   ([`app/models/base.py:40-41`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/models/base.py#L40-L41))
    - **What this is:** `default_factory` tạo trường `created_at` và `updated_at` cho `BaseDocument`.
    - **Problem:** `datetime.utcnow()` bị khai tử từ Python 3.12 và trả về datetime naive (`tzinfo=None`), trong khi toàn bộ dự án quy ước múi giờ UTC nhận biết tường minh (`now_utc()` trong [`app/core/clock.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/core/clock.py#L9-L11)).
    - **Fix:** Thay `default_factory=datetime.utcnow` bằng `default_factory=now_utc`.
@@ -33,7 +37,11 @@ Hệ thống backend đặt lịch làm đẹp (nail/hair) cho tiệm nhỏ tạ
 
 ### Nice to have
 
-4. **Hàm `month_key` không có nơi nào sử dụng** ([`app/core/clock.py:49-62`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/core/clock.py#L49-L62))
+4. **Hàm `month_key` không có nơi nào sử dụng** — **vẫn còn mở** (đối chiếu 06/11: hàm vẫn
+   ở `app/core/clock.py`, `recent_month_keys` tính tháng độc lập chứ không gọi `month_key`;
+   docstring của hàm tự thừa nhận "Không service nào gọi hàm này" và giải thích nó tồn tại
+   có chủ ý — để pin quy tắc cắt tháng giờ VN bằng test thuần Python, không phải code mồ côi)
+   ([`app/core/clock.py:49-62`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/core/clock.py#L49-L62))
    - **What this is:** Hàm định dạng `datetime` thành chuỗi `"YYYY-MM"` theo giờ Việt Nam.
    - **Problem:** Docstring thừa nhận *"Không service nào gọi hàm này"*, code production không dùng tới vì `recent_month_keys` đã tự format nội bộ.
    - **Fix:** Xóa hàm khỏi [`app/core/clock.py`](file:///home/henryb1/Desktop/HenryB1/data/salona-booking/app/core/clock.py) (chuyển vào test suite nếu muốn giữ test kiểm tra aggregation logic).

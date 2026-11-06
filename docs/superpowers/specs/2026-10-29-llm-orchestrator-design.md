@@ -5,6 +5,7 @@
 **Nguồn ý định**: `refactor.md` (gốc repo). Tài liệu này là lời giải cho đề bài đó, đối chiếu với code thật ở commit `6d348b7` và thư viện đã cài: `langchain 1.4.6`, `langchain-core 1.6.12`, `langchain-openai 1.7.2`, `langgraph 1.2.16`.
 **Phạm vi**: viết lại toàn bộ `app/agents/` (trừ hai module hạ tầng `llm.py`, `checkpoint.py`). Giữ nguyên `app/services/`, `app/api/`, `app/models/`, `app/repositories/`, giao thức Socket.IO và frontend, **trừ** danh sách đóng ở §1.3.
 **Kiến trúc**: **hybrid** = vỏ LangGraph custom workflow (code quyết đường đi) + Orchestrator là `create_agent` gọi specialist như tool (mẫu *subagents* của LangChain), chặn bằng middleware. Quyết định chủ dự án 30/10, xem §12.16.
+**Tài liệu kèm**: `docs/superpowers/specs/2026-10-29-llm-orchestrator-architecture.md` — bản vẽ kiến trúc của chủ dự án, chi tiết triển khai hơn trên cùng thiết kế hybrid này.
 
 ---
 

@@ -369,6 +369,13 @@ Mọi kịch bản kiểm thử phải tuân thủ và xác minh 14 nguyên tắ
 
 ### 4.5 Confirm Node & Cơ Chế 0-LLM (`confirm.py`)
 
+> **Cập nhật 06/11:** "0 lượt LLM" dưới đây chỉ còn đúng cho đường nút Đồng ý/Không. Từ
+> Task 12, gõ chữ ("ừ", "không"...) tốn đúng một lượt LLM (bộ phân tích câu khách, tag
+> `analyze`, không stream — `CONTEXT.md` bẫy #8) trước khi code quyết nhãn cuối. Bảng này
+> cũng mô tả cơ chế cũ hơn (`route_from_state` gọi thẳng `AppointmentService.create`); cơ
+> chế hiện hành đi qua `ProposalService.create`/`.approve`, xem `AGENTS.md` *Hard
+> constraints*.
+
 | ID | Tên Kịch bản | Trạng thái & Tin nhắn khách | Hành vi & Kết quả mong đợi |
 |---|---|---|---|
 | `TC-CONF-01` | Xác nhận đồng ý bằng tiếng Việt | Cờ `pending` có hiệu lực + Khách nhắn: `"ừ"`, `"Ừ"`, `"đúng rồi"`, `"ok"`, `"OK em"`, `"vâng"`, `"dạ đúng"`, `"được"` | Nhánh `route_from_state` đi thẳng vào node `confirm` (0 lượt LLM). Đọc `start_at` từ Mongo -> Gọi `AppointmentService.create` -> Tạo lịch thành công -> Xoá cờ pending |

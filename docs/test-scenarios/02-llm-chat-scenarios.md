@@ -79,7 +79,9 @@ sequenceDiagram
 
 * **Xác minh kỹ thuật:**
   1. Lượt 1: Model gọi `parse_time` $\rightarrow$ `propose_appointment`. **Chưa ghi lịch vào `appointments`**.
-  2. Lượt 2: Không gọi LLM nào; `confirm` node đọc trực tiếp từ `conversations.pending_confirmation`.
+  2. Lượt 2: Đường nút Đồng ý/Không thì không gọi LLM nào; gõ chữ ("Ừ đúng rồi em" như kịch
+     bản trên) từ Task 12 tốn đúng một lượt LLM (bộ phân tích câu khách, tag `analyze`,
+     không stream) trước khi code đọc trực tiếp từ DB để quyết — xem `CONTEXT.md` bẫy #8.
   3. Lịch lưu trong DB có `start_at = 2026-08-08T08:00:00Z` (15:00 UTC+7), `slot_keys` có đủ 4 slot 15p, `status = "booked"`.
 
 ---

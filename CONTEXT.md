@@ -5,7 +5,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 
 | Cần gì | Đọc file |
 |---|---|
-| Đang làm gì tiếp | `refactor.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` (kiến trúc mới, chờ duyệt) |
+| Đang làm gì tiếp | `refactor.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-architecture.md` (kiến trúc mới, **đang làm** trên nhánh `feat/llm-orchestrator`, plan `docs/superpowers/plans/2026-10-30-llm-orchestrator/`, M0–M4 xong, M5/M6 chưa) |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
 | Nợ kỹ thuật, lỗ hổng | [`REPO_AUDIT.md`](REPO_AUDIT.md) |
@@ -23,7 +23,19 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — checkpoint 2026-10-26 (đọc mục này trước khi làm tiếp)
+## Trạng thái — checkpoint 2026-10-26, biên bản cũ (đọc mục này trước khi làm tiếp)
+
+> **Cập nhật 06/11:** mục "ĐÃ LÀM"/"ĐANG BÀN"/"CHƯA LÀM" dưới đây dừng ở ngày 26/10 và
+> **không còn đúng** — đề xuất 4 bước (HIỂU/CẬP NHẬT/QUYẾT/NÓI) ở "ĐANG BÀN" đã được CHỐT
+> và đang thực thi làm nhánh **mới** `feat/llm-orchestrator` (tách từ `fix/review-ee60723`,
+> không phải tiếp tục `feat/target-architecture`/`salona-booking-harness-b/` của bảng dưới —
+> hai thư mục/nhánh đó đã hợp nhất vào `main` qua Task 15 rồi dừng). Theo
+> `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` +
+> `docs/superpowers/plans/2026-10-30-llm-orchestrator/README.md`: M0–M4 đã xong (resolver,
+> hai specialist, Orchestrator 5 tool, ReplyBrief + Conversation Agent); M5 (graph + run_turn)
+> và M6 (chuyển Socket.IO sang gói mới, xoá `booking_graph`, viết lại AGENTS.md/CONTEXT.md)
+> **chưa làm** — `app/agents/booking_graph/` vẫn là thứ phục vụ khách thật. Đọc phần dưới
+> như lịch sử dẫn tới quyết định đó, không phải trạng thái hiện tại.
 
 ### Ở đâu
 
@@ -42,7 +54,9 @@ thẳng `main`. Commit message tiếng Anh, trailer `Co-Authored-By: Claude Opus
 - Spec: `docs/superpowers/specs/2026-10-20-target-architecture-design.md`
 - Plan: `docs/superpowers/plans/2026-10-20-target-architecture.md` — **đã xoá 30/10** (plan đã thực thi
   xong tới Task 15 rồi dừng; xem git history nếu cần). Sổ tiến độ `.superpowers/sdd/` cũng đã dọn.
-- Sơ đồ: `docs/research/Architech.md` (sẽ sai sau refactor orchestrator; thay khi refactor xong)
+- Sơ đồ: `docs/research/Architech.md` — **đã xoá 06/11** (lỗi thời, owner quyết); kiến trúc
+  mới xem `docs/superpowers/specs/2026-10-29-llm-orchestrator-architecture.md` và spec
+  `2026-10-29-llm-orchestrator-design.md`
 - **Hướng đi từ 29/10**: `refactor.md` + spec `2026-10-29-llm-orchestrator-design.md` thay thế toàn bộ
   mục này và các "chốt cứng" bên dưới liên quan tới tầng agent (xem §0 của spec đó).
 - Thực thi bằng skill `superpowers:subagent-driven-development` (mỗi task: một
@@ -66,14 +80,15 @@ Mỗi task đã qua review (spec + chất lượng); đa số cần đúng một
   `GUARD_VOICE_RULES=true|false` (mặc định giữ hành vi cũ). Qua review sau 1 vòng sửa.
 - **Đã DỪNG** sau Task 15 theo lệnh chủ dự án.
 
-### ĐANG BÀN (chưa quyết)
+### ĐÃ QUYẾT từ 29/10 (ở đây lúc còn "chưa quyết")
 
 - Chủ dự án thấy kiến trúc "cứ phải vá liên tục". Nguyên nhân: agent booking (LLM) tự
-  lái luồng đặt lịch, mỗi kiểu lái sai cần một lớp chặn mới. Đề xuất đang bàn: **4 bước** —
+  lái luồng đặt lịch, mỗi kiểu lái sai cần một lớp chặn mới. Đề xuất lúc đó: **4 bước** —
   HIỂU (LLM, bộ phân tích có sẵn) → CẬP NHẬT phiếu đặt lịch (code) → QUYẾT hành động
   (code, bảng luật) → NÓI (LLM viết câu từ số liệu). Giữ nguyên vỏ: nút, proposals, Redis,
-  trí nhớ. Làm sau cờ `BOOKING_ENGINE=agent|rules`. Nếu chọn hướng này, Task 16 và phần
-  lớn các bản vá quanh agent (lối tắt "ok", `ask_without_proposal`, lưới từ khóa) sẽ thừa.
+  trí nhớ. **Đã chốt làm hướng này** (không còn là cờ `BOOKING_ENGINE=agent|rules` — xem
+  spec/plan ở ô cập nhật 06/11 phía trên); Task 16 và phần lớn bản vá quanh agent cũ
+  (lối tắt "ok", `ask_without_proposal`, lưới từ khóa) coi như thừa sau M6.
 
 ### CHƯA LÀM
 
@@ -82,7 +97,8 @@ Mỗi task đã qua review (spec + chất lượng); đa số cần đúng một
 - **Review toàn nhánh** (model mạnh nhất) + một đợt sửa; phân loại các `minor (deferred)` trong sổ.
 - **Merge** `feat/target-architecture → henry/develop → main` — chủ dự án đã đồng ý
   merge sau khi xong; **push chưa được hỏi** (hỏi trước khi push).
-- Cập nhật `docs/research/Architech.md` + spec mục 4 cho khớp code (đã ghi trong sổ).
+- ~~Cập nhật `docs/research/Architech.md` + spec mục 4 cho khớp code~~ — `Architech.md` đã
+  xoá 06/11 (lỗi thời, owner quyết) thay vì cập nhật; spec mục 4 vẫn còn cần đối chiếu.
 
 ### Benchmark — đã dừng (26/10, quyết định chủ dự án: tốn phí)
 
