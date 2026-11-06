@@ -191,7 +191,7 @@ async def mongo_error_handler(request: Request, exc: PyMongoError):
 
     Cạm bẫy: `DuplicateKeyError` cũng là lớp con của `PyMongoError`. Repository
     đã bắt nó và đổi thành `SlotTakenError`, nên trùng giờ vẫn ra 409. Chỗ ghi
-    Mongo mới nào quên bắt sẽ khiến khách thấy "máy của tiệm đang hỏng" trong
+    Mongo mới nào quên bắt sẽ khiến khách thấy "máy của tiệm đang trục trặc" trong
     khi thật ra chỉ là trùng giờ.
     """
     logger.exception("mongo_unavailable", path=request.url.path)
