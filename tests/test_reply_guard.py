@@ -138,6 +138,21 @@ def test_claim_verb_without_a_completion_marker_is_not_a_violation():
     assert "claim" not in check_reply(draft, brief, [])
 
 
+def test_claim_changing_your_mind_is_not_a_booking_claim():
+    """Fix round 2: "đổi" cũng dùng cho "đổi ý" — không phải lịch hẹn nào cả."""
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Dạ em đã đổi ý rồi ạ, chị thông cảm nhé."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
+def test_claim_changing_a_phone_number_is_not_an_appointment_claim():
+    brief = make_brief(must_not_claim=["moved"])
+    draft = "Dạ em đã đổi số điện thoại rồi, chị lưu lại giúp em nhé."
+
+    assert "claim" not in check_reply(draft, brief, [])
+
+
 async def test_apply_guard_fixes_a_forbidden_cancel_claim_via_unclaim(monkeypatch):
     """`unclaim` (tất định, đã có sẵn) đủ sức sửa câu "đã huỷ ... rồi" —
     không cần tới rewrite (LLM)."""

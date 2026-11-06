@@ -43,6 +43,11 @@ _CLAIM_FOR_VERB = {
     "hủy": "cancelled", "huỷ": "cancelled",
 }
 
+# Fix round 2: "đổi" cũng là "đổi ý"/"đổi số điện thoại" — không phải lúc nào
+# cũng nói chuyện lịch hẹn. Đối tượng cam kết (`_CLAIM_OBJS` của gói cũ, bỏ
+# khoảng trắng đệm) để đòi thêm điều kiện "câu có nhắc tới lịch hẹn".
+_CLAIM_OBJ_WORDS = frozenset(o.strip() for o in old_guard._CLAIM_OBJS)
+
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
 _FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim"})
@@ -104,19 +109,29 @@ def _claim_violation(draft: str, facts: dict) -> bool:
     return old_guard.has_false_claim(draft, no_held_facts)
 
 
+def _mentions_appointment(clause: str, words: list[str]) -> bool:
+    """Câu có đang nói về MỘT lịch hẹn không — "đổi" cũng dùng cho "đổi ý",
+    "đổi số điện thoại"; chỉ tính là claim lịch khi mệnh đề có đối tượng cam
+    kết (`_CLAIM_OBJ_WORDS`: lịch/chỗ/hẹn) hoặc một mốc giờ (`tokens.scan_times`)."""
+    return any(w in _CLAIM_OBJ_WORDS for w in words) or bool(tokens.scan_times(clause))
+
+
 def _clause_claims(clause: str) -> set[str]:
     """Claim ('booked'/'moved'/'cancelled') mà MỆNH ĐỀ này nhận đã xong —
-    một động từ cam kết (`_CLAIM_FOR_VERB`) đi kèm dấu hiệu đã hoàn tất:
-    "đã" đứng ngay trước, hoặc "rồi" xuất hiện sau nó (cùng cách nhận biết
-    của `_is_claimed_clause` cũ, chỉ khác từ vựng)."""
+    một động từ cam kết (`_CLAIM_FOR_VERB`) đi kèm dấu hiệu đã hoàn tất GẦN nó
+    ("đã" trong 2 từ trước, hoặc "rồi" trong 4 từ sau — cùng cách nhận biết
+    của `_is_claimed_clause` cũ, chỉ khác từ vựng), VÀ mệnh đề thật sự đang
+    nói về một lịch hẹn (`_mentions_appointment`) — không thì "đã đổi ý rồi"/
+    "đã đổi số điện thoại rồi" cũng bị bắt oan (Fix round 2)."""
     words = tokens.words(clause)
     claims: set[str] = set()
     for i, word in enumerate(words):
         claim = _CLAIM_FOR_VERB.get(word)
         if claim is None:
             continue
-        said_done = (i > 0 and words[i - 1] == "đã") or "rồi" in words[i + 1:]
-        if said_done:
+        near_da = "đã" in words[max(0, i - 2):i]
+        near_roi = "rồi" in words[i + 1:i + 5]
+        if (near_da or near_roi) and _mentions_appointment(clause, words):
             claims.add(claim)
     return claims
 
