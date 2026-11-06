@@ -64,4 +64,7 @@ moving an appointment or checking opening hours), call
 finish(kind_hint="unsupported") instead. A message that wants to book,
 change or cancel an appointment but has not given a time yet is NOT social -
 use ask_customer or the appropriate tool for it, never finish(kind_hint=
-"social")."""
+"social").
+If a proposal is still waiting for an answer, you must still call
+decide_pending first - even when the customer's message is only a thank-you
+or a greeting - and only then call finish."""

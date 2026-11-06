@@ -79,12 +79,20 @@ class OrchestrateOutcome(BaseModel):
     rounds_executed: int
 
 
+# Quyết định chủ dự án 06/11: Orchestrator chạy reasoning_effort="low".
+# `build_chat_model` tự bỏ `temperature` khi có giá trị này (llm.py).
+ORCH_REASONING_EFFORT = "low"
+
+
 def build_orchestrator(deps: OrchestratorDeps):
     """Dựng `create_agent` của Orchestrator, mới hoàn toàn cho một lượt —
     `deps` (và 5 tool `make_orchestrator_tools` dựng từ nó) đã đóng sẵn
     `db`/`user`/`ctx`/`ledger` của lượt này, không có state nào tái dùng giữa
     hai lượt (`checkpointer=False`)."""
-    model = build_chat_model(tags=["orchestrate"], streaming=False, max_retries=0)
+    model = build_chat_model(
+        tags=["orchestrate"], streaming=False, max_retries=0,
+        reasoning_effort=ORCH_REASONING_EFFORT,
+    )
     return create_agent(
         model=model,
         tools=make_orchestrator_tools(deps),

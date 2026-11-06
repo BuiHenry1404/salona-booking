@@ -448,6 +448,7 @@ Tool `is_open_at(iso)` (mới) bọc `ShopService.is_open_at(dt)` đã có, tr�
 
 ### 8.4 Orchestrator
 - `create_agent(model, tools=[5 tool], middleware=[OrchestratorGuard, ToolRoundLimit(orch_max_tool_rounds), ModelRetry])`; `finish`/`ask_customer` khai `return_direct=True`.
+- Orchestrator: reasoning_effort=low (chủ dự án 06/11); `build_chat_model` bỏ `temperature` khi có reasoning_effort.
 - Dựng **mỗi lượt** (repo đã làm vậy với `build_graph`/`_LazyAgent`) vì schema `appointment_id` là Literal động.
 - System prompt: vai điều phối; luật "có đề xuất chờ thì `decide_pending` trước mọi việc khác"; "kết thúc bằng `finish`/`ask_customer`"; không nói với khách. Human message: `TurnContext full` + **2 lượt cuối** + câu khách (untrusted).
 - Lỗi vòng đầu → `ended_by=error`, pending coi là `kept`, câu cứng.

@@ -541,3 +541,25 @@ async def test_two_consecutive_turns_do_not_carry_ended_by_over(test_db, clean_d
 
     assert out2.ended_by == "ask_customer"
     assert len(model2.calls) == 1  # model2 THẬT SỰ được gọi, không bị bỏ qua
+
+
+async def test_orchestrator_model_runs_with_low_reasoning_effort(test_db, clean_db, monkeypatch):
+    """Task 4.4c (quyết định chủ dự án 06/11): Orchestrator bật `reasoning_effort="low"`.
+    `build_chat_model` tự bỏ `temperature` khi có `reasoning_effort` (llm.py)."""
+    from app.agents.booking.orchestrator.agent import build_orchestrator
+
+    user = await a_user(test_db)
+    deps = await make_deps(test_db, user)
+    captured: dict = {}
+
+    def fake_build(**kw):
+        captured.update(kw)
+        return scripted([tool_call("finish", _finish())], tags=("orchestrate",))
+
+    monkeypatch.setattr(BUILD_CHAT_MODEL, fake_build)
+    build_orchestrator(deps)
+
+    assert captured["reasoning_effort"] == "low"
+    assert captured["tags"] == ["orchestrate"]
+    assert captured["streaming"] is False
+    assert captured["max_retries"] == 0
