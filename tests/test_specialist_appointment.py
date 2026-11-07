@@ -1,15 +1,10 @@
 """Test cho Appointment Agent (Task 2.4, §8.1) — `run_task` đối chiếu
 ToolMessage thật với kết quả model trả, không tin chữ model khi nó đáng ra
 phải đến từ DB/tool. Dùng model giả (không gọi Azure thật)."""
-import json
 import uuid
 from datetime import datetime, timedelta
-from typing import Callable
-from uuid import uuid4
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage
 
 from app.agents.booking.schemas import ProposalCreated, ResolvedTime
 from app.agents.booking.specialists.appointment import ALLOWLIST, run_task
@@ -22,6 +17,9 @@ from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.conversation_state import ConversationStateService
 from tests.factories import make_ctx, make_spec
+from tests.fakes import EchoTool as _EchoTool
+from tests.fakes import TwoProposeAttempts as _TwoProposeAttempts
+from tests.fakes import book_output as _book_output
 from tests.fakes import final_output, scripted, tool_call
 
 
@@ -41,107 +39,6 @@ async def a_user(db, phone=None, name="Co Lan"):
 def tomorrow_at(hour: int, minute: int = 0) -> datetime:
     local = datetime.now(TZ) + timedelta(days=1)
     return local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-
-class _EchoTool(BaseChatModel):
-    """Model giả một bước: gọi đúng MỘT tool với args cho trước, rồi CHÉP
-    JSON ToolMessage vào `SpecialistOutput` cuối qua `build_output` — mô
-    phỏng việc model "chỉ chép" mà không cần gọi Azure thật."""
-
-    tool_name: str
-    tool_args: dict
-    build_output: Callable[[dict], dict]
-
-    @property
-    def _llm_type(self) -> str:
-        return "echo_tool"
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def bind(self, **kwargs):
-        return self
-
-    def _reply(self, messages) -> AIMessage:
-        if messages and isinstance(messages[-1], ToolMessage):
-            tool_json = json.loads(messages[-1].content)
-            return final_output(**self.build_output(tool_json))
-        return AIMessage(content="", tool_calls=[{
-            "name": self.tool_name, "args": self.tool_args, "id": uuid4().hex, "type": "tool_call",
-        }])
-
-    def _generate(self, messages, stop=None, run_manager=None, **kw):
-        return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kw):
-        return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
-
-
-class _TwoProposeAttempts(BaseChatModel):
-    """Model giả: cố tạo đề xuất HAI lần trong cùng task (lần hai bị
-    `OneProposalPerTaskMiddleware` chặn), rồi báo lại đề xuất ĐẦU TIÊN đã
-    tạo thành công — mô phỏng model thử lại sau khi bị tool báo lỗi."""
-
-    first_args: dict
-    second_args: dict
-
-    @property
-    def _llm_type(self) -> str:
-        return "two_propose_attempts"
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def bind(self, **kwargs):
-        return self
-
-    def _reply(self, messages) -> AIMessage:
-        ai_rounds = sum(1 for m in messages if isinstance(m, AIMessage))
-        if ai_rounds == 0:
-            return AIMessage(content="", tool_calls=[{
-                "name": "propose_appointment", "args": self.first_args,
-                "id": uuid4().hex, "type": "tool_call",
-            }])
-        if ai_rounds == 1:
-            return AIMessage(content="", tool_calls=[{
-                "name": "propose_appointment", "args": self.second_args,
-                "id": uuid4().hex, "type": "tool_call",
-            }])
-        created = None
-        for m in messages:
-            if isinstance(m, ToolMessage) and m.name == "propose_appointment":
-                data = json.loads(m.content)
-                if "proposal_id" in data:
-                    created = data
-                    break
-        output = {
-            "status": "ok",
-            "data": {
-                "proposal_id": created["proposal_id"], "kind": "book",
-                "start_at": created["held"], "note": created.get("note"),
-                "replaces": None, "queued": [],
-            },
-            "missing": [], "error_code": None,
-        }
-        return final_output(**output)
-
-    def _generate(self, messages, stop=None, run_manager=None, **kw):
-        return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kw):
-        return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
-
-
-def _book_output(tool_json: dict) -> dict:
-    return {
-        "status": "ok",
-        "data": {
-            "proposal_id": tool_json["proposal_id"], "kind": "book",
-            "start_at": tool_json["held"], "note": tool_json.get("note"),
-            "replaces": None, "queued": [],
-        },
-        "missing": [], "error_code": None,
-    }
 
 
 def _resolved_time_output(tool_json: dict) -> dict:
