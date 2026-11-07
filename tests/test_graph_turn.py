@@ -2,7 +2,7 @@
 
 Mongo thật (`test_db`), model giả: fixture `models` cắm `ScriptedChatModel`
 vào 4 chỗ dựng model (`orchestrator.agent`, `conversation`, `specialists.base`,
-`booking_graph.rewrite`); specialist thay bằng `FakeSpecialists` qua
+`booking.rewrite`); specialist thay bằng `FakeSpecialists` qua
 monkeypatch `graph.appointment.run_task`/`graph.shop_info.run_task`. Không
 gọi Azure. Mốc giờ cố định (`_tomorrow_at`) như `tests/test_orchestrator_decide.py`.
 
@@ -32,10 +32,10 @@ from app.agents.booking.schemas import (
     ResolvedTime,
     TaskResult,
 )
-from app.agents.booking_graph.button import ButtonReply
-from app.agents.booking_graph.context import address_phrase
-from app.agents.booking_graph.history import stamp
-from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
+from app.agents.booking.button import ButtonReply
+from app.agents.booking.context import address_phrase
+from app.agents.booking.history import stamp
+from app.agents.booking.middleware import FALLBACK_ANSWER
 from app.core.clock import TZ, now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.vi_format import format_vi_datetime
@@ -49,7 +49,7 @@ from tests.fakes import FakeSpecialists, scripted, tool_call
 ORCH_MODEL = "app.agents.booking.orchestrator.agent.build_chat_model"
 CONV_MODEL = "app.agents.booking.conversation.build_chat_model"
 SPECIALIST_MODEL = "app.agents.booking.specialists.base.build_chat_model"
-REWRITE_MODEL = "app.agents.booking_graph.rewrite.build_chat_model"
+REWRITE_MODEL = "app.agents.booking.rewrite.build_chat_model"
 
 PLANNED_NODES = {"resolve", "button_path", "orchestrate", "brief", "respond", "record"}
 

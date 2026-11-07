@@ -3,10 +3,10 @@
 
 M4 thu hẹp guard: không còn kiểm giọng (`repeat`/`pronoun`/`clock` cũ gộp ba
 chuyện khác nhau) — gói mới chỉ còn kiểm SỰ THẬT (`claim`, `missing_fact`) và
-`repeat` (lặp câu, vẫn là một phép kiểm tất định, không phải giọng). Ba hàm
+`repeat` (lặp câu, vẫn là một phép kiểm tất định, không phải giọng). Các hàm
 tất định (`strip_tool_names`, `unclaim`, `has_false_claim`, `repeats`,
-`clock_keys`) tái dùng NGUYÊN từ gói cũ `booking_graph.guard` — M6 mới dời
-hẳn vào đây, lúc đó `booking_graph` bị gỡ.
+`clock_keys`) tái dùng NGUYÊN từ `draft_checks.py` (dời từ guard của gói cũ ở
+Task 6.1; vì sao tách module riêng — xem docstring ở đó).
 
 `facts_from_brief` là hàm MỚI: nó đọc `ReplyBrief.facts`/`must_not_claim` (đã
 được `build_reply_brief`, Task 4.1, dựng từ kết quả tool thật) thay vì đọc lại
@@ -21,8 +21,7 @@ from pydantic import BaseModel
 
 from app.agents.booking.reply_brief import HELD_FACT_KEYS
 from app.agents.booking.schemas import ReplyBrief
-from app.agents.booking_graph import guard as old_guard
-from app.agents.booking_graph import rewrite, tokens
+from app.agents.booking import draft_checks, rewrite, tokens
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.vi_format import _clock_phrase
@@ -31,7 +30,7 @@ logger = get_logger(__name__)
 
 _ALL_CLAIMS = frozenset({"booked", "cancelled", "moved"})
 
-# Động từ cam kết (`_CLAIM_VERBS` của gói cũ) ánh xạ sang claim nó nói lên.
+# Động từ cam kết (`draft_checks._CLAIM_VERBS`) ánh xạ sang claim nó nói lên.
 # `has_false_claim`/`_is_claimed_clause` cũ chỉ có từ vựng cho "đặt" (giữ/đặt/
 # ghi/chốt) — "huỷ"/"dời"/"đổi" không nằm trong `_CLAIM_PHRASES` của nó, nên
 # nó không bao giờ bắt được câu "đã huỷ ... rồi"/"đã dời ... rồi". Phải kiểm
@@ -43,9 +42,9 @@ _CLAIM_FOR_VERB = {
 }
 
 # Fix round 2: "đổi" cũng là "đổi ý"/"đổi số điện thoại" — không phải lúc nào
-# cũng nói chuyện lịch hẹn. Đối tượng cam kết (`_CLAIM_OBJS` của gói cũ, bỏ
+# cũng nói chuyện lịch hẹn. Đối tượng cam kết (`draft_checks._CLAIM_OBJS`, bỏ
 # khoảng trắng đệm) để đòi thêm điều kiện "câu có nhắc tới lịch hẹn".
-_CLAIM_OBJ_WORDS = frozenset(o.strip() for o in old_guard._CLAIM_OBJS)
+_CLAIM_OBJ_WORDS = frozenset(o.strip() for o in draft_checks._CLAIM_OBJS)
 
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
@@ -78,7 +77,7 @@ def facts_from_brief(brief: ReplyBrief) -> dict:
     for fact in brief.facts:
         if fact.iso:
             local = to_local(datetime.fromisoformat(fact.iso))
-            keys = old_guard.clock_keys(_clock_phrase(local.hour, local.minute))
+            keys = draft_checks.clock_keys(_clock_phrase(local.hour, local.minute))
             if keys:
                 clocks.add(keys[0])
             if fact.key in HELD_FACT_KEYS:
@@ -100,14 +99,14 @@ def _claim_violation(draft: str, facts: dict) -> bool:
     """`has_false_claim(draft, facts)` so giờ model nhận với giờ THẬT; khi
     giờ đúng nhưng động từ cam kết (vd "đã đặt") vẫn bị cấm — mới GIỮ chỗ,
     chưa đặt xong — kiểm lại coi như không có giờ nào để buộc MỌI câu nhận
-    "đã đặt/giữ/ghi/chốt rồi" bị bắt (`_CLAIM_VERBS` của gói cũ)."""
+    "đã đặt/giữ/ghi/chốt rồi" bị bắt (`draft_checks._CLAIM_VERBS`)."""
     time_facts = {"clocks": facts["clocks"], "any": bool(facts["clocks"]), "unknown": False}
-    if old_guard.has_false_claim(draft, time_facts):
+    if draft_checks.has_false_claim(draft, time_facts):
         return True
     if "booked" in facts["allowed_claims"]:
         return False
     no_held_facts = {"clocks": set(), "any": False, "unknown": False}
-    return old_guard.has_false_claim(draft, no_held_facts)
+    return draft_checks.has_false_claim(draft, no_held_facts)
 
 
 def _mentions_appointment(clause: str, words: list[str]) -> bool:
@@ -175,7 +174,7 @@ def _announced_clock(brief: ReplyBrief) -> tuple | None:
     for fact in brief.facts:
         if fact.key == "prior_outcome" and fact.iso:
             local = to_local(datetime.fromisoformat(fact.iso))
-            keys = old_guard.clock_keys(_clock_phrase(local.hour, local.minute))
+            keys = draft_checks.clock_keys(_clock_phrase(local.hour, local.minute))
             return keys[0] if keys else None
     return None
 
@@ -192,8 +191,8 @@ def _piggybacks_on_announced(sentences: list[str], needle: str, brief: ReplyBrie
         if needle not in sentence:
             continue
         rest = sentence.replace(needle, " ")
-        for said in old_guard.clock_keys(rest):
-            if r0_clock is None or not old_guard._same_clock(said, r0_clock):
+        for said in draft_checks.clock_keys(rest):
+            if r0_clock is None or not draft_checks._same_clock(said, r0_clock):
                 return True
     return False
 
@@ -234,7 +233,7 @@ def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) 
     normalized_draft = normalize(draft)
     if any(normalize(s) not in normalized_draft for s in brief.must_say):
         violations.append("missing_fact")
-    if old_guard.repeats(draft, previous_replies):
+    if draft_checks.repeats(draft, previous_replies):
         violations.append("repeat")
     return violations
 
@@ -265,10 +264,10 @@ async def apply_guard(
     if source == "code":
         return GuardResult(answer=draft, source="code", violations=[])
 
-    draft = old_guard.strip_tool_names(draft)
+    draft = draft_checks.strip_tool_names(draft)
     codes = check_reply(draft, brief, previous_replies)
     if "claim" in codes:
-        draft = old_guard.unclaim(draft)
+        draft = draft_checks.unclaim(draft)
         codes = check_reply(draft, brief, previous_replies)
 
     if not codes:
@@ -277,7 +276,7 @@ async def apply_guard(
     rewritten = await rewrite.rewrite_once(
         draft, codes, previous_replies, f"Gọi khách là: {brief.address}"
     )
-    rewritten = old_guard.strip_tool_names(rewritten) if rewritten else None
+    rewritten = draft_checks.strip_tool_names(rewritten) if rewritten else None
     checked_draft = rewritten if rewritten is not None else draft
     recheck = check_reply(checked_draft, brief, previous_replies)
 

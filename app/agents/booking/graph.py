@@ -53,8 +53,8 @@ from app.agents.booking.resolver import ResolveResult
 from app.agents.booking.resolver import resolve as resolve_route
 from app.agents.booking.schemas import Fact, ReplyBrief
 from app.agents.booking.specialists import appointment, shop_info
-from app.agents.booking_graph.button import ButtonReply
-from app.agents.booking_graph.history import model_history, stamp
+from app.agents.booking.button import ButtonReply
+from app.agents.booking.history import model_history, stamp
 from app.agents.checkpoint import get_checkpointer
 from app.core.clock import now_ms
 from app.core.config import settings

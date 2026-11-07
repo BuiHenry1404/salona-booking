@@ -1,9 +1,9 @@
 """Dựng/chạy agent cho hai specialist (Appointment, Shop Info) — dùng chung
 cho Task 2.4/2.5 (§8/§9 của `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md`).
 
-`build_specialist` dựng một `create_agent` với đúng lưới an toàn M6 sẽ dời
-sang `booking/middleware.py` (đang import từ `booking_graph` — Task này CHỈ
-tiêu thụ, không copy, hành vi của chúng). `task_message` dựng human message
+`build_specialist` dựng một `create_agent` với đúng lưới an toàn của
+`booking/middleware.py` (dời từ gói cũ ở Task 6.1 — module này CHỈ tiêu thụ,
+không copy, hành vi của chúng). `task_message` dựng human message
 DUY NHẤT của một task con: khối bối cảnh đầy đủ, rồi khối task (code viết,
 không chữ khách), rồi câu khách dưới nhãn `UNTRUSTED` — thứ tự này để model
 không lẫn lộn ranh giới giữa chữ hệ thống và chữ khách. `run_specialist`
@@ -28,10 +28,9 @@ from pydantic import BaseModel
 
 from app.agents.booking.context import UNTRUSTED, TurnContext, render_context
 from app.agents.booking.schemas import TaskResult, TaskSpec
-from app.agents.booking_graph.agents import is_transient, model_retry_middleware
-from app.agents.booking_graph.middleware.tools import (NoParallelToolsMiddleware,
-                                                        ToolFailureMiddleware,
-                                                        ToolRoundLimitMiddleware)
+from app.agents.booking.middleware import (NoParallelToolsMiddleware, ToolFailureMiddleware,
+                                           ToolRoundLimitMiddleware, is_transient,
+                                           model_retry_middleware)
 from app.agents.llm import build_chat_model
 
 # Trần số vòng gọi model mỗi task con (giá trị cố định §12.17: `max_tool_rounds_per_task=4`).

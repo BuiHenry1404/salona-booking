@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.agents.booking.orchestrator.decide import apply_decision
 from app.agents.booking.orchestrator.tools import OrchestratorDeps
 from app.agents.booking.reply_brief import BUTTON_STALE_REPLY, ButtonOutcome
-from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking.button import ButtonReply
 
 
 def stale_reply(address: str) -> str:

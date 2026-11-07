@@ -45,7 +45,7 @@ def _was_proposal_created(message: ToolMessage) -> bool:
 
 def _proposals_created_this_task(messages) -> int:
     """Số đề xuất đã tạo thành công kể từ HumanMessage cuối (cùng cách đếm
-    `_rounds_this_turn` trong `app/agents/booking_graph/middleware/tools.py`)."""
+    `_rounds_this_turn` trong `app/agents/booking/middleware.py`)."""
     count = 0
     for m in reversed(messages):
         if isinstance(m, HumanMessage):

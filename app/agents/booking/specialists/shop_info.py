@@ -24,7 +24,7 @@ from app.agents.booking.schemas import (ShopHoursOut, ShopOpenOut, ShopStatusOut
                                          specialist_output_model)
 from app.agents.booking.specialists.base import build_specialist, run_specialist
 from app.agents.booking.specialists.guard import allowlist
-from app.agents.booking_graph.tools import _CLOSED_DAY_NAMES, make_shop_tools
+from app.agents.booking.tools import _CLOSED_DAY_NAMES, make_shop_tools
 from app.core.clock import ensure_aware
 from app.core.config import settings
 from app.models.shop import ShopHours, ShopStatusView
@@ -115,7 +115,7 @@ async def run_task(
         # tiệm đang bận (fix round 1: mọi câu "trong giờ mở cửa nhưng chủ
         # đang bận" thật đều bị bắt nhầm fact_mismatch). Lặp lại đúng điều
         # kiện `owner_busy` mà `is_open_at` tool đã dùng
-        # (`app/agents/booking_graph/tools.py`): bận VÀ có `busy_until` VÀ
+        # (`app/agents/booking/tools.py`): bận VÀ có `busy_until` VÀ
         # mốc hỏi còn trước `busy_until` đó - dùng lại `status` đã đọc ở
         # trên, không gọi `get_status` lần hai.
         within_hours = await shop.is_open_at(at)

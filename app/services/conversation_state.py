@@ -341,12 +341,12 @@ class ConversationStateService:
             return False
 
     async def _compact(self, user_id: str) -> bool:
-        # Import trễ (không ở đầu file): `app.agents.booking_graph.prompts` đi
-        # qua `__init__.py` của package, mà package đó (qua events→confirm→
-        # analyzer) lại `import clean_free_text_item` NGƯỢC từ chính module
-        # này — import thẳng ở đầu file là vòng import chết. `_compact` chỉ
-        # chạy nền, sau khi mọi module đã nạp xong, nên an toàn.
-        from app.agents.booking_graph.prompts import DIGEST_PROMPT
+        # Import trễ (không ở đầu file): `app.agents.booking.prompts.digest` đi
+        # qua `__init__.py` của package `app.agents.booking` (events→graph→
+        # tools), mà package đó lại import NGƯỢC chính module này — import
+        # thẳng ở đầu file là vòng import chết. `_compact` chỉ chạy nền, sau
+        # khi mọi module đã nạp xong, nên an toàn.
+        from app.agents.booking.prompts.digest import DIGEST_PROMPT
 
         state = await self.conversations.get_state(user_id)
         if state and state.failures >= MAX_FAILURES:

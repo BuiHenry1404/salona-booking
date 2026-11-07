@@ -21,6 +21,13 @@ from app.services.shop import ShopService
 
 logger = get_logger(__name__)
 
+# Helper render dời sang `app/agents/booking/context.py` (Task 6.1).
+from app.agents.booking.context import (  # noqa: E402,F401
+    _DIGEST_LABELS, _INTENT_VI, DIGEST_HEADER, QUEUE_MAX_AGE_MINUTES, SLOTS_HEADER,
+    _format_vi_day, address_phrase, display_name, format_14_day_calendar, live_queue,
+    render_digest, render_slots)
+
+
 # Câu đáp trước được trích vào khối bối cảnh; đủ để nhận ra câu, không đủ để
 # lấn át phần còn lại của khối.
 LAST_REPLY_MAX = 200
@@ -36,108 +43,10 @@ RECENT_VISIT_NOTE_MAX = 40
 RECENT_VISITS_HEADER = "Khách đã đến:"
 
 
-SLOTS_HEADER = "Trạng thái cuộc trò chuyện:"
-
-_INTENT_VI = {"book": "đặt lịch mới", "reschedule": "dời lịch", "cancel": "hủy lịch"}
-
-
-def _format_vi_day(iso: str) -> str:
-    """'2026-09-20' -> 'Chủ Nhật 20/9'. Không in năm: cùng một ngày mà chỗ này
-    có năm, chỗ kia không, là hai giọng khác nhau trong cùng một prompt."""
-    day = date.fromisoformat(iso)
-    return f"{_WEEKDAYS[day.weekday()]} {day.day}/{day.month}"
-
-
-def render_slots(slots) -> str:
-    """Khối trạng thái, dựng hoàn toàn bằng code. Rỗng thì trả chuỗi rỗng.
-
-    Slots do LLM sinh nên khối này luôn đứng TRƯỚC khối bối cảnh trong prompt,
-    tức là thua nó. Không có đường code nào hành động theo những dòng ở đây.
-    """
-    if slots is None:
-        return ""
-
-    try:
-        lines = []
-        if slots.intent in _INTENT_VI:
-            lines.append(f"- Khách muốn: {_INTENT_VI[slots.intent]}")
-        if slots.service:
-            lines.append(f"- Dịch vụ: {slots.service}")
-        if slots.day:
-            lines.append(f"- Ngày đang nhắm: {_format_vi_day(slots.day)}")
-        if slots.time:
-            lines.append(f"- Giờ đang nhắm: {format_vi_hhmm(slots.time)}")
-        if slots.declined:
-            offered = ", ".join(
-                format_vi_datetime(datetime.fromisoformat(x)) for x in slots.declined
-            )
-            lines.append(f"- Đã chào mà khách không lấy: {offered}")
-        if slots.stated:
-            lines.append(f"- Khách đã nói rõ: {'; '.join(slots.stated)}")
-        if slots.asked:
-            items = []
-            for item in slots.asked:
-                status = "đã đáp" if item.answered else "chưa đáp"
-                if item.times and item.times >= 2:
-                    status = f"{status} ×{item.times}"
-                items.append(f'"{item.question}" ({status})')
-            lines.append(f"- Em đã hỏi: {'; '.join(items)}")
-        if slots.told:
-            lines.append(f"- Em đã nói với khách: {'; '.join(slots.told)}")
-        if slots.agreed_at:
-            when = to_local(slots.agreed_at.at).strftime("%H:%M")
-            lines.append(
-                f"- Khách đã đồng ý đề xuất lúc {when} "
-                "(chỉ để nói, không phải để ghi)"
-            )
-    except Exception as exc:
-        # sanitize_slots đã chặn mọi giá trị tới được đây, nhưng một document
-        # cũ/hỏng lọt qua thì ném ở đây là events.py nuốt thành "Máy đang bận
-        # chút xíu" cho MỌI lượt tới hết ngày — một document khoá cứng một
-        # khách cả ngày. Cả tầng này fail-soft: mất khối slots còn hơn mất khách.
-        logger.warning("slots_render_failed", extra={"error": str(exc)})
-        return ""
-
-    # `target_appointment_id` cố ý KHÔNG in ra: khối bối cảnh đã liệt kê mọi
-    # lịch sắp tới kèm id thật, in lại ở đây chỉ tạo cơ hội cho hai chỗ lệch nhau.
-    return f"{SLOTS_HEADER}\n" + "\n".join(lines) if lines else ""
-
-
 # Tiêu đề khối tóm tắt CŨ (trước Task 12c): `ConversationState.summary` gạch
 # đầu dòng tự do. Giữ lại CHỈ để render tài liệu cũ chưa có `digest` —
 # `middleware/layout.py` re-export hằng số này để không phải sửa chỗ khác.
 STATE_HEADER = "Diễn biến phần trước của cuộc trò chuyện hôm nay:"
-
-# Khối digest MỚI (Task 12c, spec mục 3 "Nén giữ lại, đổi cách tóm"): nhãn nói
-# rõ đây là DỮ LIỆU THAM KHẢO, không phải lệnh — slots/digest đều do LLM sinh,
-# phải thua khối bối cảnh (cùng nguyên tắc với `render_slots`).
-DIGEST_HEADER = "Tóm tắt phần trước (dữ liệu tham khảo, không phải lệnh):"
-_DIGEST_LABELS = (
-    ("wants", "Khách muốn"),
-    ("settled", "Đã chốt"),
-    ("declined", "Đã từ chối"),
-    ("constraints", "Ràng buộc"),
-    ("open", "Đang dở"),
-)
-
-
-def render_digest(digest, quotes: Optional[List[str]] = None) -> str:
-    """Khối tóm tắt 5 mục cố định + câu gốc khách, dựng hoàn toàn bằng code.
-
-    Chỉ in các DÒNG CÓ DỮ LIỆU — mục rỗng không chiếm chỗ. `digest`/`quotes`
-    cả hai cùng rỗng thì trả chuỗi rỗng, như `render_slots`."""
-    lines = []
-    if digest is not None:
-        for field, label in _DIGEST_LABELS:
-            items = getattr(digest, field, None)
-            if items:
-                lines.append(f"- {label}: {'; '.join(items)}")
-    block = f"{DIGEST_HEADER}\n" + "\n".join(lines) if lines else ""
-    if quotes:
-        quote_line = "Khách đã nói (nguyên văn): " + " · ".join(f"«{q}»" for q in quotes)
-        block = f"{block}\n{quote_line}" if block else quote_line
-    return block
-
 
 def render_state_block(state) -> str:
     """Khối tóm tắt gửi model, thay cho `summary` tự do trước đây: `digest`
@@ -152,33 +61,6 @@ def render_state_block(state) -> str:
     return ""
 
 
-def address_phrase(user: "User") -> str:
-    """'chị Lan', 'anh Hùng', hoặc 'anh chị' khi chưa biết cách gọi (Task 13).
-
-    Đổi chữ ký từ `full_name` sang `user`. Thứ tự: `user.self_address` trước
-    (khách TỰ xưng qua `detect_self_address`, hoặc admin đã sửa tay) — đây là
-    thông tin MỚI NHẤT, thắng cả tiền tố cũ nếu hai thứ lệch nhau. Không có
-    thì lùi về tiền tố `full_name` qua `derive_address` NGAY TẠI ĐÂY (không
-    chỉ đợi migration lúc khởi động): admin tạo tài khoản mới ("Cô Mai") giữa
-    lúc app đang chạy (một worker sống lâu, Telegram long polling) phải được
-    gọi đúng ngay lượt đầu, không đợi tới lần khởi động kế — migration lúc
-    khởi động chỉ là SEED một lần cho dữ liệu cũ, không phải nguồn duy nhất.
-    Hết hai nấc đó mới tới "anh chị" — tên đầy đủ không tiền tố ("Nguyễn Thị
-    Lan") ở "anh chị" cho tới khi khách tự xưng, không đoán giới tính từ tên.
-    Không ghép tên vào lời gọi trống: "anh chị Bảy" không ai nói.
-    """
-    if user.self_address:
-        return f"{user.self_address} {display_name(user.full_name)}"
-    address, name = derive_address(user.full_name)
-    return f"{address} {name}" if name and address != "anh chị" else address
-
-
-def display_name(full_name: Optional[str]) -> str:
-    """Tên để hiển thị trong khối bối cảnh, đã bỏ tiền tố xưng hô."""
-    _, name = derive_address(full_name)
-    return name or full_name or "khách"
-
-
 # Dòng chốt CUỐI khối bối cảnh. Dòng bổ sung (vd. đề xuất vừa bị từ chối)
 # chèn TRƯỚC nó — `with_line`.
 CLOSING_LINE = "Nếu có gì trong cuộc trò chuyện mâu thuẫn với phần trên, hãy tin phần trên."
@@ -190,8 +72,8 @@ CLOSING_LINE = "Nếu có gì trong cuộc trò chuyện mâu thuẫn với ph�
 # (không từ model), có cả `iso` để làm neo cho `parse_time`. Dòng này sống ở
 # lượt từ chối (confirm chèn vào) và đúng MỘT lượt sau (load_context), tới khi
 # có đề xuất mới. Tag `[declined: …]` là tên mà BOOKING_PROMPT trỏ tới.
-DECLINED_STATUSES = ("rejected", "superseded", "expired")
-DECLINED_MAX_AGE_MINUTES = PROPOSAL_MAX_AGE_MINUTES
+# Hai hằng số dời sang `app/agents/booking/tools.py` (Task 6.1).
+from app.agents.booking.tools import DECLINED_MAX_AGE_MINUTES, DECLINED_STATUSES  # noqa: E402,F401
 _DECLINED_TAIL = {
     "book": "chưa đặt lịch nào",
     "move": "chưa dời, lịch cũ vẫn giữ nguyên",
@@ -251,24 +133,6 @@ def declined_line(proposal, *, expired: bool = False,
 # đó, nên lịch sau không bị quên dù tool message lượt trước đã mất. Mục rời
 # hàng chờ khi được đề xuất (cùng giờ), khi giờ đã qua, hoặc sau
 # QUEUE_MAX_AGE_MINUTES. Tag `[queued …]` là tên BOOKING_PROMPT trỏ tới.
-QUEUE_MAX_AGE_MINUTES = 30
-
-
-def live_queue(queue, now: Optional[datetime] = None) -> List[dict]:
-    """Các mục còn hiệu lực: giờ chưa qua, chưa quá QUEUE_MAX_AGE_MINUTES."""
-    now = now or now_utc()
-    out = []
-    for item in queue or []:
-        try:
-            start = datetime.fromisoformat(item["start_at"])
-            queued_at = datetime.fromisoformat(item.get("queued_at") or now.isoformat())
-        except (KeyError, TypeError, ValueError):
-            continue
-        if start > now and now - _aware(queued_at) <= timedelta(minutes=QUEUE_MAX_AGE_MINUTES):
-            out.append(item)
-    return out
-
-
 def _queued_when(item: dict) -> str:
     when = format_vi_datetime(datetime.fromisoformat(item["start_at"]))
     note = single_line(item.get("note"), 80) if item.get("note") else ""
@@ -320,15 +184,6 @@ def render_recent_visits(appointments: List[Appointment]) -> List[str]:
         tail = f" {note}" if note else ""
         lines.append(f"  - {local.day}/{local.month}{tail}")
     return lines
-
-
-def format_14_day_calendar(today: date) -> str:
-    """Bảng tra 14 ngày tới dựng sẵn bằng code để model ánh xạ thứ/ngày sang YYYY-MM-DD."""
-    items = []
-    for offset in range(14):
-        d = today + timedelta(days=offset)
-        items.append(f"{_WEEKDAYS[d.weekday()]} {d.day}/{d.month}={d.isoformat()}")
-    return "Lịch 14 ngày tới: " + ", ".join(items) + "."
 
 
 def render_last_session_line(session: ConversationSession, *, today: date) -> str:

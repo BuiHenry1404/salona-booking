@@ -15,7 +15,7 @@ from app.agents.booking.button_path import run_button, stale_reply
 from app.agents.booking.context import PendingProposal
 from app.agents.booking.orchestrator.tools import OrchestratorDeps
 from app.agents.booking.reply_brief import ButtonOutcome
-from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking.button import ButtonReply
 from app.core.clock import TZ, now_utc, to_local
 from app.core.vi_format import format_vi_datetime
 from app.services.appointment import AppointmentService

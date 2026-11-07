@@ -20,7 +20,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from app.agents.booking.context import UNTRUSTED
 from app.agents.booking.prompts.conversation import CONVERSATION_PROMPT
 from app.agents.booking.schemas import ClarifyRequest, Fact, ReplyBrief
-from app.agents.booking_graph.agents import is_transient
+from app.agents.booking.middleware import is_transient
 from app.agents.llm import build_chat_model
 from app.core.logging import get_logger
 
@@ -106,7 +106,7 @@ async def respond(
     `brief.fallback` (câu chốt CODE viết sẵn, không phải câu chung).
 
     Lỗi tạm thời (`is_transient` — timeout tính là tạm thời, xem
-    `app.agents.booking_graph.agents.is_transient`) được thử lại ĐÚNG MỘT
+    `app.agents.booking.middleware.is_transient`) được thử lại ĐÚNG MỘT
     lần; lỗi khác, hoặc lỗi của lần thử lại, trả fallback ngay. Không bao giờ
     nuốt lỗi lặng lẽ — luôn log một sự kiện tên ổn định trước khi trả
     fallback (không log chữ khách, §11). `log_extra` (graph truyền

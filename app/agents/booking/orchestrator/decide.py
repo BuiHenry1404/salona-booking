@@ -1,7 +1,7 @@
 """`apply_decision` — thân thật của tool `decide_pending` (§5.5) và veto có
 cấu trúc trên nhãn model đọc được (§9.3 (i)).
 
-Đây là module DUY NHẤT ngoài `booking_graph/confirm.py` (gói cũ, M6 gỡ) được
+Đây là module DUY NHẤT ngoài `confirm.py` của gói cũ (M6 gỡ) được
 phép gọi `ProposalService.approve` — xem `tests/test_write_fence.py`. Khách
 xác nhận ở LƯỢT SAU; `decide_pending` là cách DUY NHẤT một lượt chat có thể
 ghi lịch, và veto() là nơi CODE (không phải model) có tiếng nói cuối cùng
@@ -24,8 +24,8 @@ from app.agents.booking.schemas import (
     Moment,
     PendingOutcome,
 )
-from app.agents.booking_graph.reply import other_time, restates_proposal_time
-from app.agents.booking_graph.tools import WHOLE_DAY, nearest_slots
+from app.agents.booking.timecheck import other_time, restates_proposal_time
+from app.agents.booking.tools import WHOLE_DAY, nearest_slots
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.vi_format import format_vi_datetime

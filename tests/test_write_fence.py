@@ -14,8 +14,9 @@ WRITE_METHODS = {"create", "cancel", "reschedule", "approve"}
 
 # (file, chuỗi receiver, method) — mỗi dòng là một lời gọi đã duyệt.
 ALLOWED = {
-    # Tool tạo ĐỀ XUẤT (không phải lịch) — ProposalService.create.
-    ("app/agents/booking_graph/tools.py", "proposals", "create"),
+    # Tool tạo ĐỀ XUẤT (không phải lịch) — ProposalService.create. Dời từ gói
+    # cũ ở Task 6.1; shim ở chỗ cũ chỉ trỏ module, không có lời gọi nào.
+    ("app/agents/booking/tools.py", "proposals", "create"),
     # Cổng ghi duy nhất của chat, chỉ sau khi lưới + bộ phân loại cùng approve.
     ("app/agents/booking_graph/confirm.py", "ProposalService(db)", "approve"),
     # Huỷ asyncio.Task của lượt cũ (supersede), không phải huỷ lịch.

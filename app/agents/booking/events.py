@@ -1,7 +1,7 @@
 """`run_turn` trên graph mới (Task 5.4, §5.3/§6/§9.1/§10/§11 của
 `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md`).
 
-Khác bản cũ (`app.agents.booking_graph.events`): KHÔNG còn `interrupt()` /
+Khác bản cũ (`events.py` của gói cũ): KHÔNG còn `interrupt()` /
 `Command(resume=...)` / `aupdate_state` — mỗi lượt (kể cả nút Đồng ý/Không)
 chạy graph mới (`app.agents.booking.graph.build_graph`) từ `START`. "Đang
 chờ" không còn là trạng thái của checkpoint; nó là `TurnContext.pending`, đọc
@@ -11,7 +11,7 @@ duyệt vẫn chạy hết graph (route "button" → `button_path` tự trả
 
 Các hàm hạ tầng (`translate_langchain_event`, `thread_id_for`, `pick_thread`,
 `_supersede`/`_ACTIVE_TURNS`, `schedule_compaction`) SAO CHÉP nguyên văn từ
-`booking_graph.events` — M6 sẽ xoá bản cũ, không import ngược từ đó.
+`events.py` của gói cũ — M6 sẽ xoá bản cũ, không import ngược từ đó.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from app.agents.booking.orchestrator.agent import OrchestrateOutcome
 from app.agents.booking.progress import turn_facts
 from app.agents.booking.reply_brief import ButtonOutcome
 from app.agents.booking.resolver import ResolveResult
-from app.agents.booking_graph.button import ButtonReply
-from app.agents.booking_graph.history import stamp, stamped_at
+from app.agents.booking.button import ButtonReply
+from app.agents.booking.history import stamp, stamped_at
 from app.core.clock import now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.langfuse import get_callbacks, get_trace_metadata
@@ -60,7 +60,7 @@ def turn_timeout_seconds() -> int:
     return settings.orch_turn_timeout_seconds
 
 
-# --- sao chép nguyên văn từ `booking_graph.events` (M6 xoá bản cũ) ----------
+# --- sao chép nguyên văn từ `events.py` của gói cũ (M6 xoá bản cũ) ----------
 
 # Giữ tham chiếu mạnh: event loop chỉ giữ weak-ref, tác vụ nền không ai giữ
 # có thể bị GC giữa chừng — mất lượt nén mà không có dòng log nào.

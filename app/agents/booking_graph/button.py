@@ -1,20 +1,10 @@
-"""`ButtonReply`: câu trả lời đề xuất bằng nút bấm (Đồng ý/Không), Task 5.
+"""Shim tạm (Task 6.1, Task 6.3 xoá): module đã dời sang `app.agents.booking.button`.
 
-Khác câu khách gõ chữ: nguồn là Socket.IO event `confirm_proposal`, không phải
-`send_message`. `label` là câu hiển thị — ghi vào `conversations` và thread
-đúng như một câu khách gõ ("customer_text") — để lịch sử trò chuyện cho thấy
-khách đã bấm gì, dù không gõ chữ nào. `decision`/`proposal_id` là cặp resume
-CODE dùng thẳng ở node `confirm` (`_handle_button`), không qua `reply.decide`.
-"""
-from dataclasses import dataclass
-from typing import Literal
+Không dùng `import *`: tên cũ trỏ thẳng vào CHÍNH module mới (sys.modules) để
+`monkeypatch.setattr(<module cũ>, ...)` của test cũ vẫn trúng hàm thật — kể cả
+tên `_riêng` mà `import *` bỏ sót."""
+import sys
 
-# Nhãn hiển thị cho từng quyết định — khớp đúng chữ trên nút giao diện.
-BUTTON_LABELS = {"yes": "Đồng ý", "no": "Không"}
+from app.agents.booking import button as _moved
 
-
-@dataclass(frozen=True)
-class ButtonReply:
-    decision: Literal["yes", "no"]
-    proposal_id: str
-    label: str
+sys.modules[__name__] = _moved

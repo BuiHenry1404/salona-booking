@@ -37,8 +37,8 @@ from app.agents.booking.schemas import (
     ShopStatusOut,
     TaskResult,
 )
-from app.agents.booking_graph.context import address_phrase
-from app.agents.booking_graph.phrase import code_phrase
+from app.agents.booking.context import address_phrase
+from app.agents.booking.phrase import code_phrase
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
 from app.core.vi_format import format_vi_datetime
@@ -54,7 +54,7 @@ from tests.test_specialist_appointment import _resolved_time_output
 ORCH_MODEL = "app.agents.booking.orchestrator.agent.build_chat_model"
 CONV_MODEL = "app.agents.booking.conversation.build_chat_model"
 SPECIALIST_MODEL = "app.agents.booking.specialists.base.build_chat_model"
-REWRITE_MODEL = "app.agents.booking_graph.rewrite.build_chat_model"
+REWRITE_MODEL = "app.agents.booking.rewrite.build_chat_model"
 
 
 # ---------------------------------------------------------------------------

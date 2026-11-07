@@ -1,11 +1,7 @@
-import asyncio
 from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
-import httpx
-import openai
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
-from langchain_core.exceptions import ModelError
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
 from app.agents.booking_graph.context import address_phrase, live_queue, queued_line, with_line
@@ -13,9 +9,10 @@ from app.agents.booking_graph.relatives import aside_line, deferral_reply
 from app.agents.booking_graph.middleware.guard import GuardMiddleware
 from app.agents.booking_graph.middleware.layout import (  # noqa: F401 (re-export)
     STATE_HEADER, MessageLayoutMiddleware)
-from app.agents.booking_graph.middleware.tools import (  # noqa: F401 (re-export)
-    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, TOOL_ERROR_TEXT, NoParallelToolsMiddleware,
-    ToolFailureMiddleware, ToolRoundLimitMiddleware)
+from app.agents.booking.middleware import (  # noqa: F401 (re-export; dời Task 6.1)
+    FALLBACK_ANSWER, MAX_TOOL_ROUNDS, MODEL_RETRIES, MODEL_RETRY_DELAY_SECONDS, TOOL_ERROR_TEXT,
+    NoParallelToolsMiddleware, ToolFailureMiddleware, ToolRoundLimitMiddleware, is_transient,
+    model_retry_middleware)
 from app.agents.booking_graph.middleware.phrase import PhraseMiddleware
 from app.agents.booking_graph.state import GraphState
 from app.agents.llm import build_chat_model
@@ -28,32 +25,6 @@ logger = get_logger(__name__)
 
 # Chỉ token mang tag này mới được đẩy ra màn hình khách (events.py lọc theo nó).
 RESPOND_TAG = "respond"
-
-# Lỗi TẠM THỜI của model agent (Azure 5xx/429, timeout 20 giây, mất kết nối):
-# thử lại ĐÚNG một lần sau ~0,5 giây; vẫn lỗi (hay lỗi 4xx) thì ném — `run_turn` đổi thành câu "Máy đang bận..." như A.
-MODEL_RETRIES = 1
-MODEL_RETRY_DELAY_SECONDS = 0.5
-
-
-def is_transient(exc: BaseException) -> bool:
-    """Lỗi TẠM THỜI — thử lại có thể ra kết quả khác: timeout, mất kết nối,
-    429, 5xx. 400 (kể cả content filter, quá context), 401/403/404 thì thử lại
-    vẫn y vậy, chỉ tốn gấp đôi thời gian của khách (review M4 M-1).
-    Lỗi lạ (lỗi lập trình) cũng không thử lại."""
-    if isinstance(exc, ModelError):
-        return exc.is_retryable
-    if isinstance(exc, (openai.APIConnectionError, httpx.TimeoutException,
-                        httpx.TransportError, asyncio.TimeoutError)):
-        return True          # APITimeoutError là con của APIConnectionError
-    if isinstance(exc, openai.APIStatusError):
-        return exc.status_code == 429 or exc.status_code >= 500
-    return False
-
-
-def model_retry_middleware() -> ModelRetryMiddleware:
-    return ModelRetryMiddleware(max_retries=MODEL_RETRIES, on_failure="error",
-                                initial_delay=MODEL_RETRY_DELAY_SECONDS,
-                                retry_on=is_transient)
 
 
 class _LazyAgent:

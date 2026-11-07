@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 from app.agents.booking.context import UNTRUSTED, render_context
 from app.agents.booking.schemas import ShopHoursOut, specialist_output_model
 from app.agents.booking.specialists.base import build_specialist, run_specialist, task_message
-from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
+from app.agents.booking.middleware import FALLBACK_ANSWER
 from tests.factories import make_ctx, make_spec
 from tests.fakes import Hang, final_output, scripted, tool_call
 

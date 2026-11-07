@@ -128,8 +128,8 @@ class GoalProgress(BaseModel):
 class QueuedRequest(BaseModel):
     """Một yêu cầu đặt lịch thêm, khách nhắc tới ngoài mục tiêu đang xử lý —
     CODE-ONLY (Task 0.5), sống trong `ConversationState.queued`. Khác
-    `QueuedRequest` trong `app/agents/booking_graph/tools.py` (kiểu đầu vào
-    của tool) — hai model độc lập, trùng tên tình cờ."""
+    `QueuedItem` trong `app/agents/booking/tools.py` (kiểu đầu vào của tool,
+    trước Task 6.1 cũng tên `QueuedRequest`) — hai model độc lập."""
 
     queue_id: str
     start_at: datetime               # UTC aware (validator như Proposal)

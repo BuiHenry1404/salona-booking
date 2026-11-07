@@ -41,8 +41,7 @@ from app.agents.booking.schemas import (
     ProposalCreated,
     TaskResult,
 )
-from app.agents.booking_graph.agents import model_retry_middleware
-from app.agents.booking_graph.middleware.tools import ToolRoundLimitMiddleware
+from app.agents.booking.middleware import ToolRoundLimitMiddleware, model_retry_middleware
 from app.agents.llm import build_chat_model
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -134,7 +133,7 @@ def _render_turn(message: BaseMessage) -> str:
 def orchestrator_message(ctx: TurnContext, recent: list[BaseMessage], question: str) -> HumanMessage:
     """Human message DUY NHẤT gửi Orchestrator: khối bối cảnh đầy đủ, rồi tối
     đa `RECENT_TURNS` cặp (khách, trợ lý) gần nhất rút từ
-    `app.agents.booking_graph.history.model_history`, rồi câu khách dưới nhãn
+    `app.agents.booking.history.model_history`, rồi câu khách dưới nhãn
     `UNTRUSTED` (luôn SAU nhãn, không bao giờ đứng trước — như
     `specialists/base.py::task_message`)."""
     windowed = recent[-(RECENT_TURNS * 2):] if recent else []

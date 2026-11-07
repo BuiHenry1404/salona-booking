@@ -23,8 +23,8 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.agents.booking.context import TurnContext
-from app.agents.booking_graph.button import ButtonReply
-from app.agents.booking_graph.tokens import (
+from app.agents.booking.button import ButtonReply
+from app.agents.booking.tokens import (
     has_slash_date,
     names_a_clock,
     names_a_day,

@@ -24,8 +24,8 @@ from app.agents.booking import events
 from app.agents.booking import graph as graph_module
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.schemas import AppointmentRefOut, Moment, PendingOutcome
-from app.agents.booking_graph.button import ButtonReply
-from app.agents.booking_graph.context import address_phrase
+from app.agents.booking.button import ButtonReply
+from app.agents.booking.context import address_phrase
 from app.core.clock import TZ, now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.vi_format import format_vi_datetime
@@ -39,7 +39,7 @@ from tests.fakes import FakeSpecialists, Hang, scripted, tool_call
 ORCH_MODEL = "app.agents.booking.orchestrator.agent.build_chat_model"
 CONV_MODEL = "app.agents.booking.conversation.build_chat_model"
 SPECIALIST_MODEL = "app.agents.booking.specialists.base.build_chat_model"
-REWRITE_MODEL = "app.agents.booking_graph.rewrite.build_chat_model"
+REWRITE_MODEL = "app.agents.booking.rewrite.build_chat_model"
 
 
 def _tomorrow_at(hour: int, minute: int = 0) -> datetime:
@@ -155,7 +155,7 @@ async def test_thread_holds_only_question_and_answer_not_tool_messages(test_db, 
 
 
 async def test_conversations_and_thread_share_timestamps(test_db, user, models):
-    from app.agents.booking_graph.history import stamped_at
+    from app.agents.booking.history import stamped_at
     models.orchestrator.replies += [_finish()]
     models.conversation.replies += [AIMessage("Dạ em chào chị Lan ạ.")]
     await turn(test_db, user, "chào em")

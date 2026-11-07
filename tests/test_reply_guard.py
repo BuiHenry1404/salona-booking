@@ -1,7 +1,7 @@
 """Task 4.3: `guard.py` — guard sự thật (§9.8 của
 `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md`).
 
-`rewrite_once` giả qua `monkeypatch.setattr("app.agents.booking_graph.rewrite.rewrite_once",
+`rewrite_once` giả qua `monkeypatch.setattr("app.agents.booking.rewrite.rewrite_once",
 ...)` — guard.py gọi nó qua module (`rewrite.rewrite_once`), không qua một
 binding `from ... import rewrite_once`, nên patch module mới có tác dụng.
 """
@@ -21,7 +21,7 @@ from app.agents.booking.guard import (
 )
 from app.agents.booking.schemas import Fact, ReplyBrief
 
-REWRITE_ONCE = "app.agents.booking_graph.rewrite.rewrite_once"
+REWRITE_ONCE = "app.agents.booking.rewrite.rewrite_once"
 
 
 def make_brief(**overrides) -> ReplyBrief:

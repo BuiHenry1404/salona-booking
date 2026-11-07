@@ -32,7 +32,7 @@ from app.agents.booking.schemas import (Moment, ProposalCreated, TaskResult, Tas
 from app.agents.booking.specialists.base import build_specialist, run_specialist
 from app.agents.booking.specialists.guard import (OneProposalPerTaskMiddleware,
                                                     PROPOSAL_TOOLS, allowlist)
-from app.agents.booking_graph.tools import make_booking_tools
+from app.agents.booking.tools import make_booking_tools
 from app.core.clock import ensure_aware, now_utc
 from app.core.config import settings
 from app.core.logging import get_logger

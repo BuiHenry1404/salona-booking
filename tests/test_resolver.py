@@ -16,7 +16,7 @@ import pytest
 from app.agents.booking import resolver as resolver_module
 from app.agents.booking.context import OpenQuestion, PendingProposal, UnannouncedOutcome
 from app.agents.booking.resolver import ResolveResult, is_short_time_answer, resolve
-from app.agents.booking_graph.button import ButtonReply
+from app.agents.booking.button import ButtonReply
 
 from tests.factories import make_ctx
 

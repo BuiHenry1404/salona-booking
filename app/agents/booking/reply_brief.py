@@ -44,8 +44,8 @@ from app.agents.booking.schemas import (
     ShopStatusOut,
     TaskResult,
 )
-from app.agents.booking_graph.middleware.tools import FALLBACK_ANSWER
-from app.agents.booking_graph.phrase import code_phrase
+from app.agents.booking.middleware import FALLBACK_ANSWER
+from app.agents.booking.phrase import code_phrase
 from app.core.clock import ensure_aware
 from app.core.config import settings
 
