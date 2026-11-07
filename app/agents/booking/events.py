@@ -227,6 +227,11 @@ async def _apply_turn_facts(db: AsyncIOMotorDatabase, user: User, values: dict, 
         ctx = TurnContext.model_validate(values["turn_context"])
         resolve = ResolveResult.model_validate(values["resolve"])
         outcome = _restore_outcome(values.get("outcome"))
+        # Lượt nút: `ButtonOutcome` không có `finish`/`ask` — `turn_facts` nhận
+        # `None` (đường nút: service/stated rỗng), vẫn ghi `asked` từ câu bot
+        # trước lượt (Task 6.2, phán quyết controller).
+        if isinstance(outcome, ButtonOutcome):
+            outcome = None
         facts = turn_facts(outcome, resolve, ctx)
         await ConversationStateService(db).apply_turn_analysis(
             str(user.id), facts, last_bot_text=ctx.last_bot_text,

@@ -531,6 +531,24 @@ async def test_apply_turn_facts_runs_after_complete(test_db, user, models):
     assert state.slots.service == "móng gel"
 
 
+async def test_button_turn_records_turn_facts_from_the_last_bot_text(test_db, user, models):
+    """Lượt nút: `ButtonOutcome` không có `finish`/`ask` — `turn_facts` nhận
+    `None` (đường nút), vẫn ghi `asked` từ câu bot trước lượt, không lỗi."""
+    await ConversationService(test_db).append(
+        str(user.id), "assistant", "Dạ em giữ chỗ chiều mai cho chị nhé. Chị đồng ý không ạ?")
+    proposal = await ProposalService(test_db).create(user, "book", _tomorrow_at(15), None)
+    models.conversation.replies += [AIMessage("Dạ vâng chị Lan.")]
+    button = ButtonReply(decision="no", proposal_id=str(proposal.id), label="Không")
+
+    with structlog.testing.capture_logs() as logs:
+        assert (await turn(test_db, user, button))[-1][0] == "complete"
+
+    assert not [e for e in logs if e.get("event") == "turn_facts_apply_failed"]
+    state = await ConversationStateService(test_db).conversations.get_state(str(user.id))
+    assert [(x.question, x.answered) for x in state.slots.asked] == [
+        ("Chị đồng ý không ạ?", False)]
+
+
 # ---------------------------------------------------------------------------
 # Task 6.2 (ghi chú controller): `self_address` seed sau `complete`, như gói cũ
 # (Task 13) — `detect_self_address(customer_text)`, chỉ khi chưa có, không ghi đè.
