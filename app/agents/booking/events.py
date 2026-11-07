@@ -164,20 +164,24 @@ async def _supersede(user_id: str, me: asyncio.Task,
 # --- mới ở Task 5.4 ----------------------------------------------------------
 
 
-async def pending_proposal_payload(db: AsyncIOMotorDatabase, user: User) -> Optional[dict]:
+async def pending_proposal_payload(
+    db: AsyncIOMotorDatabase, user: User, *, ids: Optional[dict] = None,
+) -> Optional[dict]:
     """Khối "đề xuất đang chờ" đính kèm `complete` cho nút Đồng ý/Không (§6).
 
     Khác `None` CHỈ khi `ProposalService.latest(user)` còn `pending` và CHƯA
     hết hạn — đọc lại từ DB (không tin state đồ hoạ) vì lượt này (hay một lượt
     bị `_supersede` chen giữa) có thể vừa approve/reject/tạo đề xuất mới. Lỗi
     đọc chỉ đáng mất NÚT bấm (`proposal: None`), không đáng mất cả lượt — câu
-    đáp đã `persist` xong trước khi hàm này chạy.
+    đáp đã `persist` xong trước khi hàm này chạy. `ids` (nếu `_run_turn`
+    truyền vào) gắn `turn_id`/`thread_id` vào dòng log lỗi — fallback về
+    `user_id` một mình khi gọi độc lập (test/nơi khác không có `ids`, §11).
     """
     try:
         proposal = await ProposalService(db).latest(user)
     except Exception as exc:
         logger.warning("pending_proposal_payload_failed", extra={
-            "user_id": str(user.id), "error_type": type(exc).__name__,
+            **(ids or {"user_id": str(user.id)}), "error_type": type(exc).__name__,
         })
         return None
     if proposal is None or proposal.status != "pending" or proposal.expires_at <= now_utc():
@@ -230,6 +234,44 @@ async def _apply_turn_facts(db: AsyncIOMotorDatabase, user: User, values: dict, 
         logger.warning("turn_facts_apply_failed", extra={**ids, "error_type": type(exc).__name__})
 
 
+async def _after_complete(
+    db: AsyncIOMotorDatabase, user: User, values: dict, turn_id: str, ids: dict,
+) -> None:
+    """Mọi lệnh ghi SAU khi `complete` đã phát — `mark_announced` (lượt này +
+    `announced_turn_id` của R0) và `TurnFacts` — chạy trong ĐÚNG MỘT task nền,
+    gọi qua `asyncio.shield` (fix round 1, §10).
+
+    Lý do shield: khách có thể gõ tin kế tiếp NGAY sau khi nhận `complete`
+    (trước khi `_run_turn` kịp chạy xong phần sau) — `_supersede` của lượt mới
+    sẽ `cancel()` task đang chạy hàm này. Không shield thì `mark_announced`
+    không bao giờ kịp ghi, và R0 lặp lại y nguyên dòng báo tin ở lượt sau
+    (khách nghe "em đã đặt xong..." hai lần). Mỗi bước tự log lỗi riêng —
+    `mark_announced(announced_turn_id)` thất bại không được chặn `TurnFacts`.
+    """
+    answer = values.get("answer") or ""
+    if answer:
+        # Đánh dấu ĐÃ BÁO chỉ khi thật sự có câu đáp gửi khách (fix round 1,
+        # #5) — câu đáp rỗng nghĩa là không có gì được nói, không đáng gọi là
+        # "đã báo" cho lượt này lẫn cho `announced_turn_id` của R0.
+        ledger = TurnLedger(db)
+        try:
+            await ledger.mark_announced(turn_id)
+        except Exception as exc:
+            logger.warning("mark_announced_failed", extra={**ids, "error_type": type(exc).__name__})
+        announced_turn_id = values.get("announced_turn_id")
+        if announced_turn_id:
+            try:
+                await ledger.mark_announced(announced_turn_id)
+            except Exception as exc:
+                logger.warning("mark_announced_failed", extra={
+                    **ids, "error_type": type(exc).__name__, "announced_turn_id": announced_turn_id,
+                })
+
+    # Sau complete, cạnh `persist`: dữ kiện lượt vào slots NGAY (lượt sau thấy
+    # `stated` mà không chờ nén nền).
+    await _apply_turn_facts(db, user, values, ids)
+
+
 async def run_turn(
     db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
 ) -> AsyncIterator[AgentEvent]:
@@ -252,15 +294,23 @@ async def run_turn(
     previous = _ACTIVE_TURNS.get(user_id)
     if me is not None:
         _ACTIVE_TURNS[user_id] = me          # đăng ký TRƯỚC khi huỷ/chờ lượt cũ
+    # Holder MUTABLE: `_run_turn` điền `turn_id`/`thread_id` ngay khi tính
+    # được, để log `turn_superseded` ở ĐÂY (nơi duy nhất quyết log, tránh đếm
+    # đôi — `test_three_quick_turns_only_the_newest_runs`) vẫn mang đủ ba khoá
+    # §11 thay vì chỉ `user_id` (fix round 1, #3). Huỷ có thể xảy ra TRƯỚC khi
+    # `_run_turn` kịp gán (vd. đang `await _supersede` của CHÍNH lượt mới) —
+    # khi đó log chỉ có `user_id`, chấp nhận được (không còn gì khác để log).
+    ids = {"user_id": user_id, "turn_id": None, "thread_id": None}
     try:
         await _supersede(user_id, me, previous)
-        async for event in _run_turn(db, user, question):
+        async for event in _run_turn(db, user, question, ids):
             yield event
     except asyncio.CancelledError:
-        # Bị lượt mới thay: im lặng — không `error`, không ghi `conversations`
-        # (lượt mới đang trả lời khách). Huỷ vì lý do khác thì không log nhầm.
+        # Bị lượt mới thay: im lặng với KHÁCH — không `error`, không ghi
+        # `conversations` (lượt mới đang trả lời khách). Huỷ vì lý do khác thì
+        # không log nhầm `turn_superseded`.
         if _ACTIVE_TURNS.get(user_id) is not me:
-            logger.info("turn_superseded", extra={"user_id": user_id})
+            logger.info("turn_superseded", extra=ids)
         raise
     finally:
         if me is not None and _ACTIVE_TURNS.get(user_id) is me:
@@ -268,18 +318,12 @@ async def run_turn(
 
 
 async def _run_turn(
-    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply"
+    db: AsyncIOMotorDatabase, user: User, question: "str | ButtonReply", ids: dict,
 ) -> AsyncIterator[AgentEvent]:
     user_id = str(user.id)
     conversations = ConversationService(db)
 
     yield AgentEvent("turn_started")
-
-    button = question if isinstance(question, ButtonReply) else None
-    # Nút bấm KHÔNG gõ chữ — "label" ("Đồng ý"/"Không") đóng vai câu khách ở
-    # mọi nơi dùng câu khách làm văn bản (thread, `conversations`).
-    raw_text = button.label if button is not None else question
-    question_text = single_line(raw_text, CUSTOMER_TEXT_MAX_CHARS) or ""
 
     # Trần thời gian chỉ bọc lúc CHỜ graph (và các lần đọc/ghi state của nó),
     # không bao giờ bọc `yield`: hết giờ khi người nhận đang `sio.emit` thì
@@ -294,6 +338,15 @@ async def _run_turn(
     turn_id: Optional[str] = None
     thread_id: Optional[str] = None
     try:
+        # Chuẩn hoá đầu vào (§9.1) TRONG try: một `question` dị dạng (không
+        # phải `str`/`ButtonReply`) phải vẫn phát đúng MỘT `error`, không làm
+        # generator vỡ ngang (fix round 1, #4).
+        button = question if isinstance(question, ButtonReply) else None
+        # Nút bấm KHÔNG gõ chữ — "label" ("Đồng ý"/"Không") đóng vai câu khách
+        # ở mọi nơi dùng câu khách làm văn bản (thread, `conversations`).
+        raw_text = button.label if button is not None else question
+        question_text = single_line(raw_text, CUSTOMER_TEXT_MAX_CHARS) or ""
+
         # Một mốc cho câu khách ở CẢ HAI nơi (thread và conversations):
         # covers_until đọc từ conversations phải khớp đúng tin bên thread.
         asked_at = now_ms()
@@ -301,7 +354,7 @@ async def _run_turn(
         graph = build_graph(db, user)
         thread_id = await bounded(pick_thread(graph, user_id, asked_at))
         history_after, previous_replies = await bounded(_turn_window(db, user_id))
-        ids = {"user_id": user_id, "turn_id": turn_id, "thread_id": thread_id}
+        ids["turn_id"], ids["thread_id"] = turn_id, thread_id
 
         # Langfuse v3: handler không mang danh tính, danh tính đi qua metadata.
         # session_id = user_id (không phải thread_id): trace của một khách
@@ -372,25 +425,16 @@ async def _run_turn(
                         **ids, "error_type": type(ledger_exc).__name__,
                     })
 
-        proposal = await pending_proposal_payload(db, user)
+        proposal = await pending_proposal_payload(db, user, ids=ids)
         yield AgentEvent("complete", {"answer": answer, "proposal": proposal})
 
-        # Ghi chú controller (sau Task 5.3): sau `complete`, đánh dấu ĐÃ BÁO
-        # cho lượt hiện tại VÀ cho `announced_turn_id` (lượt trước vừa được
-        # báo bù trong câu đáp này, R0) nếu graph đặt khoá đó.
-        ledger = TurnLedger(db)
-        try:
-            await ledger.mark_announced(turn_id)
-            announced_turn_id = values.get("announced_turn_id")
-            if announced_turn_id:
-                await ledger.mark_announced(announced_turn_id)
-        except Exception as exc:
-            logger.warning("mark_announced_failed", extra={**ids, "error_type": type(exc).__name__})
-
-        # Sau complete, cạnh `persist`: dữ kiện lượt vào slots NGAY (lượt sau
-        # thấy `stated` mà không chờ nén nền). Ghi TRƯỚC khi lên lịch nén để
-        # hai lần ghi không chạy chồng ngay từ đầu.
-        await _apply_turn_facts(db, user, values, ids)
+        # Ghi chú controller (sau Task 5.3) + fix round 1 (#1): mọi lệnh ghi
+        # SAU `complete` (đánh dấu ĐÃ BÁO cho lượt này VÀ cho `announced_turn_id`
+        # của R0, `TurnFacts`) chạy trong ĐÚNG MỘT task `shield` — khách có thể
+        # gõ tin kế tiếp ngay khi nhận `complete`, `_supersede` của lượt mới sẽ
+        # `cancel()` task này nếu không shield, và `announced`/slots không bao
+        # giờ kịp ghi.
+        await asyncio.shield(asyncio.ensure_future(_after_complete(db, user, values, turn_id, ids)))
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không
@@ -401,9 +445,8 @@ async def _run_turn(
                 logger.warning("state_schedule_failed", extra={**ids, "error_type": type(exc).__name__})
 
     except Exception as exc:
-        ids = {"user_id": user_id, "turn_id": turn_id, "thread_id": thread_id}
         if isinstance(exc, TimeoutError) and loop.time() >= deadline:
             logger.error("agent_turn_timeout", extra={**ids, "seconds": turn_timeout_seconds()})
         else:
-            logger.error("agent_turn_failed", extra={**ids, "error_type": type(exc).__name__})
+            logger.error("agent_turn_failed", extra={**ids, "error_type": type(exc).__name__}, exc_info=True)
         yield AgentEvent("error", {"message": TURN_ERROR_MESSAGE})

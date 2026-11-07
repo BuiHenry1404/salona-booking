@@ -100,6 +100,28 @@ async def thread_values(test_db, user, thread_id=None):
 
 
 # ---------------------------------------------------------------------------
+# `translate_langchain_event` — chỉ token tag "respond" được chuyển tiếp.
+# ---------------------------------------------------------------------------
+
+
+def _lc_stream_event(tags, text="Dạ"):
+    class _Chunk:
+        content = text
+
+    return {"event": "on_chat_model_stream", "tags": list(tags), "data": {"chunk": _Chunk()}}
+
+
+@pytest.mark.parametrize("tag", ["orchestrate", "appointment", "shop_info", "rewrite"])
+def test_translate_langchain_event_drops_tokens_from_every_tag_but_respond(tag):
+    assert events.translate_langchain_event(_lc_stream_event([tag])) == []
+
+
+def test_translate_langchain_event_forwards_the_respond_tagged_token():
+    result = events.translate_langchain_event(_lc_stream_event(["respond"]))
+    assert [(e.type, e.data["text"]) for e in result] == [("token", "Dạ")]
+
+
+# ---------------------------------------------------------------------------
 # Thread checkpointer: lịch sử model đến từ thread, không từ `conversations`.
 # ---------------------------------------------------------------------------
 
@@ -208,7 +230,7 @@ async def test_complete_proposal_is_none_after_approve_or_reject(test_db, user, 
 # ---------------------------------------------------------------------------
 
 
-async def test_button_turn_when_nothing_is_pending_replies_stale_without_graph_writes(
+async def test_button_turn_when_nothing_is_pending_makes_no_model_call_and_writes_no_appointment(
     test_db, user, models
 ):
     from app.agents.booking.reply_brief import BUTTON_STALE_REPLY
@@ -236,6 +258,16 @@ async def _wait_until(predicate, timeout=5.0):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while not predicate():
+        assert loop.time() < deadline, "timeout"
+        await asyncio.sleep(0.01)
+
+
+async def _wait_until_async(predicate, timeout=5.0):
+    """Như `_wait_until`, nhưng `predicate` là coroutine (đọc DB) — chờ một
+    ĐIỀU KIỆN thật, không phải một khoảng `sleep` cố định đoán là đủ."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not await predicate():
         assert loop.time() < deadline, "timeout"
         await asyncio.sleep(0.01)
 
@@ -316,6 +348,59 @@ async def test_cancel_after_record_still_stores_the_whole_pair(test_db, user, mo
     await asyncio.sleep(0.2)
     stored = await ConversationService(test_db)._all_messages(str(user.id))
     assert contents(stored) == ["chào em", "Dạ em chào chị Lan ạ."]
+
+
+async def test_writes_after_complete_survive_a_cancel_right_after_complete_is_yielded(
+    test_db, user, models
+):
+    """Fix round 1 (#1): khách gõ tin kế tiếp NGAY sau khi nhận `complete` —
+    `_supersede` của lượt mới huỷ task đang emit `complete`. `mark_announced`
+    (lượt này VÀ `announced_turn_id` của R0) cùng `TurnFacts` phải chạy
+    `shield` nên vẫn ghi xong, dù task tiêu thụ generator đã bị `cancel()`."""
+    ledger = TurnLedger(test_db)
+    asked_at = now_ms()
+    start = _tomorrow_at(15)
+    spoken = format_vi_datetime(start)
+    await ledger.start(turn_id="prev-turn", user_id=str(user.id), route="orchestrate",
+                       rule="R2", asked_at=asked_at - timedelta(seconds=1))
+    pending = PendingOutcome(
+        outcome="approved", proposal_id="p-prev", kind="book", spoken=spoken,
+        appointment=AppointmentRefOut(id="a-prev", at=Moment(iso=start.isoformat(), spoken=spoken)),
+    )
+    await ledger.set_pending_outcome("prev-turn", pending)
+
+    models.orchestrator.replies += [tool_call(
+        "finish", {"kind_hint": "answer", "service": "móng gel", "stated": ["muốn làm móng gel"]})]
+    models.conversation.replies += [
+        AIMessage(f"Dạ chị Lan, em đã đặt xong {spoken} rồi ạ.")]
+
+    seen = []
+
+    async def consume():
+        me = asyncio.current_task()
+        async for event in events.run_turn(test_db, user, "alo em"):
+            seen.append((event.type, event.data))
+            if event.type == "complete":
+                me.cancel()          # huỷ NGAY sau khi khách đã nhận complete
+
+    task = asyncio.create_task(consume())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert seen[-1][0] == "complete"
+    assert str(user.id) not in events._ACTIVE_TURNS
+
+    async def _writes_landed():
+        prev_doc = await ledger.record_of("prev-turn")
+        docs = [d async for d in test_db["turn_ledger"].find({"user_id": str(user.id)})]
+        this_doc = next((d for d in docs if d["turn_id"] != "prev-turn"), None)
+        state = await ConversationStateService(test_db).conversations.get_state(str(user.id))
+        return bool(
+            prev_doc and prev_doc["announced"]
+            and this_doc and this_doc["announced"]
+            and state and state.slots and state.slots.service == "móng gel"
+        )
+
+    await _wait_until_async(_writes_landed)
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +498,20 @@ async def test_announced_turn_id_also_gets_marked_when_r0_reports_it(test_db, us
     this_doc = next(d for d in docs if d["turn_id"] != "prev-turn")
     assert this_doc["announced"] is True
 
+    # Lượt 3: cả hai lượt trước đã `announced=True` -> resolver không còn gì
+    # để coi là "chưa báo" nữa; câu đáp lượt 3 không cần (và không) lặp lại
+    # dòng R0 của lượt 1.
+    models.orchestrator.replies += [_finish()]
+    models.conversation.replies += [AIMessage("Dạ chị Lan cần gì nữa không ạ?")]
+    with structlog.testing.capture_logs() as logs:
+        third = await turn(test_db, user, "cảm ơn em")
+
+    assert third[-1] == (
+        "complete", {"answer": "Dạ chị Lan cần gì nữa không ạ?", "proposal": None})
+    resolve_entry = next(e for e in logs if e["event"] == "resolve_done")
+    assert resolve_entry["extra"]["has_unannounced"] is False
+    assert spoken not in third[-1][1]["answer"]
+
 
 # ---------------------------------------------------------------------------
 # `TurnFacts` → slots, ngay sau `complete`.
@@ -456,13 +555,11 @@ async def test_customer_text_is_capped_at_1000_chars_and_single_line(test_db, us
 
 
 async def test_complete_answer_is_the_final_guarded_state_not_the_streamed_tokens(
-    test_db, user, models
+    test_db, user, models, monkeypatch
 ):
     models.orchestrator.replies += [_finish()]
-    # Model trả "Dạ chao chi." (thiếu dấu, bị guard viết lại/fallback khác hẳn
-    # khi stream) — giả lập bằng cách model trả một câu, nhưng gắn thêm một
-    # hậu tố guard sẽ thấy là vi phạm `must_say`; đơn giản hơn: patch guard để
-    # trả câu khác hẳn câu model stream ra.
+    # Model trả một câu, nhưng guard (patch) trả về một câu CUỐI khác hẳn —
+    # mô phỏng guard viết lại nguyên câu (vd. rewrite/fallback).
     models.conversation.replies += [AIMessage("câu nháp bị guard thay")]
 
     async def fake_guard(draft, reply, previous_replies, *, source, log_extra=None):
@@ -470,12 +567,9 @@ async def test_complete_answer_is_the_final_guarded_state_not_the_streamed_token
         return GuardResult(answer="câu CUỐI sau guard", source="code", violations=["x"])
 
     import app.agents.booking.graph as graph_mod
-    orig = graph_mod.apply_guard
-    graph_mod.apply_guard = fake_guard
-    try:
-        result = await turn(test_db, user, "chào em")
-    finally:
-        graph_mod.apply_guard = orig
+    monkeypatch.setattr(graph_mod, "apply_guard", fake_guard)
+
+    result = await turn(test_db, user, "chào em")
 
     assert result[-1] == ("complete", {"answer": "câu CUỐI sau guard", "proposal": None})
     # `complete.answer` KHÔNG BAO GIỜ là chữ ghép từ các token đã stream —
