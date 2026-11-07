@@ -341,7 +341,11 @@ async def test_approve_failed_slot_taken_reply_names_the_time_and_three_nearest(
     assert outcome["proposal_id"] == str(proposal.id)
     nearest_isos = [m["iso"] for m in outcome["nearest"]]
     assert len(nearest_isos) == 3
-    assert start.isoformat() not in nearest_isos
+    # So bằng datetime thật, không bằng chuỗi — `nearest` tới từ
+    # `find_free_slots` (UTC) còn `start.isoformat()` mang offset +07:00:
+    # hai chuỗi không bao giờ trùng ký tự dù CÙNG một thời điểm, nên so chuỗi
+    # không chứng minh được gì.
+    assert all(datetime.fromisoformat(iso) != start for iso in nearest_isos)
     # Những giờ gần nhất phải đến từ sự kiện THẬT (facts), không phải chữ model
     # bịa — kiểm bằng cách soi lại đúng những gì Conversation model NHẬN được.
     conversation_input = str(models.conversation.calls[-1])
@@ -778,9 +782,13 @@ async def test_day_named_last_turn_is_reused_via_time_hint_anchor(test_db, user,
     assert docs[-1]["rule"] == "R3"
 
     # (1) Orchestrator của lượt 2 phải THẤY ngày thứ Sáu của lượt 1 trong
-    # chính input của nó (khối "previous turns" render `partial_date`).
+    # chính input của nó — kiểm đúng DÒNG `partial_date=...` mà
+    # `context.py::_render_previous_call` in ra, không phải bất kỳ chỗ nào
+    # chứa chuỗi ngày đó (khối "Calendar (14 days)" liệt kê mọi ngày trong 14
+    # ngày tới, kể cả thứ Sáu, dù app fix không tồn tại).
     turn2_calls = models.orchestrator.calls[before_turn2:]
-    assert any(friday.isoformat() in str(batch) for batch in turn2_calls)
+    partial_date_line = f"partial_date={friday.isoformat()}"
+    assert any(partial_date_line in str(batch) for batch in turn2_calls)
 
     # (2) TimeHint mà specialist (giả) NHẬN ĐƯỢC mang đúng ngày đó — dây
     # chuyền appointment_task -> TaskSpec.args.time không làm rơi mất ngày.

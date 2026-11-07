@@ -227,6 +227,22 @@ class EchoTool(BaseChatModel):
     async def _agenerate(self, messages, stop=None, run_manager=None, **kw):
         return ChatResult(generations=[ChatGeneration(message=self._reply(messages))])
 
+    async def _astream(self, messages, stop=None, run_manager=None, **kw):
+        """Như `ScriptedChatModel._astream` — một model KHÔNG override hàm
+        này vẫn stream được (LangChain tự chạy `_agenerate` rồi phát một
+        chunk), nhưng khai báo tường minh ở đây để chắc chắn `content` (khác
+        rỗng) của bước gọi tool thật sự đi qua `on_chat_model_stream` — nửa
+        "specialist" của C-1 (`test_only_respond_tokens_reach_the_stream`)
+        cần đúng điều đó, không chỉ suy luận từ hành vi mặc định."""
+        m = self._reply(messages)
+        chunk = ChatGenerationChunk(message=AIMessageChunk(
+            content=m.content, tool_call_chunks=[
+                {"name": t["name"], "args": json.dumps(t["args"]), "id": t["id"], "index": i}
+                for i, t in enumerate(m.tool_calls)]))
+        if run_manager:
+            await run_manager.on_llm_new_token(m.content or "", chunk=chunk)
+        yield chunk
+
 
 class TwoProposeAttempts(BaseChatModel):
     """Model giả cho SPECIALIST THẬT: cố tạo đề xuất HAI lần trong cùng task
