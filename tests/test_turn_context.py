@@ -195,6 +195,31 @@ def test_previous_turn_calls_show_offered_and_resolved():
     assert "10 giờ sáng" in full
 
 
+def test_previous_turn_call_renders_partial_date():
+    """Task 5.5 fix round 1 (I-3): một lượt trước chỉ chốt được ngày (chưa đủ
+    giờ) phải để lại dấu vết trong khối bối cảnh, để Orchestrator đọc được
+    ngày đó ở lượt sau."""
+    from datetime import date
+
+    call = PreviousCall(action="resolve_time", status="needs_info", partial_date=date(2026, 1, 2))
+    turn = PreviousTurn(turn_id="t0", route="orchestrate", reply_kind="clarify", calls=[call])
+    ctx = make_ctx(previous_turns=[turn])
+
+    full = render_context(ctx, "full")
+
+    assert "2026-01-02" in full
+
+
+def test_previous_turn_call_renders_dash_when_no_partial_date():
+    call = PreviousCall(action="find_slots", status="ok")
+    turn = PreviousTurn(turn_id="t0", route="orchestrate", reply_kind="answer", calls=[call])
+    ctx = make_ctx(previous_turns=[turn])
+
+    full = render_context(ctx, "full")
+
+    assert "partial_date=-" in full
+
+
 def test_full_render_covers_every_turn_context_field():
     """Mọi trường của `TurnContext` ngoài `NOT_RENDERED` phải để lại dấu vết
     trong `full`. Thêm trường mới vào `TurnContext` mà quên render là test

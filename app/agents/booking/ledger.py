@@ -88,14 +88,20 @@ def previous_call_from(call: CallRecord) -> PreviousCall:
     if isinstance(result, TaskResult):
         offered = []
         resolved = None
+        partial_date = None
         proposal = None
         data = result.data
         if isinstance(data, FreeSlots):
             offered = list(data.slots)
         if result.nearest:
             offered = [*offered, *result.nearest]
-        if isinstance(data, ResolvedTime) and data.start_at is not None:
-            resolved = data.start_at
+        if isinstance(data, ResolvedTime):
+            if data.start_at is not None:
+                resolved = data.start_at
+            # Task 5.5 fix round 1 (I-3): `partial_date` sống ngay cả khi chưa
+            # đủ giờ (`missing=["giờ cụ thể"]`) — lượt SAU chỉ nói giờ cần
+            # ngày này để không hỏi lại "ngày nào".
+            partial_date = data.partial_date
         if isinstance(data, ProposalCreated):
             proposal = PendingProposal(
                 id=data.proposal_id,
@@ -113,6 +119,7 @@ def previous_call_from(call: CallRecord) -> PreviousCall:
             error_code=result.error_code,
             offered=offered,
             resolved=resolved,
+            partial_date=partial_date,
             proposal=proposal,
         )
 

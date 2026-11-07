@@ -273,6 +273,29 @@ def test_previous_call_maps_resolved_time():
     assert pc.resolved == moment
 
 
+def test_previous_call_keeps_partial_date_even_when_hour_is_still_missing():
+    """Task 5.5 fix round 1 (I-3): lượt trước chỉ chốt được NGÀY (thiếu giờ,
+    `needs_info`) vẫn phải để lại `partial_date` — lượt SAU chỉ nói giờ cần nó
+    để không hỏi lại ngày."""
+    day = to_local(now_utc()).date()
+    result = TaskResult(
+        task_id="t", agent="appointment", action="resolve_time", status="needs_info",
+        data=ResolvedTime(start_at=None, partial_date=day, missing=["giờ cụ thể"], day_from="explicit"),
+    )
+    pc = previous_call_from(_call(result=result))
+    assert pc.resolved is None
+    assert pc.partial_date == day
+
+
+def test_previous_call_partial_date_is_none_when_resolve_time_has_none():
+    result = TaskResult(
+        task_id="t", agent="appointment", action="resolve_time", status="ok",
+        data=ResolvedTime(start_at=_moment(1), partial_date=None, missing=[], day_from=None),
+    )
+    pc = previous_call_from(_call(result=result))
+    assert pc.partial_date is None
+
+
 def test_previous_call_maps_proposal_created():
     moment = _moment(2)
     call_at = now_utc()

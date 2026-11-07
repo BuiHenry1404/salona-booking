@@ -24,6 +24,10 @@ decide_pending.
 Never compute dates or clock times yourself. Always pass a TimeHint (day,
 weekday, day_offset, hour, minute, part_of_day, anchor, ...) and let the
 specialist resolve it instead of guessing an ISO date or an hour on your own.
+If a previous turn this same day already resolved a date but was missing the
+clock time (shown as partial_date in that turn's calls), and the customer now
+only gives a time, set TimeHint.day to that partial_date instead of asking
+for the day again.
 
 Only one proposal can be created per turn. If the customer's message also
 asks for something else while you are calling appointment_task with

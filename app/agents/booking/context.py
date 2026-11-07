@@ -81,13 +81,19 @@ class OpenQuestion(BaseModel):
 
 
 class PreviousCall(BaseModel):
-    """Một dòng rút từ ledger của lượt trước (§6)."""
+    """Một dòng rút từ ledger của lượt trước (§6).
+
+    `partial_date`: ngày `resolve_time` của lượt trước đã chốt được dù chưa đủ
+    giờ (`ResolvedTime.partial_date`, lúc `missing` còn "giờ cụ thể") — lượt
+    SAU chỉ nói giờ ("3 giờ chiều") cần dữ kiện này để không hỏi lại ngày
+    (Task 5.5 fix round 1, I-3)."""
 
     action: str
     status: Literal["ok", "needs_info", "failed", "rejected"]
     error_code: str | None = None
     offered: list[Moment] = []
     resolved: Moment | None = None
+    partial_date: date | None = None
     proposal: PendingProposal | None = None
 
 
@@ -196,7 +202,11 @@ def _render_previous_call(c: PreviousCall) -> str:
     offered = ",".join(m.spoken for m in c.offered)
     resolved = _moment_spoken(c.resolved)
     proposal = c.proposal.id if c.proposal is not None else "-"
-    return f"    {c.action} {c.status} offered=[{offered}] resolved={resolved} proposal={proposal}"
+    partial_date = c.partial_date.isoformat() if c.partial_date is not None else "-"
+    return (
+        f"    {c.action} {c.status} offered=[{offered}] resolved={resolved} "
+        f"partial_date={partial_date} proposal={proposal}"
+    )
 
 
 def _render_previous_turn(t: PreviousTurn) -> list[str]:
