@@ -5,7 +5,7 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 
 | Cần gì | Đọc file |
 |---|---|
-| Đang làm gì tiếp | `refactor.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` + `docs/superpowers/specs/2026-10-29-llm-orchestrator-architecture.md` (kiến trúc mới, **đang làm** trên nhánh `feat/llm-orchestrator`, plan `docs/superpowers/plans/2026-10-30-llm-orchestrator/`, M0–M4 xong, M5/M6 chưa) |
+| Đang làm gì tiếp | **Mục "TRẠNG THÁI HIỆN TẠI — 07/11" ngay dưới** → `docs/superpowers/plans/2026-10-30-llm-orchestrator/M6b-live-fixes.md` (đang tới) + spec `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
 | Nợ kỹ thuật, lỗ hổng | [`REPO_AUDIT.md`](REPO_AUDIT.md) |
@@ -23,7 +23,70 @@ phá**. Chi tiết nằm ở file khác, đã ghi kèm từng mục.
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — checkpoint 2026-10-26, biên bản cũ (đọc mục này trước khi làm tiếp)
+## TRẠNG THÁI HIỆN TẠI — 07/11/2026 (đọc mục này trước khi làm tiếp; mục 26/10 bên dưới là lịch sử)
+
+Nhánh làm việc: **`feat/llm-orchestrator`** (tách từ `fix/review-ee60723` @ `18d050b`; ~97 commit;
+chưa push; chưa merge). Đích merge theo quy ước: `henry/develop` → `main`. HEAD lúc ghi: `ae58c04`.
+Commit message tiếng Anh; trailer `Co-Authored-By` ghi đúng model đã viết commit (Opus/Sonnet/Haiku/Fable —
+quyết định 30/10: ghi thật, không ép một tên).
+
+### Gói mới `app/agents/booking/` ĐÃ PHỤC VỤ KHÁCH THẬT (Task 6.2, commit `a111dc9` + `157856d` + `ae58c04`)
+
+`app/services/socketio_service.py` import `run_turn`/`ButtonReply`/`TURN_ERROR_MESSAGE` từ
+`app.agents.booking`. Gói cũ `app/agents/booking_graph/` **vẫn còn trong code** (shim `sys.modules`
+và `import *` từ Task 6.1) chỉ để test cũ chạy — Task 6.3 sẽ xoá. Quay lại gói cũ = revert 3 commit trên.
+
+Spec: `docs/superpowers/specs/2026-10-29-llm-orchestrator-design.md` (+ `…-architecture.md` của chủ dự án).
+Plan: `docs/superpowers/plans/2026-10-30-llm-orchestrator/` (README → T0, M0…M6, **M6b** mới).
+Sổ tiến độ SDD (git-ignored, nguồn sự thật về mọi phán quyết): `.superpowers/sdd/README/progress.md`
+(93 dòng `Ruling:`/`Owner (…)`, 48 dòng `minor (deferred)`), brief/report từng task cùng thư mục,
+`m6-notes.md` (việc gác lại sau M6), `docs-audit.md`, `docs-sweep-report.md`.
+
+| Milestone | Trạng thái | Ghi chú |
+|---|---|---|
+| T0, M0 (nền), M1 (TurnContext/ledger/resolver) | xong (30–31/10) | |
+| M2 specialists | xong 05/11 | + **2.6** (chủ dự án): `SpecialistOutput` qua `response_format=ToolStrategy`, **schema riêng theo action** (đo Azure: union 7 kiểu sai 5/8 lần) |
+| M3 orchestrator | xong 05/11 | + **3.6** (chủ dự án): **Mongo replica set 1 node `rs0`**, approve + ledger outcome trong **một transaction**; `finish`/`ask_customer` KHÔNG `return_direct` (edge của create_agent bỏ qua status lỗi → lách luật h); guard là nơi DUY NHẤT ghi CallRecord |
+| M4 reply | xong 06/11 | **classify_only BỎ** (4.4b, chủ dự án: Orchestrator tự `finish(kind_hint=social\|unsupported)`); **4.4c** Orchestrator `reasoning_effort="low"` (đo 5 lần Azure: mặc định rt=0, low rt 4–41, trễ như nhau) |
+| M5 graph + run_turn | xong 07/11 | `graph.py` (resolve → button_path \| orchestrate → brief → respond → guard → record), `events.py` (không interrupt, `_after_complete` shield), §13 scenarios (21 + 4) |
+| M6.1 dời helper | xong 07/11 | regex budget gói mới `{"draft_checks.py": 2}` |
+| M6.2 cutover Socket.IO | **xong 07/11** | + port `self_address` seeding; lọc 5 tool điều khiển khỏi stream khách |
+| **M6b live-fixes** | **plan đã viết, chưa chạy** | `M6b-live-fixes.md` — sửa L1/L2/L4 từ 10 lượt chat thật, rồi chạy lại 10 lượt |
+| M6.3 xoá gói cũ, 6.4 docs, 6.5 PR | chưa | 6.3 brief đã sửa budget → `draft_checks.py`; 6.4 cũng sửa RUNBOOK.md:326 (probe_repeats đã xoá) |
+
+### Kết quả 10 lượt chat thật (07/11 13:51–13:53, DB dev, log ở scratchpad `live10.log`)
+
+9/10 `complete`, 1 `error`. DB cuối ĐÚNG (1 lịch 08/11 16:00 booked; 15:00 superseded; 11/11 09:00 pending).
+An toàn đúng: không ghi khi chưa đồng ý; đổi giờ đúng; lượt 9 không neo lịch cũ; guard bắt 3 vi phạm.
+- **L1 (lỗi, lượt 5)**: `ShopHoursOut.open.iso="08:00"` (hhmm) → `guard.facts_from_brief` `fromisoformat` vỡ → cả lượt error. Sửa: hours → `Fact.text`, guard bỏ qua iso lỗi.
+- **L2 (lượt 3/4/9)**: sau `propose_book` Orchestrator trả **chữ thường thay vì `finish`** → `ended_by` rỗng → "limit" → câu trả lời chỉ còn các dòng `must_say` trơ ("Chủ Nhật 8/11, 4 giờ chiều"), không hỏi "đồng ý không?". Sửa: `aafter_model` coi chữ-thường-sau-≥1-call-hợp-lệ là `finish(answer)`; guard reply thêm `missing_question` cho `proposal_made`/`clarify`.
+- **L4 (lượt 3)**: 3 slot + held đều vào `must_say` → 4 dòng giờ. Sửa: có `ProposalCreated` thì slot chỉ là Fact.
+- **L3 (lượt 7, ghi lại)**: "ừ đặt đi" sau khi đã duyệt → lặp y câu lượt 6; guard bắt `claim` nhưng kind không có fallback. Để sau M6.
+- Token: mỗi lượt gọi Orchestrator ≈3.0k prompt token, **73% là 5 schema tool** (`appointment_task` 1.3k — `TimeHint` 10 trường nhúng 3 lần), prompt 752, context 350–600. Cache Azure hit 90% khi schema không đổi, **0 khi số lịch sắp tới đổi** (enum id động). Mọi việc giảm token GÁC LẠI (xem dưới).
+
+### Quyết định chủ dự án trong đợt 05–07/11 (đừng mở lại)
+
+1. Giữ **transaction Mongo** (replica set 1 node; mọi URI `?directConnection=true`, kể cả test/scripts; `AGENTS.md` đã ghi).
+2. Giữ **guard sự thật bằng code** (không LLM giám khảo, không "cách B" code ghép câu).
+3. **Bỏ `classify_only`**; **bỏ `bench/`** (97 file + file máy, commit `bdbe1bf`).
+4. Orchestrator **`reasoning_effort="low"`**.
+5. **Giữ kiến trúc 2 tầng (agent-as-tool) tới hết M6**, rồi **thí nghiệm "phẳng"** có đo (Orchestrator gọi thẳng 8 tool nghiệp vụ; kiểm của specialist thành middleware; guard/veto/transaction giữ). Các việc giảm token (schema cố định bỏ enum id → cache; bỏ `title`; bỏ dòng `Shop: hours`; `TimeHint` → chuỗi) **gác tới sau thí nghiệm** — ghi ở `.superpowers/sdd/README/m6-notes.md`.
+6. Spec caching cũ (`2026-10-27-prompt-caching-design.md`) viết cho kiến trúc cũ; tầng Redis cache LLM **không còn hợp**; Redis hiện chỉ làm dedupe tin nhắn + cache trạng thái tiệm (tuỳ chọn, `.env` chưa bật). Chưa viết lại spec này — chờ sau thí nghiệm phẳng.
+7. Dọn tài liệu 06/11: xoá 6 file lỗi thời; sửa `main.py` 503 ("Cô chú…con" → "Anh chị…em"), Telegram NUDGE "con" → "em".
+8. Ngân sách gọi Azure thật: luôn hỏi trước; đã dùng: strict probe ×2, response_format probe (~25), reasoning probe 5, cache probe 5, live 10 lượt.
+
+### Việc của chủ dự án (không tự làm)
+
+- `scripts/terminal_chat.py` (untracked, của chủ dự án) import `booking_graph` → **sẽ hỏng ở Task 6.3**; đổi import sang `app.agents.booking` khi được bảo.
+- `bench/.env` đã xoá theo quyết định; `.env` có `?directConnection=true` (đã sửa 05/11).
+
+### Việc tiếp theo, theo thứ tự
+
+1. Chạy plan **M6b** (`M6b-live-fixes.md`): 6.2b.1 → 6.2b.2 → 6.2b.3 (subagent + review Opus), 6.2b.4 chạy lại 10 lượt thật (đã duyệt, DB dev xoá được).
+2. Task **6.3** xoá `booking_graph` + test cũ (brief `.superpowers/sdd/README/task-6.3-brief.md`), **6.4** docs (viết lại AGENTS.md/CONTEXT.md theo kiến trúc mới), **6.5** review toàn nhánh (Opus) → finishing-a-development-branch → PR `feat/llm-orchestrator` → `henry/develop`.
+3. Sau merge: thí nghiệm phẳng vs 2 tầng (quyết định 5).
+
+## Trạng thái — checkpoint 2026-10-26, biên bản cũ (LỊCH SỬ — mục 07/11 ở trên mới là hiện tại)
 
 > **Cập nhật 06/11:** mục "ĐÃ LÀM"/"ĐANG BÀN"/"CHƯA LÀM" dưới đây dừng ở ngày 26/10 và
 > **không còn đúng** — đề xuất 4 bước (HIỂU/CẬP NHẬT/QUYẾT/NÓI) ở "ĐANG BÀN" đã được CHỐT
