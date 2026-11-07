@@ -38,6 +38,7 @@ from app.agents.booking.schemas import (
     TaskResult,
 )
 from app.agents.booking_graph.context import address_phrase
+from app.agents.booking_graph.phrase import code_phrase
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
 from app.core.vi_format import format_vi_datetime
@@ -434,6 +435,43 @@ async def test_approve_not_approvable_reply_says_expired(test_db, user, models, 
     assert result2[-1][0] == "complete"
     answer2 = dict(result2)["complete"]["answer"]
     assert "đặt xong" not in answer2
+
+
+async def test_conversation_error_after_approve_falls_back_to_code_phrase(test_db, user, models):
+    """Review Focus §10: `decide_pending(approve)` đã ghi lịch THẬT xong
+    (`apply_decision` ghi trước khi graph tới `respond`) — Conversation Agent
+    lỗi KHÔNG tạm thời (không phải timeout/429/5xx, `is_transient` trả False)
+    ngay sau đó không được làm mất sự thật đó: câu đáp phải là câu chốt CODE
+    (`code_phrase`, `source="code"`), không phải `error` hay câu chung chung.
+    `conversation.respond` không thử lại lỗi không tạm thời (đúng MỘT lần)."""
+    start = _tomorrow_at(15)
+    spoken = format_vi_datetime(start)
+    proposal = await ProposalService(test_db).create(user, "book", start, None)
+
+    events_out, db = await scenario(
+        test_db, user, models,
+        orchestrator_replies=[
+            tool_call("decide_pending", {"label": "approve", "aside": None, "reason": "dong y"}),
+            _finish(),
+        ],
+        specialists_plan={},
+        conversation_replies=[RuntimeError("azure hong")],
+    )
+
+    assert events_out[-1][0] == "complete"
+    answer = dict(events_out)["complete"]["answer"]
+    expected = code_phrase(
+        {"kind": "booked", "address": address_phrase(user), "when": spoken, "context": "first_time"},
+        [],
+    )
+    assert answer == expected
+    doc = await _ledger_doc(db, user)
+    assert doc["reply_kind"] == "confirmed"
+    assert doc["ended_by"] == "finish"
+    reloaded = await ProposalService(db).get(user, str(proposal.id))
+    assert reloaded.status == "approved"
+    appointments = await AppointmentService(db).upcoming_for(user)
+    assert len(appointments) == 1
 
 
 # ---------------------------------------------------------------------------

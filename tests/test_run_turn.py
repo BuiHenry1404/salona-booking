@@ -29,6 +29,7 @@ from app.agents.booking_graph.context import address_phrase
 from app.core.clock import TZ, now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.vi_format import format_vi_datetime
+from app.services.appointment import AppointmentService
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.conversation_state import ConversationStateService
@@ -646,3 +647,146 @@ async def test_turn_events_do_not_log_the_customer_text(test_db, user, models):
         await turn(test_db, user, "một câu rất riêng tư của khách")
 
     assert not any("một câu rất riêng tư của khách" in str(entry) for entry in logs)
+
+
+# ---------------------------------------------------------------------------
+# Review Focus #2: kết quả chưa báo (R0) sống qua một lượt bị `_supersede`.
+# ---------------------------------------------------------------------------
+
+
+async def test_unannounced_outcome_is_said_next_turn(test_db, user, models):
+    """Lượt 1: `decide_pending(approve)` ghi lịch THẬT ngay trong `orchestrate`
+    (`apply_decision` ghi `pending_outcome` vào `turn_ledger` NGAY, không chờ
+    `record` — `app/agents/booking/orchestrator/decide.py`), rồi TREO ở
+    Conversation (`respond`). Lượt 2 "alo em" tới SUPERSEDE lượt 1 trước khi
+    nó kịp phát `complete`. Lượt 2 phải tự báo bù (R0, `đã đặt xong {spoken}`)
+    trong câu đáp; SAU lượt 2 cả hai ledger doc (lượt 1 VÀ lượt 2) phải
+    `announced=True` — hành vi ĐÚNG hiện tại của fix Task 5.3/5.4 (khác ghi
+    chú "ledger lượt 1 vẫn False" của brief, vốn mô tả hành vi TRƯỚC fix đó).
+    Lượt 3 không còn gì chưa báo -> không lặp lại dòng R0."""
+    start = _tomorrow_at(15)
+    spoken = format_vi_datetime(start)
+    await ProposalService(test_db).create(user, "book", start, None)
+
+    models.orchestrator.replies += [
+        tool_call("decide_pending", {"label": "approve", "aside": None, "reason": "dong y"}),
+        _finish("answer"),
+    ]
+    models.conversation.replies += [Hang(3600)]
+
+    first = asyncio.create_task(turn(test_db, user, "ừ"))
+    await _wait_until(lambda: len(models.conversation.calls) == 1)
+
+    # Lịch đã ghi THẬT dù lượt 1 chưa phát `complete` (còn treo ở Conversation).
+    appointments = await test_db["appointments"].count_documents({"user_id": str(user.id)})
+    assert appointments == 1
+
+    models.orchestrator.replies += [_finish("answer")]
+    models.conversation.replies += [AIMessage(f"Dạ chị Lan, em đã đặt xong {spoken} rồi ạ.")]
+
+    second = await asyncio.wait_for(turn(test_db, user, "alo em"), timeout=5)
+    await asyncio.wait({first}, timeout=1)
+    assert first.cancelled()
+
+    assert second[-1][0] == "complete"
+    answer2 = dict(second)["complete"]["answer"]
+    assert spoken in answer2
+
+    docs = [d async for d in test_db["turn_ledger"].find({"user_id": str(user.id)})]
+    assert len(docs) == 2
+    assert all(d["announced"] is True for d in docs)
+
+    # Lượt 3: cả hai lượt trước đã `announced=True` -> không còn gì chưa báo,
+    # câu đáp không lặp lại dòng R0.
+    models.orchestrator.replies += [_finish("answer")]
+    models.conversation.replies += [AIMessage("Dạ chị Lan cần gì nữa không ạ?")]
+    with structlog.testing.capture_logs() as logs:
+        third = await turn(test_db, user, "cảm ơn em")
+
+    assert third[-1] == (
+        "complete", {"answer": "Dạ chị Lan cần gì nữa không ạ?", "proposal": None})
+    assert spoken not in third[-1][1]["answer"]
+    resolve_entry = next(e for e in logs if e["event"] == "resolve_done")
+    assert resolve_entry["extra"]["has_unannounced"] is False
+
+
+# ---------------------------------------------------------------------------
+# Review Focus #5: an toàn khi khởi động lại (checkpoint mất) và nút cũ.
+# ---------------------------------------------------------------------------
+
+
+async def test_restart_does_not_resume_and_stale_button_is_safe(test_db, user, models):
+    """Đề xuất đang chờ sống trong `proposals` (Mongo), KHÔNG trong thread
+    checkpointer — "khởi động lại" (checkpoint mất, vd. process restart) vẫn
+    duyệt được bình thường: lắp một `InMemorySaver` MỚI thay cho cái fixture
+    `memory_checkpointer` (conftest) đã cài, mô phỏng mất mọi thread state.
+    `build_graph` không có tham số mặc định đóng băng — nó đọc checkpointer
+    hiện hành LÚC DỰNG (`get_checkpointer()`), nên swap này có hiệu lực ngay
+    từ lượt tiếp theo mà không cần build lại gì khác.
+
+    Sau khi lượt "ừ" chạy xong (từ START, không `aupdate_state`/resume), đề
+    xuất GỐC đã `approved` -> một NÚT CŨ gửi lên với đúng id đề xuất đó (máy
+    khách vẫn còn hiện nút sau restart) phải an toàn: `ctx.pending` giờ là
+    `None` nên route "button" tự trả `stale_button`, không gọi Orchestrator,
+    không ghi thêm gì."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from app.agents import checkpoint
+    from app.agents.booking.reply_brief import BUTTON_STALE_REPLY
+
+    start = _tomorrow_at(15)
+    spoken = format_vi_datetime(start)
+    old_proposal = await ProposalService(test_db).create(user, "book", start, None)
+
+    checkpoint.set_checkpointer(InMemorySaver())  # "restart": thread state mất
+
+    models.orchestrator.replies += [
+        tool_call("decide_pending", {"label": "approve", "aside": None, "reason": "dong y"}),
+        _finish(),
+    ]
+    models.conversation.replies += [AIMessage(f"Dạ em đặt xong {spoken} cho chị rồi nhé.")]
+
+    result = await turn(test_db, user, "ừ")
+
+    assert result[-1][0] == "complete"
+    reloaded = await ProposalService(test_db).get(user, str(old_proposal.id))
+    assert reloaded.status == "approved"
+    appointments = await AppointmentService(test_db).upcoming_for(user)
+    assert len(appointments) == 1
+    messages = (await thread_values(test_db, user))["messages"]
+    # Chạy hẳn từ START trên checkpointer mới: đúng MỘT cặp hỏi-đáp, không có
+    # gì "resume" được từ một thread cũ không tồn tại.
+    assert [type(m).__name__ for m in messages] == ["HumanMessage", "AIMessage"]
+
+    orch_calls_before = len(models.orchestrator.calls)
+    appointments_before = len(await AppointmentService(test_db).upcoming_for(user))
+    button = ButtonReply(decision="yes", proposal_id=str(old_proposal.id), label="Đồng ý")
+
+    result2 = await turn(test_db, user, button)
+
+    expected = BUTTON_STALE_REPLY.replace("anh chị", address_phrase(user))
+    assert result2[-1] == ("complete", {"answer": expected, "proposal": None})
+    assert len(models.orchestrator.calls) == orch_calls_before      # không chạy Orchestrator
+    appointments_after = len(await AppointmentService(test_db).upcoming_for(user))
+    assert appointments_after == appointments_before                # không ghi gì thêm
+
+
+# ---------------------------------------------------------------------------
+# §7.3: trần thời gian một lượt phải còn dư cho Conversation và cho vòng
+# orchestrate (2 task song song + 1 lượt model) sau khi `CLASSIFY_TIMEOUT_SECONDS`
+# bị bỏ (Task 4.4b, 06/11 — Orchestrator tự `finish(kind_hint=...)`).
+# ---------------------------------------------------------------------------
+
+
+def test_turn_time_budget_inequality():
+    from app.agents.booking.conversation import RESPOND_TIMEOUT_SECONDS
+    from app.agents.llm import LLM_TIMEOUT_SECONDS
+
+    assert (
+        settings.orch_orchestrate_timeout_seconds + RESPOND_TIMEOUT_SECONDS + 5
+        <= settings.orch_turn_timeout_seconds
+    )
+    assert (
+        settings.orch_task_timeout_seconds * 2 + LLM_TIMEOUT_SECONDS
+        <= settings.orch_orchestrate_timeout_seconds
+    )
