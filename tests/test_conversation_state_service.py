@@ -447,12 +447,12 @@ async def test_compaction_keeps_the_analyzer_fields(test_db, patch_model):
     """`_compact` từng `$set` CẢ `state` (set_state) — xoá sạch
     `stated`/`asked` mà `apply_turn_analysis` vừa ghi. Giờ nó chỉ ghi các
     trường nó sở hữu."""
-    from app.agents.booking_graph.analyzer import TurnAnalysis
+    from app.agents.booking.schemas import TurnFacts
 
     await _seed(test_db, turns=12)
     svc = ConversationStateService(test_db)
     await svc.apply_turn_analysis(
-        "u1", TurnAnalysis(stated=["để tiệm chọn giờ"], service="làm móng gel"),
+        "u1", TurnFacts(stated=["để tiệm chọn giờ"], service="làm móng gel"),
         "Chị muốn giờ nào ạ?")
     patch_model(reply=StateOutput(digest=StateDigest(wants=["Khách muốn làm tóc."]),
                                   slots=ConversationSlots(intent="book")))
@@ -469,11 +469,11 @@ async def test_compaction_keeps_the_analyzer_fields(test_db, patch_model):
 
 
 async def test_compaction_overwrites_service_only_with_a_value(test_db, patch_model):
-    from app.agents.booking_graph.analyzer import TurnAnalysis
+    from app.agents.booking.schemas import TurnFacts
 
     await _seed(test_db, turns=12)
     svc = ConversationStateService(test_db)
-    await svc.apply_turn_analysis("u1", TurnAnalysis(service="làm móng gel"), "")
+    await svc.apply_turn_analysis("u1", TurnFacts(service="làm móng gel"), "")
     patch_model(reply=StateOutput(digest=StateDigest(wants=["Khách muốn sơn gel."]),
                                   slots=ConversationSlots(service="sơn gel")))
 
@@ -570,11 +570,11 @@ async def test_compaction_still_sets_day_when_it_has_one(test_db, patch_model):
 async def test_analysis_lands_on_a_state_whose_slots_are_null(test_db, patch_model):
     """`bump_state_failures` (nén hỏng) tạo state với `slots: null`; `$set`
     `state.slots.stated` trên null là lỗi Mongo — bộ phân tích phải vẫn ghi được."""
-    from app.agents.booking_graph.analyzer import TurnAnalysis
+    from app.agents.booking.schemas import TurnFacts
 
     await ConversationService(test_db).bump_state_failures("u1")
     await ConversationStateService(test_db).apply_turn_analysis(
-        "u1", TurnAnalysis(stated=["để tiệm chọn giờ"]), "")
+        "u1", TurnFacts(stated=["để tiệm chọn giờ"]), "")
 
     state = await ConversationService(test_db).get_state("u1")
     assert state.slots.stated == ["để tiệm chọn giờ"]
@@ -584,7 +584,7 @@ async def test_analysis_lands_on_a_state_whose_slots_are_null(test_db, patch_mod
 async def test_analysis_replaces_a_stale_state_from_yesterday(test_db):
     """State của hôm qua (`day` khác hôm nay) không được để lại `stated`/`digest`
     cũ khi bộ phân tích tạo state hôm nay."""
-    from app.agents.booking_graph.analyzer import TurnAnalysis
+    from app.agents.booking.schemas import TurnFacts
     from app.models.conversation import ConversationState
 
     yesterday = to_local(now_utc()).date() - timedelta(days=1)
@@ -594,7 +594,7 @@ async def test_analysis_replaces_a_stale_state_from_yesterday(test_db):
         slots=ConversationSlots(stated=["điều hôm qua"], intent="cancel")))
 
     await ConversationStateService(test_db).apply_turn_analysis(
-        "u1", TurnAnalysis(stated=["điều hôm nay"]), "")
+        "u1", TurnFacts(stated=["điều hôm nay"]), "")
 
     state = await ConversationService(test_db).get_state("u1")
     assert state.slots.stated == ["điều hôm nay"]

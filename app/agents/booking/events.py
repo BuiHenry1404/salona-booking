@@ -38,9 +38,10 @@ from app.core.clock import now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
-from app.core.text import single_line
+from app.core.text import detect_self_address, single_line
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.services.conversation import ConversationService, session_cutoff
 from app.services.conversation_state import ConversationStateService
 from app.services.proposal import ProposalService
@@ -236,10 +237,12 @@ async def _apply_turn_facts(db: AsyncIOMotorDatabase, user: User, values: dict, 
 
 async def _after_complete(
     db: AsyncIOMotorDatabase, user: User, values: dict, turn_id: str, ids: dict,
+    *, typed: bool,
 ) -> None:
     """Mọi lệnh ghi SAU khi `complete` đã phát — `mark_announced` (lượt này +
-    `announced_turn_id` của R0) và `TurnFacts` — chạy trong ĐÚNG MỘT task nền,
-    gọi qua `asyncio.shield` (fix round 1, §10).
+    `announced_turn_id` của R0), `TurnFacts` và seed `self_address` (chỉ lượt
+    gõ chữ, `typed`) — chạy trong ĐÚNG MỘT task nền, gọi qua `asyncio.shield`
+    (fix round 1, §10).
 
     Lý do shield: khách có thể gõ tin kế tiếp NGAY sau khi nhận `complete`
     (trước khi `_run_turn` kịp chạy xong phần sau) — `_supersede` của lượt mới
@@ -270,6 +273,28 @@ async def _after_complete(
     # Sau complete, cạnh `persist`: dữ kiện lượt vào slots NGAY (lượt sau thấy
     # `stated` mà không chờ nén nền).
     await _apply_turn_facts(db, user, values, ids)
+    if typed:
+        await _seed_self_address(db, user, values, ids)
+
+
+async def _seed_self_address(db: AsyncIOMotorDatabase, user: User, values: dict, ids: dict) -> None:
+    """Khách CHƯA có `self_address` mà lượt gõ chữ này tự xưng "chị"/"anh" →
+    ghi một lần (port từ gói cũ, Task 13 — Task 6.2). Cùng một bộ dò
+    `detect_self_address` trên câu khách; gói mới không có bộ phân tích nên
+    không còn vế "analyzer đồng thuận". Nút bấm không phải lời khách tự xưng
+    → bỏ qua. `set_self_address` tự lọc `self_address: None` nên hai lượt
+    chồng nhau (hay admin đã sửa tay) không bao giờ bị ghi đè. Lỗi chỉ log
+    (không kèm chữ khách, §11) — mất seed một lượt, không mất `complete`.
+    Lượt nút KHÔNG tới đây (`typed=False` ở `_after_complete`): `record` đã
+    đặt lại `state["button"]` nên `values` không còn cho biết lượt là nút."""
+    if user.self_address is not None:
+        return
+    try:
+        self_address = detect_self_address(values.get("customer_text") or "")
+        if self_address:
+            await UserRepository(db).set_self_address(str(user.id), self_address)
+    except Exception as exc:
+        logger.warning("self_address_seed_failed", extra={**ids, "error_type": type(exc).__name__})
 
 
 async def run_turn(
@@ -434,7 +459,8 @@ async def _run_turn(
         # gõ tin kế tiếp ngay khi nhận `complete`, `_supersede` của lượt mới sẽ
         # `cancel()` task này nếu không shield, và `announced`/slots không bao
         # giờ kịp ghi.
-        await asyncio.shield(asyncio.ensure_future(_after_complete(db, user, values, turn_id, ids)))
+        await asyncio.shield(asyncio.ensure_future(
+            _after_complete(db, user, values, turn_id, ids, typed=button is None)))
 
         if answer:
             # Sau complete, ngoài đường trả lời. Lỗi lên lịch (hiếm) cũng không

@@ -4,9 +4,9 @@ from typing import Dict, Optional
 import socketio
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking_graph import run_turn
-from app.agents.booking_graph.button import BUTTON_LABELS, ButtonReply
-from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+from app.agents.booking import run_turn
+from app.agents.booking.button import BUTTON_LABELS, ButtonReply
+from app.agents.booking.events import TURN_ERROR_MESSAGE
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.errors import RateLimitedError

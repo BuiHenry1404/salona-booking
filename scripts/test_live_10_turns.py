@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from app.agents.booking_graph.events import run_turn
+from app.agents.booking.events import run_turn
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
 from app.infrastructure.database import ensure_indexes
@@ -99,16 +99,18 @@ async def execute_turn(turn_idx: int, db, user: User, user_text: str, descriptio
             print(f"  ❌ [ERROR] {evt_data}")
 
     # Đọc lại trạng thái Graph, Working Memory và DB
-    from app.agents.booking_graph.graph import build_graph
-    from app.agents.booking_graph.events import pick_thread
+    from app.agents.booking.graph import build_graph
+    from app.agents.booking.events import pick_thread
     from app.core.clock import now_ms
 
     graph = build_graph(db, user)
     thread_id = await pick_thread(graph, str(user.id), now_ms())
     snap = await graph.aget_state({"configurable": {"thread_id": thread_id}})
     values = snap.values or {}
-    route = values.get("route")
-    gate_next = values.get("gate_next")
+    # Graph mới: route/luật nằm trong `resolve` (R0–R5), không còn `gate_next`.
+    resolve = values.get("resolve") or {}
+    route = resolve.get("route")
+    rule = resolve.get("rule")
     answer_source = values.get("answer_source")
 
     # Thu thập chi tiết tool calls từ messages
@@ -125,7 +127,7 @@ async def execute_turn(turn_idx: int, db, user: User, user_text: str, descriptio
     appts = await AppointmentService(db).upcoming_for(user)
 
     print("\n  📊 [TRẠNG THÁI CUỘC TRÒ CHUYỆN SAU LƯỢT]")
-    print(f"     - Agent route    : {route} (gate_next={gate_next}, source={answer_source})")
+    print(f"     - Agent route    : {route} (rule={rule}, source={answer_source})")
     if recent_tool_details:
         print(f"     - Tool calls gần : {recent_tool_details}")
     if slots:

@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 import pytest
 import structlog
 
-from app.agents.booking_graph.analyzer import TurnAnalysis
-from app.agents.booking_graph.context import render_slots
+from app.agents.booking.schemas import TurnFacts
+from app.agents.booking.context import render_slots
 from app.models.conversation import ConversationSlots
 from app.services.conversation import ConversationService
 from app.services.conversation_state import ConversationStateService, sanitize_slots
@@ -221,7 +221,7 @@ class TestApplyTurnAnalysis:
 
     async def test_apply_turn_analysis_marks_question_answered(self, test_db):
         svc = ConversationStateService(test_db)
-        a = TurnAnalysis(route="booking", answers_question=True)
+        a = TurnFacts(answers_question=True)
         await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
         state = await ConversationService(test_db).get_state("u1")
         assert state.slots.asked[0].answered is True
@@ -229,7 +229,7 @@ class TestApplyTurnAnalysis:
 
     async def test_repeated_question_increments_times(self, test_db):
         svc = ConversationStateService(test_db)
-        a = TurnAnalysis(route="booking", answers_question=False)
+        a = TurnFacts(answers_question=False)
         await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
         await svc.apply_turn_analysis("u1", a, "Chị muốn làm dịch vụ gì ạ?")
         state = await ConversationService(test_db).get_state("u1")
@@ -239,9 +239,9 @@ class TestApplyTurnAnalysis:
     async def test_stated_capped_at_five_and_deduped(self, test_db):
         svc = ConversationStateService(test_db)
         for i in range(6):
-            a = TurnAnalysis(route="booking", stated=[f"điều {i}"])
+            a = TurnFacts(stated=[f"điều {i}"])
             await svc.apply_turn_analysis("u1", a, "")
-        a = TurnAnalysis(route="booking", stated=["điều 5"])
+        a = TurnFacts(stated=["điều 5"])
         await svc.apply_turn_analysis("u1", a, "")
         state = await ConversationService(test_db).get_state("u1")
         assert len(state.slots.stated) == 5
@@ -251,7 +251,7 @@ class TestApplyTurnAnalysis:
         """Review Task 12 #5: câu trả lời có một câu khẳng định trước câu hỏi
         — chỉ câu hỏi CUỐI mới được lưu, không phải 60 ký tự đầu của cả câu."""
         svc = ConversationStateService(test_db)
-        a = TurnAnalysis(route="booking", answers_question=False)
+        a = TurnFacts(answers_question=False)
         await svc.apply_turn_analysis(
             "u1", a, "Dạ chiều mai còn 3 giờ và 4 giờ ạ. Anh chị muốn giờ nào ạ?")
         state = await ConversationService(test_db).get_state("u1")
@@ -259,7 +259,7 @@ class TestApplyTurnAnalysis:
 
     async def test_two_different_questions_with_the_same_preamble_are_two_items(self, test_db):
         svc = ConversationStateService(test_db)
-        a = TurnAnalysis(route="booking")
+        a = TurnFacts()
         await svc.apply_turn_analysis(
             "u1", a, "Dạ chiều mai còn 3 giờ và 4 giờ ạ. Anh chị muốn giờ nào ạ?")
         await svc.apply_turn_analysis(
@@ -279,7 +279,7 @@ class TestApplyTurnAnalysis:
         await conv.append("u1", "user", "em muốn làm móng")
 
         svc = ConversationStateService(test_db)
-        await svc.apply_turn_analysis("u1", TurnAnalysis(route="booking"), "")
+        await svc.apply_turn_analysis("u1", TurnFacts(), "")
 
         summary, slots, msgs = await conv.context_window("u1")
         assert len(msgs) == 3
@@ -291,7 +291,7 @@ class TestApplyTurnAnalysis:
         svc = ConversationStateService(test_db)
         conv = ConversationService(test_db)
 
-        await svc.apply_turn_analysis("u1", TurnAnalysis(route="booking"), "")
+        await svc.apply_turn_analysis("u1", TurnFacts(), "")
 
         # Mô phỏng một lượt nén + bump_state_failures chạy "song song": ghi
         # thẳng summary và failures vào document, không qua apply_turn_analysis.
@@ -302,7 +302,7 @@ class TestApplyTurnAnalysis:
         )
 
         await svc.apply_turn_analysis(
-            "u1", TurnAnalysis(route="booking", service="làm móng"), "Giờ nào ạ?")
+            "u1", TurnFacts(service="làm móng"), "Giờ nào ạ?")
 
         state = await conv.get_state("u1")
         assert state.summary == ["Khách muốn làm tóc."]

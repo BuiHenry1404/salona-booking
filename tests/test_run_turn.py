@@ -532,6 +532,65 @@ async def test_apply_turn_facts_runs_after_complete(test_db, user, models):
 
 
 # ---------------------------------------------------------------------------
+# Task 6.2 (ghi chú controller): `self_address` seed sau `complete`, như gói cũ
+# (Task 13) — `detect_self_address(customer_text)`, chỉ khi chưa có, không ghi đè.
+# ---------------------------------------------------------------------------
+
+
+async def _self_address(test_db, user):
+    return (await AuthService(test_db).get_user_by_id(str(user.id))).self_address
+
+
+async def test_first_typed_turn_seeds_self_address_and_a_later_turn_does_not_overwrite(
+    test_db, user, models
+):
+    models.orchestrator.replies += [_finish(), _finish()]
+    models.conversation.replies += [AIMessage("Dạ chị muốn làm ngày nào ạ?"),
+                                    AIMessage("Dạ vâng ạ.")]
+
+    assert (await turn(test_db, user, "chị muốn làm móng"))[-1][0] == "complete"
+    assert await _self_address(test_db, user) == "chị"
+
+    # Lượt sau (user đọc lại từ DB như socketio làm) xưng khác — không ghi đè.
+    reloaded = await AuthService(test_db).get_user_by_id(str(user.id))
+    assert (await turn(test_db, reloaded, "anh muốn làm tóc mai"))[-1][0] == "complete"
+    assert await _self_address(test_db, user) == "chị"
+
+
+async def test_button_turn_does_not_seed_self_address(test_db, user, models, monkeypatch):
+    """Nút bấm không phải lời khách tự xưng — kể cả khi bộ dò (ép ở đây) có
+    nói gì đi nữa, lượt nút không seed."""
+    monkeypatch.setattr(events, "detect_self_address", lambda text: "chị")
+    button = ButtonReply(decision="yes", proposal_id="khong-con-ton-tai", label="Đồng ý")
+
+    assert (await turn(test_db, user, button))[-1][0] == "complete"
+    assert await _self_address(test_db, user) is None
+
+
+async def test_self_address_write_failure_is_logged_without_customer_text(
+    test_db, user, models, monkeypatch
+):
+    from app.repositories.user import UserRepository
+
+    models.orchestrator.replies += [_finish()]
+    models.conversation.replies += [AIMessage("Dạ chị muốn làm ngày nào ạ?")]
+
+    async def broken(self, user_id, self_address):
+        raise RuntimeError("mongo hong")
+
+    monkeypatch.setattr(UserRepository, "set_self_address", broken)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await turn(test_db, user, "chị muốn làm móng")
+
+    assert result[-1][0] == "complete"
+    failed = [e for e in logs if e.get("event") == "self_address_seed_failed"]
+    assert len(failed) == 1 and failed[0]["extra"]["error_type"] == "RuntimeError"
+    assert failed[0]["extra"]["user_id"] == str(user.id) and failed[0]["extra"]["turn_id"]
+    assert not any("chị muốn làm móng" in str(entry) for entry in logs)
+
+
+# ---------------------------------------------------------------------------
 # §9.1: input ≤ 1000 ký tự, một dòng.
 # ---------------------------------------------------------------------------
 

@@ -22,8 +22,8 @@ from app.models.conversation import (AskedItem, ChatMessage, ConversationSession
 from app.repositories.conversation_session import ConversationSessionRepository
 from app.services.conversation import CHARS_PER_TOKEN, ConversationService
 
-if TYPE_CHECKING:  # tránh vòng import: analyzer.py cần clean_free_text_item ở đây.
-    from app.agents.booking_graph.analyzer import TurnAnalysis
+if TYPE_CHECKING:  # tránh vòng import: gói agent cần clean_free_text_item ở đây.
+    from app.agents.booking.schemas import TurnFacts
 
 logger = get_logger(__name__)
 
@@ -183,12 +183,12 @@ class ConversationStateService:
             )
         return state
 
-    async def apply_turn_analysis(self, user_id: str, a: "TurnAnalysis",
+    async def apply_turn_analysis(self, user_id: str, a: "TurnFacts",
                                   last_bot_text: str) -> None:
-        """Ghi THẲNG kết quả bộ phân tích vào `state.slots.{service,stated,asked}`
-        của HÔM NAY — không gọi LLM, không nén gì. `a` đã qua `sanitize_analysis`
-        trước khi tới đây — hàm này KHÔNG lọc lại nội dung, chỉ hợp nhất và
-        chặn trần.
+        """Ghi THẲNG dữ kiện của lượt (`TurnFacts`, §8.3 — `progress.turn_facts`
+        dựng) vào `state.slots.{service,stated,asked}` của HÔM NAY — không gọi
+        LLM, không nén gì. `a` đã được lọc (`clean_free_text_item`) trước khi
+        tới đây — hàm này KHÔNG lọc lại nội dung, chỉ hợp nhất và chặn trần.
 
         CHỈ `$set` BA trường slots này (review Task 12 #6) — không đọc-sửa-ghi
         CẢ document như `_compact`/`set_state` làm: một lượt nén chạy song

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.agents.booking_graph.events import AgentEvent
+from app.agents.booking import AgentEvent
 from app.services.auth import AuthService
 from app.services.socketio_service import SocketIOService
 
@@ -263,7 +263,7 @@ class TestConfirmProposalEvent:
     async def test_confirm_proposal_runs_a_button_turn_without_rate_limit(
         self, service, test_db, monkeypatch
     ):
-        from app.agents.booking_graph.button import ButtonReply
+        from app.agents.booking import ButtonReply
 
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         received = {}
@@ -290,7 +290,7 @@ class TestConfirmProposalEvent:
     async def test_confirm_proposal_rejects_bad_payload(
         self, service, test_db, monkeypatch
     ):
-        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+        from app.agents.booking import TURN_ERROR_MESSAGE
 
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         called = []
@@ -312,7 +312,7 @@ class TestConfirmProposalEvent:
     ):
         """`decision` sai kiểu nặng (dict/list, không chỉ chuỗi lạ) không được
         làm nổ `.get()` trước khi kịp trả `error`."""
-        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+        from app.agents.booking import TURN_ERROR_MESSAGE
 
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         called = []
@@ -337,7 +337,7 @@ class TestConfirmProposalEvent:
         nhầm một mảng) không được làm nổ `.get()` trước khi tới nhánh `error`
         — review finding sau Task 5 (lấy handler từ `AsyncServer` thật TRƯỚC
         khi thay `sio` bằng `Recorder`, vì đăng ký xảy ra trong `__init__`)."""
-        from app.agents.booking_graph.events import TURN_ERROR_MESSAGE
+        from app.agents.booking import TURN_ERROR_MESSAGE
 
         svc = SocketIOService(test_db)
         handler = svc.sio.handlers["/"]["confirm_proposal"]
@@ -470,3 +470,95 @@ class TestMessageDedupe:
                                          message_id="m1")
 
         assert "error" not in service.sio.events()
+
+
+class TestCompleteProposalContract:
+    """`complete.proposal` qua ĐÚNG đường Socket.IO thật (không `run_turn` giả):
+    khác `None` khi và chỉ khi lượt kết thúc với một đề xuất còn `pending` và
+    chưa hết hạn (spec §6, AGENTS.md "Socket.IO protocol"). Model giả
+    (`ScriptedChatModel`/`EchoTool`), specialist THẬT tạo đề xuất, Mongo thật."""
+
+    @pytest.mark.parametrize("decision", ["yes", "no"])
+    async def test_complete_proposal_follows_the_pending_proposal_rule(
+        self, service, test_db, monkeypatch, decision
+    ):
+        from datetime import datetime, timedelta
+
+        from langchain_core.messages import AIMessage
+
+        from app.agents.booking import events
+        from app.core.clock import TZ, now_utc, to_local
+        from app.core.vi_format import format_vi_datetime
+        from app.services.proposal import ProposalService
+        from tests.fakes import EchoTool, book_output, scripted, tool_call
+
+        tomorrow = (to_local(now_utc()) + timedelta(days=1)).date()
+        when = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 15, tzinfo=TZ)
+        spoken = format_vi_datetime(when)
+        time_args = dict(day=None, weekday=None, day_offset=1, hour=15, minute=None,
+                         part_of_day=None, ambiguous_week=None, is_now=None, anchor=None,
+                         queue_id=None)
+        propose = {"action": "propose_book", "args": dict(
+            time=time_args, service=None, appointment_id=None, for_whom=None, also=None)}
+
+        orchestrator = scripted([
+            tool_call("appointment_task", propose),
+            tool_call("finish", {"kind_hint": "answer", "service": None, "stated": []}),
+            tool_call("decide_pending", {
+                "label": "none", "aside": "defer_with_request", "reason": "để hỏi con"}),
+        ], tags=("orchestrate",))
+        conversation = scripted([
+            AIMessage(f"Dạ em giữ chỗ {spoken} cho chị nhé, chị đồng ý không ạ?"),
+            AIMessage("Dạ vâng chị Lan."),
+            AIMessage("Dạ em đặt xong rồi nhé." if decision == "yes" else "Dạ vâng chị Lan."),
+        ], tags=("respond",))
+        specialist = EchoTool(
+            tool_name="propose_appointment",
+            tool_args={"start_at": when.isoformat(), "note": "lam mong"},
+            build_output=book_output,
+        )
+        rewrite = scripted([], tags=("rewrite",))
+        monkeypatch.setattr("app.agents.booking.orchestrator.agent.build_chat_model",
+                            lambda **kw: orchestrator)
+        monkeypatch.setattr("app.agents.booking.conversation.build_chat_model",
+                            lambda **kw: conversation)
+        monkeypatch.setattr("app.agents.booking.specialists.base.build_chat_model",
+                            lambda **kw: specialist)
+        monkeypatch.setattr("app.agents.booking.rewrite.build_chat_model", lambda **kw: rewrite)
+        monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
+        monkeypatch.setattr(events, "get_callbacks", lambda: [])
+
+        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Nguyễn Thị Lan")
+
+        def last_complete():
+            completes = [d for e, d, _ in service.sio.sent if e == "complete"]
+            assert service.sio.events().count("error") == 0, service.sio.sent
+            return completes[-1]
+
+        # Lượt 1: tạo đề xuất → nút hiện.
+        await service.handle_message(sid="s1", user=user, message="dat mai 3h chieu")
+        pending = await ProposalService(test_db).latest(user)
+        assert pending is not None and pending.status == "pending"
+        proposal = last_complete()["proposal"]
+        assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
+        assert proposal["id"] == str(pending.id)
+        assert proposal["kind"] == "book"
+        assert proposal["when_spoken"] == spoken
+        assert datetime.fromisoformat(proposal["expires_at"]) > now_utc()
+
+        # Lượt 2: khách hoãn ("kept") → đề xuất vẫn chờ, nút vẫn hiện.
+        await service.handle_message(sid="s1", user=user, message="để chị hỏi con đã nha em")
+        assert last_complete()["proposal"] == proposal
+
+        # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": proposal["id"], "decision": decision})
+        assert service.sio.events()[-1] == "complete"
+        assert last_complete()["proposal"] is None
+        decided = await ProposalService(test_db).get(user, proposal["id"])
+        assert decided.status == ("approved" if decision == "yes" else "rejected")
+        # Đúng ba lượt đã chạy hết kịch bản (không lượt nào rẽ đường tắt), và
+        # mỗi lượt mở bằng `turn_started`, đóng bằng đúng một `complete`.
+        assert orchestrator.replies == [] and conversation.replies == []
+        assert service.sio.events().count("turn_started") == 3
+        assert service.sio.events().count("complete") == 3
