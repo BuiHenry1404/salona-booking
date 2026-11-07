@@ -29,6 +29,7 @@ from app.agents.booking.conversation import RESPOND_TAG
 from app.agents.booking.graph import build_graph
 from app.agents.booking.ledger import TurnLedger
 from app.agents.booking.orchestrator.agent import OrchestrateOutcome
+from app.agents.booking.orchestrator.tools import CONTROL_TOOL_NAMES
 from app.agents.booking.progress import turn_facts
 from app.agents.booking.reply_brief import ButtonOutcome
 from app.agents.booking.resolver import ResolveResult
@@ -95,6 +96,13 @@ def translate_langchain_event(event: dict) -> List[AgentEvent]:
         chunk = (event.get("data") or {}).get("chunk")
         text = getattr(chunk, "content", "") or ""
         return [AgentEvent("token", {"text": text})] if text else []
+
+    # Tool điều phối của Orchestrator (appointment_task, finish, …) không phải
+    # việc khách thấy được — callback lan vào agent lồng nên chúng cũng tới
+    # đây. Chỉ tool của specialist (có nhãn ở frontend) được hiện, như gói cũ.
+    if kind in ("on_tool_start", "on_tool_end", "on_tool_error") \
+            and event.get("name") in CONTROL_TOOL_NAMES:
+        return []
 
     if kind == "on_tool_start":
         return [AgentEvent("tool_started", {"name": event.get("name", "")})]

@@ -484,9 +484,11 @@ class TestCompleteProposalContract:
     ):
         from datetime import datetime, timedelta
 
+        import structlog
         from langchain_core.messages import AIMessage
 
         from app.agents.booking import events
+        from app.agents.booking.orchestrator.tools import CONTROL_TOOL_NAMES
         from app.core.clock import TZ, now_utc, to_local
         from app.core.vi_format import format_vi_datetime
         from app.services.proposal import ProposalService
@@ -501,16 +503,25 @@ class TestCompleteProposalContract:
         propose = {"action": "propose_book", "args": dict(
             time=time_args, service=None, appointment_id=None, for_whom=None, also=None)}
 
+        finish = {"kind_hint": "answer", "service": None, "stated": []}
         orchestrator = scripted([
+            # Lượt 1: đề xuất rồi kết thúc.
             tool_call("appointment_task", propose),
-            tool_call("finish", {"kind_hint": "answer", "service": None, "stated": []}),
+            tool_call("finish", finish),
+            # Lượt 2: giữ đề xuất (hoãn) rồi kết thúc — `decide_pending` không
+            # phải tool kết thúc lượt, thiếu `finish` là model bị gọi trên
+            # kịch bản rỗng (`orchestrate_failed`).
             tool_call("decide_pending", {
                 "label": "none", "aside": "defer_with_request", "reason": "để hỏi con"}),
+            tool_call("finish", finish),
         ], tags=("orchestrate",))
+        # Mỗi lượt một câu KHÁC nhau: câu trùng lượt trước bị guard coi là lặp
+        # và đẩy sang `rewrite` (kịch bản rỗng → `rewrite_failed`).
         conversation = scripted([
             AIMessage(f"Dạ em giữ chỗ {spoken} cho chị nhé, chị đồng ý không ạ?"),
-            AIMessage("Dạ vâng chị Lan."),
-            AIMessage("Dạ em đặt xong rồi nhé." if decision == "yes" else "Dạ vâng chị Lan."),
+            AIMessage("Dạ vâng, chị cứ hỏi con rồi báo em nhé."),
+            AIMessage(f"Dạ em đặt xong lịch {spoken} cho chị rồi nhé." if decision == "yes"
+                      else "Dạ em bỏ chỗ đó rồi ạ, chị cần giờ khác cứ nhắn em."),
         ], tags=("respond",))
         specialist = EchoTool(
             tool_name="propose_appointment",
@@ -535,30 +546,40 @@ class TestCompleteProposalContract:
             assert service.sio.events().count("error") == 0, service.sio.sent
             return completes[-1]
 
-        # Lượt 1: tạo đề xuất → nút hiện.
-        await service.handle_message(sid="s1", user=user, message="dat mai 3h chieu")
-        pending = await ProposalService(test_db).latest(user)
-        assert pending is not None and pending.status == "pending"
-        proposal = last_complete()["proposal"]
-        assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
-        assert proposal["id"] == str(pending.id)
-        assert proposal["kind"] == "book"
-        assert proposal["when_spoken"] == spoken
-        assert datetime.fromisoformat(proposal["expires_at"]) > now_utc()
+        with structlog.testing.capture_logs() as logs:
+            # Lượt 1: tạo đề xuất → nút hiện.
+            await service.handle_message(sid="s1", user=user, message="dat mai 3h chieu")
+            pending = await ProposalService(test_db).latest(user)
+            assert pending is not None and pending.status == "pending"
+            proposal = last_complete()["proposal"]
+            assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
+            assert proposal["id"] == str(pending.id)
+            assert proposal["kind"] == "book"
+            assert proposal["when_spoken"] == spoken
+            assert datetime.fromisoformat(proposal["expires_at"]) > now_utc()
 
-        # Lượt 2: khách hoãn ("kept") → đề xuất vẫn chờ, nút vẫn hiện.
-        await service.handle_message(sid="s1", user=user, message="để chị hỏi con đã nha em")
-        assert last_complete()["proposal"] == proposal
+            # Lượt 2: khách hoãn ("kept") → đề xuất vẫn chờ, nút vẫn hiện.
+            await service.handle_message(sid="s1", user=user, message="để chị hỏi con đã nha em")
+            assert last_complete()["proposal"] == proposal
 
-        # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
-        await service.handle_button(sid="s1", user=user,
-                                    data={"proposal_id": proposal["id"], "decision": decision})
+            # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
+            await service.handle_button(sid="s1", user=user,
+                                        data={"proposal_id": proposal["id"], "decision": decision})
         assert service.sio.events()[-1] == "complete"
         assert last_complete()["proposal"] is None
         decided = await ProposalService(test_db).get(user, proposal["id"])
         assert decided.status == ("approved" if decision == "yes" else "rejected")
-        # Đúng ba lượt đã chạy hết kịch bản (không lượt nào rẽ đường tắt), và
-        # mỗi lượt mở bằng `turn_started`, đóng bằng đúng một `complete`.
+        # Ba lượt chạy đúng đường bình thường: không lượt nào rơi vào nhánh
+        # dự phòng (model hỏng, rewrite hỏng, TurnFacts hỏng) — kịch bản dùng
+        # hết không đủ chứng minh điều đó, nên đọc log.
+        fallbacks = {"orchestrate_failed", "rewrite_failed", "turn_facts_apply_failed"}
+        assert [e["event"] for e in logs if e.get("event") in fallbacks] == []
         assert orchestrator.replies == [] and conversation.replies == []
+        # Mỗi lượt mở bằng `turn_started`, đóng bằng đúng một `complete`.
         assert service.sio.events().count("turn_started") == 3
         assert service.sio.events().count("complete") == 3
+        # Tool điều phối của Orchestrator không lên màn hình khách; tool của
+        # specialist (giữ chỗ) vẫn lên.
+        shown = {d["name"] for e, d, _ in service.sio.sent if e in ("tool_started", "tool_finished")}
+        assert not shown & CONTROL_TOOL_NAMES
+        assert "propose_appointment" in shown

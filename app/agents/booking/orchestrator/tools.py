@@ -64,6 +64,15 @@ RunTask = Callable[[TaskSpec, TurnContext, str], Awaitable[TaskResult]]
 # tool; hằng số này chỉ giữ chỗ cho nhánh đó.
 SEQUENTIAL = frozenset({"appointment_task:propose", "decide_pending", "ask_customer", "finish"})
 
+# Tên ĐÚNG năm tool `make_orchestrator_tools` trả về — tool ĐIỀU PHỐI, không phải
+# việc khách thấy được. `events.translate_langchain_event` lọc `on_tool_*` theo
+# tập này để chúng không hiện thành dòng "Đang xử lý…" trên màn hình khách
+# (frontend chỉ có nhãn cho tool của specialist). `test_orchestrator_tools`
+# giữ tập này khớp tên tool thật.
+CONTROL_TOOL_NAMES = frozenset({
+    "appointment_task", "shop_info_task", "decide_pending", "ask_customer", "finish",
+})
+
 
 @dataclass
 class OrchestratorDeps:

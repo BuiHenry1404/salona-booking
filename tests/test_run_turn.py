@@ -122,6 +122,26 @@ def test_translate_langchain_event_forwards_the_respond_tagged_token():
     assert [(e.type, e.data["text"]) for e in result] == [("token", "Dạ")]
 
 
+_CONTROL_TOOLS = ["appointment_task", "shop_info_task", "decide_pending", "ask_customer", "finish"]
+_SPECIALIST_TOOLS = ["parse_time", "find_free_slots", "propose_appointment", "cancel_appointment",
+                     "list_my_appointments", "get_shop_hours", "get_shop_status", "is_open_at"]
+
+
+@pytest.mark.parametrize("kind", ["on_tool_start", "on_tool_end", "on_tool_error"])
+@pytest.mark.parametrize("name,forwarded", (
+    [(n, False) for n in _CONTROL_TOOLS] + [(n, True) for n in _SPECIALIST_TOOLS]
+))
+def test_translate_langchain_event_hides_orchestrator_control_tools(kind, name, forwarded):
+    """Tool điều phối của Orchestrator không phải việc khách thấy được (không có
+    nhãn ở `frontend/src/lib/toolLabels.ts`); tool của specialist vẫn hiện như gói cũ."""
+    result = events.translate_langchain_event({"event": kind, "name": name})
+    if not forwarded:
+        assert result == []
+        return
+    expected = "tool_started" if kind == "on_tool_start" else "tool_finished"
+    assert [(e.type, e.data["name"]) for e in result] == [(expected, name)]
+
+
 # ---------------------------------------------------------------------------
 # Thread checkpointer: lịch sử model đến từ thread, không từ `conversations`.
 # ---------------------------------------------------------------------------

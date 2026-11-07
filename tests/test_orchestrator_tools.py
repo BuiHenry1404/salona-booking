@@ -15,7 +15,7 @@ from datetime import timedelta
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from app.agents.booking.context import AppointmentRef
-from app.agents.booking.orchestrator.tools import OrchestratorDeps, make_orchestrator_tools
+from app.agents.booking.orchestrator.tools import CONTROL_TOOL_NAMES, OrchestratorDeps, make_orchestrator_tools
 from app.agents.booking.schemas import AppointmentArgs, Moment, ProposalCreated, TaskResult, TaskSpec
 from app.core.clock import now_utc
 from app.models.conversation import QueuedRequest
@@ -101,6 +101,8 @@ def test_five_tools_with_expected_names_and_return_direct_flags():
     by_name = _by_name(tools)
 
     assert set(by_name) == EXPECTED_NAMES
+    # `events.translate_langchain_event` lọc theo tập này — không được lệch tên tool thật.
+    assert set(by_name) == CONTROL_TOOL_NAMES
     for name, t in by_name.items():
         # Không tool nào `return_direct` (ruling Task 3.3): kết thúc lượt do
         # `OrchestratorGuard.abefore_model` nhảy END, để một `finish` bị từ
