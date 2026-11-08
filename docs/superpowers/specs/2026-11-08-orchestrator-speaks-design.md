@@ -193,6 +193,98 @@ Code duyệt/từ chối thẳng (không qua Orchestrator quyết, như R1 hiệ
 được gọi ở chế độ **chỉ báo kết quả**: nhận kết quả duyệt + bối cảnh, không được gọi tool
 nghiệp vụ, chỉ được gọi `reply`. Nếu còn đề xuất giữ chỗ chờ hỏi, Orchestrator hỏi tiếp lịch đó.
 
+### 4.5 User story ví dụ
+
+Câu bot chỉ để minh hoạ: câu thật do Orchestrator viết, mỗi lần khác chữ, nhưng phải đúng sự thật
+như dưới đây. Số điện thoại là ví dụ (`settings.shop_phone`).
+
+**1. Đặt lịch, thiếu thông tin.** Là khách, tôi muốn nhắn tự nhiên và được hỏi lại khi nói chưa rõ.
+
+```
+Chị Lan: mai chị ghé làm móng lúc 3 giờ nha em
+Bot:     Dạ chị Lan, 3 giờ sáng hay 3 giờ chiều ạ?
+```
+
+Phía sau: Orchestrator giao Appointment Agent; agent báo `needs_info` thiếu "sáng hay chiều";
+Orchestrator tự viết câu hỏi qua `reply(asks="part_of_day")`; guard kiểm xong mới hiện.
+
+**2. Đề xuất rồi xác nhận.** Là khách, tôi muốn được giữ chỗ và hỏi đồng ý trước khi ghi lịch.
+
+```
+Chị Lan: 3 giờ chiều nha em
+Bot:     Em giữ chỗ Thứ Hai 9/11, 3 giờ chiều cho chị, chị đồng ý không ạ?
+         [Đồng ý] [Không]
+Chị Lan: ừ được em
+Bot:     Dạ em đặt xong lịch Thứ Hai 9/11, 3 giờ chiều cho chị rồi ạ.
+```
+
+Phía sau: Appointment Agent tạo đề xuất + giữ chỗ 15:00. Lượt sau Orchestrator gọi
+`decide_pending(approve)`, chỉ code ghi lịch. Câu "đặt xong" qua guard vì lượt này có `approve`
+thành công.
+
+**3. Hai lịch trong một tin nhắn.** Là khách, tôi muốn đặt cho mình và con gái một lần mà không
+mất giờ thứ hai.
+
+```
+Chị Lan: đặt cho chị 3 giờ chiều mai, với cho con gái chị 4 giờ luôn nha
+Bot:     Em giữ chỗ Thứ Hai 9/11, 3 giờ chiều cho chị, chị đồng ý không ạ?
+         Xong em hỏi tiếp lịch 4 giờ cho con gái chị nhé.
+Chị Lan: [Đồng ý]
+Bot:     Dạ em đặt xong lịch 3 giờ chiều cho chị rồi ạ. Còn lịch Thứ Hai 9/11,
+         4 giờ chiều cho con gái chị, chị đồng ý không ạ?
+```
+
+Phía sau: giữ chỗ cả 15:00 (đang hỏi) và 16:00 (chờ hỏi). Trong lúc hỏi lịch đầu, không ai đặt
+được 16:00, kể cả chủ tiệm. Bấm nút: code duyệt, Orchestrator ở chế độ "chỉ báo kết quả" báo xong
+rồi hỏi tiếp lịch 16:00.
+
+**4. Thêm lịch khi đang chờ xác nhận.** Là khách, tôi muốn thêm lịch giữa chừng mà không làm hỏng
+lịch đang hỏi.
+
+```
+Bot:     Em giữ chỗ 3 giờ chiều mai cho chị, chị đồng ý không ạ?
+Chị Lan: à đặt thêm cho cháu chị 5 giờ nữa nha
+Bot:     Dạ em giữ thêm 5 giờ chiều mai cho cháu chị. Trước tiên, lịch
+         3 giờ chiều của chị, chị đồng ý không ạ?
+```
+
+Phía sau: Orchestrator giữ thêm 17:00 mà không quyết 15:00 trước. Nếu khách nói "đổi sang 5 giờ"
+thì đó là đổi chính lịch đang hỏi, phải qua `decide_pending`.
+
+**5. Ghi lịch thất bại.** Là khách, tôi muốn được nói thật khi chưa ghi được và biết làm gì tiếp.
+
+```
+Chị Lan: [Đồng ý]
+Bot:     Dạ hệ thống chưa ghi được lịch 3 giờ chiều mai cho chị. Chị gọi giúp
+         em số 0901 234 567 để tiệm xếp lịch trực tiếp nhé ạ.
+```
+
+Phía sau: `approve` thất bại (ví dụ đề xuất hết hạn). Trường hợp duy nhất có số điện thoại. Câu
+"đặt xong" bị guard từ chối, Orchestrator phải viết lại.
+
+**6. Hỏi chuyện khác giữa chừng.** Là khách, tôi muốn hỏi giờ mở cửa mà không mất lịch đang chờ.
+
+```
+Chị Lan: tiệm mở cửa tới mấy giờ em?
+Bot:     Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ. Lịch 3 giờ chiều mai
+         em vẫn đang giữ cho chị, chị đồng ý không ạ?
+         [Đồng ý] [Không]
+```
+
+Phía sau: Orchestrator giao Shop Info Agent; đề xuất đang hỏi còn nguyên trong DB, nút vẫn hiện.
+
+**7. Chủ tiệm đặt hộ vào giờ đang giữ.** Là chủ tiệm, tôi cần biết giờ đó đang được giữ cho khách
+khác.
+
+```
+Chủ tiệm đặt 4 giờ chiều mai cho khách gọi điện
+Hệ thống: Giờ này đang được giữ cho một khách khác tới 10:25. Vui lòng chọn
+          giờ khác hoặc thử lại sau.
+```
+
+Phía sau: kiểm chỗ giữ nằm trong `AppointmentService`, chặn mọi đường đặt lịch. Hết 10 phút mà
+khách chưa xác nhận thì chỗ giữ tự nhả, chủ tiệm đặt được.
+
 ## 5. Bối cảnh và trí nhớ
 
 **Orchestrator, mỗi lượt** đọc: bối cảnh do code dựng từ DB (khách, giờ mở cửa, lịch sắp tới,
