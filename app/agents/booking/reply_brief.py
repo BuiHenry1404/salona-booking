@@ -127,9 +127,11 @@ def _facts_for_appointment_list(data: AppointmentList) -> tuple[list[Fact], list
 
 
 def _facts_for_shop_hours(data: ShopHoursOut) -> tuple[list[Fact], list[str], list[str]]:
+    # Giờ mở/đóng cửa KHÔNG phải mốc thời gian (Shop Info trả `iso` dạng
+    # "08:00", M6b L1) — để ở `text`, không bao giờ vào `iso` cho guard parse.
     facts = [
-        Fact(key="open", spoken=data.open.spoken, iso=data.open.iso),
-        Fact(key="close", spoken=data.close.spoken, iso=data.close.iso),
+        Fact(key="open", spoken=data.open.spoken, text=data.open.iso),
+        Fact(key="close", spoken=data.close.spoken, text=data.close.iso),
     ]
     return facts, [data.open.spoken, data.close.spoken], []
 

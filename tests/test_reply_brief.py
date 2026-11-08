@@ -463,3 +463,17 @@ def test_queued_adds_then_and_blocks_booked_claim_for_queued_time():
     brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
     assert brief.then == "Sau giờ này em sẽ hỏi tiếp 5 giờ chiều mai"
     assert "booked" in brief.must_not_claim
+
+
+def test_shop_hours_facts_carry_hhmm_as_text_not_iso():
+    """M6b L1: giờ mở/đóng cửa không phải mốc thời gian — Shop Info trả
+    `iso="08:00"` (hhmm) và guard không được parse nó như ISO."""
+    data = ShopHoursOut(open=_m("8 giờ sáng", "08:00"), close=_m("7 giờ tối", "19:00"), closed_days=[])
+    record = _call("shop_info_task", "get_hours", _task_result("get_hours", data=data))
+
+    facts, must_say, _claim = facts_for(record, CTX, now_utc())
+
+    by_key = {f.key: f for f in facts}
+    assert by_key["open"].text == "08:00" and by_key["open"].iso is None
+    assert by_key["close"].text == "19:00" and by_key["close"].iso is None
+    assert must_say == ["8 giờ sáng", "7 giờ tối"]

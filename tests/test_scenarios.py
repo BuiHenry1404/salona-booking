@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import structlog.testing
 from bson import ObjectId
 from langchain_core.messages import AIMessage
 
@@ -928,3 +929,27 @@ def test_schema_strict_safe_for_the_five_tools():
     from tests.test_orchestrator_tools import test_orchestrator_tool_schemas_are_strict_safe
 
     test_orchestrator_tool_schemas_are_strict_safe()
+
+
+async def test_shop_hours_turn_with_hhmm_iso_completes(test_db, user, models):
+    """M6b L1 (lượt 5 chạy thật): Shop Info trả `open.iso="08:00"` (hhmm, không
+    phải ISO) — lượt phải `complete`, guard không được làm cả lượt thành `error`."""
+    hours = TaskResult(
+        task_id="t0", agent="shop_info", action="get_hours", status="ok",
+        data=ShopHoursOut(
+            open=Moment(iso="08:00", spoken="8 giờ sáng"),
+            close=Moment(iso="19:00", spoken="7 giờ tối"),
+            closed_days=[],
+        ),
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        events_out, db = await scenario(
+            test_db, user, models,
+            orchestrator_replies=[tool_call("shop_info_task", _shop("get_hours")), _finish()],
+            specialists_plan={("shop", "get_hours"): hours},
+            conversation_replies=[AIMessage("Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ.")],
+        )
+
+    assert events_out[-1][0] == "complete"
+    assert not [e for e in logs if e["event"] in ("respond_failed", "agent_turn_failed")]

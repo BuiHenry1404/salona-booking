@@ -76,7 +76,12 @@ def facts_from_brief(brief: ReplyBrief) -> dict:
     held_iso: str | None = None
     for fact in brief.facts:
         if fact.iso:
-            local = to_local(datetime.fromisoformat(fact.iso))
+            try:
+                local = to_local(datetime.fromisoformat(fact.iso))
+            except ValueError:
+                # Guard là lưới kiểm, không được làm hỏng lượt (M6b L1).
+                logger.warning("guard_fact_iso_invalid", extra={"key": fact.key})
+                continue
             keys = draft_checks.clock_keys(_clock_phrase(local.hour, local.minute))
             if keys:
                 clocks.add(keys[0])

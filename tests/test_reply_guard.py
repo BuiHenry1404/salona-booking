@@ -406,3 +406,24 @@ async def test_limit_reached_still_missing_the_phone_after_rewrite_falls_back_to
 
     assert result.answer == phone_line
     assert result.source == "code"
+
+
+# ---------------------------------------------------------------------------
+# M6b L1: iso không parse được (ví dụ giờ mở cửa "08:00") không được làm vỡ guard
+# ---------------------------------------------------------------------------
+
+
+def test_facts_from_brief_skips_a_non_iso_clock_and_logs():
+    brief = make_brief(
+        facts=[
+            Fact(key="open", spoken="8 giờ sáng", iso="08:00"),
+            Fact(key="slot", spoken="ba giờ chiều mai", iso="2026-11-07T15:00:00+07:00"),
+        ],
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        facts = facts_from_brief(brief)
+
+    assert facts["clocks"] == {(3, 0, "chiều")}
+    skipped = [e for e in logs if e["event"] == "guard_fact_iso_invalid"]
+    assert skipped and skipped[0]["extra"]["key"] == "open"
