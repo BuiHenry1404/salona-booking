@@ -68,6 +68,9 @@ async def test_respond_uses_a_streaming_model_tagged_respond(monkeypatch):
     assert captured["tags"] == [RESPOND_TAG]
     assert captured["streaming"] is True
     assert captured["max_retries"] == 0
+    # Chủ dự án 08/11: bật reasoning thấp — model không suy luận chép trơ dòng
+    # must_say làm cả câu trả lời (lượt chạy thật 08/11).
+    assert captured["reasoning_effort"] == "low"
 
 
 async def test_customer_text_sits_only_under_untrusted_label(monkeypatch):
@@ -187,7 +190,7 @@ def test_render_brief_handles_empty_optional_fields():
 
     rendered = render_brief(brief)
 
-    assert "Say exactly: none" in rendered
+    assert "Must mention: none" in rendered
     assert "Ask: none" in rendered
     assert "Never claim: none" in rendered
     assert "Then: none" in rendered

@@ -48,7 +48,10 @@ _CLAIM_OBJ_WORDS = frozenset(o.strip() for o in draft_checks._CLAIM_OBJS)
 
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
-_FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim", "missing_question"})
+_FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim", "missing_question", "bare_facts"})
+# Câu đáp chỉ chép trơ các dòng must_say (chạy thật 08/11, lượt 6/10): bỏ các
+# dòng đó và cách gọi khách ra, còn ít hơn ngần này từ thì không phải một câu.
+BARE_MIN_EXTRA_WORDS = 3
 # Kind mà câu đáp PHẢI có câu hỏi (M6b L2): đề xuất mới cần khách đồng ý;
 # `clarify` cần khách trả lời đúng một điều. Chỉ xét có dấu "?" — câu hỏi có
 # thể đứng trước emoji, dấu nháy hay dòng R0/"Then" (review M6b, Important 3).
@@ -248,7 +251,20 @@ def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) 
         violations.append("repeat")
     if brief.kind in _QUESTION_KINDS and "?" not in draft:
         violations.append("missing_question")
+    if _is_bare(draft, brief):
+        violations.append("bare_facts")
     return violations
+
+
+def _is_bare(draft: str, brief: ReplyBrief) -> bool:
+    """Câu đáp chỉ gồm các dòng must_say (cộng cách gọi khách, "dạ", "ạ")
+    — model chép dữ kiện làm cả câu trả lời. Không regex: bỏ chuỗi rồi đếm từ."""
+    if not brief.must_say:
+        return False
+    rest = normalize(draft)
+    for piece in [*brief.must_say, brief.address]:
+        rest = rest.replace(normalize(piece), " ")
+    return len(tokens.words(rest)) < BARE_MIN_EXTRA_WORDS
 
 
 async def apply_guard(

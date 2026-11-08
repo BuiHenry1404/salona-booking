@@ -487,3 +487,54 @@ def test_question_followed_by_emoji_quote_or_another_line_is_not_missing_questio
     brief = make_brief(kind="proposal_made", must_say=["Chủ Nhật 8/11, 4 giờ chiều"], must_not_claim=["booked"])
 
     assert "missing_question" not in check_reply(draft, brief, [])
+
+
+# ---------------------------------------------------------------------------
+# 08/11: câu đáp chỉ là các dòng must_say chép trơ (chạy thật lượt 6/10)
+# ---------------------------------------------------------------------------
+
+HELD = "Thứ Hai 9/11, 4 giờ chiều"
+
+
+@pytest.mark.parametrize("draft, bare", [
+    (HELD, True),
+    (f"{HELD} ạ.", True),
+    (f"Dạ chị Lan, {HELD} ạ.", True),
+    (f"Dạ, em dời lịch của chị Lan sang {HELD} rồi ạ.", False),
+    (f"Chị Lan xác nhận giúp em {HELD} nhé?", False),
+])
+def test_reply_that_only_repeats_the_must_say_lines_is_bare_facts(draft, bare):
+    brief = make_brief(kind="confirmed", must_say=[HELD])
+
+    assert ("bare_facts" in check_reply(draft, brief, [])) is bare
+
+
+def test_short_reply_without_must_say_is_not_bare_facts():
+    brief = make_brief(kind="social", must_say=[])
+
+    assert "bare_facts" not in check_reply("Dạ.", brief, [])
+
+
+async def test_bare_confirmed_reply_is_rewritten(monkeypatch):
+    fixed = f"Dạ, em dời lịch của chị Lan sang {HELD} rồi ạ."
+    mock = AsyncMock(return_value=fixed)
+    monkeypatch.setattr(REWRITE_ONCE, mock)
+    brief = make_brief(kind="confirmed", must_say=[HELD])
+
+    result = await apply_guard(HELD, brief, [], source="llm")
+
+    assert result.answer == fixed
+    assert result.source == "llm"
+    mock.assert_awaited_once()
+
+
+async def test_bare_confirmed_reply_falls_back_when_rewrite_fails(monkeypatch):
+    monkeypatch.setattr(REWRITE_ONCE, AsyncMock(return_value=None))
+    fallback = f"Dạ chị Lan, em dời lịch sang {HELD} cho chị Lan rồi nhé."
+    brief = make_brief(kind="confirmed", must_say=[HELD], fallback=fallback)
+
+    result = await apply_guard(HELD, brief, [], source="llm")
+
+    assert result.source == "code"
+    assert result.answer == fallback
+    assert "bare_facts" in result.violations

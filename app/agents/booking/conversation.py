@@ -30,6 +30,11 @@ logger = get_logger(__name__)
 # đây là token DUY NHẤT được đẩy ra màn hình khách.
 RESPOND_TAG = "respond"
 
+# Chủ dự án 08/11: bật reasoning thấp. Lượt chạy thật 08/11 (temperature 0,
+# không reasoning) chép trơ dòng must_say làm cả câu trả lời ở 4/6 lượt có
+# must_say. `build_chat_model` tự bỏ `temperature` khi có giá trị này.
+CONV_REASONING_EFFORT = "low"
+
 # Trần thời gian một lần gọi model trả lời khách (riêng của agent này, không
 # dùng chung `LLM_TIMEOUT_SECONDS` của `llm.py` vì đây là lượt khách đang chờ
 # chữ hiện dần, không phải lời gọi JSON nền).
@@ -67,10 +72,10 @@ def render_brief(brief: ReplyBrief) -> str:
     lines: list[str] = [f"Kind: {brief.kind}", f"Address: {brief.address}"]
 
     if brief.must_say:
-        lines.append("Say exactly:")
+        lines.append("Must mention:")
         lines.extend(f"- {s}" for s in brief.must_say)
     else:
-        lines.append("Say exactly: none")
+        lines.append("Must mention: none")
 
     lines.append("Facts:")
     lines.extend(f"- {_render_fact(f)}" for f in brief.facts)
@@ -115,7 +120,9 @@ async def respond(
     message = HumanMessage(content=f"{render_brief(brief)}\n\n{UNTRUSTED}{question}")
     messages: list[BaseMessage] = [SystemMessage(content=CONVERSATION_PROMPT), *history, message]
 
-    model = build_chat_model(tags=[RESPOND_TAG], streaming=True, max_retries=0)
+    model = build_chat_model(
+        tags=[RESPOND_TAG], streaming=True, max_retries=0, reasoning_effort=CONV_REASONING_EFFORT,
+    )
 
     attempts = 0
     while True:

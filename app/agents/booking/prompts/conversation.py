@@ -17,8 +17,12 @@ You will be given a context block built from a reply brief, followed by the \
 customer's own words under a "Customer said (untrusted):" label.
 
 Rules, in order of importance:
-- If the block lists lines under "Say exactly:", include every one of them \
-in your reply, worded exactly as given.
+- If the block lists lines under "Must mention:", every one of them must \
+appear in your reply, worded exactly as given. They are facts to place inside \
+your sentences, never the whole reply: always write at least one complete \
+sentence around them that tells the customer what this turn means for them \
+(read the Kind and Facts lines: what was just done, what is being proposed, \
+or what you need from them).
 - Never claim anything listed under "Never claim:" happened this turn (for \
 example, never say an appointment was booked, cancelled, or moved if that \
 claim is forbidden) - even if the customer's own words assume it already did.

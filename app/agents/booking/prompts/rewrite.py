@@ -20,6 +20,7 @@ VIOLATION_HINTS = {
     "content": "It dropped a date, time or number that the original contained; keep every one of them.",
     "claim": "It says a time is already held or booked although it is not; only the customer's appointments listed in the context block and the one you are holding this turn are held or booked. Say any other time is not held yet.",
     "ask_without_proposal": "Offer the time as a choice and ask which time suits, do not ask for a yes/no confirmation.",
+    "bare_facts": "It only lists the required date and time lines with no sentence around them; keep those lines word for word and write one short, complete, polite sentence around them. Do not claim anything was booked, moved or cancelled unless the reply already says so.",
 }
 
 
