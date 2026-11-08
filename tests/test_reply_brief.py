@@ -477,3 +477,44 @@ def test_shop_hours_facts_carry_hhmm_as_text_not_iso():
     assert by_key["open"].text == "08:00" and by_key["open"].iso is None
     assert by_key["close"].text == "19:00" and by_key["close"].iso is None
     assert must_say == ["8 giờ sáng", "7 giờ tối"]
+
+
+# ---------------------------------------------------------------------------
+# M6b L4: có đề xuất mới thì không bắt đọc hết mọi giờ trống
+# ---------------------------------------------------------------------------
+
+
+def _free_slots_call(*hours: int) -> CallRecord:
+    slots = [_m(f"{h - 12} giờ chiều mai", f"2026-11-10T{h:02d}:00:00+07:00") for h in hours]
+    data = FreeSlots(day=CTX.today, slots=slots, more=False, fetched_at=now_utc())
+    return _call("appointment_task", "find_slots", _task_result("find_slots", data=data))
+
+
+def _propose_call(hour: int) -> CallRecord:
+    held = _m(f"{hour - 12} giờ chiều mai", f"2026-11-10T{hour:02d}:00:00+07:00")
+    proposal = ProposalCreated(proposal_id="p-l4", kind="book", start_at=held, note=None, replaces=None, queued=[])
+    return _call("appointment_task", "propose_book", _task_result("propose_book", data=proposal))
+
+
+def test_proposal_made_does_not_force_every_free_slot_into_must_say():
+    outcome = _outcome(calls=[_free_slots_call(14, 15, 16), _propose_call(16)], proposals_created=1, finish=None)
+    brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
+
+    assert brief.kind == "proposal_made"
+    assert brief.must_say == ["4 giờ chiều mai"]
+    assert [f.spoken for f in brief.facts if f.key == "slot"] == ["2 giờ chiều mai", "3 giờ chiều mai", "4 giờ chiều mai"]
+
+
+def test_find_slots_alone_keeps_slots_in_must_say():
+    outcome = _outcome(calls=[_free_slots_call(14, 15, 16)], finish=None)
+    brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
+
+    assert brief.kind != "proposal_made"
+    assert brief.must_say == ["2 giờ chiều mai", "3 giờ chiều mai", "4 giờ chiều mai"]
+
+
+def test_must_say_is_deduplicated_in_order():
+    outcome = _outcome(calls=[_free_slots_call(14, 15), _free_slots_call(15, 16)], finish=None)
+    brief = build_reply_brief(CTX, outcome, previous_reply=None, now=now_utc())
+
+    assert brief.must_say == ["2 giờ chiều mai", "3 giờ chiều mai", "4 giờ chiều mai"]

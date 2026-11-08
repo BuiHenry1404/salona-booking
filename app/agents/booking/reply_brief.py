@@ -407,6 +407,10 @@ def _fallback_for(
     return FALLBACK_ANSWER
 
 
+def _is_free_slots(record: CallRecord) -> bool:
+    return isinstance(record.result, TaskResult) and isinstance(record.result.data, FreeSlots)
+
+
 def build_reply_brief(
     ctx: TurnContext, outcome: TurnOutcome, *, previous_reply: str | None, now: datetime
 ) -> ReplyBrief:
@@ -438,6 +442,11 @@ def build_reply_brief(
                 continue
             f, say, claim = facts_for(record, ctx, now)
             facts.extend(f)
+            # M6b L4: lượt đã có đề xuất mới thì giờ trống (`FreeSlots`) chỉ là
+            # Fact (model được nhắc), không bắt đọc hết — `must_say` chỉ còn
+            # `held_at` (và R0). Lượt chỉ `find_slots` giữ nguyên bảng §5.4.
+            if kind == "proposal_made" and _is_free_slots(record):
+                continue
             must_say.extend(say)
             _add_claims(claim)
     elif isinstance(outcome, ButtonOutcome) and outcome.outcome is not None:
@@ -476,6 +485,7 @@ def build_reply_brief(
         ask_out = ClarifyRequest(field="confirm", hint=None)
 
     fallback = _fallback_for(kind, ctx, pending, calls, tone_context, previous_reply)
+    must_say = list(dict.fromkeys(must_say))  # khử trùng lặp, giữ thứ tự (M6b L4)
 
     return ReplyBrief(
         kind=kind,

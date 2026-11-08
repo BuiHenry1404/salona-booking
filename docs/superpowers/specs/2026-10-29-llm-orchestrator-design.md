@@ -300,7 +300,7 @@ class ReplyBrief(BaseModel):
 | `ProposalCreated{move}` | `held_at`, `replaces.was` | `held_at.spoken` | `moved` |
 | `ProposalCreated{cancel}` | `will_cancel` | `will_cancel.spoken` | `cancelled` |
 | `ProposalCreated.queued[]` | `queued_at[]` + `then` | — | `booked` cho giờ chờ |
-| `FreeSlots` | `slots[≤3]`, `more`, `day` | mỗi `slots[].spoken` | — |
+| `FreeSlots` | `slots[≤3]`, `more`, `day` | mỗi `slots[].spoken` — khi cùng lượt có `ProposalCreated` → slot chỉ là Fact, không must_say (M6b, 07/11) | — |
 | `slot_unavailable` | `asked`, `nearest[≤3]` | `asked.spoken` | — |
 | `outside_hours`/`closed_day`/`time_passed` | `asked`, `open/close`, `reason` | `asked.spoken` | — |
 | `already_yours` | `existing` | `existing.spoken` | — |
