@@ -7,11 +7,10 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from app.agents.booking_graph.agents import FALLBACK_ANSWER
-from app.agents.booking_graph.middleware.tools import (TOOL_ERROR_TEXT,
-                                                       NoParallelToolsMiddleware,
-                                                       ToolFailureMiddleware,
-                                                       ToolRoundLimitMiddleware)
+from app.agents.booking.middleware import (FALLBACK_ANSWER, TOOL_ERROR_TEXT,
+                                           NoParallelToolsMiddleware,
+                                           ToolFailureMiddleware,
+                                           ToolRoundLimitMiddleware)
 from tests.fakes import scripted, tool_call
 
 

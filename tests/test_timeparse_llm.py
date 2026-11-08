@@ -12,9 +12,9 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from app.agents.booking_graph.context import format_14_day_calendar, format_vi_datetime
-from app.agents.booking_graph.prompts import BOOKING_PROMPT
-from app.agents.booking_graph.timeparse import ParsedTime, parse_vi_time
+from app.agents.booking.context import format_14_day_calendar, format_vi_datetime
+from app.agents.booking.prompts.appointment import APPOINTMENT_PROMPT
+from app.agents.booking.timeparse import ParsedTime, parse_vi_time
 from app.agents.llm import build_chat_model
 from app.core.clock import TZ
 from app.models.shop import ShopHours
@@ -46,7 +46,7 @@ async def _llm_parse(text: str) -> ParsedTime:
     )
     model = build_chat_model(tags=["timeparse"], streaming=False).bind_tools([parse_time])
     ai = await model.ainvoke([
-        SystemMessage(content=BOOKING_PROMPT),
+        SystemMessage(content=APPOINTMENT_PROMPT),
         HumanMessage(content=f"{ctx}\n\nKhách nói: {text}"),
     ])
     if not ai.tool_calls:

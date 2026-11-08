@@ -1,4 +1,4 @@
-from app.agents.booking_graph import tokens
+from app.agents.booking import tokens
 
 
 def test_tokens_module_contains_no_regex_imports_or_calls():

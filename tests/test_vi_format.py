@@ -3,8 +3,10 @@ import pathlib
 
 
 def test_vi_format_matches_legacy_context_helpers():
+    """Task 6.3 (M6-cutover): mốc so sánh đổi từ gói supervisor graph cũ (đã xoá)
+    sang `app.agents.booking.context` — cùng một lẽ, vẫn cùng hàm qua re-export."""
     from app.core import vi_format
-    from app.agents.booking_graph import context
+    from app.agents.booking import context
 
     assert vi_format.format_vi_datetime is context.format_vi_datetime
     assert vi_format.derive_address is context.derive_address

@@ -1,22 +1,70 @@
-"""Tầng gác là code tất định — mỗi phép kiểm có ca dương và ca âm."""
-import pytest
+"""Phép kiểm tất định trên câu nháp (`app.agents.booking.draft_checks`):
+`strip_tool_names`, `unclaim`, `has_false_claim`, `repeats` — không gọi LLM.
 
-from app.agents.booking_graph.context import address_phrase
-from app.agents.booking_graph.guard import (REPEAT_LOOKBACK, check_clock, check_pronoun,
-                                            content_kept,
-                                            customer_asked_to_repeat,
-                                            find_violations, normalize,
-                                            repeats, sentences)
-from app.models.user import User
+Task 6.3 (M6-cutover): module này tên `guard.py` ở gói cũ, nhưng Task 6.1 đã
+dời các hàm này sang `app.agents.booking.draft_checks` (không phải
+`app.agents.booking.guard`, module khác hẳn — kiểm `ReplyBrief`/`must_say`,
+xem `tests/test_reply_guard.py`). `check_pronoun`/`check_clock`/`find_violations`
+của gói cũ không còn tương đương ở gói mới — không dời.
+"""
+from app.agents.booking.draft_checks import TOOL_NAMES, has_false_claim, repeats, strip_tool_names, unclaim
 
 
-class TestNormalizeAndSentences:
-    def test_normalize_drops_punctuation_case_and_spacing(self):
-        assert normalize("Dạ, anh Tám!  Em   chào ANH.") == "dạ anh tám em chào anh"
+class TestStripToolNames:
+    def test_clean_text_is_returned_untouched(self):
+        text = "Dạ anh Tám,\n  mai 9 giờ sáng (cắt tóc) ạ ."
+        assert strip_tool_names(text) is text
 
-    def test_sentences_split_on_terminal_punctuation(self):
-        assert sentences("Em giữ chỗ rồi ạ. Anh xác nhận giúp em nhé? Cảm ơn!") == [
-            "Em giữ chỗ rồi ạ", "Anh xác nhận giúp em nhé", "Cảm ơn"]
+    def test_snake_case_identifier_in_brackets_is_removed(self):
+        assert strip_tool_names("Dạ còn trống [slot_keys] 3 giờ chiều ạ.") == "Dạ còn trống 3 giờ chiều ạ."
+
+    def test_every_bare_name_is_removed(self):
+        for name in TOOL_NAMES:
+            out = strip_tool_names(f"Dạ em dùng {name} để xem rồi ạ.")
+            assert name not in out
+            assert out == "Dạ em dùng để xem rồi ạ."
+
+    def test_a_list_of_names_leaves_no_stray_commas(self):
+        out = strip_tool_names("Em gọi `parse_time`, find_free_slots và get_shop_status rồi ạ.")
+        assert out == "Em gọi rồi ạ."
+
+
+class TestUnclaim:
+    def test_booked_claim_becomes_a_hold(self):
+        assert unclaim("Dạ em đã đặt lịch rồi ạ.") == "Dạ em giữ chỗ rồi ạ."
+
+    def test_move_claim_becomes_a_future_promise(self):
+        assert unclaim("Em đã dời lịch rồi ạ.") == "Em sẽ dời lịch ạ."
+
+    def test_sentence_with_no_claim_is_left_alone(self):
+        draft = "Dạ anh Tám, mai 9 giờ sáng ạ."
+        assert unclaim(draft) == draft
+
+    def test_ghi_nhan_is_not_a_booking_claim(self):
+        """"em đã ghi nhận" là "em đã nghe", không phải "em đã ghi lịch"."""
+        draft = "Dạ em đã ghi nhận yêu cầu hủy lịch rồi ạ."
+        assert unclaim(draft) == draft
+
+
+class TestHasFalseClaim:
+    def test_claim_matching_a_known_clock_is_not_false(self):
+        facts = {"clocks": [(9, 0, "sáng")], "any": True, "unknown": False}
+        assert has_false_claim("Dạ em đã giữ 9 giờ sáng cho anh rồi ạ.", facts) is False
+
+    def test_claim_not_matching_any_known_clock_is_false(self):
+        facts = {"clocks": [(9, 0, "sáng")], "any": True, "unknown": False}
+        assert has_false_claim("Dạ em đã giữ 10 giờ sáng cho anh rồi ạ.", facts) is True
+
+    def test_no_facts_is_never_a_false_claim(self):
+        assert has_false_claim("Dạ em đã giữ 10 giờ sáng cho anh rồi ạ.", None) is False
+
+    def test_unknown_facts_never_flag_a_false_claim(self):
+        facts = {"clocks": [], "any": False, "unknown": True}
+        assert has_false_claim("Dạ em đã giữ 10 giờ sáng cho anh rồi ạ.", facts) is False
+
+    def test_negated_claim_is_not_flagged(self):
+        facts = {"clocks": [], "any": False, "unknown": False}
+        assert has_false_claim("Dạ em chưa giữ lịch nào cho anh ạ.", facts) is False
 
 
 class TestRepeats:
@@ -41,19 +89,6 @@ class TestRepeats:
     def test_different_content_is_not_a_repeat(self):
         assert repeats("Tiệm đóng cửa 7 giờ tối ạ.", self.PREV) is False
 
-    def test_replies_beyond_the_lookback_window_do_not_count(self):
-        """Cửa sổ có TRẦN — không so với cả phiên. Bám hằng số thay vì con số
-        cứng: 2026-09-19 nới 3 → 8, test cũ khoá đúng con số nên đỏ oan."""
-        xa = "Câu này lặp lại y nguyên nhưng đã quá xa trong lịch sử rồi ạ."
-        assert repeats(xa, [xa] + ["khác một"] * REPEAT_LOOKBACK) is False
-
-    def test_a_repeat_a_few_turns_back_is_caught(self):
-        """Mốc cũ 3 mù với câu từ chối tái xuất sau vài lượt. Chạy thật
-        2026-09-19 (LLM-32): cùng một câu từ chối ở lượt 1, 2, 6, 14, 16 —
-        lượt 6 trở đi không còn gì trong tầm để so."""
-        cau = "Dạ anh chị, em chỉ xem và đặt lịch của chính anh chị thôi ạ."
-        assert repeats(cau, [cau] + ["khác một", "khác hai", "khác ba"]) is True
-
     def test_same_template_with_a_different_time_is_not_a_repeat(self):
         prev = ["Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"]
         draft = "Em giữ chỗ Thứ Ba 15/9, 10 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"
@@ -63,246 +98,3 @@ class TestRepeats:
         prev = ["Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"]
         draft = "Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng cho cắt tóc. Anh xác nhận giúp em nhé?"
         assert repeats(draft, prev) is True
-
-
-@pytest.mark.parametrize("text", ["nhắc lại giùm", "em nói lại đi", "anh quên rồi", "lặp lại giúp anh"])
-def test_customer_asking_to_repeat_is_detected(text):
-    assert customer_asked_to_repeat(text) is True
-
-
-def test_ordinary_text_is_not_a_repeat_request():
-    assert customer_asked_to_repeat("mai 9 giờ được không") is False
-
-
-class TestPronoun:
-    def test_wrong_pronoun_at_sentence_start_for_a_male_customer(self):
-        assert check_pronoun("Chị hỏi bên chủ tiệm giúp em nhé.", "anh Tám", "Tám") is True
-
-    def test_wrong_pronoun_before_the_name(self):
-        assert check_pronoun("Em giữ chỗ cho chị Tám rồi ạ.", "anh Tám", "Tám") is True
-
-    def test_chi_chu_tiem_is_not_a_violation(self):
-        """"Chị chủ" là cách gọi chủ tiệm, không phải gọi khách."""
-        assert check_pronoun("Chị chủ sẽ trả lời phần giá ạ. Anh Tám muốn đặt gì ạ?", "anh Tám", "Tám") is False
-
-    def test_correct_pronoun_passes(self):
-        assert check_pronoun("Dạ anh Tám, mai 9 giờ sáng ạ.", "anh Tám", "Tám") is False
-
-    def test_female_customer_called_anh_is_a_violation(self):
-        assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", "chị Lan", "Lan") is True
-
-    def test_guessing_a_gender_the_name_does_not_give_is_a_violation(self):
-        """Đổi 2026-09-19, lật quyết định cũ "không rõ giới thì không bao giờ cờ".
-
-        `derive_address` trả "anh chị" đúng khi tên KHÔNG cho biết giới tính.
-        Gọi "chị" lúc đó là AI tự đoán giới tính khách — thứ code cố tình không
-        làm. Chạy thật (LLM-32) còn cho thấy hệ quả thứ hai: hai lượt đầu gọi
-        "Chị ơi", từ lượt 3 đổi sang "Anh chị ơi" — cùng một khách, hai cách gọi
-        trong một cuộc, đúng thứ dòng "Gọi khách là:" sinh ra để chốt."""
-        assert check_pronoun("Chị muốn đặt giờ nào ạ?", "anh chị", "") is True
-        assert check_pronoun("Anh muốn đặt giờ nào ạ?", "anh chị", "") is True
-
-    def test_the_ambiguous_address_itself_passes(self):
-        """"Anh chị" là chính cách gọi được chốt — không được tự cờ mình."""
-        assert check_pronoun("Anh chị muốn đặt giờ nào ạ?", "anh chị", "") is False
-        assert check_pronoun("Dạ anh chị ơi, mai 9 giờ sáng ạ.", "anh chị", "") is False
-
-    def test_talking_about_the_owner_still_passes_when_gender_is_unknown(self):
-        """"Chị chủ" là gọi CHỦ TIỆM, không phải gọi khách — vế miễn trừ sẵn có
-        phải còn hiệu lực ở nhánh mới này."""
-        assert check_pronoun("Chị chủ sẽ báo giá ạ.", "anh chị", "") is False
-
-    @pytest.mark.parametrize("draft", ["Cô muốn đặt giờ nào ạ?", "Để con xem lịch giúp cô.", "Chú Ba đặt 3 giờ nhé."])
-    def test_forbidden_register_is_flagged(self, draft):
-        assert check_pronoun(draft, "anh chị", "") is True
-
-    def test_naming_a_gender_beside_the_name_is_a_violation_when_unknown(self):
-        """Trước 2026-09-19 câu này được cho qua. Nhưng cách gọi đã chốt là
-        "anh chị", nên "anh Tám" là AI tự quyết khách là nam."""
-        assert check_pronoun("Dạ anh Tám, em xem lịch giúp anh nhé.", "anh chị", "") is True
-
-    def test_booking_for_the_customers_child_is_not_a_violation(self):
-        """"cho con chị" = đặt hộ con của khách, không phải xưng hô sai."""
-        assert check_pronoun("Dạ em đặt cho con chị lúc 3 giờ chiều ạ.", "anh chị", "") is False
-
-    def test_con_as_subject_of_a_receptionist_verb_is_still_flagged(self):
-        assert check_pronoun("Để con xem lịch giúp cô.", "anh chị", "") is True
-
-    def test_con_as_subject_without_de_giup_is_still_flagged(self):
-        assert check_pronoun("Con giữ chỗ cho cô rồi ạ.", "anh chị", "") is True
-
-    def test_capitalised_mid_sentence_register_before_name_is_flagged(self):
-        assert check_pronoun("Dạ, Chú Tám ơi, em giữ chỗ rồi ạ.", "anh chị", "") is True
-
-    def test_bac_si_is_not_a_register_violation(self):
-        """"bác sĩ" — chữ thường sau honorific, [A-ZĐ] không được match kiểu
-        không phân biệt hoa thường nữa."""
-        assert check_pronoun("Em sẽ hỏi bác sĩ giúp anh.", "anh chị", "") is False
-
-    def test_co_gai_is_not_a_register_violation(self):
-        assert check_pronoun("cô gái đó", "anh chị", "") is False
-
-    def test_chu_cho_is_not_a_register_violation(self):
-        assert check_pronoun("chú chó", "anh chị", "") is False
-
-    def test_leading_da_particle_still_flags_wrong_pronoun(self):
-        """"Dạ" mở đầu câu đúng văn phong nhưng che mất đại từ sai ở token 0."""
-        assert check_pronoun("Dạ chị muốn đặt giờ nào ạ?", "anh Tám", "Tám") is True
-
-    def test_trailing_comma_on_first_token_still_flags(self):
-        assert check_pronoun("Chị, em giữ chỗ rồi ạ.", "anh Tám", "Tám") is True
-
-    def test_leading_da_particle_with_correct_pronoun_passes(self):
-        assert check_pronoun("Dạ anh Tám, mai 9 giờ sáng ạ.", "anh Tám", "Tám") is False
-
-    def test_owner_exemption_survives_the_leading_particle(self):
-        assert check_pronoun("Dạ chị chủ sẽ báo giá ạ.", "anh Tám", "Tám") is False
-
-    def test_pronoun_check_accepts_chi_lan_when_self_address_is_chi(self):
-        """Task 13: khách tên "Lan" (không tiền tố cho biết giới) nhưng đã TỰ
-        xưng "chị" — `address_phrase` phải đọc `self_address` đó (không còn
-        "anh chị" mơ hồ), và guard phải cho qua "chị Lan"."""
-        user = User(phone="0912345678", hashed_password="x",
-                   full_name="Lan", self_address="chị")
-        address = address_phrase(user)
-        assert address == "chị Lan"
-        assert check_pronoun("Dạ chị Lan, mai 9 giờ sáng ạ.", address, "Lan") is False
-        assert check_pronoun("Anh Lan muốn đặt giờ nào ạ?", address, "Lan") is True
-
-    def test_pronoun_check_accepts_the_live_prefix_before_migration_runs(self):
-        """Review (2026-10-26): admin tạo tài khoản mới ("Cô Mai") giữa lúc
-        app đang chạy — `self_address` chưa có (migration lúc khởi động chỉ
-        chạy MỘT lần lúc boot), nhưng `address_phrase` vẫn phải suy đúng từ
-        tiền tố NGAY, không đợi tới lần khởi động kế."""
-        user = User(phone="0912345678", hashed_password="x", full_name="Cô Mai")
-        address = address_phrase(user)
-        assert address == "chị Mai"
-        assert check_pronoun("Dạ chị Mai, mai 9 giờ sáng ạ.", address, "Mai") is False
-        assert check_pronoun("Anh Mai muốn đặt giờ nào ạ?", address, "Mai") is True
-
-
-class TestClock:
-    @pytest.mark.parametrize("draft", ["Hẹn anh 15:00 nhé.", "Em giữ chỗ chín giờ sáng ạ.",
-                                       "Thứ Bảy ngày mười chín tháng chín ạ."])
-    def test_colon_and_number_words_are_flagged(self, draft):
-        assert check_clock(draft) is True
-
-    def test_digits_pass(self):
-        assert check_clock("Thứ Bảy 19/9, 9 giờ sáng ạ.") is False
-
-    def test_a_name_that_is_a_number_word_passes(self):
-        assert check_clock("Dạ anh Ba, em chào anh.") is False
-
-    def test_customer_name_tam_after_honorific_passes(self):
-        assert check_clock("Dạ anh Tám giờ nào tiện ạ?") is False
-
-    def test_customer_name_ba_after_honorific_passes(self):
-        assert check_clock("anh Ba giờ nào cũng được") is False
-
-    def test_nine_oclock_morning_still_flags(self):
-        assert check_clock("Em giữ chỗ chín giờ sáng ạ.") is True
-
-
-def test_language_is_no_longer_checked():
-    """Câu tiếng Anh dài, không lỗi lặp/đại từ/giờ → không sinh mã nào."""
-    assert find_violations(
-        "Sure, I can book that appointment for you tomorrow at your convenience.",
-        previous_replies=[], address="anh chị", name="", customer_text="",
-    ) == []
-
-
-class TestContentKept:
-    def test_dropping_a_time_is_not_kept(self):
-        assert content_kept("Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng ạ.", "Em giữ chỗ cho anh rồi ạ.") is False
-
-    def test_reworded_with_the_same_numbers_is_kept(self):
-        assert content_kept("Em giữ chỗ Thứ Ba 15/9, 9 giờ sáng ạ.",
-                            "Dạ anh Tám, Thứ Ba 15/9 lúc 9 giờ sáng em đã giữ chỗ rồi nhé.") is True
-
-
-class TestFindViolations:
-    def test_collects_codes_in_fixed_order(self):
-        codes = find_violations("Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé.",
-                                previous_replies=[], address="anh Tám", name="Tám", customer_text="giá bao nhiêu")
-        assert codes == ["pronoun", "clock"]
-
-    def test_repeat_is_skipped_when_the_customer_asked_for_it(self):
-        prev = ["Dạ anh Tám, mai 9 giờ sáng cắt tóc ạ, em đã giữ chỗ rồi."]
-        assert find_violations(prev[0], previous_replies=prev, address="anh Tám", name="Tám",
-                               customer_text="mai mấy giờ ha, anh quên rồi") == []
-
-    def test_clean_draft_has_no_violations(self):
-        assert find_violations("Dạ anh Tám, mai 9 giờ sáng ạ.", previous_replies=[],
-                               address="anh Tám", name="Tám", customer_text="mai mấy giờ") == []
-
-    def test_yes_no_question_about_a_time_without_proposal_is_flagged(self):
-        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
-                                previous_replies=[], address="anh chị", name="",
-                                customer_text="2 giờ chiều mai nhé", has_proposal=False)
-        assert "ask_without_proposal" in codes
-
-    def test_same_question_with_a_proposal_is_fine(self):
-        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
-                                previous_replies=[], address="anh chị", name="",
-                                customer_text="2 giờ chiều mai nhé", has_proposal=True)
-        assert "ask_without_proposal" not in codes
-
-    def test_yes_no_question_without_a_clock_is_not_flagged(self):
-        codes = find_violations("Anh chị còn cần gì nữa không ạ?", previous_replies=[],
-                                address="anh chị", name="", customer_text="ok",
-                                has_proposal=False)
-        assert "ask_without_proposal" not in codes
-
-    def test_a_non_yes_no_question_naming_a_time_is_not_flagged(self):
-        codes = find_violations("Anh chị muốn 2 giờ hay 3 giờ chiều ạ?", previous_replies=[],
-                                address="anh chị", name="", customer_text="2 hay 3 giờ chiều",
-                                has_proposal=False)
-        assert "ask_without_proposal" not in codes
-
-    def test_clock_in_an_earlier_sentence_than_the_yes_no_question_is_flagged(self):
-        """Hình dạng LLM-02 thật: giờ nêu ở câu trước, câu cuối mới hỏi có/không
-        — "ừ" của khách không rõ đang đồng ý giờ nào. `clock_keys` phải quét cả
-        draft, không chỉ câu cuối."""
-        codes = find_violations("Dạ 3 giờ chiều mai còn trống. Giữ chỗ nhé?",
-                                previous_replies=[], address="anh chị", name="",
-                                customer_text="3 giờ chiều mai còn trống không em",
-                                has_proposal=False)
-        assert "ask_without_proposal" in codes
-
-    def test_a_plain_co_khong_question_after_a_clock_sentence_is_not_flagged(self):
-        """Câu cuối "...không ạ?" là câu hỏi có/không về MỘT CHUYỆN KHÁC (mời
-        thêm dịch vụ), không chứa đúng cụm "được không"/"nhé"/"nha" mà luật
-        quét ("có muốn ... không" không khớp "được không" — thiếu chữ "được"
-        ngay trước). Mở rộng `clock_keys` ra cả draft (thay vì chỉ câu cuối)
-        chỉ đổi nơi TÌM GIỜ, không đổi tập cụm có/không được công nhận — nên
-        câu này vẫn không bị gắn `ask_without_proposal`, đúng với luật đã cài:
-        nó không phải dạng LLM-02 (hỏi có/không về CHÍNH giờ vừa nêu)."""
-        codes = find_violations("Dạ 3 giờ chiều mai còn trống ạ. Anh chị có muốn làm "
-                                "thêm sơn gel không ạ?", previous_replies=[],
-                                address="anh chị", name="",
-                                customer_text="3 giờ chiều mai còn trống không em",
-                                has_proposal=False)
-        assert "ask_without_proposal" not in codes
-
-    def test_voice_rules_off_keeps_claim_and_tool_name_only(self):
-        """Task 15 (`GUARD_VOICE_RULES=false`): bỏ ba phép kiểm GIỌNG
-        (`repeat`/`pronoun`/`clock`) — `claim` (nói sai sự thật) và
-        `ask_without_proposal` (Task 9) không phải chuyện giọng, vẫn chạy.
-        Tên tool luôn bị xoá ở `apply_guard`, trước mọi phép kiểm — không
-        thuộc `find_violations`, nên không kiểm lại ở đây."""
-        draft = "Chị hỏi chủ tiệm giúp em, hẹn 15:00 nhé. Em đã giữ chỗ rồi."
-        claims = {"clocks": [], "any": False, "unknown": False}
-        full = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
-                               customer_text="giá bao nhiêu", claims=claims)
-        assert full == ["claim", "pronoun", "clock"]
-
-        off = find_violations(draft, previous_replies=[], address="anh Tám", name="Tám",
-                              customer_text="giá bao nhiêu", claims=claims, voice_rules=False)
-        assert off == ["claim"]
-
-    def test_voice_rules_off_still_flags_ask_without_proposal(self):
-        codes = find_violations("Em giữ cho anh chị 2 giờ chiều mai được không?",
-                                previous_replies=[], address="anh chị", name="",
-                                customer_text="2 giờ chiều mai nhé", has_proposal=False,
-                                voice_rules=False)
-        assert "ask_without_proposal" in codes

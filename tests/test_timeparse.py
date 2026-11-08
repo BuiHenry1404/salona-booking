@@ -4,8 +4,8 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.agents.booking_graph import timeparse
-from app.agents.booking_graph.timeparse import (
+from app.agents.booking import timeparse
+from app.agents.booking.timeparse import (
     ParsedTime,
     _guard,
     _to_24h,

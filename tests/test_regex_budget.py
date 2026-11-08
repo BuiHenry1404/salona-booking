@@ -1,26 +1,18 @@
 """Hàng rào số lượng regex (`re.compile`) trong tầng AI Agent.
 
-Spec `2026-10-29-llm-orchestrator-design.md`: `app/agents/booking_graph/` cắt
-xuống còn đúng 2 regex (tới hết M5):
-- `guard.py`: 2 (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`)
-- Mọi module khác (kể cả `timeparse.py`): 0 regex.
-
-`app/agents/booking/` (gói mới thay thế dần `booking_graph`, Task 1.1+) bắt
-đầu với ngân sách 0. Task 6.1 dời đúng hai regex của `strip_tool_names` sang
-`draft_checks.py` của gói mới — gói cũ còn 0, gói mới đúng 2 ở một module.
+Spec `2026-10-29-llm-orchestrator-design.md`: `app/agents/booking/` cắt xuống
+còn đúng 2 regex (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`, dời từ
+`guard.py` của gói cũ ở Task 6.1 sang `draft_checks.py`). Mọi module khác
+(kể cả `timeparse.py`) — 0 regex. Task 6.3 (M6-cutover) xoá hẳn gói
+supervisor graph cũ — chỉ còn một gói để quét.
 """
 import ast
 import pathlib
 import re
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents"
+ROOT = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "booking"
 
-ROOT = REPO_ROOT / "booking_graph"
-ROOT2 = REPO_ROOT / "booking"
-
-EXPECTED_BUDGET: dict[str, int] = {}
-
-EXPECTED_BUDGET_BOOKING = {
+EXPECTED_BUDGET = {
     "draft_checks.py": 2,
 }
 
@@ -48,15 +40,5 @@ def test_agent_regex_budget_is_at_most_two():
     actual, re_importers = _scan(ROOT)
     assert actual == EXPECTED_BUDGET, f"Vượt ngân sách regex tầng agent: {actual}"
     assert re_importers == set(EXPECTED_BUDGET.keys()), (
-        f"Module ngoài ngân sách import re: {re_importers}"
-    )
-
-
-def test_new_package_regex_budget():
-    """`app/agents/booking/` (gói orchestrator mới): chỉ `draft_checks.py` được
-    dùng regex (hai regex của `strip_tool_names`), không module nào khác."""
-    actual, re_importers = _scan(ROOT2)
-    assert actual == EXPECTED_BUDGET_BOOKING, f"Vượt ngân sách regex gói mới: {actual}"
-    assert re_importers == set(EXPECTED_BUDGET_BOOKING.keys()), (
         f"Module ngoài ngân sách import re: {re_importers}"
     )

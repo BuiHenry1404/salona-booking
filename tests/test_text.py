@@ -1,4 +1,4 @@
-from app.core.text import detect_self_address, single_line
+from app.core.text import detect_self_address, single_line, strip_diacritics
 
 
 class TestSingleLine:
@@ -82,3 +82,13 @@ class TestDetectSelfAddress:
 
     def test_chi_with_the_di_verb(self):
         assert detect_self_address("chị đi làm tóc") == "chị"
+
+
+class TestStripDiacritics:
+    """Dời từ `tests/test_reply_veto.py` ở Task 6.3 (M6-cutover): `strip_diacritics`
+    sống ở `app/core/text.py`, không riêng của một gói agent nào."""
+
+    def test_strip_diacritics_handles_d_bar(self):
+        assert strip_diacritics("Đúng rồi đó") == "Dung roi do"
+        assert strip_diacritics("") == ""
+        assert strip_diacritics(None) == ""

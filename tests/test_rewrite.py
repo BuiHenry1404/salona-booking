@@ -1,13 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from app.agents.booking_graph.context import build_context_block
-from app.agents.booking_graph.rewrite import REWRITE_TAG, _address_from_block, rewrite_once
-from app.models.shop import ShopStatusView
-from app.models.user import User
-
-
-USER = User(phone="0912345678", hashed_password="x", full_name="Chú Tám")
+from app.agents.booking.rewrite import REWRITE_TAG, _address_from_block, rewrite_once
 
 
 class ScriptedModel:
@@ -28,14 +22,14 @@ def patch_model(monkeypatch):
         def _build(**kwargs):
             m.kwargs = kwargs
             return m
-        monkeypatch.setattr("app.agents.booking_graph.rewrite.build_chat_model", _build)
+        monkeypatch.setattr("app.agents.booking.rewrite.build_chat_model", _build)
         return m
     return _install
 
 
 class TestRewriteOnce:
     """Phần LLM của guard: viết lại MỘT lần. Luật quyết khi nào gọi và dùng bản
-    nào nằm ở `guard.apply_guard` — test ở `test_mw_guard.py`."""
+    nào nằm ở `guard.apply_guard` — test ở `test_reply_guard.py`."""
 
     async def test_rewrites_with_the_violation_hints_and_previous_reply(self, patch_model):
         model = patch_model("Dạ anh Tám, phần giá để chủ tiệm báo anh nhé.")
@@ -70,7 +64,7 @@ class TestRewriteOnce:
     async def test_slow_rewrite_returns_none(self, patch_model, monkeypatch):
         import asyncio
 
-        from app.agents.booking_graph import rewrite
+        from app.agents.booking import rewrite
 
         class Slow:
             async def ainvoke(self, messages, **kw):
@@ -85,9 +79,9 @@ class TestRewriteOnce:
 
 
 class TestAddressFromBlock:
-    def test_reads_the_address_from_the_real_context_block(self):
-        block = build_context_block(
-            User(phone="0912345678", hashed_password="x", full_name="Chú Tám"),
-            ShopStatusView(is_busy=False), [],
-        )
-        assert _address_from_block(block) == "anh Tám"
+    def test_reads_the_address_from_a_context_block(self):
+        """Task 6.3 (M6-cutover): `build_context_block` không còn ở gói mới
+        (`app.agents.booking.context`) — dựng block bằng chuỗi thẳng thay vì
+        gọi hàm đã xoá."""
+        block = "Bây giờ là 09:00 ngày 2026-10-19.\nGọi khách là: cô Lan."
+        assert _address_from_block(block) == "cô Lan"

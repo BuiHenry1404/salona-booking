@@ -176,93 +176,20 @@ async def test_last_session_finds_session_from_yesterday(test_db):
 
 
 # --- load_context gating ("Lần trước" chỉ hiện khi còn ý định dang dở) ----
-
-async def _make_user(test_db, phone="0912345678"):
-    from app.services.auth import AuthService
-    return await AuthService(test_db).create_user(phone, "matkhau123", "Cô Lan")
-
-
-async def test_last_session_line_only_when_intent_left_open(test_db):
-    """Có phiên cũ, CÓ `slots.intent` còn dở, KHÔNG có lịch mới sau đó →
-    dòng "Lần trước" xuất hiện."""
-    from app.agents.booking_graph.context import load_context
-
-    user = await _make_user(test_db)
-    now = now_utc()
-    yesterday = to_local(now).date() - timedelta(days=1)
-    await ConversationSessionRepository(test_db).upsert(
-        user_id=str(user.id), day=yesterday,
-        digest=StateDigest(wants=["làm tóc"], open=["chưa chọn giờ"]),
-        slots=ConversationSlots(intent="book"),
-        expires_at=now + timedelta(days=30),
-    )
-
-    context = await load_context(test_db, user, "xin chào")
-    assert "Lần trước (hôm qua" in context["context_block"]
-
-
-async def test_last_session_line_absent_without_open_intent(test_db):
-    """Phiên cũ không có `slots.intent` (hoặc không có slots) → không có gì
-    dang dở, không nhắc lại."""
-    from app.agents.booking_graph.context import load_context
-
-    user = await _make_user(test_db)
-    now = now_utc()
-    yesterday = to_local(now).date() - timedelta(days=1)
-    await ConversationSessionRepository(test_db).upsert(
-        user_id=str(user.id), day=yesterday,
-        digest=StateDigest(wants=["làm tóc"]), slots=None,
-        expires_at=now + timedelta(days=30),
-    )
-
-    context = await load_context(test_db, user, "xin chào")
-    assert "Lần trước" not in context["context_block"]
-
-
-async def test_last_session_line_absent_when_appointment_booked_since(test_db):
-    """Khách ĐÃ đặt lịch mới sau lượt nén cuối của phiên cũ → ý định cũ coi
-    như đã xong, không nhắc lại dù `slots.intent` vẫn còn "book"."""
-    from app.agents.booking_graph.context import load_context
-    from app.services.appointment import AppointmentService
-
-    user = await _make_user(test_db)
-    now = now_utc()
-    yesterday = to_local(now).date() - timedelta(days=1)
-    await ConversationSessionRepository(test_db).upsert(
-        user_id=str(user.id), day=yesterday,
-        digest=StateDigest(wants=["làm tóc"]),
-        slots=ConversationSlots(intent="book"),
-        expires_at=now + timedelta(days=30),
-    )
-    await AppointmentService(test_db).create(
-        user, now + timedelta(days=1), note="làm tóc",
-    )
-
-    context = await load_context(test_db, user, "xin chào")
-    assert "Lần trước" not in context["context_block"]
-
-
-async def test_recent_visits_lists_three_past_appointments_newest_first(test_db):
-    from app.agents.booking_graph.context import load_context
-    from app.core.slots import quantize
-    from app.repositories.appointment import AppointmentRepository
-
-    user = await _make_user(test_db)
-    now = now_utc()
-    repo = AppointmentRepository(test_db)
-    for days_ago, note in ((1, "gần nhất"), (3, "giữa"), (5, "xa nhất"), (8, "quá cũ")):
-        await repo.insert_booked(
-            user_id=str(user.id), user_name=user.full_name, phone=user.phone,
-            start_at=quantize(now - timedelta(days=days_ago)), duration_minutes=60,
-            note=note, created_via="chat",
-        )
-
-    context = await load_context(test_db, user, "xin chào")
-    block = context["context_block"]
-    assert "Khách đã đến:" in block
-    gan_idx, giua_idx, xa_idx = (block.index(n) for n in ("gần nhất", "giữa", "xa nhất"))
-    assert gan_idx < giua_idx < xa_idx
-    assert "quá cũ" not in block
+#
+# Task 6.3 (M6-cutover, phát hiện ngoài danh sách file của kế hoạch): bốn test
+# ở đây từng gọi `load_context` của gói supervisor graph cũ (đã xoá) để kiểm
+# dòng "Lần trước" trong `context_block`.
+# `app.agents.booking.context` (gói mới, Task 5.x) KHÔNG có hàm tương đương —
+# `load_turn_context`/`render_context` của gói mới không đọc
+# `ConversationSessionRepository` và không còn dòng "Lần trước" nào (chỉ còn
+# "Recent visits: ..." bằng tiếng Anh, khác hẳn cách trình bày). Tính năng
+# "nhắc ý định dang dở của hôm qua" vì vậy CHƯA được dời sang gói mới — đây là
+# một khoảng trống tính năng thật (không phải lỗi xoá nhầm của task này), nên
+# bốn test xoá ở đây thay vì "move" (test policy §4 không áp dụng: không có gì
+# để move/re-import tới, hàm bị kiểm không còn chạy trên traffic thật). Xem
+# báo cáo Task 1 (2026-11-08-orchestrator-speaks) để theo dõi việc dời tính
+# năng này sang gói mới ở một task sau.
 
 
 async def test_short_session_without_compaction_still_saves_episodic_memory_preserving_digest(test_db):

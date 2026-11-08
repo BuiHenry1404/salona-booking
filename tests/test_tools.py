@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.agents.booking_graph.context import format_vi_datetime, format_vi_hhmm
-from app.agents.booking_graph.tools import make_booking_tools, make_shop_tools
+from app.agents.booking.context import format_vi_datetime, format_vi_hhmm
+from app.agents.booking.tools import make_booking_tools, make_shop_tools
 from app.core.clock import TZ, now_utc, to_local
 from app.models.user import User
 from app.services.appointment import AppointmentService
@@ -98,7 +98,7 @@ async def test_shop_hours_returns_data_not_a_sentence(test_db):
 
 class TestIsOpenAtTool:
     """Thứ tự kiểm: closed_day → before_open/after_close → owner_busy → open
-    (app/agents/booking_graph/tools.py, is_open_at)."""
+    (app/agents/booking/tools.py, is_open_at)."""
 
     def _tool(self, test_db, user):
         tools = {t.name: t for t in make_shop_tools(test_db, user)}
