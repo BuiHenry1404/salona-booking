@@ -187,6 +187,53 @@ def _is_claimed_clause(clause: str) -> bool:
     return False
 
 
+# `claim_verbs` (orchestrator-speaks, Task 2): động từ cam kết của MỘT mệnh đề,
+# để `reply_check` tách claim "giữ" (hợp lệ khi giờ đó đang có đề xuất chờ thật)
+# khỏi "đặt/ghi/chốt" và "dời/huỷ" (chỉ hợp lệ sau `approve` thành công).
+# `_is_claimed_clause` ở trên giữ nguyên cho guard cũ tới khi nó bị xoá.
+_COMMIT_VERBS = frozenset({"giữ", "đặt", "ghi", "chốt", "dời", "đổi", "hủy", "huỷ"})
+_DONE_BEFORE = frozenset({"đã", "vừa", "đang"})
+# "có người đặt rồi", "khách khác đặt rồi": người khác làm, không phải em nhận.
+_OTHER_SUBJECTS = frozenset({"người", "khách"})
+# "sẽ giữ/huỷ": hứa làm, chưa phải nói đã làm.
+_FUTURE_BEFORE = frozenset({"sẽ"})
+# "đã đổi ý rồi" không phải lịch hẹn — các động từ này cần mệnh đề nói tới lịch.
+_NEEDS_APPOINTMENT = frozenset({"dời", "đổi", "hủy", "huỷ"})
+_CLAIM_OBJ_WORDS = frozenset(o.strip() for o in _CLAIM_OBJS)
+
+
+def claim_verbs(clause: str) -> set:
+    """Động từ cam kết (`_COMMIT_VERBS`) mà mệnh đề nói là em ĐÃ/ĐANG làm.
+
+    Một động từ được tính khi: có "đã/vừa/đang" trong 2 từ trước, hoặc "rồi"
+    đứng sau; riêng "giữ" còn tính ở dạng trần ("em giữ chỗ 4 giờ chiều") khi
+    mệnh đề nói tới lịch/chỗ/hẹn hoặc một mốc giờ. Không tính: mệnh đề phủ
+    định ("chưa/không/ko", như `_is_claimed_clause`), "ghi nhận/ghi lại", chủ
+    ngữ người khác ("có người đặt rồi"), tương lai ("sẽ giữ"), và "dời/đổi/huỷ"
+    khi mệnh đề không nói tới lịch ("đã đổi ý rồi")."""
+    p = tokens.padded(clause)
+    if tokens.has_phrase(p, ("chưa", "không", "ko")):
+        return set()
+    p_clean = p.replace(" ghi nhận ", " ").replace(" ghi lại ", " ")
+    ws = [t for t in p_clean.split() if t != "|"]
+    about_appointment = any(w in _CLAIM_OBJ_WORDS for w in ws) or bool(tokens.scan_times(clause))
+    verbs = set()
+    for i, w in enumerate(ws):
+        if w not in _COMMIT_VERBS:
+            continue
+        before = set(ws[max(0, i - 2):i])
+        if before & (_OTHER_SUBJECTS | _FUTURE_BEFORE):
+            continue
+        done = bool(before & _DONE_BEFORE) or "rồi" in ws[i + 1:]
+        bare_hold = w == "giữ" and about_appointment
+        if not (done or bare_hold):
+            continue
+        if w in _NEEDS_APPOINTMENT and not about_appointment:
+            continue
+        verbs.add(w)
+    return verbs
+
+
 def _clauses(sentence: str) -> List[str]:
     return tokens.split_clauses(sentence, break_words=("còn",), preserve_date_comma=True)
 

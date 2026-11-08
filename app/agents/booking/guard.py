@@ -13,7 +13,6 @@ Task 6.1; vì sao tách module riêng — xem docstring ở đó).
 toàn bộ `state` của graph cũ."""
 from __future__ import annotations
 
-import unicodedata
 from datetime import datetime
 from typing import Literal, Sequence
 
@@ -22,6 +21,7 @@ from pydantic import BaseModel
 from app.agents.booking.reply_brief import HELD_FACT_KEYS
 from app.agents.booking.schemas import ReplyBrief
 from app.agents.booking import draft_checks, rewrite, tokens
+from app.agents.booking.reply_check import normalize  # dời sang reply_check (Task 2)
 from app.core.clock import to_local
 from app.core.logging import get_logger
 from app.core.vi_format import _clock_phrase
@@ -98,15 +98,6 @@ def facts_from_brief(brief: ReplyBrief) -> dict:
                 held_iso = fact.iso
     allowed_claims = _ALL_CLAIMS - set(brief.must_not_claim)
     return {"clocks": clocks, "held_iso": held_iso, "allowed_claims": allowed_claims}
-
-
-def normalize(text: str) -> str:
-    """NFC + casefold + gộp khoảng trắng — không regex, chỉ `split`/`join`.
-
-    Fix round 1 (item 3): chữ Việt gõ dấu tổ hợp (NFD, vài bộ gõ/IME phát ra)
-    và dấu dựng sẵn (NFC, phổ biến hơn) KHÁC NHAU về byte dù hiển thị giống
-    hệt — so sánh thẳng sẽ trật dù mắt người không thấy khác biệt gì."""
-    return " ".join(unicodedata.normalize("NFC", text or "").casefold().split())
 
 
 def _claim_violation(draft: str, facts: dict) -> bool:

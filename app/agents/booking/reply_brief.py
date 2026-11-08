@@ -8,13 +8,9 @@ Conversation Agent không được bịa. Task 4.4b (quyết định chủ dự 
 `classify_only`/`ClassifyOutcome` — `social`/`unsupported` giờ đến thẳng từ
 `finish(kind_hint=...)` của Orchestrator, cùng đường với `answer`.
 
-`facts_for(record, ctx, now)` ứng với ĐÚNG MỘT dòng bảng ánh xạ §5.4 — nó chỉ
-đọc `record.result` (một `TaskResult` của `appointment_task`/`shop_info_task`,
-hoặc một `PendingOutcome` của `decide_pending`), không biết gì về các
-`CallRecord` khác trong lượt; `ctx`/`now` chỉ dùng cho hai dòng cần dữ kiện
-KHÔNG nằm trong `TaskResult`/`PendingOutcome` (`ctx.shop_hours` cho
-`outside_hours`/`closed_day`/`time_passed`, `now` để tính phút còn lại của
-`PendingOutcome{kept}.expires_at`). `build_reply_brief` gộp `facts_for` của
+`facts_for(record, ctx, now)` (một dòng bảng §5.4 cho một `CallRecord`) và các
+câu mẫu đã dời sang `reply_check.py` (orchestrator-speaks, Task 2) — module
+này import lại. `build_reply_brief` gộp `facts_for` của
 mọi `CallRecord.allowed` lại, rồi thêm các dòng không gắn với MỘT call cụ thể
 (`unannounced` R0, `recently_declined`, `shop_phone` của `unsupported`,
 `error_reason`/cấm mọi claim của `limit_reached`)."""
@@ -25,60 +21,42 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.agents.booking.context import TurnContext, UnannouncedOutcome
+from app.agents.booking.context import TurnContext
 from app.agents.booking.orchestrator.agent import OrchestrateOutcome
 from app.agents.booking.schemas import (
-    AppointmentList,
     CallRecord,
     ClarifyRequest,
     Fact,
     FreeSlots,
-    Moment,
     PendingOutcome,
     ProposalCreated,
     ReplyBrief,
     ReplyKind,
-    ResolvedTime,
-    ShopHoursOut,
-    ShopOpenOut,
-    ShopStatusOut,
     TaskResult,
 )
 from app.agents.booking.middleware import FALLBACK_ANSWER
 from app.agents.booking.phrase import code_phrase
-from app.core.clock import ensure_aware
 from app.core.config import settings
 
-# ---------------------------------------------------------------------------
-# Câu cứng pin sẵn (nguyên văn từ confirm.py cũ, xem brief Task 4.1)
-# ---------------------------------------------------------------------------
-
-FAILED_FALLBACK = "Dạ {address}, {when} em chưa ghi được, {address} nhắn lại giờ khác giúp em nhé."
-BUTTON_STALE_REPLY = "Đề xuất lúc nãy hết hạn rồi, anh chị nhắn lại giờ giúp em nhé."
-PROPOSAL_FALLBACK = "Dạ {address}, em giữ chỗ {when} cho {address} nhé, {address} đồng ý không ạ?"
-UNANNOUNCED_LINE = {"approved": "đã {verb} xong {when}", "failed": "{when} em chưa ghi được"}
-
-# `kind` (book/move/cancel) -> động từ nói với khách và -> claim bị cấm/được
-# dùng cho `code_phrase` (tên khoá của `_TEMPLATES` trong `phrase.py`).
-_VERB_FOR_KIND = {"book": "đặt", "move": "dời", "cancel": "huỷ"}
-_CLAIM_FOR_KIND = {"book": "booked", "move": "moved", "cancel": "cancelled"}
-_ALL_CLAIMS: list[Literal["booked", "cancelled", "moved"]] = ["booked", "cancelled", "moved"]
+# Trích sự thật dùng chung + câu mẫu đã dời sang `reply_check.py`
+# (orchestrator-speaks, Task 2) — import lại để graph cũ và test cũ chạy tới
+# khi module này bị xoá.
+from app.agents.booking.reply_check import (  # noqa: F401  (tái xuất cho graph/test cũ)
+    BUTTON_STALE_REPLY,
+    FAILED_FALLBACK,
+    PROPOSAL_FALLBACK,
+    _ALL_CLAIMS,
+    _CLAIM_FOR_KIND,
+    _facts_for_pending,
+    _tone_context,
+    facts_for,
+    unannounced_line,
+)
 
 # Khoá `Fact` mang mốc giờ ĐANG/ĐÃ giữ thật (không phải mọi fact có `iso` —
 # ví dụ `slot`/`queued_at` chỉ là giờ trống). `guard.py` import hằng số này
 # thay vì chép lại danh sách khoá — một nguồn sự thật duy nhất cho tên khoá.
 HELD_FACT_KEYS = frozenset({"held_at", "will_cancel", "booked_at", "moved_to", "cancelled_at"})
-
-_HOURS_ERROR_CODES = frozenset({"outside_hours", "closed_day", "time_passed"})
-
-
-def unannounced_line(unannounced: UnannouncedOutcome) -> str:
-    """Câu R0 bắt buộc (`must_say`) cho kết quả lượt trước khách chưa được
-    báo — graph dùng lại đúng câu này để biết câu đáp cuối đã báo hay chưa."""
-    if unannounced.outcome == "approved":
-        verb = _VERB_FOR_KIND.get(unannounced.kind, "")
-        return UNANNOUNCED_LINE["approved"].format(verb=verb, when=unannounced.spoken)
-    return UNANNOUNCED_LINE["failed"].format(when=unannounced.spoken)
 
 
 class ButtonOutcome(BaseModel):
@@ -89,206 +67,6 @@ class ButtonOutcome(BaseModel):
 
 
 TurnOutcome = OrchestrateOutcome | ButtonOutcome
-
-
-# ---------------------------------------------------------------------------
-# facts_for — MỘT dòng bảng §5.4 ứng với MỘT CallRecord
-# ---------------------------------------------------------------------------
-
-
-def _facts_for_proposal(data: ProposalCreated) -> tuple[list[Fact], list[str], list[str]]:
-    facts: list[Fact] = []
-    must_say: list[str] = []
-    if data.kind == "cancel":
-        facts.append(Fact(key="will_cancel", spoken=data.start_at.spoken, iso=data.start_at.iso))
-        must_say.append(data.start_at.spoken)
-    else:
-        facts.append(Fact(key="held_at", spoken=data.start_at.spoken, iso=data.start_at.iso))
-        must_say.append(data.start_at.spoken)
-        if data.kind == "move" and data.replaces is not None:
-            facts.append(Fact(key="replaces", spoken=data.replaces.spoken, iso=data.replaces.iso))
-    if data.note:
-        facts.append(Fact(key="note", text=data.note))
-    for queued in data.queued:
-        facts.append(Fact(key="queued_at", spoken=queued.spoken, iso=queued.iso))
-    return facts, must_say, [_CLAIM_FOR_KIND[data.kind]]
-
-
-def _facts_for_free_slots(data: FreeSlots) -> tuple[list[Fact], list[str], list[str]]:
-    facts = [Fact(key="slot", spoken=m.spoken, iso=m.iso) for m in data.slots]
-    facts.append(Fact(key="day", text=data.day.isoformat()))
-    facts.append(Fact(key="more", text=str(data.more)))
-    return facts, [m.spoken for m in data.slots], []
-
-
-def _facts_for_appointment_list(data: AppointmentList) -> tuple[list[Fact], list[str], list[str]]:
-    facts = [Fact(key="appointment", spoken=a.at.spoken, iso=a.at.iso, text=a.note) for a in data.appointments]
-    return facts, [a.at.spoken for a in data.appointments], []
-
-
-def _facts_for_shop_hours(data: ShopHoursOut) -> tuple[list[Fact], list[str], list[str]]:
-    # Giờ mở/đóng cửa KHÔNG phải mốc thời gian (Shop Info trả `iso` dạng
-    # "08:00", M6b L1) — để ở `text`, không bao giờ vào `iso` cho guard parse.
-    facts = [
-        Fact(key="open", spoken=data.open.spoken, text=data.open.iso),
-        Fact(key="close", spoken=data.close.spoken, text=data.close.iso),
-    ]
-    return facts, [data.open.spoken, data.close.spoken], []
-
-
-def _facts_for_shop_status(data: ShopStatusOut) -> tuple[list[Fact], list[str], list[str]]:
-    facts = [Fact(key="busy", text=str(data.busy))]
-    must_say: list[str] = []
-    if data.until is not None:
-        facts.append(Fact(key="until", spoken=data.until.spoken, iso=data.until.iso))
-        must_say.append(data.until.spoken)
-    return facts, must_say, []
-
-
-def _facts_for_shop_open(data: ShopOpenOut) -> tuple[list[Fact], list[str], list[str]]:
-    facts = [
-        Fact(key="at", spoken=data.at.spoken, iso=data.at.iso),
-        Fact(key="open", text=str(data.open)),
-        Fact(key="reason", text=data.reason),
-    ]
-    must_say = [data.at.spoken]
-    if data.next_change is not None:
-        facts.append(Fact(key="next_change", spoken=data.next_change.spoken, iso=data.next_change.iso))
-        must_say.append(data.next_change.spoken)
-    return facts, must_say, []
-
-
-def _facts_for_failed_task(result: TaskResult, ctx: TurnContext) -> tuple[list[Fact], list[str], list[str]]:
-    code = result.error_code
-    if code == "slot_unavailable":
-        facts: list[Fact] = []
-        must_say: list[str] = []
-        if result.asked is not None:
-            facts.append(Fact(key="asked", spoken=result.asked.spoken, iso=result.asked.iso))
-            must_say.append(result.asked.spoken)
-        facts.extend(Fact(key="nearest", spoken=m.spoken, iso=m.iso) for m in result.nearest)
-        return facts, must_say, []
-    if code in _HOURS_ERROR_CODES:
-        # Fix round 1 (ruling 3): `TaskResult` của lỗi này không mang giờ mở
-        # cửa — khối bối cảnh (`ctx.shop_hours`) là nguồn thật DUY NHẤT, không
-        # đổi schema `TaskResult` cho việc này.
-        facts = [
-            Fact(key="reason", text=code),
-            Fact(key="open", text=ctx.shop_hours.open_time),
-            Fact(key="close", text=ctx.shop_hours.close_time),
-        ]
-        must_say = []
-        if result.asked is not None:
-            facts.append(Fact(key="asked", spoken=result.asked.spoken, iso=result.asked.iso))
-            must_say.append(result.asked.spoken)
-        return facts, must_say, []
-    if code == "already_yours":
-        facts = []
-        must_say = []
-        if result.asked is not None:
-            facts.append(Fact(key="existing", spoken=result.asked.spoken, iso=result.asked.iso))
-            must_say.append(result.asked.spoken)
-        return facts, must_say, []
-    # "failed khác" (schema_invalid, model_error, tool_timeout, fact_mismatch,
-    # appointment_not_found...) — dòng chung của bảng §5.4: chỉ `error_reason`,
-    # cấm mọi claim vì không biết việc có xảy ra hay không.
-    return [Fact(key="error_reason", text=code or "unknown")], [], list(_ALL_CLAIMS)
-
-
-def _facts_for_task_result(result: TaskResult, ctx: TurnContext) -> tuple[list[Fact], list[str], list[str]]:
-    data = result.data
-    if isinstance(data, ProposalCreated):
-        return _facts_for_proposal(data)
-    if isinstance(data, FreeSlots):
-        return _facts_for_free_slots(data)
-    if isinstance(data, AppointmentList):
-        return _facts_for_appointment_list(data)
-    if isinstance(data, ShopHoursOut):
-        return _facts_for_shop_hours(data)
-    if isinstance(data, ShopStatusOut):
-        return _facts_for_shop_status(data)
-    if isinstance(data, ShopOpenOut):
-        return _facts_for_shop_open(data)
-    if isinstance(data, ResolvedTime):
-        # §5.4: `ResolvedTime{missing}` không tự sinh fact/claim — câu hỏi
-        # (`ask`) đến từ `ask_customer` của Orchestrator, không phải ở đây.
-        return [], [], []
-    if result.status == "failed":
-        return _facts_for_failed_task(result, ctx)
-    return [], [], []
-
-
-def _minutes_left(expires_at: datetime, now: datetime) -> int:
-    delta = ensure_aware(expires_at) - ensure_aware(now)
-    return max(0, round(delta.total_seconds() / 60))
-
-
-def _facts_for_pending(pending: PendingOutcome, now: datetime) -> tuple[list[Fact], list[str], list[str]]:
-    claim = _CLAIM_FOR_KIND.get(pending.kind)
-    claims = [claim] if claim else []
-
-    if pending.outcome == "approved":
-        key = {"book": "booked_at", "move": "moved_to", "cancel": "cancelled_at"}.get(pending.kind, "booked_at")
-        iso = pending.appointment.at.iso if pending.appointment is not None else None
-        return [Fact(key=key, spoken=pending.spoken, iso=iso)], [pending.spoken], []
-
-    if pending.outcome in ("rejected", "superseded"):
-        return [Fact(key="declined", text=pending.kind, spoken=pending.spoken)], [], claims
-
-    if pending.outcome == "clarify":
-        return [Fact(key="pending", text=pending.kind, spoken=pending.spoken)], [pending.spoken], claims
-
-    if pending.outcome == "kept":
-        facts = [Fact(key="pending", text=pending.kind, spoken=pending.spoken)]
-        if pending.expires_at is not None:
-            # Fix round 1 (ruling 2): `expires_at` tồn tại trên `PendingOutcome`
-            # đúng cho dòng này (§5.4 "kept{kind, spoken, expires_in}") — dòng
-            # cũ bỏ sót nó.
-            facts.append(Fact(
-                key="expires_in",
-                iso=pending.expires_at.isoformat(),
-                text=str(_minutes_left(pending.expires_at, now)),
-            ))
-        return facts, [], claims
-
-    if pending.outcome == "failed":
-        facts = [Fact(key="asked", spoken=pending.spoken)]
-        reason_text = pending.error or pending.reason
-        if reason_text:
-            facts.append(Fact(key="error_reason", text=reason_text))
-        facts.extend(Fact(key="nearest", spoken=m.spoken, iso=m.iso) for m in pending.nearest)
-        return facts, [pending.spoken], list(_ALL_CLAIMS)
-
-    if pending.outcome == "not_approvable":
-        # Review M4 finding (binding, xem brief task): `reason` có thể là
-        # "expired"/"approving"/"not_found" hay một status đề xuất khác đã bị
-        # đóng ở nơi khác ("rejected"/"superseded"/"approved" — ví dụ nút bấm
-        # vừa xử lý xong). Bảng §5.4 chỉ có MỘT dòng cho `not_approvable`,
-        # không phân nhánh theo giá trị `reason` — áp y nguyên cho mọi giá
-        # trị. `reason="approved"` là trường hợp bảng không cho hành vi hợp
-        # lý (cấm `booked` khi lịch THẬT ra đã được ghi ở nơi khác) — xem
-        # ghi chú concern trong báo cáo task, KHÔNG tự chế một nhánh riêng
-        # ở đây để tránh hành vi không có trong spec.
-        if pending.reason == "expired":
-            return [Fact(key="expired", spoken=pending.spoken)], [], list(_ALL_CLAIMS)
-        reason_text = pending.reason or pending.error or "not_approvable"
-        return [Fact(key="error_reason", text=reason_text)], [], list(_ALL_CLAIMS)
-
-    return [], [], []
-
-
-def facts_for(
-    record: CallRecord, ctx: TurnContext, now: datetime
-) -> tuple[list[Fact], list[str], list[str]]:
-    """`(facts, must_say, must_not_claim)` cho MỘT dòng bảng §5.4 — đọc
-    đúng `record.result`, không biết gì về các `CallRecord` khác. `ctx`/`now`
-    chỉ dùng cho hai dòng cần dữ kiện ngoài `record` (xem docstring module)."""
-    result = record.result
-    if isinstance(result, PendingOutcome):
-        return _facts_for_pending(result, now)
-    if isinstance(result, TaskResult):
-        return _facts_for_task_result(result, ctx)
-    return [], [], []
 
 
 # ---------------------------------------------------------------------------
@@ -363,19 +141,6 @@ def _then_line(calls: list[CallRecord]) -> str | None:
     if proposal is not None and proposal.queued:
         return f"Sau giờ này em sẽ hỏi tiếp {proposal.queued[0].spoken}"
     return None
-
-
-def _tone_context(
-    ctx: TurnContext, pending: PendingOutcome | None, has_new_proposal: bool
-) -> Literal["first_time", "returning", "changed_time", "after_decline"]:
-    declined_no_new = pending is not None and pending.outcome in ("rejected", "superseded") and not has_new_proposal
-    if ctx.recently_declined is not None or declined_no_new:
-        return "after_decline"
-    if pending is not None and pending.outcome == "superseded" and has_new_proposal:
-        return "changed_time"
-    if ctx.recent_visits:
-        return "returning"
-    return "first_time"
 
 
 def _fallback_for(
