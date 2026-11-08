@@ -563,3 +563,46 @@ async def test_orchestrator_model_runs_with_low_reasoning_effort(test_db, clean_
     assert captured["tags"] == ["orchestrate"]
     assert captured["streaming"] is False
     assert captured["max_retries"] == 0
+
+
+# ---------------------------------------------------------------------------
+# M6b L2: model dừng bằng chữ thường (không tool call)
+# ---------------------------------------------------------------------------
+
+
+async def test_plain_text_after_an_allowed_call_ends_as_finish_answer(test_db, clean_db, monkeypatch):
+    """Lượt 3/4/9 chạy thật: sau `propose_book` model trả AIMessage không tool
+    call → code coi là `finish(kind_hint="answer")`, không phải `limit`."""
+    user = await a_user(test_db)
+    fake = FakeSpecialists({("appointment", "propose_book"): _propose_result()})
+    deps = await make_deps(test_db, user, run_appointment=fake.appointment)
+    model = scripted(
+        [
+            tool_call("appointment_task", _appt("propose_book", time=_time(day_offset=1, hour=9))),
+            AIMessage("Da em giu cho roi"),
+        ],
+        tags=("orchestrate",),
+    )
+    patch_model(monkeypatch, model)
+
+    with structlog.testing.capture_logs() as logs:
+        out = await run_orchestrate(deps, recent=[])
+
+    assert out.ended_by == "finish"
+    assert out.finish is not None and out.finish.kind_hint == "answer"
+    assert out.rounds_executed == 1
+    assert out.proposals_created == 1
+    text_end = [e for e in logs if e["event"] == "orch_text_end"]
+    assert text_end and text_end[0]["extra"]["turn_id"] == deps.turn_id
+
+
+async def test_plain_text_with_no_allowed_call_is_still_error(test_db, clean_db, monkeypatch):
+    user = await a_user(test_db)
+    deps = await make_deps(test_db, user)
+    model = scripted([AIMessage("Da em chao chi")], tags=("orchestrate",))
+    patch_model(monkeypatch, model)
+
+    out = await run_orchestrate(deps, recent=[])
+
+    assert out.ended_by == "error"
+    assert out.finish is None

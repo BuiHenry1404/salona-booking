@@ -953,3 +953,59 @@ async def test_shop_hours_turn_with_hhmm_iso_completes(test_db, user, models):
 
     assert events_out[-1][0] == "complete"
     assert not [e for e in logs if e["event"] in ("respond_failed", "agent_turn_failed")]
+
+
+async def test_propose_then_plain_text_reply_asks_for_confirmation(test_db, user, models):
+    """M6b L2 (lượt 3 chạy thật): `find_slots` + `propose_book` rồi Orchestrator
+    dừng bằng CHỮ (không `finish`); Conversation chỉ đọc 4 dòng giờ không hỏi
+    gì → câu cuối phải kết thúc bằng câu hỏi và nêu giờ đang giữ; lượt kết
+    thúc `finish`, kind `proposal_made`, có nút bấm."""
+    start = _tomorrow_at(16)
+    held_spoken = format_vi_datetime(start)
+    day = to_local(start).date()
+    slot_moments = [
+        Moment(iso=_tomorrow_at(h).isoformat(), spoken=format_vi_datetime(_tomorrow_at(h)))
+        for h in (14, 15, 16)
+    ]
+    slots = TaskResult(
+        task_id="t0", agent="appointment", action="find_slots", status="ok",
+        data=FreeSlots(day=day, slots=slot_moments, more=False, fetched_at=now_utc()),
+    )
+
+    async def fake_appointment(db, user_, spec, ctx, question, *, extra_middleware=()):
+        if spec.action == "find_slots":
+            return slots
+        assert spec.action == "propose_book"
+        proposal = await ProposalService(db).create(user_, "book", start, None)
+        from app.agents.booking.schemas import ProposalCreated
+        return TaskResult(
+            task_id="t1", agent="appointment", action="propose_book", status="ok",
+            data=ProposalCreated(
+                proposal_id=str(proposal.id), kind="book",
+                start_at=Moment(iso=start.isoformat(), spoken=held_spoken),
+                note=None, replaces=None, queued=[],
+            ),
+        )
+
+    models.orchestrator.replies += [
+        tool_call("appointment_task", _appt("find_slots", time=_time(day_offset=1))),
+        tool_call("appointment_task", _appt("propose_book", time=_time(day_offset=1, hour=16))),
+        AIMessage("Da em giu cho roi"),
+    ]
+    models.conversation.replies += [AIMessage("\n".join(m.spoken for m in slot_moments) + f"\n{held_spoken}")]
+    monkeypatch_target = graph_module.appointment
+    original = monkeypatch_target.run_task
+    monkeypatch_target.run_task = fake_appointment
+    try:
+        events_out = await turn(test_db, user, "mai chieu co trong khong")
+    finally:
+        monkeypatch_target.run_task = original
+
+    data = dict(events_out)
+    assert events_out[-1][0] == "complete"
+    assert data["complete"]["answer"].rstrip().endswith("?")
+    assert held_spoken in data["complete"]["answer"]
+    assert data["complete"]["proposal"] is not None
+    doc = await _ledger_doc(test_db, user)
+    assert doc["ended_by"] == "finish"
+    assert doc["reply_kind"] == "proposal_made"

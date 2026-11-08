@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 from typing import Any, Awaitable, Callable
 
+from types import SimpleNamespace
+
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
@@ -616,6 +618,35 @@ class OrchestratorGuard(AgentMiddleware):
         if rounds >= self.deps.max_rounds:
             return {**update, "jump_to": "end", "ended_by": "limit"}
         return update or None
+
+    @hook_config(can_jump_to=["end"])
+    async def aafter_model(self, state, runtime) -> dict[str, Any] | None:
+        """Sau mỗi lần gọi model: model dừng bằng CHỮ (AIMessage không tool call)
+        là một cách kết thúc hợp lệ khi lượt đã có ≥1 call được phép (M6b L2
+        — lượt 3/4/9 chạy thật: sau `propose_book` model trả chữ thay vì
+        `finish`, `ended_by` rỗng rơi thành "limit" và câu đáp mất câu hỏi
+        xác nhận). Đặt ở `aafter_model` chứ không `abefore_model`: khi model
+        không gọi tool, `create_agent` đi thẳng END và không gọi
+        `abefore_model` nữa (đọc `langchain/agents/factory.py`,
+        `_make_model_to_tools_edge`), còn `after_model` chạy sau MỌI lần gọi
+        model. Không đếm vòng ở đây: vòng tool trước đó đã được `abefore_model`
+        tính TRƯỚC lần gọi model này. Chưa có call nào được phép → `error`
+        (§10, cùng luật với `_outcome_from_ledger`).
+        """
+        messages = state.get("messages") or []
+        last = messages[-1] if messages else None
+        if not isinstance(last, AIMessage) or last.tool_calls:
+            return None
+        ids = self._base_extra(SimpleNamespace(runtime=runtime))
+        if any(c.get("allowed") for c in state.get("calls") or []):
+            logger.info("orch_text_end", extra={**ids, "ended_by": "finish"})
+            finish = FinishArgs(kind_hint="answer", service=None, stated=[])
+            return {
+                "jump_to": "end", "ended_by": "finish",
+                "finish_args": finish.model_dump(mode="json"),
+            }
+        logger.warning("orch_text_end", extra={**ids, "ended_by": "error"})
+        return {"jump_to": "end", "ended_by": "error"}
 
 
 def _parse_result(tool: str, msg) -> TaskResult | PendingOutcome | None:

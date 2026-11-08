@@ -48,10 +48,13 @@ _CLAIM_OBJ_WORDS = frozenset(o.strip() for o in draft_checks._CLAIM_OBJS)
 
 # Hai nhóm vi phạm có thể SỬA được bằng câu chốt CODE (`brief.fallback`) khi
 # rewrite không gỡ được — chỉ áp dụng cho lượt có câu chốt riêng (§5.4).
-_FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim"})
+_FIXABLE_BY_FALLBACK = frozenset({"missing_fact", "claim", "missing_question"})
+# Kind mà câu đáp PHẢI kết thúc bằng câu hỏi (M6b L2): đề xuất mới cần khách
+# đồng ý; `clarify` cần khách trả lời đúng một điều. Không regex: `endswith`.
+_QUESTION_KINDS = frozenset({"proposal_made", "clarify"})
 # `limit_reached` (Task 5.3 fix round 3): câu chốt là lời mời gọi tiệm (§7.2)
 # — thiếu nó sau rewrite thì dùng thẳng câu đó.
-_FALLBACK_KINDS = frozenset({"confirmed", "failed", "proposal_made", "limit_reached"})
+_FALLBACK_KINDS = frozenset({"confirmed", "failed", "proposal_made", "limit_reached", "clarify"})
 
 
 class GuardResult(BaseModel):
@@ -240,6 +243,8 @@ def check_reply(draft: str, brief: ReplyBrief, previous_replies: Sequence[str]) 
         violations.append("missing_fact")
     if draft_checks.repeats(draft, previous_replies):
         violations.append("repeat")
+    if brief.kind in _QUESTION_KINDS and not draft.rstrip().endswith("?"):
+        violations.append("missing_question")
     return violations
 
 

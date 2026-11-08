@@ -427,3 +427,38 @@ def test_facts_from_brief_skips_a_non_iso_clock_and_logs():
     assert facts["clocks"] == {(3, 0, "chiều")}
     skipped = [e for e in logs if e["event"] == "guard_fact_iso_invalid"]
     assert skipped and skipped[0]["extra"]["key"] == "open"
+
+
+# ---------------------------------------------------------------------------
+# M6b L2: proposal_made / clarify phải kết thúc bằng câu hỏi
+# ---------------------------------------------------------------------------
+
+
+async def test_proposal_made_reply_without_a_question_is_rewritten_then_falls_back(monkeypatch):
+    held = "Chủ Nhật 8/11, 4 giờ chiều"
+    mock = AsyncMock(return_value=f"Dạ chị Lan, {held} nhé chị.")
+    monkeypatch.setattr(REWRITE_ONCE, mock)
+    fallback = f"Dạ chị Lan, em giữ chỗ {held} cho chị Lan nhé, chị Lan đồng ý không ạ?"
+    brief = make_brief(kind="proposal_made", must_say=[held], must_not_claim=["booked"], fallback=fallback)
+
+    result = await apply_guard(held, brief, [], source="llm")
+
+    assert result.source == "code"
+    assert result.answer == fallback
+    assert "missing_question" in result.violations
+    mock.assert_awaited_once()
+
+
+@pytest.mark.parametrize("kind", ["proposal_made", "clarify"])
+def test_reply_ending_with_a_question_has_no_missing_question(kind):
+    held = "Chủ Nhật 8/11, 4 giờ chiều"
+    brief = make_brief(kind=kind, must_say=[held], must_not_claim=["booked"])
+
+    assert check_reply(f"Dạ chị Lan, {held}, chị Lan đồng ý không ạ?  ", brief, []) == []
+    assert "missing_question" in check_reply(f"Dạ chị Lan, {held} nhé chị.", brief, [])
+
+
+def test_answer_kind_does_not_require_a_question():
+    brief = make_brief(kind="answer")
+
+    assert "missing_question" not in check_reply("Dạ chị Lan, tiệm mở cửa 8 giờ sáng ạ.", brief, [])

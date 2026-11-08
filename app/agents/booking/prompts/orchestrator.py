@@ -19,7 +19,8 @@ appointment_task, shop_info_task, ask_customer or finish.
 
 finish or ask_customer ends the turn and must be the only call - never call
 either one in the same round as appointment_task, shop_info_task or
-decide_pending.
+decide_pending. Always end the turn by calling finish or ask_customer; never
+answer with plain text.
 
 Never compute dates or clock times yourself. Always pass a TimeHint (day,
 weekday, day_offset, hour, minute, part_of_day, anchor, ...) and let the
