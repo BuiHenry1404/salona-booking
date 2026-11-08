@@ -462,3 +462,28 @@ def test_answer_kind_does_not_require_a_question():
     brief = make_brief(kind="answer")
 
     assert "missing_question" not in check_reply("Dạ chị Lan, tiệm mở cửa 8 giờ sáng ạ.", brief, [])
+
+
+async def test_clarify_reply_without_a_question_keeps_the_draft_not_a_canned_line(monkeypatch):
+    """Review M6b (Critical 1): `clarify` không có câu dự phòng riêng — rơi về
+    `brief.fallback` sẽ là câu "gọi trực tiếp cho tiệm". Câu nhờ khách trả lời
+    lịch sự (không có "?") phải được giữ sau một lần viết lại không sửa được."""
+    monkeypatch.setattr(REWRITE_ONCE, AsyncMock(return_value=None))
+    brief = make_brief(kind="clarify", fallback="Dạ em chưa tra được, anh chị gọi trực tiếp cho tiệm giúp em nhé ạ.")
+    draft = "Dạ chị Lan cho em biết chị muốn đặt mấy giờ nhé ạ."
+
+    result = await apply_guard(draft, brief, [], source="llm")
+
+    assert result.answer == draft
+    assert result.source == "llm"
+
+
+@pytest.mark.parametrize("draft", [
+    "Dạ chị Lan, Chủ Nhật 8/11, 4 giờ chiều, chị đồng ý không ạ? 😊",
+    "Dạ chị Lan, Chủ Nhật 8/11, 4 giờ chiều, chị đồng ý không ạ?\nXong em giữ tiếp giờ chờ cho chị nhé.",
+    "Dạ chị Lan, Chủ Nhật 8/11, 4 giờ chiều, chị đồng ý không ạ?”",
+])
+def test_question_followed_by_emoji_quote_or_another_line_is_not_missing_question(draft):
+    brief = make_brief(kind="proposal_made", must_say=["Chủ Nhật 8/11, 4 giờ chiều"], must_not_claim=["booked"])
+
+    assert "missing_question" not in check_reply(draft, brief, [])

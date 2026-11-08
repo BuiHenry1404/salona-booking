@@ -586,7 +586,7 @@ async def test_plain_text_after_an_allowed_call_ends_as_finish_answer(test_db, c
     patch_model(monkeypatch, model)
 
     with structlog.testing.capture_logs() as logs:
-        out = await run_orchestrate(deps, recent=[])
+        out = await run_orchestrate(deps, recent=[], thread_id="thread-text")
 
     assert out.ended_by == "finish"
     assert out.finish is not None and out.finish.kind_hint == "answer"
@@ -594,9 +594,13 @@ async def test_plain_text_after_an_allowed_call_ends_as_finish_answer(test_db, c
     assert out.proposals_created == 1
     text_end = [e for e in logs if e["event"] == "orch_text_end"]
     assert text_end and text_end[0]["extra"]["turn_id"] == deps.turn_id
+    assert text_end[0]["extra"]["thread_id"] == "thread-text"
 
 
-async def test_plain_text_with_no_allowed_call_is_still_error(test_db, clean_db, monkeypatch):
+async def test_plain_text_with_no_allowed_call_also_ends_as_finish_answer(test_db, clean_db, monkeypatch):
+    """Review M6b (Important 2): model trả lời "cảm ơn em" bằng chữ, chưa gọi
+    tool nào — không phải lỗi model (§10 dành cho lỗi/timeout), nên KHÔNG ra
+    câu cứng "gọi tiệm"; Conversation trả lời với brief không có fact nào."""
     user = await a_user(test_db)
     deps = await make_deps(test_db, user)
     model = scripted([AIMessage("Da em chao chi")], tags=("orchestrate",))
@@ -604,5 +608,5 @@ async def test_plain_text_with_no_allowed_call_is_still_error(test_db, clean_db,
 
     out = await run_orchestrate(deps, recent=[])
 
-    assert out.ended_by == "error"
-    assert out.finish is None
+    assert out.ended_by == "finish"
+    assert out.finish is not None and out.finish.kind_hint == "answer"

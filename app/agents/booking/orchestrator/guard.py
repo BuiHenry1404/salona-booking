@@ -23,10 +23,9 @@ from __future__ import annotations
 import json
 from typing import Any, Awaitable, Callable
 
-from types import SimpleNamespace
-
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.config import get_config
 from langgraph.types import Command
 from pydantic import BaseModel, ValidationError, create_model
 
@@ -630,23 +629,31 @@ class OrchestratorGuard(AgentMiddleware):
         `abefore_model` nữa (đọc `langchain/agents/factory.py`,
         `_make_model_to_tools_edge`), còn `after_model` chạy sau MỌI lần gọi
         model. Không đếm vòng ở đây: vòng tool trước đó đã được `abefore_model`
-        tính TRƯỚC lần gọi model này. Chưa có call nào được phép → `error`
-        (§10, cùng luật với `_outcome_from_ledger`).
+        tính TRƯỚC lần gọi model này. Kể cả khi CHƯA có call nào được phép
+        (model đáp "cảm ơn" bằng chữ) vẫn là `finish(answer)`, không phải
+        `error`: §10 dành `error` cho lỗi/timeout model, còn `error` ở đây ra
+        câu cứng "gọi tiệm" (review M6b, Important 2).
         """
         messages = state.get("messages") or []
         last = messages[-1] if messages else None
         if not isinstance(last, AIMessage) or last.tool_calls:
             return None
-        ids = self._base_extra(SimpleNamespace(runtime=runtime))
-        if any(c.get("allowed") for c in state.get("calls") or []):
-            logger.info("orch_text_end", extra={**ids, "ended_by": "finish"})
-            finish = FinishArgs(kind_hint="answer", service=None, stated=[])
-            return {
-                "jump_to": "end", "ended_by": "finish",
-                "finish_args": finish.model_dump(mode="json"),
-            }
-        logger.warning("orch_text_end", extra={**ids, "ended_by": "error"})
-        return {"jump_to": "end", "ended_by": "error"}
+        # `Runtime` của hook không mang `config` — đọc thread_id từ config
+        # của lần chạy hiện tại (§11: mọi log có thread_id).
+        thread_id = (get_config().get("configurable") or {}).get("thread_id")
+        user = self.deps.user
+        ids = {
+            "user_id": str(user.id) if user is not None else self.deps.ctx.customer.id,
+            "turn_id": self.deps.turn_id,
+            "thread_id": thread_id,
+        }
+        had_allowed_call = any(c.get("allowed") for c in state.get("calls") or [])
+        logger.info("orch_text_end", extra={**ids, "had_allowed_call": had_allowed_call})
+        finish = FinishArgs(kind_hint="answer", service=None, stated=[])
+        return {
+            "jump_to": "end", "ended_by": "finish",
+            "finish_args": finish.model_dump(mode="json"),
+        }
 
 
 def _parse_result(tool: str, msg) -> TaskResult | PendingOutcome | None:
