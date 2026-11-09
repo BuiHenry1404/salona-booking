@@ -28,6 +28,9 @@ from app.agents.salon.orchestrator.decide import Aside, DecideLabel, apply_decis
 from app.agents.salon.orchestrator.state import SalonContext, SalonState
 from app.agents.salon.shared.context import SnapshotHolder, TurnSnapshot
 from app.agents.salon.shared.schemas import DecisionFact
+# `CONTROL_TOOLS` sống ở `shared/` (guard cần nó mà không được import
+# `orchestrator/`); re-export ở đây cho `middleware/tool_rules.py`.
+from app.agents.salon.shared.tool_names import CONTROL_TOOLS  # noqa: F401
 from app.agents.salon.subagents.appointment.agent import APPOINTMENT
 from app.agents.salon.subagents.dispatch import run_subagent
 from app.agents.salon.subagents.shop_info.agent import SHOP_INFO
@@ -36,10 +39,6 @@ from app.core.logging import get_logger
 from app.models.user import User
 
 logger = get_logger(__name__)
-
-# Tên mọi tool điều khiển của Orchestrator — `service_task` có sẵn ở đây từ
-# trước (Task 17 mới thêm tool) để luật và bộ lọc chữ dùng chung một tập.
-CONTROL_TOOLS = frozenset({"appointment_task", "shop_info_task", "service_task", "decide_pending"})
 
 _REQUEST_DESCRIPTION = (
     "Short English instruction for the agent: what the customer wants done. Never put ids, "
