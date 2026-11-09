@@ -58,6 +58,15 @@ async def lifespan(app: FastAPI):
         app.state.checkpointer = make_checkpointer()
         set_checkpointer(app.state.checkpointer)
 
+        # Store bộ nhớ dài hạn (Task 14, spec §3.5) — cùng DB, cùng `MongoClient`
+        # của checkpointer (`get_sync_client()`); hàm dựng của `MongoDBStore` tự
+        # tạo index unique `(namespace_str, key)`, không có bước `setup()` riêng.
+        # Cùng fail-hard với checkpointer: thiếu nó thì bộ nhớ dài hạn im lặng
+        # mất, chạy tiếp chỉ giấu lỗi.
+        from app.agents.salon.memory.store import make_store, set_store
+        app.state.memory_store = make_store()
+        set_store(app.state.memory_store)
+
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
 
     except Exception as e:
@@ -143,11 +152,21 @@ async def lifespan(app: FastAPI):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
 
+    if getattr(app.state, 'memory_store', None) is not None:
+        from app.agents.salon.memory.store import set_store
+        set_store(None)
+        app.state.memory_store = None
+
     if getattr(app.state, 'checkpointer', None) is not None:
-        from app.agents.checkpoint import set_checkpointer
+        from app.agents.checkpoint import set_checkpointer, set_sync_client
         set_checkpointer(None)
         app.state.checkpointer.close()
         app.state.checkpointer = None
+        # `checkpointer.close()` vừa đóng MongoClient dùng chung (checkpointer
+        # VÀ store bộ nhớ dài hạn) — pymongo không cho dùng lại một client đã
+        # đóng, nên lần khởi động kế tiếp của lifespan (test chạy nhiều app
+        # trong cùng tiến trình) phải tạo client mới, không phải client cũ.
+        set_sync_client(None)
 
     # Shutdown database connection
     if hasattr(app.state, 'mongo_db'):

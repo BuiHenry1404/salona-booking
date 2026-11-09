@@ -25,6 +25,7 @@ from pymongo import MongoClient
 from app.core.config import settings
 
 _checkpointer: Optional[BaseCheckpointSaver] = None
+_client: Optional[MongoClient] = None
 
 
 CHECKPOINT_COLLECTIONS = ("checkpoints", "checkpoint_writes")
@@ -62,8 +63,28 @@ def make_serde() -> JsonPlusSerializer:
     )
 
 
+def get_sync_client() -> MongoClient:
+    """`MongoClient` đồng bộ DÙNG CHUNG cho cả tiến trình — checkpointer VÀ
+    store bộ nhớ dài hạn (Task 14, `memory/store.py::make_store`) đi qua MỘT
+    client, MỘT connection pool, thay vì mỗi nơi tự mở một cái tới cùng Mongo.
+    Tạo mới nếu chưa có — kể cả sau khi lifespan đã đóng client cũ lúc
+    shutdown (`main.py` đặt lại `None` sau `checkpointer.close()`, vì
+    `MongoClient` không dùng lại được sau `close()`)."""
+    global _client
+    if _client is None:
+        _client = MongoClient(str(settings.mongo_uri), tz_aware=True)
+    return _client
+
+
+def set_sync_client(client: Optional[MongoClient]) -> None:
+    """Cho lifespan (quên client đã đóng) và test. `None` = tạo mới ở lần
+    gọi `get_sync_client()` sau."""
+    global _client
+    _client = client
+
+
 def make_checkpointer(client: Optional[MongoClient] = None) -> MongoDBSaver:
-    client = client or MongoClient(str(settings.mongo_uri), tz_aware=True)
+    client = client or get_sync_client()
     ttl = settings.checkpoint_ttl_days * 86400
     _sync_ttl(client, ttl)
     return MongoDBSaver(

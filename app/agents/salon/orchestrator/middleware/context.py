@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Optional
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import BaseMessage, SystemMessage
 
+from app.agents.salon.memory.long_term import read_memory, render_memory
 from app.agents.salon.orchestrator.middleware.turns import (
     current_turn_start,
     final_reply,
@@ -101,8 +102,14 @@ class ContextMiddleware(AgentMiddleware[SalonState, SalonContext]):
         state = request.state
         messages = list(request.messages)
         snapshot = await self.holder.current()
+        memory_text = None
+        if self.store is not None:
+            context = request.runtime.context if request.runtime is not None else None
+            user_id = getattr(context, "user_id", None)
+            if user_id:
+                memory_text = render_memory(await read_memory(self.store, user_id))
         block = render_context(snapshot, audience="orchestrator", turn_facts=read_facts(state),
-                               memory_text=None, now=now_utc())
+                               memory_text=memory_text, now=now_utc())
         tools = offered_tools(
             list(request.tools), has_pending=snapshot.pending is not None,
             pending_decided=bool(state.get("pending_decided")),

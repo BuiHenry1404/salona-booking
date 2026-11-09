@@ -84,3 +84,17 @@ def memory_checkpointer():
     checkpoint.set_checkpointer(saver)
     yield saver
     checkpoint.set_checkpointer(previous)
+
+
+@pytest.fixture(autouse=True)
+def memory_store():
+    """Graph trong test KHÔNG bao giờ ghi bộ nhớ dài hạn vào Mongo thật — như
+    `memory_checkpointer`, mỗi test nhận một `InMemoryStore` mới."""
+    from langgraph.store.memory import InMemoryStore
+
+    from app.agents.salon.memory import store as memory_store_module
+    previous = memory_store_module._store
+    store = InMemoryStore()
+    memory_store_module.set_store(store)
+    yield store
+    memory_store_module.set_store(previous)
