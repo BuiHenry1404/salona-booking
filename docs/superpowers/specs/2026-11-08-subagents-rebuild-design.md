@@ -88,7 +88,7 @@ flowchart TB
     classDef data fill:#fff8e1,stroke:#ff8f00;
 
     K(["Khách (Socket.IO)"])
-    RT["run_turn (code)<br/>nút bấm → apply_decision trước"]:::code
+    RT["run_turn (code)<br/>nút bấm → apply_decision + câu báo code, không gọi model"]:::code
     subgraph O ["Orchestrator = create_agent + checkpointer (thread = conversation_id)"]
         OM["model Orchestrator"]:::llm
         MW["middleware: bối cảnh lượt (gồm phiên chờ) ·<br/>guard câu cuối · trần gọi · retry · ngân sách"]:::code
@@ -150,10 +150,18 @@ Socket.IO) nằm ở `run_turn` và middleware.
 
 - **Gõ chữ**: `run_turn` → `orchestrator.astream_events(...)` trên thread `conversation_id` của
   cuộc trò chuyện hiện tại (§3.4).
-- **Nút bấm** (Router bằng code ở cửa vào): `run_turn` gọi `apply_decision` như `button_path`
-  hiện tại, rồi gọi Orchestrator với kết quả đã áp sẵn trong state (`pending_decided=True`) để
-  nó viết câu báo và làm tiếp nếu còn việc. Nút có `proposal_id` khác đề xuất đang chờ →
-  câu cố định `BUTTON_STALE_REPLY`, không gọi model.
+- **Nút bấm là một API bằng code** (chủ dự án 09/11). `run_turn` kiểm nút (đúng chủ, đúng đề
+  xuất đang chờ, còn hạn), gọi `apply_decision`, rồi trả câu báo do code viết từ kết quả (đã đặt /
+  đã dời / đã huỷ / đã bỏ; giờ vừa bị lấy thì kèm giờ trống gần nhất; ghi thất bại thì kèm số điện
+  thoại tiệm). **Không gọi model.** Câu báo và một dòng ghi lại việc bấm nút được ghi vào thread và
+  `conversations`, để lượt gõ chữ sau Orchestrator biết chuyện đã xảy ra. Nút có `proposal_id` khác
+  đề xuất đang chờ → câu cố định `BUTTON_STALE_REPLY`.
+- **Ngoại lệ duy nhất (hai lịch trong một tin, §5.1):** khách bấm Đồng ý mà phiên `appointment` còn
+  `next_requests` → sau câu báo của code, `run_turn` chạy Orchestrator với một HumanMessage do code
+  dựng (tiếng Anh, có dấu `salon_button`, nêu kết quả duyệt và câu đã báo) và `DecisionFact` trong
+  `turn_facts`. Orchestrator đề xuất lịch kế; câu tới khách = câu báo của code + câu của
+  Orchestrator (đã qua guard), kèm nút cho đề xuất mới. Orchestrator lỗi thì khách vẫn nhận câu báo
+  của code, phiên vẫn chờ.
 
 ### 3.3 Middleware của Orchestrator
 
@@ -162,7 +170,7 @@ Socket.IO) nằm ở `run_turn` và middleware.
 | Bối cảnh lượt | `wrap_model_call` | Chèn khối bối cảnh code dựng từ DB **ngay sau system prompt**, mỗi lần gọi model; không lưu vào lịch sử, không nằm trong phần prompt cache. Cắt lịch sử model thấy theo §3.4: lượt trước chỉ còn cặp câu khách / câu trả lời cuối; lượt này thấy đủ mọi tool call và kết quả. **Đọc DB một lần mỗi lượt, đọc lại sau mỗi tool làm DB đổi.** **Ẩn tool không dùng được** ở từng lần gọi model (không có đề xuất chờ / đã quyết → ẩn `decide_pending`; đề xuất chờ chưa quyết → ẩn `appointment_task`; lần viết lại của guard → **ẩn mọi tool**). Mỗi agent con chỉ nhận phần bối cảnh nó cần, không nhận memory dài hạn. |
 | Đầu lượt | `before_agent` | Sửa đuôi thread của lượt bị cắt và đặt lại khoá theo lượt (§3.4). Phiên quá `expires_at` không cần đóng: `WaitingSessionService` bỏ chúng lúc đọc (§5). |
 | Guard câu cuối | `after_model`, `can_jump_to=["model", "end"]` | Khi AIMessage không có tool call: kiểm sự thật (§7). Sai → **xoá AIMessage bị loại khỏi state** rồi thêm lời nhắc lỗi, `jump_to: "model"` cho viết lại **một lần**; vẫn sai → thay bằng câu mẫu code rồi kết thúc. |
-| Trần | `ModelCallLimitMiddleware`, `ToolCallLimitMiddleware` (có sẵn) với **`exit_behavior="error"`** | Trần số lần gọi model / tool mỗi lượt. `run_turn` bắt lỗi trần, trả câu mẫu code. Không dùng `"end"`: chế độ đó tự chèn AIMessage tiếng Anh "Model call limits exceeded…" và nhảy END từ `before_model`, guard không thấy (đã kiểm trong `langchain` 1.4.6). Lần viết lại của guard có tính vào trần; chạm trần đúng lần viết lại → câu mẫu code. |
+| Trần | `ModelCallLimitMiddleware`, `ToolCallLimitMiddleware` (có sẵn) với **`exit_behavior="error"`** | Trần số lần gọi model / tool mỗi lượt. `run_turn` bắt lỗi trần, trả câu mẫu code. Không dùng `"end"`: chế độ đó tự chèn AIMessage tiếng Anh "Model call limits exceeded…" và nhảy END từ `before_model`, guard không thấy (đã kiểm trong `langchain` 1.4.6). Lần viết lại của guard được đếm khi nó qua guard (lần bị guard loại thì không: `jump_to` bỏ qua các `after_model` còn lại, gồm cả bộ đếm); chạm trần đúng lần viết lại → câu mẫu code. |
 | Retry | `ModelRetryMiddleware` (có sẵn) | Như hiện tại. |
 | Nén lịch sử | `SummarizationMiddleware` (có sẵn) | Tóm tắt `messages` của thread khi vượt ngưỡng (§3.5). |
 | Bộ nhớ khách | trong middleware bối cảnh, qua `runtime.store` | Đọc namespace `("memories", user_id)`, in vào khối bối cảnh dưới nhãn dữ liệu (§3.5). |
@@ -191,8 +199,9 @@ Orchestrator chạy trên thread đó, có checkpointer, nên mọi superstep c�
 
 **Sửa đuôi thread.** Lượt bị cắt (timeout, huỷ vì lượt mới, server khởi động lại) có thể để lại
 AIMessage có `tool_calls` mà thiếu ToolMessage. Azure từ chối mọi yêu cầu có đuôi như vậy, khách
-sẽ kẹt cả ngày. Đầu mỗi lượt, `before_agent` xoá các message của lượt dở (từ HumanMessage cuối có
-câu trả lời trở về sau, trừ chính câu khách) bằng `RemoveMessage`. Câu khách của lượt dở giữ lại.
+sẽ kẹt cả ngày. Đầu mỗi lượt, `before_agent` sửa **theo cấu trúc**, ở bất kỳ vị trí nào trong thread: mọi
+AIMessage có tool call mà thiếu ToolMessage bị xoá bằng `RemoveMessage`, cùng các ToolMessage lẻ
+của nó. Câu khách của lượt dở giữ lại.
 Những gì tool của lượt dở đã ghi vẫn có hiệu lực vì mỗi lần ghi là một đơn vị trọn vẹn: phiên đã
 lưu thì còn, đề xuất đã tạo thì còn trong DB, lịch đã duyệt mà chưa báo thì R0 báo ở lượt sau.
 
@@ -207,7 +216,7 @@ Nén lịch sử ngắn hạn dùng `SummarizationMiddleware` có sẵn của La
 
 | Lớp | Nhớ gì | Cơ chế (theo docs) | Sống |
 |---|---|---|---|
-| Ngắn hạn | `messages` của thread | checkpointer Mongo (`AsyncMongoDBSaver`, đang có), `thread_id = conversation_id` (§3.4) | một cuộc trò chuyện (một ngày) |
+| Ngắn hạn | `messages` của thread | checkpointer Mongo (`MongoDBSaver` qua `get_checkpointer()`, đang có), `thread_id = conversation_id` (§3.4) | một cuộc trò chuyện (một ngày) |
 | Việc đang dở | phiên chờ (§5) | collection Mongo `waiting_sessions` qua `WaitingSessionService` | tới khi phiên đóng / hết hạn |
 | Dài hạn về khách | sở thích, ghi chú, "Lần trước" | `MongoDBStore` (`langgraph.store.mongodb`), namespace `("memories", user_id)` | lâu dài |
 | Sự thật nghiệp vụ | lịch, đề xuất, ledger, danh mục, `address_phrase`, `staff_note` | Mongo qua `app/services` (không phải memory) | lâu dài |
@@ -264,7 +273,7 @@ thay vì tự vẽ node.
 | Thành phần LangGraph | Dùng ở đâu |
 |---|---|
 | `CompiledStateGraph` (do `create_agent` dựng) | Orchestrator; mỗi agent con |
-| Checkpointer (`langgraph-checkpoint-mongodb`, `AsyncMongoDBSaver`) | Bộ nhớ ngắn hạn, thread `conversation_id` (§3.4, §3.5) |
+| Checkpointer (`langgraph-checkpoint-mongodb`, `MongoDBSaver`) | Bộ nhớ ngắn hạn, thread `conversation_id` (§3.4, §3.5) |
 | Store (`MongoDBStore`, `langgraph.store.mongodb`) | Bộ nhớ dài hạn về khách (§3.5) |
 | `Command(update=...)` | Tool giao việc ghi `messages`, `turn_facts` (§4.1) |
 | Reducer (`add_messages` và reducer tự viết) | Khoá `messages`, `turn_facts` (§4.1) |
@@ -303,8 +312,10 @@ Orchestrator gọi appointment_task(request, continue_session)
   spec: bỏ `TimeHint` ở tầng Orchestrator; schema tool hiện chiếm 73% prompt token của
   Orchestrator, CONTEXT.md)*
 - `appointment_task` có thêm `service_ids` (không bắt buộc). Giá trị chỉ được là id dịch vụ có
-  trong `turn_facts` hoặc phiên (enum dựng mỗi lượt, như `appointment_id` hiện nay), không bao giờ
-  là chữ model tự gõ.
+  trong `turn_facts`, phiên, đề xuất đang chờ, hoặc **đã nhận ra ở lượt trước của cùng cuộc trò
+  chuyện** (đọc từ ledger), không bao giờ là chữ model tự gõ. Schema tool cố định để trúng prompt
+  cache; code kiểm id trong `wrap_tool_call`. Cuộc trò chuyện đã có dịch vụ mà `appointment_task`
+  không kèm `service_ids` → từ chối `service_required`, để lịch nhuộm không bị đặt 30 phút.
 - `continue_session`: Orchestrator chọn làm tiếp phiên đang chờ hay mở việc mới. Mở việc mới khi
   đang có phiên chờ cùng agent → phiên cũ bị thay. Phân biệt "đang trả lời" với "đổi ý" là lựa
   chọn của Orchestrator, không dùng từ khoá.
@@ -382,8 +393,12 @@ Bỏ hàng chờ cũ (`QueuedRequest`, `set_queued`, tham số `queued` của `p
 
 - Agent Đặt lịch đề xuất lịch đầu; các yêu cầu còn lại ghi vào `memory.next_requests` của phiên
   `appointment` (giờ đã đọc bằng `parse_time` thì lưu từ ToolMessage, chưa đọc thì lưu nguyên lời
-  dặn).
-- Lịch đầu được duyệt / từ chối thì Orchestrator làm tiếp yêu cầu kế (đọc lại giờ trống, đề xuất).
+  dặn). Phiên `appointment` **vẫn mở** khi agent tạo đề xuất mà còn `next_requests` (field
+  `confirm`, hạn 10 phút như đề xuất); hết yêu cầu thì phiên đóng.
+- Lịch đầu được duyệt **bằng nút** → code báo đã đặt, rồi Orchestrator đề xuất lịch kế, khách bấm
+  nút lần nữa (chủ dự án 09/11, §3.2). Duyệt **bằng chữ** → Orchestrator gọi `decide_pending` rồi làm
+  tiếp phiên trong cùng lượt. Lịch đầu bị **từ chối** → phiên vẫn chờ, Orchestrator hỏi tiếp ở lượt
+  gõ chữ sau. *(quyết định người viết spec)*
 - **Không giữ chỗ** cho các yêu cầu sau — đó là việc của đợt B; giờ có thể bị người khác đặt trong
   lúc chờ.
 - `veto()` hiện dùng danh sách giờ hàng chờ để không hiểu nhầm "ừ, còn lịch 2 giờ để sau" thành đổi
@@ -575,7 +590,9 @@ Gói cũ `app/agents/booking_graph/` đã xoá (`3907927`).
   lượt đầu của cuộc trò chuyện mới gom memory từ cuộc trước và in vào khối bối cảnh dưới nhãn dữ
   liệu; lượt 00:10 tiếp cuộc hôm trước còn lượt sáng hôm sau mở cuộc mới; phiên chờ còn sau khi
   server khởi động lại; hai agent con cùng vòng không ghi đè phiên của nhau;
-  memory của khách này không lộ sang khách khác; memory không chứa giờ / giá / id; gom lỗi thì lượt
+  memory của khách này không lộ sang khách khác; bấm nút không gọi model và chủ tiệm được báo;
+  bấm Đồng ý lịch đầu của "hai lịch một tin" thì có đề xuất lịch kế kèm nút; dịch vụ nhận ra ở lượt
+  trước dùng được ở lượt sau; memory không chứa giờ / giá / id; gom lỗi thì lượt
   vẫn chạy.
 - `scripts/test_live_10_turns.py` cập nhật cho kiến trúc mới (có lượt "giờ kín → lượt sau chọn
   giờ khác", lượt hỏi giá, lượt đặt dịch vụ dài), chạy thật **2 lần** (chủ dự án duyệt trước mỗi
@@ -611,7 +628,7 @@ Gói cũ `app/agents/booking_graph/` đã xoá (`3907927`).
 10. Guard viết mới trong gói mới; gói cũ chỉ để tham khảo rồi xoá.
 11. Agent Thông tin tiệm có thêm `parse_time`.
 12. Bảng khoá theo lượt / theo thread và bước sửa đuôi thread ở đầu lượt (§3.4).
-13. Trần dùng `exit_behavior="error"`; lần viết lại của guard tính vào trần.
+13. Trần dùng `exit_behavior="error"`; lần viết lại của guard được đếm khi nó qua guard.
 14. Lượt kết thúc bằng câu mẫu thì đóng các phiên mở trong lượt đó.
 15. Tối đa một đề xuất mới mỗi lượt; gọi lại agent `failed` tối đa một lần mỗi lượt.
 16. `memory` của phiên chỉ giữ dữ kiện có cấu trúc, không giữ chữ của agent con.
@@ -642,3 +659,7 @@ Chủ dự án 09/11, sau spike `interrupt()` (kết quả ở `docs/architech-a
 không dùng `interrupt()`. Phiên chờ chuyển sang Mongo (`waiting_sessions`, cạnh `proposals`).
 `thread_id = conversation_id` (bản ghi `conversation_threads`), ranh giới là qua ngày. Giữ luật 30
 phút sau nửa đêm là quyết định người viết spec.
+
+Chủ dự án 09/11, sau review Fable lần hai: **nút bấm là API bằng code**, không gọi model; chỉ khi
+khách bấm Đồng ý mà còn yêu cầu kế (hai lịch một tin) thì Orchestrator đề xuất lịch kế và khách bấm
+nút lần nữa.

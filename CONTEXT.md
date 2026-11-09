@@ -124,6 +124,9 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 19. **Phiên chờ ở Mongo, thread là cuộc trò chuyện** (09/11, sau spike `interrupt()`): phiên chờ là
     collection `waiting_sessions` cạnh `proposals`; agent con không bao giờ `checkpointer=True`.
     `thread_id = conversation_id` (collection `conversation_threads`), mỗi ngày VN một cuộc mới.
+20. **Nút bấm là API bằng code** (09/11): bấm Đồng ý / Không thì code duyệt và trả câu báo, không gọi
+    model. Chỉ khi khách nói hai lịch trong một tin, bấm Đồng ý lịch đầu thì Orchestrator đề xuất lịch kế
+    và khách bấm nút lần nữa.
 
 ## Chốt cứng — đừng mở lại
 

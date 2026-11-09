@@ -30,23 +30,27 @@ flowchart TD
     H --> I
     I -->|"turn_facts + ToolMessage"| D
 
-    V --> AD["apply_decision (code)<br/>ONE path for button and typed replies"]
+    V --> AD["apply_decision (code)<br/>ONE path for button and typed replies<br/>owner notified after commit"]
     AD -->|approve| WP["Deterministic Booking Write Path<br/>ProposalService.approve<br/>owner / expiry / later turn / single use / target unchanged"]
     AD -->|"reject / change"| CL["Close proposal"]
     AD -->|"unclear / none"| KP["Keep proposal pending"]
-    WP -->|"decision recorded"| D
-    CL -->|"decision recorded"| D
-    KP -->|"decision recorded"| D
+    WP --> DR{"Typed or button? (code)"}
+    CL --> DR
+    KP --> DR
+    DR -->|"typed: decision recorded in turn facts"| D
+    DR -->|button| BR["Button reply written by code<br/>no model call"]
+    BR -->|"approved and a next request waits<br/>(two bookings in one message)"| D
+    BR -->|otherwise| OUT
 
     D -->|"no tool call = candidate final answer"| GD{"Guard (code), checks against turn facts + DB<br/>claims / times / prices / required facts /<br/>pending left undecided / pronoun / repeat"}
     GD -->|pass| OUT["complete: answer + pending-proposal buttons"]
-    GD -->|"fail, 1st time"| RW["Remove the bad answer, add a hint<br/>rewrite with NO tools: text only, same facts"]
+    GD -->|"fail, 1st time"| RW["Remove the bad answer, add a hint<br/>rewrite with NO tools: text only, same facts<br/>(only decide_pending if the reason is pending left undecided)"]
     RW --> GD
     GD -->|"fail, 2nd time"| FB["Code fallback reply"]
     FB --> OUT
     STALE --> OUT
 
-    I -.->|"need_info: open / replace session"| S
+    I -.->|"need_info, or proposal with a next request:<br/>open / replace session"| S
     S -.->|"next turn: continue_session"| D
     F -.->|create| PR
     WP -.->|write| AP
@@ -78,17 +82,23 @@ flowchart TD
    server khởi động lại (CONTEXT.md bẫy 15). Khách là người duyệt: bấm nút hoặc gõ chữ.
 3. **Một đường duy nhất** cho quyết định đề xuất: nút bấm và chữ gõ đều tới `apply_decision`. Với
    chữ gõ, nhãn của Orchestrator đi qua **Decision Gate** (`veto` chỉ được hạ nhãn, không nâng).
+   Sau khi commit, `apply_decision` gửi thông báo cho chủ tiệm. **Nút bấm là một API bằng code**
+   (chủ dự án 09/11): duyệt hoặc từ chối, rồi trả câu báo do code viết, không gọi model. Ngoại lệ duy
+   nhất: khách vừa bấm Đồng ý mà phiên Đặt lịch còn yêu cầu kế (khách nói hai lịch trong một tin) thì
+   Orchestrator chạy tiếp, đề xuất lịch kế, và khách bấm nút lần nữa.
 4. **Có đề xuất chờ thì lượt phải quyết nó**: câu trả lời cuối mà đề xuất còn chưa quyết bị guard
    từ chối (`pending_undecided`); nhãn `none` hợp lệ khi khách nói chuyện khác.
 5. **Câu trả lời cuối luôn qua guard bằng code**, đối chiếu với dữ kiện code trích từ kết quả tool
    và DB — không tin chữ model. Viết lại **một lần và không có tool** (không tra cứu lại, không tạo
-   đề xuất lại); vẫn sai thì câu mẫu code.
+   đề xuất lại); vẫn sai thì câu mẫu code. Ngoại lệ: lý do bị loại là `pending_undecided` thì lần viết
+   lại chỉ được gọi `decide_pending`.
 6. **Bối cảnh**: đọc DB một lần mỗi lượt, đọc lại sau mỗi tool làm DB đổi; tool không dùng được bị ẩn
    ở từng lần gọi model; mỗi agent con chỉ nhận phần bối cảnh nó cần.
 7. **Phiên chờ** giữ việc dở của agent con qua lượt (loại việc, dữ kiện đã thu, trường còn thiếu,
    hạn 10 phút); Orchestrator chọn làm tiếp (`continue_session`) hay mở việc mới (phiên cũ bị thay).
    Phiên nằm trong collection Mongo `waiting_sessions` (qua `WaitingSessionService`), **không** trong
    state của graph: mỗi khách tối đa một phiên chờ cho mỗi agent con, hết hạn do code kiểm lúc đọc.
+   Agent Đặt lịch tạo đề xuất mà khách còn yêu cầu kế thì phiên vẫn mở để giữ yêu cầu kế.
    Đây là **human-in-the-loop để thu thông tin còn thiếu**, không dùng `interrupt()` trong agent con
    (chủ dự án 08/11): khách hay hỏi xen chuyện khác (graph đang treo sẽ coi tin kế tiếp là câu trả lời),
    câu hỏi phải qua Orchestrator và guard, resume chạy lại tool cha từ đầu và bắt agent con phải có
