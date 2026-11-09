@@ -11,10 +11,12 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "booking"
+ROOT_SALON = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "salon"
 
 EXPECTED_BUDGET = {
     "draft_checks.py": 2,
 }
+EXPECTED_BUDGET_SALON: dict[str, int] = {}
 
 
 def _scan(root: pathlib.Path) -> tuple[dict[str, int], set[str]]:
@@ -41,4 +43,12 @@ def test_agent_regex_budget_is_at_most_two():
     assert actual == EXPECTED_BUDGET, f"Vượt ngân sách regex tầng agent: {actual}"
     assert re_importers == set(EXPECTED_BUDGET.keys()), (
         f"Module ngoài ngân sách import re: {re_importers}"
+    )
+
+
+def test_salon_package_has_no_regex():
+    actual, re_importers = _scan(ROOT_SALON)
+    assert actual == EXPECTED_BUDGET_SALON, f"Vượt ngân sách regex gói salon: {actual}"
+    assert re_importers == set(EXPECTED_BUDGET_SALON.keys()), (
+        f"Module trong gói salon import re: {re_importers}"
     )

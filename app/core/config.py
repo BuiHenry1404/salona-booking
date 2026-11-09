@@ -89,6 +89,17 @@ class Settings(BaseSettings):
     # Orchestrator: trần số lượt gọi LLM mỗi khách mỗi giờ, và số ngày giữ sổ cái chi phí.
     orch_llm_calls_per_user_per_hour: int = 150
     orch_ledger_ttl_days: int = 7
+
+    # Gói agent mới (app/agents/salon/) — trần theo lượt, hết hạn phiên, tóm tắt
+    # hội thoại dài, và bộ nhớ dài hạn (spec §12, giá trị do plan chọn).
+    salon_model_calls_per_turn: int = 10
+    salon_tool_calls_per_turn: int = 12
+    salon_subagent_max_rounds: int = 4
+    salon_session_ttl_minutes: int = 10
+    salon_summary_trigger_tokens: int = 6000
+    salon_summary_keep_messages: int = 40
+    salon_memory_max_chars: int = 1200
+    salon_memory_timeout_seconds: int = 8
     timezone: str
 
     # Luật giọng trong guard (lặp/xưng hô/giờ viết sai dạng): tắt (false) để đo
