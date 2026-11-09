@@ -25,6 +25,9 @@ ALLOWED = {
     # Cổng ghi duy nhất của gói `salon` mới (Task 8) — decide_pending's
     # apply_decision, sau khi veto() đã lọc nhãn.
     ("app/agents/salon/orchestrator/decide.py", "ProposalService(db)", "approve"),
+    # Tool tạo ĐỀ XUẤT (không phải lịch) của agent Đặt lịch gói `salon` (Task 9)
+    # — `propose_appointment` / `propose_cancel`, ProposalService.create.
+    ("app/agents/salon/subagents/appointment/tools.py", "proposals", "create"),
 }
 
 
