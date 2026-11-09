@@ -270,9 +270,10 @@ Azure treo) — lượt cũ bị huỷ êm, không phát `error`, không ghi `co
 ## 8c. Kiểm tầng gác (guard/rewrite/phrase)
 
 Mọi câu LLM đi qua guard đúng một lần trước khi ra khách — từ M4 là
-`GuardMiddleware` (`after_agent`) trong mỗi agent, luật ở `guard.apply_guard` (spec
-`docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`; xem bẫy #21
-ở `CONTEXT.md`). Log qua `structlog`, không ném lỗi ra khách:
+`GuardMiddleware` (`after_agent`) trong mỗi agent, luật ở `guard.apply_guard` (mục này
+mô tả pipeline hiện tại, sẽ viết lại theo spec dựng lại
+`docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`). Log qua `structlog`,
+không ném lỗi ra khách:
 
 - `guard_violation{codes}` — draft đầu tiên phạm một hay nhiều trong ba phép
   kiểm tất định: `repeat` (giống câu đáp gần đây, xem `REPEAT_RATIO`/

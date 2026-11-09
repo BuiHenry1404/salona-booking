@@ -1,20 +1,21 @@
 # AGENTS.md
 
-FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Plans 1–4 done
-(Telegram bot in `app/telegram/`, React frontend in `frontend/`); test counts have grown well
-past the original 281 since. Two agent architectures currently coexist: the live Socket.IO
-traffic still runs on `app/agents/booking_graph/` while `app/agents/booking/` (the LLM
-orchestrator rewrite, plan `docs/superpowers/plans/2026-10-30-llm-orchestrator/`) is mid-build —
-M0–M4 done, M5 (graph + run_turn) and M6 (cutover, incl. rewriting this file) not done yet.
-Don't read the sections below as describing `app/agents/booking/`.
+FastAPI + LangGraph booking app for a small nail/hair salon in Vietnam. Telegram bot in
+`app/telegram/`, React frontend in `frontend/`. Live Socket.IO traffic runs on
+`app/agents/booking/` (a fixed pipeline: resolve → orchestrate → brief → respond → record; the
+old `booking_graph/` package is gone). The agent layer is about to be **rebuilt** on the
+LangChain Subagents pattern — spec `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`
+(no plan yet). Old agent specs/plans were removed on 08/11; read them via git
+(`git show 72c98fc:<path>`) only if you need history.
 
 ## Read first (in this order)
 
-1. `CONTEXT.md` — the *why*: locked decisions, 23 already-fixed traps (do NOT "clean them up"),
-   UI constraints for elderly users, security audit results. Authoritative.
+1. `CONTEXT.md` — the *why*: current state, locked decisions, already-fixed traps (do NOT
+   "clean them up"), UI constraints for elderly users, security notes. Authoritative.
 2. `RUNBOOK.md` — the *how*: setup, test accounts, Azure/Langfuse config, troubleshooting.
-3. Before any plan task: the **Ràng buộc toàn cục** section in that plan's `README.md`
-   under `docs/superpowers/plans/`. Work is executed TDD via the `superpowers` skills.
+   Its agent/guard sections describe the current pipeline and will change with the rebuild.
+3. The rebuild spec above before touching `app/agents/`. Work is executed TDD via the
+   `superpowers` skills.
 
 ## Commands
 
@@ -45,20 +46,19 @@ pytest tests/test_timeparse_llm.py -m llm -v     # calls real Azure ($$$); exclu
 - **All booking logic lives in `app/services/`.** Agent tools, REST routes, and the
   Telegram bot are thin wrappers around services. If you write scheduling logic anywhere
   else, you've duplicated it.
-- **Agent has NO create/write tool.** Flow: `propose_appointment` / `cancel_appointment`
-  create a *proposal* in the `proposals` collection (`ProposalService.create`);
-  `ConfirmMiddleware` puts only its `proposal_id` into graph state; the `confirm` node
-  `interrupt()`s and, on the next turn, code decides: a structural veto in `reply.py`
-  first (another time/day in the reply → `change`, no model call), then the
-  `TurnAnalysis` label (`aside` defer → reject, `relative_free` + approve → unclear,
-  a `change` label on a reply that only restates the proposed time → unclear). No
-  keyword dictionaries. Only `ProposalService.approve(user, proposal_id)`
-  writes — it re-checks owner, 10-min expiry, later turn, single use, and that a
-  move/cancel target is unchanged. Adding a `create_appointment` tool (or HITL around
-  one) removes the user's confirmation step — forbidden. `tests/test_write_fence.py` guards it.
-- **Only stream tokens tagged `respond`.** Time-parser LLM must use `tags=["timeparse"]` +
-  `streaming=False`; turn analyzer `tags=["analyze"]` + `streaming=False`; supervisor
-  output is routing JSON, never user-visible.
+- **Agent has NO create/write tool.** `propose_appointment` / `cancel_appointment` only
+  create a *proposal* in the `proposals` collection (`ProposalService.create`). The
+  customer agrees on a later turn (Đồng ý/Không button, or typed text that the
+  Orchestrator labels via `decide_pending`; `orchestrator/decide.py::veto` may only
+  downgrade that label, e.g. another time in the reply → `change`). No keyword
+  dictionaries. Only `ProposalService.approve(user, proposal_id)` writes, and inside
+  `app/agents/` only `decide.apply_decision` calls it — it re-checks owner, 10-min expiry,
+  later turn, single use, and that a move/cancel target is unchanged. Adding a
+  `create_appointment` tool (or HITL around one) removes the user's confirmation step —
+  forbidden. `tests/test_write_fence.py` guards it.
+- **Only user-visible tokens reach the screen.** Today only tokens tagged `respond`
+  stream; every other model call is `streaming=False` with its own tag. After the
+  rebuild nothing streams: the answer arrives in `complete` after the code guard.
 - **Context block goes first after system prompt and must state today's date** ("mai", "3h
   chiều" are unresolvable otherwise). It's per-turn, so it must NOT be inside the cached
   system prompt prefix.
@@ -74,12 +74,12 @@ pytest tests/test_timeparse_llm.py -m llm -v     # calls real Azure ($$$); exclu
 ```
 main.py                  entrypoint; lifespan init (Mongo fail-hard, LLM warn-and-continue)
 app/services/            all business logic (appointment, auth, shop, conversation, rate_limit)
-app/agents/booking_graph/  LangGraph: supervisor → agents (guard/phrase are middleware) → record → confirm (interrupt); 5 tools, none writes
+app/agents/booking/      current pipeline (graph.py, orchestrator/, specialists/, guard); no tool writes; being rebuilt
 app/api/v1/              thin REST layer over services
 app/repositories/        pymongo access; translates DuplicateKeyError → domain errors
 scripts/seed_dev_users.py  idempotent; no public signup (admin creates users)
 tests/                   pytest; markers: llm (real Azure), slow, integration
-docs/superpowers/        specs + 4 plans; start at specs/2026-08-06-booking-nail-toc/README.md
+docs/superpowers/specs/  product spec (2026-08-06-*), Telegram admin reset, the subagents rebuild spec
 ```
 
 ## Socket.IO protocol
@@ -113,6 +113,6 @@ arrives without one.
 - `mongo-express` on :8081 (`admin`/`admin`) and Mongo exposed without auth are **dev-only**
   compose entries; prod split is planned (Plan 5), not done. Don't ship them as-is.
 - Repo is Vietnamese-language throughout (docs, comments, UI strings), except commit messages — those are English and short. Match that.
-- Plans 3 and 4 can run in parallel. After Plan 3: admin password reset via Telegram bot
+- Admin password reset goes via the Telegram bot
   (`specs/2026-08-15-admin-password-reset-telegram-design.md`) — Zalo/SMS are permanently
   off the table, don't re-suggest them.
