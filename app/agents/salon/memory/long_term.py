@@ -27,6 +27,7 @@ from app.agents.checkpoint import get_checkpointer
 from app.agents.llm import build_chat_model
 from app.agents.salon.memory.prompts import MEMORY_PROMPT
 from app.agents.salon.shared.text_scan import scan_money, scan_spoken_clocks, scan_times, words
+from app.agents.salon.shared.tool_names import CONTROL_TOOLS, SUBAGENT_TOOLS
 from app.core.clock import to_local
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -44,13 +45,10 @@ _RECENT_MESSAGE_COUNT = 6
 _SUMMARY_SOURCE = "summarization"
 
 # Tên tool nội bộ — một dòng memory nhắc tới tên này gần như chắc chắn là
-# model đang chép lại một lời gọi tool thay vì viết sự thật về khách.
-_TOOL_NAMES = frozenset({
-    "appointment_task", "shop_info_task", "service_task", "decide_pending",
-    "propose_appointment", "propose_cancel", "find_free_slots",
-    "get_shop_hours", "get_shop_status", "is_open_at",
-    "list_my_appointments", "remember_next_request",
-})
+# model đang chép lại một lời gọi tool thay vì viết sự thật về khách. MỘT
+# nguồn duy nhất (`shared/tool_names.py`), không chép tay — review round 1:
+# một bản chép tay đã lạc hậu, thiếu `parse_time`.
+_TOOL_NAMES = CONTROL_TOOLS | SUBAGENT_TOOLS
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
 
@@ -140,23 +138,34 @@ def sanitize_memory(memory: CustomerMemory, *, max_chars: int) -> CustomerMemory
 
 async def read_memory(store: BaseStore, user_id: str) -> CustomerMemory:
     """Đọc ba mục cố định của namespace `("memories", user_id)` — khách mới,
-    chưa từng được gom, trả về bộ nhớ rỗng (không phải lỗi)."""
+    chưa từng được gom, trả về bộ nhớ rỗng (không phải lỗi).
+
+    FAIL-SOFT (review round 1, controller re-chấm): một bản ghi hỏng (vd
+    `last_visit.day` không parse được thành `date`) không được làm hỏng cả
+    lượt của khách đó — mọi lỗi đọc/parse chỉ log `memory_read_failed` và trả
+    bộ nhớ rỗng, để `ContextMiddleware` vẫn dựng được khối bối cảnh."""
     namespace = (MEMORY_NAMESPACE, user_id)
-    preferences_item = await store.aget(namespace, "preferences")
-    notes_item = await store.aget(namespace, "notes")
-    last_visit_item = await store.aget(namespace, "last_visit")
+    try:
+        preferences_item = await store.aget(namespace, "preferences")
+        notes_item = await store.aget(namespace, "notes")
+        last_visit_item = await store.aget(namespace, "last_visit")
 
-    last_visit: Optional[LastVisit] = None
-    if last_visit_item is not None:
-        data = last_visit_item.value.get("data") or {}
-        if data.get("day") and data.get("lines"):
-            last_visit = LastVisit(day=data["day"], lines=list(data["lines"]))
+        last_visit: Optional[LastVisit] = None
+        if last_visit_item is not None:
+            data = last_visit_item.value.get("data") or {}
+            if data.get("day") and data.get("lines"):
+                last_visit = LastVisit(day=data["day"], lines=list(data["lines"]))
 
-    return CustomerMemory(
-        preferences=list((preferences_item.value.get("data") if preferences_item else None) or []),
-        notes=list((notes_item.value.get("data") if notes_item else None) or []),
-        last_visit=last_visit,
-    )
+        return CustomerMemory(
+            preferences=list((preferences_item.value.get("data") if preferences_item else None) or []),
+            notes=list((notes_item.value.get("data") if notes_item else None) or []),
+            last_visit=last_visit,
+        )
+    except Exception as exc:
+        logger.warning("memory_read_failed", extra={
+            "user_id": user_id, "error": str(exc), "error_type": type(exc).__name__,
+        })
+        return CustomerMemory()
 
 
 def render_memory(memory: CustomerMemory) -> Optional[str]:
@@ -221,18 +230,21 @@ def _format_group(items: Sequence[str]) -> str:
 
 async def consolidate_memory(
     db: AsyncIOMotorDatabase, store: BaseStore, user: User, *,
-    previous_thread_id: str, now: datetime,
+    previous_thread_id: str, now: datetime, turn_id: Optional[str] = None,
 ) -> bool:
     """Bước gom bộ nhớ dài hạn (spec §3.5): chạy ở lượt ĐẦU TIÊN của một cuộc
     trò chuyện MỚI, TRƯỚC khi Orchestrator chạy, trên thread CŨ vừa đóng lại
     (`ConversationThread.previous_id`). `db` không được đọc trực tiếp ở đây —
     mọi thứ cần đều tới từ checkpoint của thread cũ và store — tham số giữ lại
     để chữ ký đồng dạng với các bước đầu lượt khác của gói, phòng khi một bản
-    sau cần tra thêm sự thật nghiệp vụ.
+    sau cần tra thêm sự thật nghiệp vụ. `turn_id` (lượt ĐANG chạy, gọi bước
+    gom này — không phải lượt của thread cũ) chỉ vào log, cho đúng bộ ba
+    `user_id`/`turn_id`/`thread_id` mọi log có cấu trúc của gói phải mang.
 
-    Không bao giờ ném: mọi lỗi (model lỗi, quá timeout, schema sai) chỉ log
-    `memory_consolidate_failed` và trả `False` — lượt hiện tại vẫn chạy với
-    bộ nhớ cũ.
+    Không bao giờ ném: mọi lỗi (model lỗi, quá timeout, schema sai, VÀ lỗi
+    lúc ghi ba khoá — review round 1: giai đoạn ghi từng nằm NGOÀI try) chỉ
+    log `memory_consolidate_failed` và trả `False` — lượt hiện tại vẫn chạy
+    với bộ nhớ cũ.
 
     Giới hạn đã biết: checkpoint có TTL `checkpoint_ttl_days` (mặc định 7
     ngày, `app/agents/checkpoint.py`). Một cuộc trò chuyện trước cách đây hơn
@@ -241,7 +253,7 @@ async def consolidate_memory(
     `last_visit` giữ nguyên bản ghi cũ (chấp nhận, spec §3.5).
     """
     user_id = str(user.id)
-    log_extra = {"user_id": user_id, "thread_id": previous_thread_id}
+    log_extra = {"user_id": user_id, "turn_id": turn_id, "thread_id": previous_thread_id}
     try:
         tuple_ = await get_checkpointer().aget_tuple(
             {"configurable": {"thread_id": previous_thread_id}})
@@ -271,21 +283,21 @@ async def consolidate_memory(
             model.with_structured_output(CustomerMemory).ainvoke(prompt),
             timeout=settings.salon_memory_timeout_seconds,
         )
+
+        cleaned = sanitize_memory(result, max_chars=settings.salon_memory_max_chars)
+        namespace = (MEMORY_NAMESPACE, user_id)
+        await store.aput(namespace, "preferences",
+                         {"data": cleaned.preferences, "updated_at": now.isoformat()})
+        await store.aput(namespace, "notes",
+                         {"data": cleaned.notes, "updated_at": now.isoformat()})
+        if cleaned.last_visit is not None:
+            await store.aput(namespace, "last_visit", {
+                "data": {"day": cleaned.last_visit.day.isoformat(), "lines": cleaned.last_visit.lines},
+                "updated_at": now.isoformat(),
+            })
     except Exception as exc:
         logger.warning("memory_consolidate_failed", extra={
             **log_extra, "error": str(exc), "error_type": type(exc).__name__,
         })
         return False
-
-    cleaned = sanitize_memory(result, max_chars=settings.salon_memory_max_chars)
-    namespace = (MEMORY_NAMESPACE, user_id)
-    await store.aput(namespace, "preferences",
-                     {"data": cleaned.preferences, "updated_at": now.isoformat()})
-    await store.aput(namespace, "notes",
-                     {"data": cleaned.notes, "updated_at": now.isoformat()})
-    if cleaned.last_visit is not None:
-        await store.aput(namespace, "last_visit", {
-            "data": {"day": cleaned.last_visit.day.isoformat(), "lines": cleaned.last_visit.lines},
-            "updated_at": now.isoformat(),
-        })
     return True

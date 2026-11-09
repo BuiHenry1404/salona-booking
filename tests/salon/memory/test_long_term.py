@@ -62,6 +62,20 @@ async def test_read_returns_empty_memory_for_new_customer(memory_store):
     assert memory == CustomerMemory()
 
 
+async def test_read_is_fail_soft_against_a_malformed_record(memory_store):
+    """Review round 1 (controller re-chấm): một bản ghi hỏng (ở đây `day`
+    không parse được thành `date`) không được ném — `read_memory` phải trả
+    bộ nhớ rỗng, để `ContextMiddleware` vẫn dựng được khối bối cảnh."""
+    namespace = (MEMORY_NAMESPACE, "khach-hong")
+    await memory_store.aput(namespace, "last_visit", {
+        "data": {"day": "khong-phai-ngay", "lines": ["làm tóc"]},
+        "updated_at": "2026-10-01T00:00:00+00:00",
+    })
+
+    memory = await read_memory(memory_store, "khach-hong")
+    assert memory == CustomerMemory()
+
+
 # ---------------------------------------------------------------------------
 # sanitize_memory
 # ---------------------------------------------------------------------------
@@ -74,7 +88,8 @@ def test_sanitize_drops_times_prices_ids_and_caps_length():
             "hẹn lúc 3 giờ chiều mai",               # có giờ -> bỏ
             "gói 200k mỗi lần",                      # có tiền -> bỏ
             "mã lịch 64e2f1a2b3c4d5e6f7a8b9c0",       # 24 ký tự hex -> bỏ
-            "gọi propose_appointment cho khách",      # tên tool -> bỏ
+            "gọi propose_appointment cho khách",      # tên tool (orchestrator) -> bỏ
+            "model gọi parse_time rồi mới đặt",       # tên tool (subagent) -> bỏ
         ],
         notes=["thích ngồi gần cửa"],
         last_visit=LastVisit(day=date(2026, 11, 1), lines=["làm tóc, hẹn giờ 15:30"]),
@@ -150,7 +165,7 @@ async def test_consolidate_writes_three_keys_from_previous_thread(
 
     ok = await consolidate_memory(
         test_db, memory_store, user, previous_thread_id=thread_id,
-        now=datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc), turn_id="turn-moi",
     )
     assert ok is True
 
@@ -189,6 +204,40 @@ async def test_consolidate_failure_returns_false_and_keeps_old_memory(
 
     kept = await read_memory(memory_store, str(user.id))
     assert kept.preferences == ["hay cắt tóc ngắn"]
+
+
+class _RaisingPutStore:
+    """Store giả: `aget` đi thẳng tới store thật, `aput` luôn ném — giả một
+    Mongo lỗi ĐÚNG lúc ghi (review round 1: giai đoạn ghi từng nằm ngoài
+    `try` của `consolidate_memory`, nên lỗi ở đây từng thoát ra ngoài hàm)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    async def aget(self, namespace, key, **kwargs):
+        return await self._inner.aget(namespace, key, **kwargs)
+
+    async def aput(self, namespace, key, value, **kwargs):
+        raise RuntimeError("store lỗi lúc ghi")
+
+
+async def test_consolidate_returns_false_when_the_store_write_fails(
+        test_db, memory_checkpointer, memory_store, monkeypatch):
+    user = _user("0901234565")
+    thread_id = f"thread-{uuid.uuid4().hex}"
+    await _seed_thread(memory_checkpointer, thread_id, [
+        HumanMessage("chị muốn làm nail"),
+        AIMessage("Dạ, anh chị muốn ngày nào ạ?"),
+    ])
+
+    model = scripted([CustomerMemory(preferences=["thích làm nail"])], tags=("memory",))
+    monkeypatch.setattr(long_term_module, "build_chat_model", lambda **kwargs: model)
+
+    ok = await consolidate_memory(
+        test_db, _RaisingPutStore(memory_store), user, previous_thread_id=thread_id,
+        now=datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc),
+    )
+    assert ok is False
 
 
 async def test_consolidate_with_missing_checkpoint_returns_false(test_db, memory_store):

@@ -27,8 +27,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
 
+from app.agents.salon.memory.long_term import MEMORY_NAMESPACE
 from app.agents.salon.memory.prompts import SUMMARY_PROMPT
+from app.agents.salon.shared.context import MEMORY_LABEL
 from app.agents.salon.orchestrator import middleware as middleware_pkg
 from app.agents.salon.orchestrator.middleware import orchestrator_middleware
 from app.agents.salon.orchestrator.middleware.budget import LlmBudgetExceeded
@@ -130,24 +133,24 @@ def _config() -> dict:
     return {"configurable": {"thread_id": THREAD_ID}}
 
 
-def _agent(db, user, holder, model, saver):
+def _agent(db, user, holder, model, saver, store=None):
     return create_agent(
         model=model, tools=make_orchestrator_tools(db, user, holder),
         system_prompt=ORCHESTRATOR_PROMPT,
-        middleware=orchestrator_middleware(db, user, holder, None),
+        middleware=orchestrator_middleware(db, user, holder, store),
         state_schema=SalonState, context_schema=SalonContext, checkpointer=saver,
     )
 
 
 async def _turn(db, user, model, text, *, saver, turn_id: Optional[str] = None,
-                preset: Optional[PendingOutcome] = None, button: bool = False):
+                preset: Optional[PendingOutcome] = None, button: bool = False, store=None):
     # +5 giây: đề xuất tạo lúc dựng test phải là của lượt TRƯỚC (`approve` kiểm).
     asked_at = now_utc() + timedelta(seconds=5)
     turn_id = turn_id or uuid.uuid4().hex
     await TurnLedger(db).start(turn_id=turn_id, user_id=str(user.id), thread_id=THREAD_ID,
                                asked_at=asked_at, kind="button" if button else "typed")
     holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=THREAD_ID, services=NoLedger())
-    agent = _agent(db, user, holder, model, saver)
+    agent = _agent(db, user, holder, model, saver, store=store)
     if button:
         message = HumanMessage(text, additional_kwargs={"salon_button": True})
     else:
@@ -345,6 +348,29 @@ async def test_context_block_is_second_and_not_persisted(test_db):
     assert not any("Today: " in str(m.content) for m in state["messages"])
     # Câu khách lưu NGUYÊN VĂN; nhãn untrusted chỉ thêm lúc gửi model.
     assert state["messages"][0].content == "chào em"
+
+
+async def test_context_block_carries_only_this_customers_memory(test_db):
+    """Review round 1 (item 3): `ContextMiddleware` đọc `("memories", uid)`
+    đúng của khách đang nói chuyện, không lẫn mục của khách khác."""
+    await default_hours(test_db)
+    user = await a_user(test_db, phone="0912345678")
+    other = await a_user(test_db, phone="0909999999", name="Anh Minh")
+    store = InMemoryStore()
+    await store.aput((MEMORY_NAMESPACE, str(user.id)), "preferences",
+                     {"data": ["thích làm nail buổi chiều"], "updated_at": "2026-01-01T00:00:00+00:00"})
+    await store.aput((MEMORY_NAMESPACE, str(other.id)), "preferences",
+                     {"data": ["thích cắt tóc ngắn"], "updated_at": "2026-01-01T00:00:00+00:00"})
+    model = recorder([AIMessage(GOOD)])
+
+    await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), store=store)
+
+    context_block = model.calls[0][1]
+    lines = context_block.content.splitlines()
+    idx = lines.index(MEMORY_LABEL)
+    block = "\n".join(lines[idx + 1:])
+    assert "thích làm nail buổi chiều" in block
+    assert "thích cắt tóc ngắn" not in block
 
 
 async def test_tools_offered_follow_pending_state(test_db):
