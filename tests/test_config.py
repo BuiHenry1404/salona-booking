@@ -44,3 +44,16 @@ def test_orchestrator_settings_have_defaults():
                  "orch_goal_turns_limit": 3, "orch_turn_timeout_seconds": 150, "orch_orchestrate_timeout_seconds": 110,
                  "orch_task_timeout_seconds": 40, "orch_llm_calls_per_user_per_hour": 150, "orch_ledger_ttl_days": 7}
     assert d["orch_orchestrate_timeout_seconds"] + 30 <= d["orch_turn_timeout_seconds"]
+
+
+def test_summary_keep_must_cover_one_whole_turn():
+    """Ruling R11: phần giữ của `SummarizationMiddleware` phải lớn hơn số message
+    tối đa của một lượt, không thì bản tóm tắt cắt vào lượt đang chạy."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match="salon_summary_keep_messages"):
+        Settings(salon_summary_keep_messages=10)
+    assert Settings(salon_summary_keep_messages=36).salon_summary_keep_messages == 36

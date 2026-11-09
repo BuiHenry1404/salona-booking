@@ -50,6 +50,9 @@ __all__ = ["GUARD_HINT_MARK", "ReplyGuardMiddleware", "guard_hint"]
 logger = get_logger(__name__)
 
 _CODE_HINTS = {
+    "bad_tool_call": "Your last message had a tool call with invalid arguments.",
+    "empty": "Your reply was empty. Write the reply to the customer in plain words; never "
+             "write a tool call as text.",
     "claim": "Do not say anything was booked, moved, cancelled or held unless this turn's "
              "facts show it.",
     "unknown_time": "Mention only times that appear in the context block, this turn's facts or "
@@ -112,6 +115,10 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
         text = strip_tool_text(reply.text)
         facts = await self._facts(state, context)
         codes = check_reply(text, facts)
+        if reply.invalid_tool_calls:
+            # Tool call hỏng: `create_agent` coi là câu cuối (không có tool call
+            # hợp lệ) — không bao giờ gửi khách, và xoá khỏi state cùng lúc.
+            codes = ["bad_tool_call", *codes]
         hints = [RemoveMessage(id=m.id) for m in messages if is_guard_hint(m)]
         log_extra = {"user_id": context.user_id, "turn_id": context.turn_id,
                      "thread_id": context.thread_id, "codes": codes}

@@ -34,7 +34,7 @@ from app.core.config import settings
 from app.core.text import normalize_for_match
 
 CHECK_CODES = (
-    "claim", "unknown_time", "unknown_price", "missing_fact", "missing_question",
+    "empty", "claim", "unknown_time", "unknown_price", "missing_fact", "missing_question",
     "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun", "repeat",
 )
 
@@ -315,6 +315,10 @@ def check_reply(text: str, facts: ReplyFacts) -> list[str]:
     """Mã vi phạm của `text` so với dữ kiện của lượt, theo thứ tự `CHECK_CODES`."""
     text = text or ""
     found: set[str] = set()
+    # Câu rỗng — vd model viết tool call thành chữ, `strip_tool_text` xoá sạch
+    # (review Task 13): không bao giờ gửi khách một tin trống.
+    if not text.strip():
+        found.add("empty")
     if _has_false_claim(text, facts):
         found.add("claim")
     if not all(is_known(clock, facts.clocks) for clock in clocks_in_text(text)):

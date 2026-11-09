@@ -52,12 +52,23 @@ def current_turn_start(messages: Sequence[BaseMessage]) -> int:
     return openers[-1] if openers else 0
 
 
+def has_calls(message: BaseMessage) -> bool:
+    """AIMessage có tool call — kể cả `invalid_tool_calls` (tham số hỏng):
+    `langchain_openai` gửi chúng lên như tool call, nên chúng cũng cần ToolMessage."""
+    return isinstance(message, AIMessage) and bool(message.tool_calls or message.invalid_tool_calls)
+
+
+def call_ids(message: AIMessage) -> set[str]:
+    return {call["id"] for call in [*message.tool_calls, *message.invalid_tool_calls]
+            if call.get("id")}
+
+
 def final_reply(segment: Sequence[BaseMessage]) -> Optional[AIMessage]:
-    """Câu trả lời cuối của một lượt: AIMessage KHÔNG tool call cuối cùng.
-    Lượt bị cắt sau một ToolMessage thì không có (không lấy AIMessage có tool
-    call — gửi nó mà thiếu ToolMessage là lỗi 400, bẫy 13)."""
+    """Câu trả lời cuối của một lượt: AIMessage KHÔNG tool call (hợp lệ hay
+    hỏng) cuối cùng. Lượt bị cắt sau một ToolMessage thì không có (gửi một
+    AIMessage có tool call mà thiếu ToolMessage là lỗi 400, bẫy 13)."""
     for message in reversed(segment):
-        if isinstance(message, AIMessage) and not message.tool_calls:
+        if isinstance(message, AIMessage) and not has_calls(message):
             return message
     return None
 

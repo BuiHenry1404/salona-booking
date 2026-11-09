@@ -70,8 +70,11 @@ def _check_history(messages: list[BaseMessage]) -> None:
         message = messages[i]
         if isinstance(message, ToolMessage):
             raise ValueError("400 INVALID_TOOL_RESULTS: orphan ToolMessage")
-        if isinstance(message, AIMessage) and message.tool_calls:
-            expected = sorted(call["id"] for call in message.tool_calls)
+        # langchain_openai gửi cả `invalid_tool_calls` như tool call — cũng cần kết quả.
+        calls = [*message.tool_calls, *message.invalid_tool_calls] if isinstance(
+            message, AIMessage) else []
+        if calls:
+            expected = sorted(call["id"] for call in calls)
             answered = []
             j = i + 1
             while j < len(messages) and isinstance(messages[j], ToolMessage):
@@ -607,3 +610,85 @@ async def test_summary_keeps_tool_call_pairs_together(summary_model):
     kept = [m for m in update["messages"][1:] if not m.additional_kwargs.get("lc_source")]
     assert [m.id for m in kept] == [call.id, "t1", "a1", "h2"]
     assert "{messages}" in SUMMARY_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1: câu rỗng, tool call hỏng, nén theo số message mới
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["", 'decide_pending({"label": "approve"})'])
+async def test_blank_or_tool_call_as_text_reply_is_rewritten(test_db, bad):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([AIMessage(bad), AIMessage(GOOD)])
+
+    state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
+
+    [hint] = _hints(model.calls[1])
+    assert hint.additional_kwargs[GUARD_HINT_MARK][0] == "empty"
+    assert state["messages"][-1].content == GOOD
+    assert bad not in _texts(state["messages"], AIMessage)
+
+
+def _invalid_call(call_id: str = "bad-1") -> dict:
+    return {"name": "shop_info_task", "args": '{"request": ', "id": call_id,
+            "error": "malformed JSON", "type": "invalid_tool_call"}
+
+
+async def test_invalid_tool_call_in_the_thread_is_repaired(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    saver = InMemorySaver()
+    broken = AIMessage("Dạ có ạ.", invalid_tool_calls=[_invalid_call()], id="broken")
+    await _seed(test_db, user, saver, {"messages": [HumanMessage("tiệm mở mấy giờ"), broken]})
+    model = recorder([AIMessage(GOOD)])
+
+    state = await _turn(test_db, user, model, "còn mở không em", saver=saver)
+
+    assert "broken" not in [m.id for m in state["messages"]]
+    assert not any(isinstance(m, AIMessage) and m.invalid_tool_calls for m in state["messages"])
+    sent = _sent_history(model.calls[0])
+    assert not any(isinstance(m, AIMessage) and m.invalid_tool_calls for m in sent)
+
+
+async def test_invalid_tool_call_is_not_delivered_as_the_answer(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([AIMessage(GOOD, invalid_tool_calls=[_invalid_call()]), AIMessage("Dạ có ạ.")])
+
+    state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
+
+    assert len(model.calls) == 2
+    [hint] = _hints(model.calls[1])
+    assert "bad_tool_call" in hint.additional_kwargs[GUARD_HINT_MARK]
+    assert not any(isinstance(m, AIMessage) and m.invalid_tool_calls for m in state["messages"])
+    assert state["messages"][-1].content == "Dạ có ạ."
+
+
+async def _long_thread_turn(db, user, size: int, monkeypatch) -> None:
+    saver = InMemorySaver()
+    old = []
+    for i in range(size // 2):
+        old += [HumanMessage(f"câu cũ {i}"), AIMessage(f"Dạ trả lời {i} ạ.")]
+    await _seed(db, user, saver, {"messages": old})
+    model = recorder([tool_call("decide_pending", _DECIDE) for _ in range(2)] + [AIMessage(GOOD)])
+    await _turn(db, user, model, "câu khách của lượt", saver=saver)
+    assert len(model.calls) == 3
+
+
+async def test_summary_waits_for_enough_new_messages(test_db, monkeypatch, summary_model):
+    from app.agents.salon.orchestrator.middleware import SUMMARY_MIN_NEW_MESSAGES
+
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    monkeypatch.setattr(settings, "salon_summary_trigger_tokens", 50)
+    keep = settings.salon_summary_keep_messages
+
+    # Quá ngưỡng token nhưng chưa đủ keep + 20 message: ba lần gọi model, không lần nén nào.
+    await _long_thread_turn(test_db, user, keep + SUMMARY_MIN_NEW_MESSAGES - 10, monkeypatch)
+    assert summary_model.calls == []
+
+    # Đủ: nén đúng MỘT lần trong cả lượt (sau đó còn keep + vài message).
+    await _long_thread_turn(test_db, user, keep + SUMMARY_MIN_NEW_MESSAGES + 10, monkeypatch)
+    assert len(summary_model.calls) == 1

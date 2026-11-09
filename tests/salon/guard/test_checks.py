@@ -356,3 +356,12 @@ async def test_tool_name_set_covers_every_subagent_tool(test_db):
     names = {t.name for spec in (APPOINTMENT, SHOP_INFO) for t in spec.build_tools(ctx)}
     assert names <= SUBAGENT_TOOLS
     assert orchestrator_tools.CONTROL_TOOLS is CONTROL_TOOLS
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n"])
+async def test_empty_reply_is_a_violation(test_db, text):
+    """Câu rỗng (vd model viết tool call thành chữ, `strip_tool_text` xoá sạch)
+    không bao giờ được gửi khách — mã `empty` đứng đầu."""
+    facts = await facts_for(test_db)
+    assert check_reply(text, facts)[0] == "empty"
+    assert strip_tool_text('decide_pending({"label": "approve"})') == ""

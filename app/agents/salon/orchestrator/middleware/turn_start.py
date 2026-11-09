@@ -20,10 +20,10 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import BaseMessage, RemoveMessage, ToolMessage
 from langgraph.runtime import Runtime
 
-from app.agents.salon.orchestrator.middleware.turns import is_guard_hint
+from app.agents.salon.orchestrator.middleware.turns import call_ids, has_calls, is_guard_hint
 from app.agents.salon.orchestrator.state import RESET, SalonContext, SalonState
 from app.agents.salon.shared.schemas import DecisionFact
 from app.core.logging import get_logger
@@ -38,14 +38,16 @@ def broken_message_ids(messages: list[BaseMessage]) -> list[str]:
     dropped_calls: set[str] = set()
     live_calls: set[str] = set()
     for message in messages:
-        if not isinstance(message, AIMessage) or not message.tool_calls:
+        if not has_calls(message):
             continue
-        call_ids = {call["id"] for call in message.tool_calls}
-        if call_ids - answered:
+        # Tính cả `invalid_tool_calls` — câu trả lời kèm tool call hỏng mà
+        # không có ToolMessage cũng làm Azure trả 400 (review Task 13).
+        ids = call_ids(message)
+        if ids - answered:
             drop.add(message.id)
-            dropped_calls |= call_ids
+            dropped_calls |= ids
         else:
-            live_calls |= call_ids
+            live_calls |= ids
     for message in messages:
         if isinstance(message, ToolMessage) and (
                 message.tool_call_id in dropped_calls or message.tool_call_id not in live_calls):

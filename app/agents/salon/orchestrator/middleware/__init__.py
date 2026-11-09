@@ -37,10 +37,15 @@ from app.agents.salon.subagents.dispatch import MODEL_RETRY_DELAY_SECONDS, is_tr
 from app.core.config import settings
 from app.models.user import User
 
+# Ruling R11: mỗi lần nén gộp ít nhất chừng này message MỚI. Chỉ có ngưỡng
+# token thì khi bản tóm tắt + `keep` message còn vượt ngưỡng, lần gọi model
+# nào cũng nén lại (thêm một lời gọi LLM không đếm ngân sách mỗi lần).
+SUMMARY_MIN_NEW_MESSAGES = 20
+
 __all__ = [
     "BudgetMiddleware", "ContextMiddleware", "GUARD_HINT_MARK", "LlmBudgetExceeded",
     "ReplyGuardMiddleware", "ToolRulesMiddleware", "TurnStartMiddleware",
-    "orchestrator_middleware",
+    "SUMMARY_MIN_NEW_MESSAGES", "orchestrator_middleware",
 ]
 
 
@@ -53,7 +58,9 @@ def orchestrator_middleware(db: AsyncIOMotorDatabase, user: User, holder: Snapsh
         # `wrap_model_call`, nên BudgetMiddleware không đếm — chấp nhận.
         SummarizationMiddleware(
             model=build_chat_model(tags=["summary"], streaming=False, max_retries=0),
-            trigger=("tokens", settings.salon_summary_trigger_tokens),
+            # Mệnh đề AND: vượt ngưỡng token VÀ có ít nhất 20 message mới ngoài phần giữ.
+            trigger={"tokens": settings.salon_summary_trigger_tokens,
+                     "messages": settings.salon_summary_keep_messages + SUMMARY_MIN_NEW_MESSAGES},
             keep=("messages", settings.salon_summary_keep_messages),
             summary_prompt=SUMMARY_PROMPT,
         ),

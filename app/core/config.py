@@ -1,5 +1,5 @@
 from typing import Literal, Union, Optional
-from pydantic import SecretStr, field_validator, AnyUrl
+from pydantic import SecretStr, field_validator, model_validator, AnyUrl
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 # Chỉ tồn tại trong container (compose mount vào). Máy dev không có thì bỏ qua.
@@ -132,6 +132,19 @@ class Settings(BaseSettings):
             origins = [origin.strip() for origin in v.split(",") if origin.strip()]
             return origins
         return v if isinstance(v, list) else [str(v)]
+
+    @model_validator(mode="after")
+    def _summary_keep_covers_a_turn(self):
+        """Ruling R11: `SummarizationMiddleware` giữ `salon_summary_keep_messages`
+        message cuối — phải nhiều hơn số message tối đa của một lượt (mỗi tool
+        call một AIMessage + một ToolMessage, mỗi lời gọi model một AIMessage,
+        câu khách + lời nhắc guard), không thì bản tóm tắt cắt vào lượt đang chạy."""
+        turn_max = 2 * self.salon_tool_calls_per_turn + self.salon_model_calls_per_turn + 2
+        if self.salon_summary_keep_messages < turn_max:
+            raise ValueError(
+                f"salon_summary_keep_messages={self.salon_summary_keep_messages} must be >= "
+                f"{turn_max} (2*salon_tool_calls_per_turn + salon_model_calls_per_turn + 2)")
+        return self
 
     # File sau thắng file trước: `.env` là gốc, `DOCKER_ENV_FILE` chỉ đè vài
     # khoá khác biệt trong container.
