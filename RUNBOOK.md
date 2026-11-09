@@ -20,6 +20,9 @@ docker compose up -d mongo
 PYTHONPATH=. .venv/bin/python scripts/seed_dev_users.py
 ```
 
+`requirements.txt` là nguồn phụ thuộc thật. `bcrypt` ghim ở **4.0.1**: passlib 1.7.4 hỏng với bcrypt 5.x,
+đừng nâng.
+
 ## 3. Cấu hình
 
 **Cấu hình chỉ đọc từ `.env`.** Biến môi trường của shell bị bỏ qua hoàn toàn

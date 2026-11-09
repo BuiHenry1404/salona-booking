@@ -7,7 +7,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 | Cần gì | Đọc file |
 |---|---|
 | Đang làm gì, làm tiếp gì | Mục **Trạng thái** ngay dưới + spec [`docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`](docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md) |
-| Kiến trúc đích của tầng agent | [`docs/architech-agent.md`](docs/architech-agent.md) — thắng spec / plan khi lệch; `AGENTS.md` không còn là chuẩn |
+| Kiến trúc đích của tầng agent | [`docs/architech-agent.md`](docs/architech-agent.md) — thắng spec / plan khi lệch; `AGENTS.md` đã xoá (09/11) |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
 | Rà kiến trúc / bảo mật | [`docs/ARCH_SECURITY_REVIEW.md`](docs/ARCH_SECURITY_REVIEW.md) |
@@ -117,7 +117,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
     dù Orchestrator có reasoning (08/11): reasoning không đúng 100% (chính lần chạy thật 08/11 còn sai),
     không chống được chữ khách cố tình lừa, và veto sai thì chỉ hỏi lại một câu, còn nhãn `approve`
     sai thì ghi nhầm lịch. Vẫn cho khách xác nhận bằng chữ, không chỉ bằng nút.
-18. **`docs/architech-agent.md` là kiến trúc đích** (08/11); `AGENTS.md` không còn là chuẩn cho tầng agent.
+18. **`docs/architech-agent.md` là kiến trúc đích** (08/11); `AGENTS.md` đã xoá (09/11), đừng tạo lại.
     Theo đó: một đường `apply_decision` cho nút và chữ (chữ qua Decision Gate = `veto` + kiểm đề xuất);
     guard từ chối câu cuối khi đề xuất chờ chưa được quyết (`pending_undecided`); lần viết lại không có
     tool; tool huỷ tên `propose_cancel`; human-in-the-loop = xác nhận đề xuất qua hai lượt, không `interrupt()`.

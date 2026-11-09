@@ -10,7 +10,7 @@ duyệt bằng code). Đợt B (giữ chỗ nhiều lịch, `git show
 và phải viết lại cho khớp kiến trúc mới.
 
 **Kiến trúc đích: [`docs/architech-agent.md`](../../architech-agent.md)** (chủ dự án chốt 08/11). Spec này
-triển khai đúng sơ đồ đó; chỗ nào lệch thì sơ đồ thắng. `AGENTS.md` **không còn là chuẩn** cho tầng agent.
+triển khai đúng sơ đồ đó; chỗ nào lệch thì sơ đồ thắng. `AGENTS.md` đã xoá (chủ dự án 09/11).
 Sơ đồ chi tiết hơn (middleware trong một lượt, state, bộ nhớ, phiên chờ):
 https://claude.ai/artifact/CCinuSWJv3LybFPAeivH39
 
