@@ -50,6 +50,18 @@ def _sync_ttl(client: MongoClient, ttl: int) -> None:
                            index={"keyPattern": {"created_at": 1}, "expireAfterSeconds": ttl})
 
 
+def make_serde() -> JsonPlusSerializer:
+    """Serializer của dự án, allowlist các kiểu pydantic mang trong state.
+
+    Tách khỏi `make_checkpointer` để test roundtrip (vd `SalonState`) dùng
+    được serializer thật mà không mở `MongoClient` — serde không chạm Mongo,
+    chỉ encode/decode bằng msgpack/json.
+    """
+    return JsonPlusSerializer(
+        allowed_msgpack_modules=[("app.models.conversation", "ConversationSlots")]
+    )
+
+
 def make_checkpointer(client: Optional[MongoClient] = None) -> MongoDBSaver:
     client = client or MongoClient(str(settings.mongo_uri), tz_aware=True)
     ttl = settings.checkpoint_ttl_days * 86400
@@ -58,9 +70,7 @@ def make_checkpointer(client: Optional[MongoClient] = None) -> MongoDBSaver:
         client,
         db_name=settings.mongo_db_name,
         ttl=ttl,
-        serde=JsonPlusSerializer(
-            allowed_msgpack_modules=[("app.models.conversation", "ConversationSlots")]
-        ),
+        serde=make_serde(),
     )
 
 
