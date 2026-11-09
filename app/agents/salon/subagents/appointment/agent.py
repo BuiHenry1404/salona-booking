@@ -98,10 +98,8 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
     proposals = ProposalService(ctx.db)
     prior = ctx.session.memory if ctx.session is not None else {}
 
-    parsed: list[Moment] = []          # mọi giờ parse_time đọc ra
-    checked: set[datetime] = set()     # giờ đã đem đi kiểm (việc đang làm)
-    excluded: set[datetime] = {datetime.fromisoformat(a.at.iso) for a in ctx.snapshot.upcoming}
-    proposed: set[datetime] = set()
+    remembered: list[Moment] = []      # yêu cầu kế qua `remember_next_request`
+    done: set[datetime] = set()        # giờ đã THẬT SỰ đề xuất / lịch được dời đi
     offered: list[Moment] = []
     taken: list[Moment] = []
     day: Optional[str] = None
@@ -119,7 +117,6 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
             moment = _moment_of(data)
             if moment is not None:
                 collector.time("asked", moment)
-                parsed.append(moment)
                 day = to_local(_instant(moment)).date().isoformat()
             elif isinstance(data.get("day"), str):
                 day = data["day"]
@@ -128,13 +125,16 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
             day = data.get("day") if isinstance(data.get("day"), str) else day
             asked = _moment_of(data.get("asked"))
             if asked is not None:
-                checked.add(_instant(asked))
                 collector.time("asked", asked)
+                # `yours` là lịch của chính khách — không bao giờ ghi là "kín".
                 if data.get("asked_status") == "taken":
                     collector.time("taken", asked)
                     taken.append(asked)
                 elif data.get("asked_status") == "free":
                     collector.time("free", asked)
+            yours = data.get("yours")
+            if isinstance(yours, dict):
+                collector.time("appointment", _moment_of(yours.get("at")))
             slots = [m for m in (_moment_of(s) for s in data.get("slots") or []) if m]
             for slot in slots:
                 collector.time("free", slot)
@@ -143,7 +143,6 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
         elif name == "propose_appointment":
             asked = _moment_of(data.get("asked") or data.get("held"))
             if asked is not None:
-                checked.add(_instant(asked))
                 collector.time("asked", asked)
                 day = to_local(_instant(asked)).date().isoformat()
             if data.get("error") == "slot_unavailable" and asked is not None:
@@ -161,13 +160,19 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
                 was = _moment_of(replaces.get("was"))
                 collector.time("appointment", was)
                 if was is not None:
-                    excluded.add(_instant(was))
+                    done.add(_instant(was))
             if data.get("proposal_id"):
                 fact = await _proposal_fact(proposals, ctx, data, _moment_of(data.get("held")))
                 if fact is not None:
                     collector.add(fact)
-                    proposed.add(_instant(fact.at))
+                    done.add(_instant(fact.at))
                     created = True
+
+        elif name == "remember_next_request":
+            # JSON do code của tool dựng, chỉ sau khi đã khớp một kết quả parse_time.
+            moment = _moment_of(data.get("next_request"))
+            if moment is not None:
+                remembered.append(moment)
 
         elif name == "propose_cancel":
             will_cancel = data.get("will_cancel")
@@ -184,13 +189,13 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
                 if isinstance(item, dict):
                     collector.time("appointment", _moment_of(item.get("at")))
 
-    # Yêu cầu kế (spec §5.1): giờ khách xin THÊM mà lần gọi này không đem đi
-    # kiểm/đề xuất. Chỉ tính giờ mới khi đã tạo đề xuất (lịch đầu); yêu cầu kế
-    # của phiên trước được giữ tới khi được đề xuất.
+    # Yêu cầu kế (spec §5.1, ruling review T9): CHỈ những giờ model ghi qua
+    # `remember_next_request` (code đã khớp với parse_time) cộng yêu cầu kế của
+    # phiên trước — code không tự đoán "A hay B" với "A và B" từ parse_time.
+    # Chỉ bỏ khi giờ đó đã thật sự thành đề xuất (hoặc là lịch vừa dời đi); bị
+    # từ chối vì hạn mức đề xuất hay chỉ đem đi kiểm chỗ thì vẫn giữ.
     prior_next = [m for m in (_moment_of(x) for x in prior.get("next_requests") or []) if m]
-    candidates = prior_next + (parsed if created else [])
-    done = checked | excluded | proposed
-    next_requests = [m for m in _dedupe(candidates) if _instant(m) not in done]
+    next_requests = [m for m in _dedupe(prior_next + remembered) if _instant(m) not in done]
 
     prior_taken = [m for m in (_moment_of(x) for x in prior.get("taken") or []) if m]
     prior_offered = [m for m in (_moment_of(x) for x in prior.get("offered") or []) if m]

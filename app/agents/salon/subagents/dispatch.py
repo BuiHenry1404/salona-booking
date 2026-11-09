@@ -214,7 +214,7 @@ def _build_agent(spec: SubagentSpec, ctx: RunContext, middleware: Sequence[Agent
     )
 
 
-async def _invoke(agent, message: HumanMessage, *, timeout: float,
+async def _invoke(agent, message: HumanMessage, *, timeout: float, log_extra: dict,
                   ) -> tuple[Optional[SubagentResult], list[BaseMessage], Optional[ErrorCode]]:
     """Chạy agent, giữ state MỚI NHẤT qua `astream(values)` — quá giờ giữa
     chừng vẫn còn các ToolMessage đã có (vd một đề xuất đã tạo), để `extract`
@@ -230,12 +230,17 @@ async def _invoke(agent, message: HumanMessage, *, timeout: float,
         await asyncio.wait_for(_drive(), timeout)
     except asyncio.TimeoutError:
         error = "timeout"
-    except StructuredOutputError:
+        logger.warning("subagent_timeout", extra={**log_extra, "timeout_seconds": timeout})
+    except StructuredOutputError as exc:
         error = "schema_invalid"
-    except Exception:
+        logger.warning("subagent_schema_invalid",
+                       extra={**log_extra, "error_type": type(exc).__name__})
+    except Exception as exc:
         # Lỗi model (đã hết lượt thử lại), chạm trần lời gọi model
         # (`ModelCallLimitExceededError`), lỗi tool ngoài dự kiến.
         error = "model_error"
+        # Có traceback để soi lỗi lập trình trong tool; không có chữ khách.
+        logger.exception("subagent_error", extra={**log_extra, "error_type": type(exc).__name__})
     output = latest.get("structured_response")
     if error is None and not isinstance(output, SubagentResult):
         error = "schema_invalid"
@@ -324,7 +329,7 @@ async def run_subagent(
     )
 
     agent = _build_agent(spec, ctx, middleware)
-    result, messages, error = await _invoke(agent, subagent_message(spec, ctx),
+    result, messages, error = await _invoke(agent, subagent_message(spec, ctx), log_extra=log_extra,
                                             timeout=settings.orch_task_timeout_seconds)
     extracted = await spec.extract(messages, ctx)
     if result is None and error is None:

@@ -18,11 +18,16 @@ Rules:
   including each extra request when they ask for several appointments. Never
   compute a date or an ISO string yourself; copy `iso` values unchanged.
 - Free slots: find_free_slots gives the slots near a time. Only times that a
-  tool returned exist; never invent one.
+  tool returned exist; never invent one. When moving an appointment, pass its
+  id as replaces_appointment_id to find_free_slots too. `asked_status` "yours"
+  means the customer's own appointment, not someone else's.
 - NO tool writes an appointment. propose_appointment and propose_cancel only
   create a PROPOSAL that the customer approves later. Create at most ONE
-  proposal per call. When the customer asks for several appointments, propose
-  only the first; the others are remembered from your parse_time calls.
+  proposal per call.
+- Several appointments in one message: propose only the first, and call
+  remember_next_request once for EACH other appointment, with the `iso` its
+  parse_time call returned. Alternatives for the same appointment ("A or B")
+  are NOT extra appointments: never remember them; ask which one instead.
 - Moving an appointment: propose_appointment with replaces_appointment_id set
   to that appointment's id. Cancelling: propose_cancel. If the customer has
   several appointments and it is unclear which one, ask (which_appointment).

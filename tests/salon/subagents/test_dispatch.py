@@ -23,7 +23,7 @@ from app.services.waiting_session import WaitingSessionService
 from tests.fakes import Hang, scripted, tool_call, tool_calls
 from tests.salon.subagents import (
     TURN_ID, a_holder, a_runtime, a_user, default_hours, human_text, moment, result,
-    seed_services, tomorrow_at, use_model,
+    seed_services, tomorrow_at, tool_json, use_model,
 )
 
 _ALLOWED_UPDATE_KEYS = {"messages", "turn_facts", "proposals_created", "failed_calls"}
@@ -156,6 +156,7 @@ async def test_proposal_with_next_requests_keeps_the_session_open(test_db, monke
             ("parse_time", {"day": day, "hour": 9, "part_of_day": "sang"}),
             ("parse_time", {"day": day, "hour": 3, "part_of_day": "chieu"}),
         ),
+        tool_call("remember_next_request", {"iso": tomorrow_at(15).isoformat()}),
         tool_call("propose_appointment", {"start_at": tomorrow_at(9).isoformat(), "note": None}),
         result(status="ok"),
     ])
@@ -173,6 +174,56 @@ async def test_proposal_with_next_requests_keeps_the_session_open(test_db, monke
     assert command.update["proposals_created"] == 1
     proposal_facts = [f for f in _facts(command) if f["kind"] == "proposal"]
     assert [f["at"] for f in proposal_facts] == [moment(tomorrow_at(9))]
+
+
+async def test_refused_second_propose_keeps_the_next_request(test_db, monkeypatch):
+    # "3 giờ cho chị, 4 giờ cho con gái": model đề xuất cả hai trong một vòng —
+    # lần hai bị từ chối theo hạn mức, yêu cầu 4 giờ vẫn phải còn trong phiên.
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    day = tomorrow_at(15).date().isoformat()
+    model = scripted([
+        tool_calls(
+            ("parse_time", {"day": day, "hour": 3, "part_of_day": "chieu"}),
+            ("parse_time", {"day": day, "hour": 4, "part_of_day": "chieu"}),
+        ),
+        tool_call("remember_next_request", {"iso": tomorrow_at(16).isoformat()}),
+        tool_calls(
+            ("propose_appointment", {"start_at": tomorrow_at(15).isoformat()}),
+            ("propose_appointment", {"start_at": tomorrow_at(16).isoformat()}),
+        ),
+        result(status="ok"),
+    ])
+    use_model(monkeypatch, model)
+
+    command = await _run(test_db, user, request="Book 3pm for her and 4pm for her daughter")
+
+    refused = [m for m in tool_json(model, "propose_appointment") if "error" in m]
+    assert [m["error"] for m in refused] == ["one_proposal_per_call"]
+    session = (await _active(test_db, user))["appointment"]
+    assert session.question.field == "confirm"
+    assert session.memory["next_requests"] == [moment(tomorrow_at(16))]
+    assert command.update["proposals_created"] == 1
+
+
+async def test_alternatives_are_not_next_requests(test_db, monkeypatch):
+    # "3 giờ hoặc 4 giờ": hai lần parse_time nhưng không remember → không có yêu cầu kế.
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    day = tomorrow_at(15).date().isoformat()
+    use_model(monkeypatch, scripted([
+        tool_calls(
+            ("parse_time", {"day": day, "hour": 3, "part_of_day": "chieu"}),
+            ("parse_time", {"day": day, "hour": 4, "part_of_day": "chieu"}),
+        ),
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat()}),
+        result(status="ok"),
+    ]))
+
+    command = await _run(test_db, user, request="Book 3pm or 4pm")
+
+    assert "appointment" not in await _active(test_db, user)
+    assert command.update["proposals_created"] == 1
 
 
 async def test_timeout_is_failed_and_keeps_the_older_session(test_db, monkeypatch):

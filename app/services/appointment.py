@@ -4,7 +4,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
-from app.core.clock import local_day_bounds, now_utc
+from app.core.clock import local_day_bounds, now_utc, to_local
 from app.core.config import settings
 from app.core.errors import (ForbiddenError, NotFoundError,
                              OutsideShopHoursError, PastTimeError,
@@ -290,6 +290,19 @@ class AppointmentService:
     async def day_schedule(self, day: date) -> List[Appointment]:
         start, end = local_day_bounds(day)
         return await self.repo.booked_between(start, end)
+
+    async def own_covering(self, user: User, at: datetime, *,
+                           ignore_appointment_id: Optional[str] = None) -> Optional[Appointment]:
+        """Lịch còn hiệu lực của CHÍNH khách đang chiếm mốc `at` (bắt đầu ≤ `at`
+        < bắt đầu + thời lượng) — để agent phân biệt "giờ này là lịch của anh
+        chị" với "giờ này người khác đặt rồi". `ignore_appointment_id`: lịch
+        đang được dời, coi như không có."""
+        for appt in await self.day_schedule(to_local(at).date()):
+            if appt.user_id != str(user.id) or str(appt.id) == ignore_appointment_id:
+                continue
+            if appt.start_at <= at < appt.start_at + timedelta(minutes=appt.duration_minutes):
+                return appt
+        return None
 
     async def find_free_slots(
         self, day: date, limit: int = 12, ignore_appointment_id: Optional[str] = None,

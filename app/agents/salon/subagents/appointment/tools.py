@@ -19,6 +19,8 @@ import json
 from datetime import date, datetime
 from typing import Literal, Optional
 
+from langchain.tools import ToolRuntime
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, create_model
 
@@ -28,7 +30,7 @@ from app.core.clock import TZ, now_utc, to_local
 from app.core.errors import AppError, ForbiddenError, NotFoundError
 from app.core.text import single_line
 from app.core.vi_format import format_vi_datetime, format_vi_hhmm
-from app.models.appointment import NOTE_MAX
+from app.models.appointment import NOTE_MAX, Appointment
 from app.models.shop import ShopHours
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
@@ -124,32 +126,57 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             return "one_proposal_per_call"
         return None
 
-    async def _status_of(target: datetime, free: list[datetime], duration: int) -> str:
-        """Vì sao giờ khách hỏi (không) trống — chỉ `taken` mới là "có người đặt"."""
+    async def _duration(old: Optional[Appointment]) -> int:
+        # Dời mà không mang dịch vụ mới → giữ thời lượng của lịch cũ (spec §6.2).
+        if old is not None and not service_ids:
+            return old.duration_minutes
+        return await catalog.duration_for(service_ids)
+
+    async def _status_of(target: datetime, free: list[datetime], duration: int,
+                         old: Optional[Appointment]) -> tuple[str, Optional[Appointment]]:
+        """Vì sao giờ khách hỏi (không) trống — chỉ `taken` mới là "người khác
+        đặt rồi"; `yours` là lịch của CHÍNH khách (không phải lịch đang dời)."""
         if target in free:
-            return "free"
+            return "free", None
         if target <= now_utc():
-            return "time_passed"
+            return "time_passed", None
         hours = await shop.get_hours()
         if _closed_on(hours, target):
-            return "closed_day"
+            return "closed_day", None
         if not fits_before_closing(hours, target, duration):
-            return "outside_hours"
-        return "taken"
+            return "outside_hours", None
+        mine = await appointments.own_covering(
+            user, target, ignore_appointment_id=str(old.id) if old is not None else None)
+        if mine is not None:
+            return "yours", mine
+        return "taken", None
 
-    async def find_free_slots(day: str, around: Optional[str] = None) -> str:
+    async def find_free_slots(day: str, around: Optional[str] = None,
+                              replaces_appointment_id: Optional[str] = None) -> str:
         try:
             parsed_day = date.fromisoformat(day.strip())
         except ValueError:
             return _dumps({"error": "bad_day_format"})
-        duration = await catalog.duration_for(service_ids)
-        free = await appointments.find_free_slots(parsed_day, limit=WHOLE_DAY,
-                                                  duration_minutes=duration)
+        old = None
+        if replaces_appointment_id:
+            try:
+                old = await appointments.own_booked(user, replaces_appointment_id)
+            except AppError as exc:
+                return _dumps({"error": _ERROR_CODES.get(type(exc), "unavailable")})
+        duration = await _duration(old)
+        # Đang dời: các mốc của chính lịch cũ tính là trống.
+        free = await appointments.find_free_slots(
+            parsed_day, limit=WHOLE_DAY, duration_minutes=duration,
+            ignore_appointment_id=str(old.id) if old is not None else None,
+        )
         payload: dict = {"day": parsed_day.isoformat()}
         target = _around(around, parsed_day) if around else None
         if target is not None:
             payload["asked"] = _moment(target)
-            payload["asked_status"] = await _status_of(target, free, duration)
+            status, mine = await _status_of(target, free, duration, old)
+            payload["asked_status"] = status
+            if mine is not None:
+                payload["yours"] = {"id": str(mine.id), "at": _moment(mine.start_at)}
         chosen = nearest_slots(free, target) if target else spread_slots(free)
         payload["slots"] = [_moment(slot) for slot in chosen]
         payload["more"] = len(free) > len(chosen)
@@ -180,9 +207,7 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             except AppError as exc:
                 return {"error": _ERROR_CODES.get(type(exc), "unavailable"), "asked": asked}
 
-        # Dời mà không mang dịch vụ mới → giữ thời lượng của lịch cũ (spec §6.2).
-        duration = (old.duration_minutes if old is not None and not service_ids
-                    else await catalog.duration_for(service_ids))
+        duration = await _duration(old)
         if not fits_before_closing(hours, start, duration):
             return {
                 "error": "outside_hours", "asked": asked,
@@ -190,12 +215,13 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
                 "close": {"hhmm": hours.close_time, "spoken": format_vi_hhmm(hours.close_time)},
             }
 
-        # Khách đã có ĐÚNG lịch ở giờ này — ngược hẳn với "chọn giờ khác".
-        if old is None:
-            mine = await appointments.repo.find_active_at(str(user.id), start)
-            if mine:
-                return {"error": "already_yours", "asked": asked,
-                        "existing": {"id": str(mine.id), "at": _moment(mine.start_at)}}
+        # Giờ này nằm trong một lịch của CHÍNH khách (không phải lịch đang dời)
+        # — ngược hẳn với "người khác đặt rồi, chọn giờ khác".
+        mine = await appointments.own_covering(
+            user, start, ignore_appointment_id=str(old.id) if old is not None else None)
+        if mine is not None:
+            return {"error": "already_yours", "asked": asked,
+                    "existing": {"id": str(mine.id), "at": _moment(mine.start_at)}}
 
         free = await appointments.find_free_slots(
             to_local(start).date(), limit=WHOLE_DAY,
@@ -240,6 +266,26 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             reserved["proposal"] = False
         return _dumps(payload)
 
+    async def remember_next_request(iso: str, runtime: ToolRuntime) -> str:
+        """Ghi một yêu cầu KẾ (khách xin thêm lịch) — chỉ nhận đúng một `iso`
+        mà `parse_time` đã trả trong CHÍNH lần gọi agent con này (kiểm bằng
+        code trên ToolMessage của run), để model không bịa được giờ."""
+        try:
+            wanted = _parse_local(iso)
+        except (ValueError, AttributeError):
+            return _dumps({"error": "need_iso_from_parse_time"})
+        for message in runtime.state.get("messages", []):
+            if not (isinstance(message, ToolMessage) and message.name == "parse_time"):
+                continue
+            try:
+                data = json.loads(message.content)
+            except (TypeError, ValueError):
+                continue
+            if (isinstance(data, dict) and isinstance(data.get("iso"), str)
+                    and _parse_local(data["iso"]) == wanted):
+                return _dumps({"next_request": {"iso": data["iso"], "spoken": data["spoken"]}})
+        return _dumps({"error": "need_iso_from_parse_time"})
+
     async def propose_cancel(appointment_id: str) -> str:
         try:
             appt = await appointments.own_booked(user, appointment_id)
@@ -273,6 +319,17 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
                                             "from the context block. Leave null for a new booking."),
         )
 
+    free_slot_fields: dict = {
+        "day": (str, Field(description="YYYY-MM-DD")),
+        "around": (Optional[str], Field(default=None, description="ISO or HH:MM")),
+    }
+    if appointment_id_type is not None:
+        free_slot_fields["replaces_appointment_id"] = (
+            Optional[appointment_id_type],
+            Field(default=None, description="Set ONLY when moving an existing appointment: "
+                                            "its id; its own slots then count as free."),
+        )
+
     tools: list[BaseTool] = [
         parse_time,
         StructuredTool.from_function(
@@ -280,16 +337,20 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             description=(
                 "Free slots on one day, as JSON — at most 3. `day` is YYYY-MM-DD. `around` is "
                 "the time asked for (parse_time's `iso`, or HH:MM): you get the free slots "
-                "nearest to it, plus `asked` and `asked_status` (free, taken, time_passed, "
-                "closed_day, outside_hours — only `taken` means someone booked it). Without "
+                "nearest to it, plus `asked` and `asked_status` (free, taken, yours, "
+                "time_passed, closed_day, outside_hours — only `taken` means another customer "
+                "booked it; `yours` means the customer's own appointment, in `yours`). Without "
                 "`around`, slots spread across the day. `more` is true when other free slots "
                 "exist. An empty `slots` means nothing is free that day. Slot length follows "
                 "the services of this task."),
-            args_schema=create_model(
-                "FindFreeSlotsArgs", __base__=BaseModel,
-                day=(str, Field(description="YYYY-MM-DD")),
-                around=(Optional[str], Field(default=None, description="ISO or HH:MM")),
-            ),
+            args_schema=create_model("FindFreeSlotsArgs", __base__=BaseModel, **free_slot_fields),
+        ),
+        StructuredTool.from_function(
+            coroutine=remember_next_request, name="remember_next_request",
+            description=(
+                "Remember one EXTRA appointment the customer asked for, to propose after the "
+                "current one. `iso` must be copied from a parse_time result of this call. "
+                "Never use it for alternatives of the same appointment."),
         ),
         StructuredTool.from_function(
             coroutine=list_my_appointments, name="list_my_appointments",

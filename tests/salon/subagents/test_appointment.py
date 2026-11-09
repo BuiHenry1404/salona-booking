@@ -17,7 +17,9 @@ from app.agents.salon.subagents.appointment.agent import APPOINTMENT
 from app.agents.salon.subagents.dispatch import RunContext, run_subagent
 from app.agents.salon.subagents.time_tool import parse_time
 from app.core.clock import now_utc, to_local
+from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
+from app.services.waiting_session import WaitingSessionService
 from tests.fakes import scripted, tool_call
 from tests.salon.subagents import (
     a_holder, a_runtime, a_user, default_hours, human_text, moment, result, seed_services,
@@ -152,6 +154,76 @@ async def test_customer_text_sits_only_under_untrusted_label(test_db, monkeypatc
     assert text.startswith("Today: ")
     systems = [m for m in model.calls[0] if isinstance(m, SystemMessage)]
     assert systems and all(question not in m.content for m in systems)
+
+
+async def test_remember_next_request_refuses_an_iso_not_from_parse_time(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    day = tomorrow_at(15).date().isoformat()
+    model = scripted([
+        tool_call("parse_time", {"day": day, "hour": 3, "part_of_day": "chieu"}),
+        tool_call("remember_next_request", {"iso": tomorrow_at(17).isoformat()}),
+        tool_call("propose_appointment", {"start_at": tomorrow_at(15).isoformat()}),
+        result(status="ok"),
+    ])
+    use_model(monkeypatch, model)
+
+    await _run(test_db, user)
+
+    [refused] = tool_json(model, "remember_next_request")
+    assert refused == {"error": "need_iso_from_parse_time"}
+    active = await WaitingSessionService(test_db).active(str(user.id), now=now_utc())
+    assert "appointment" not in active
+
+
+async def _own_appointment_at_15(db, user):
+    return await AppointmentService(db).create(user, tomorrow_at(15), None)
+
+
+def _time_facts(command, role) -> list[dict]:
+    return [f["moment"] for f in command.update["turn_facts"]
+            if f["kind"] == "time" and f["role"] == role]
+
+
+async def test_move_does_not_call_its_own_time_taken(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    appt = await _own_appointment_at_15(test_db, user)
+    model = scripted([
+        tool_call("find_free_slots", {"day": tomorrow_at(15).date().isoformat(),
+                                      "around": tomorrow_at(15, 15).isoformat(),
+                                      "replaces_appointment_id": str(appt.id)}),
+        result(status="need_info", question_field="time", question_text="Which time?"),
+    ])
+    use_model(monkeypatch, model)
+
+    command = await _run(test_db, user, request="Move the 3pm appointment a bit later")
+
+    [found] = tool_json(model, "find_free_slots")
+    assert found["asked_status"] == "free"
+    assert _time_facts(command, "taken") == []
+    session = (await WaitingSessionService(test_db).active(str(user.id), now=now_utc()))
+    assert session["appointment"].memory["taken"] == []
+
+
+async def test_own_time_is_yours_not_taken(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    await _own_appointment_at_15(test_db, user)
+    model = scripted([
+        tool_call("find_free_slots", {"day": tomorrow_at(15).date().isoformat(),
+                                      "around": "15:30"}),
+        result(status="need_info", question_field="time", question_text="Another time?"),
+    ])
+    use_model(monkeypatch, model)
+
+    command = await _run(test_db, user)
+
+    [found] = tool_json(model, "find_free_slots")
+    assert found["asked_status"] == "yours"
+    assert found["yours"]["at"] == moment(tomorrow_at(15))
+    assert _time_facts(command, "taken") == []
+    assert moment(tomorrow_at(15)) in _time_facts(command, "appointment")
 
 
 async def test_parse_time_resolves_offsets_and_weekdays(test_db):
