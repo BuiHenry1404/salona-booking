@@ -16,6 +16,7 @@ from datetime import datetime, time
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, create_model
 
+from app.agents.salon.shared.context import closed_day_names
 from app.agents.salon.subagents.dispatch import RunContext
 from app.agents.salon.subagents.time_tool import parse_time
 from app.core.clock import TZ, now_utc, to_local
@@ -61,8 +62,9 @@ def make_shop_info_tools(ctx: RunContext) -> list[BaseTool]:
         return _dumps({
             "open": _moment(_hhmm_today(hours.open_time)),
             "close": _moment(_hhmm_today(hours.close_time)),
-            # Quy ước ShopHours.closed_days: 0 = Chủ Nhật .. 6 = Thứ Bảy.
-            "closed_days": list(hours.closed_days),
+            # Tên thứ tiếng Việt, không phải số thô — model không được tự dịch
+            # quy ước `ShopHours.closed_days` (Task 7 review; round 1 ở đây).
+            "closed_days": closed_day_names(hours.closed_days),
         })
 
     async def get_shop_status() -> str:
@@ -85,8 +87,8 @@ def make_shop_info_tools(ctx: RunContext) -> list[BaseTool]:
         StructuredTool.from_function(
             coroutine=get_shop_hours, name="get_shop_hours",
             description=("Today's opening and closing time, as JSON `open`/`close` moments, "
-                        "plus `closed_days` (0 = Sunday .. 6 = Saturday). The shop keeps the "
-                        "same hours every open day; `closed_days` says which days it is shut."),
+                        "plus `closed_days` (the Vietnamese names of the days the shop is "
+                        "shut). The shop keeps the same hours every open day."),
             args_schema=create_model("GetShopHoursArgs", __base__=BaseModel),
         ),
         StructuredTool.from_function(

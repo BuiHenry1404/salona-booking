@@ -142,7 +142,11 @@ def _shop_day_to_weekday(shop_day: int) -> int:
     return (shop_day - 1) % 7
 
 
-def _closed_day_names(closed_days: list[int]) -> list[str]:
+def closed_day_names(closed_days: list[int]) -> list[str]:
+    """`ShopHours.closed_days` (ints, quy ước 0=Chủ Nhật) -> tên thứ tiếng Việt —
+    dùng chung cho khối bối cảnh VÀ tool `get_shop_hours` của agent Thông tin
+    tiệm, để model không bao giờ thấy số thứ trần (Task 7 review; Task 10
+    review round 1: cùng lỗi raw int lặp lại ở tool)."""
     return [_WEEKDAYS_VI[_shop_day_to_weekday(day)] for day in closed_days]
 
 
@@ -291,7 +295,7 @@ def _render_address(snapshot: TurnSnapshot) -> str:
 def _render_shop(snapshot: TurnSnapshot) -> str:
     hours = snapshot.shop_hours
     status = snapshot.shop_status
-    closed = ", ".join(_closed_day_names(hours.closed_days)) or "none"
+    closed = ", ".join(closed_day_names(hours.closed_days)) or "none"
     if status.is_busy and status.busy_until is not None:
         busy = f"busy until {format_vi_datetime(status.busy_until)} (~{status.minutes_left} min left)"
     else:

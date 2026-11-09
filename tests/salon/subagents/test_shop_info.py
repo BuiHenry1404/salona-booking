@@ -56,6 +56,20 @@ async def test_hours_become_time_facts(test_db, monkeypatch):
     assert close_moment["iso"].startswith(f"{today}T19:00")
 
 
+async def test_closed_days_are_vietnamese_names_not_raw_ints(test_db):
+    # closed_days=[0] -> Chủ Nhật trong quy ước ShopHours (0 = Chủ Nhật);
+    # model không bao giờ được thấy số thô (Task 7 review, lặp lại ở Task 10).
+    await ShopService(test_db).set_hours("08:00", "19:00", [0])
+    user = await a_user(test_db)
+    ctx = await _ctx(test_db, user)
+    tools = {t.name: t for t in make_shop_info_tools(ctx)}
+
+    payload = json.loads(await tools["get_shop_hours"].ainvoke({}))
+
+    assert payload["closed_days"] == ["Chủ Nhật"]
+    assert 0 not in payload["closed_days"]
+
+
 async def test_busy_status_becomes_time_fact(test_db, monkeypatch):
     await default_hours(test_db)
     await ShopService(test_db).set_busy(30)
