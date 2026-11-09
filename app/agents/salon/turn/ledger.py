@@ -18,7 +18,13 @@ from typing import Literal, Optional, Sequence
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, TypeAdapter
 
-from app.agents.salon.shared.schemas import Moment, PendingOutcome, ServiceFact, TurnFact
+from app.agents.salon.shared.schemas import (
+    Moment,
+    PendingOutcome,
+    ServiceFact,
+    TurnFact,
+    UnannouncedDecision,
+)
 from app.core.clock import to_local
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -48,14 +54,6 @@ class TurnRecord(BaseModel):
     ended_by: Optional[EndedBy] = None
     answer_source: Optional[Literal["llm", "code"]] = None
     announced: bool = False
-
-
-class UnannouncedDecision(BaseModel):
-    turn_id: str
-    outcome: Literal["approved", "failed"]
-    proposal_kind: str
-    at: Moment
-    error: Optional[str] = None
 
 
 async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:

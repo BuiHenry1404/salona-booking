@@ -93,3 +93,15 @@ class PendingOutcome(BaseModel):
     error: Optional[str] = None
     reason: Optional[str] = None
     nearest: list[Moment] = []
+
+
+class UnannouncedDecision(BaseModel):
+    """Một quyết định (duyệt/thất bại) chưa được báo cho khách — đọc lại ở
+    lượt sau qua `TurnLedger.unannounced` (Task 6; định nghĩa ở đây vì
+    `shared/` không được import `turn/`, xem `shared/context.py::LedgerReader`)."""
+
+    turn_id: str
+    outcome: Literal["approved", "failed"]
+    proposal_kind: str
+    at: Moment
+    error: Optional[str] = None
