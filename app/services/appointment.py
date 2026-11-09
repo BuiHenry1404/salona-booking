@@ -46,6 +46,46 @@ class AppointmentDetail(BaseModel):
     services: List[ServiceRef] = Field(default_factory=list)
 
 
+async def describe_appointments(
+    catalog: Optional[ServiceCatalogService], appointments: Sequence[Appointment]
+) -> List[AppointmentDetail]:
+    """Hàm dựng DUY NHẤT cho `AppointmentDetail`: REST
+    (`AppointmentService.describe`), `SocketNotifier` và `TelegramNotifier`
+    đều gọi đây — tên dịch vụ / giờ xong tính đúng MỘT chỗ (AGENTS.md: logic
+    đặt lịch chỉ ở `app/services/`).
+
+    `catalog=None`: notifier dựng không có `db` (test cũ, hoặc kênh chưa cấu
+    hình) — bỏ qua tra tên, dịch vụ không khớp catalog thì vắng mặt trong
+    `services` thay vì lỗi; `end_at` vẫn luôn đúng vì tính thẳng từ
+    `duration_minutes`, không cần tra cứu.
+
+    Tra tên MỘT LẦN cho cả danh sách (không N+1 query mỗi lịch)."""
+    all_ids = sorted({sid for appt in appointments for sid in (appt.service_ids or [])})
+    by_id: Dict[str, Service] = {}
+    if all_ids and catalog is not None:
+        by_id = {service.id: service for service in await catalog.get_many(all_ids)}
+
+    details = []
+    for appt in appointments:
+        refs = [
+            ServiceRef(id=sid, name=service.name)
+            for sid in (appt.service_ids or [])
+            if (service := by_id.get(sid)) is not None
+        ]
+        details.append(AppointmentDetail(
+            id=str(appt.id),
+            start_at=appt.start_at,
+            end_at=appt.start_at + timedelta(minutes=appt.duration_minutes),
+            duration_minutes=appt.duration_minutes,
+            note=appt.note,
+            status=appt.status,
+            user_name=appt.user_name,
+            phone=appt.phone,
+            services=refs,
+        ))
+    return details
+
+
 class AppointmentService:
     """Toàn bộ nghiệp vụ đặt lịch. Tool của agent, handler Telegram và REST cho
     React đều gọi lớp này — logic chỉ tồn tại một chỗ."""
@@ -242,30 +282,10 @@ class AppointmentService:
         return await self.repo.created_since(user_id, since)
 
     async def describe(self, appointments: Sequence[Appointment]) -> List[AppointmentDetail]:
-        """Dựng view đầy đủ cho một danh sách lịch: tên dịch vụ tra MỘT LẦN
-        cho cả danh sách (không N+1 query mỗi lịch), rồi ghép lại theo
-        `service_ids` của từng lịch. REST router dùng hàm này thay vì tự
-        tính — logic đặt lịch chỉ ở `app/services/` (AGENTS.md)."""
-        all_ids = sorted({sid for appt in appointments for sid in (appt.service_ids or [])})
-        by_id: Dict[str, Service] = {}
-        if all_ids:
-            by_id = {service.id: service for service in await self.catalog.get_many(all_ids)}
-
-        details = []
-        for appt in appointments:
-            refs = [ServiceRef(id=sid, name=by_id[sid].name) for sid in (appt.service_ids or [])]
-            details.append(AppointmentDetail(
-                id=str(appt.id),
-                start_at=appt.start_at,
-                end_at=appt.start_at + timedelta(minutes=appt.duration_minutes),
-                duration_minutes=appt.duration_minutes,
-                note=appt.note,
-                status=appt.status,
-                user_name=appt.user_name,
-                phone=appt.phone,
-                services=refs,
-            ))
-        return details
+        """Dựng view đầy đủ cho một danh sách lịch — REST router dùng hàm
+        này thay vì tự tính. Logic thật nằm ở `describe_appointments` (hàm
+        module-level, dùng chung với `SocketNotifier`/`TelegramNotifier`)."""
+        return await describe_appointments(self.catalog, appointments)
 
     async def day_schedule(self, day: date) -> List[Appointment]:
         start, end = local_day_bounds(day)
