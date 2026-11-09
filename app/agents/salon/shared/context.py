@@ -134,11 +134,27 @@ Audience = Literal["orchestrator", "appointment", "shop_info", "service"]
 # ---------------------------------------------------------------------------
 
 
-def _calendar_14d(today: date) -> list[tuple[date, str]]:
+def _shop_day_to_weekday(shop_day: int) -> int:
+    """`ShopHours.closed_days` dùng quy ước 0=Chủ Nhật..6=Thứ Bảy (app/models/
+    shop.py); `date.weekday()` của Python dùng 0=Thứ Hai..6=Chủ Nhật. Đổi
+    chiều của phép tính trong `app/services/shop.py::is_within`
+    (`weekday = (local.weekday() + 1) % 7`) để hai nơi không lệch quy ước."""
+    return (shop_day - 1) % 7
+
+
+def _closed_day_names(closed_days: list[int]) -> list[str]:
+    return [_WEEKDAYS_VI[_shop_day_to_weekday(day)] for day in closed_days]
+
+
+def _calendar_14d(today: date, closed_days: list[int]) -> list[tuple[date, str]]:
+    closed_weekdays = {_shop_day_to_weekday(day) for day in closed_days}
     items = []
     for offset in range(14):
         day = today + timedelta(days=offset)
-        items.append((day, f"{_WEEKDAYS_VI[day.weekday()]} {day.day}/{day.month}"))
+        label = f"{_WEEKDAYS_VI[day.weekday()]} {day.day}/{day.month}"
+        if day.weekday() in closed_weekdays:
+            label = f"{label} (closed)"
+        items.append((day, label))
     return items
 
 
@@ -161,10 +177,17 @@ async def _service_names(catalog: ServiceCatalogService, ids: list[str]) -> dict
         return names
 
 
+def _local_moment(dt: datetime) -> Moment:
+    """`Moment.iso` ở giờ Việt Nam (+07:00), KHÔNG phải UTC Mongo trả về —
+    đứng cạnh dòng `Today:` (cũng giờ VN) trong cùng một khối thì model đọc
+    một giờ, không phải hai quy ước lệch nhau."""
+    return Moment(iso=to_local(dt).isoformat(), spoken=format_vi_datetime(dt))
+
+
 def _appointment_view(appt: Appointment, names_by_id: dict[str, str]) -> AppointmentView:
     return AppointmentView(
         id=str(appt.id),
-        at=Moment(iso=appt.start_at.isoformat(), spoken=format_vi_datetime(appt.start_at)),
+        at=_local_moment(appt.start_at),
         service_names=[names_by_id[sid] for sid in appt.service_ids if sid in names_by_id],
         note=single_line(appt.note, NOTE_MAX),
     )
@@ -178,7 +201,7 @@ def _pending_view(proposal, *, now: datetime) -> Optional[PendingView]:
     return PendingView(
         id=str(proposal.id),
         kind=proposal.kind,
-        at=Moment(iso=proposal.start_at.isoformat(), spoken=format_vi_datetime(proposal.start_at)),
+        at=_local_moment(proposal.start_at),
         expires_at=proposal.expires_at,
         target_id=proposal.appointment_id,
         service_ids=list(proposal.service_ids),
@@ -234,7 +257,7 @@ async def load_snapshot(
     return TurnSnapshot(
         now_local=now_local,
         today=today,
-        calendar_14d=_calendar_14d(today),
+        calendar_14d=_calendar_14d(today, shop_hours.closed_days),
         customer=customer,
         shop_hours=shop_hours,
         shop_status=shop_status,
@@ -268,7 +291,7 @@ def _render_address(snapshot: TurnSnapshot) -> str:
 def _render_shop(snapshot: TurnSnapshot) -> str:
     hours = snapshot.shop_hours
     status = snapshot.shop_status
-    closed = ",".join(str(day) for day in hours.closed_days) or "none"
+    closed = ", ".join(_closed_day_names(hours.closed_days)) or "none"
     if status.is_busy and status.busy_until is not None:
         busy = f"busy until {format_vi_datetime(status.busy_until)} (~{status.minutes_left} min left)"
     else:
@@ -302,7 +325,7 @@ def _render_pending(snapshot: TurnSnapshot) -> str:
     target = f", target {pending.target_id}" if pending.target_id else ""
     return (
         f"Pending proposal: {pending.id} {pending.kind} at {pending.at.spoken} "
-        f"({pending.at.iso}), expires {pending.expires_at.isoformat()}{target}, "
+        f"({pending.at.iso}), expires {to_local(pending.expires_at).isoformat()}{target}, "
         f"unclear_count={pending.unclear_count}"
     )
 
@@ -326,7 +349,7 @@ def _render_sessions(snapshot: TurnSnapshot) -> str:
         options = ", ".join(option.spoken for option in session.question.options) or "none"
         lines.append(
             f"- {agent}: field={session.question.field}, options=[{options}], "
-            f"expires {session.expires_at.isoformat()}"
+            f"expires {to_local(session.expires_at).isoformat()}"
         )
     return "\n".join(lines)
 

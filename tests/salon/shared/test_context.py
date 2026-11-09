@@ -25,7 +25,6 @@ from app.agents.salon.shared.schemas import (
     TimeFact,
     UnannouncedDecision,
 )
-from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import TZ, now_utc, to_local
 from app.models.service import Service
 from app.models.user import User
@@ -34,12 +33,32 @@ from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
 from app.services.service_catalog import ServiceCatalogService
+from app.services.shop import ShopService
 from app.services.waiting_session import WaitingSessionService
 
 HAIR = Service(id="toc-cat", category="toc", name="Cắt tóc", price_min=50000,
                price_max=50000, duration_minutes=30)
 NAIL = Service(id="nail-son", category="nail", name="Sơn móng", price_min=80000,
                 price_max=80000, duration_minutes=45)
+
+
+_HEX_CHARS = set("0123456789abcdef")
+
+
+def _hex24_tokens(text: str) -> set[str]:
+    """Mọi chuỗi hex 24 ký tự (hình dạng `ObjectId.__str__`) xuất hiện trong
+    `text`, tách bằng tay (không `re`): gom từng đoạn ký tự hex LIÊN TỤC,
+    chỉ giữ đoạn dài ĐÚNG 24 — dài hơn/ngắn hơn không phải một id thật."""
+    tokens: set[str] = set()
+    current = ""
+    for ch in text + " ":
+        if ch in _HEX_CHARS:
+            current += ch
+        else:
+            if len(current) == 24:
+                tokens.add(current)
+            current = ""
+    return tokens
 
 
 def _phone() -> str:
@@ -169,10 +188,16 @@ async def test_render_for_each_audience_includes_only_its_parts(
 
 
 async def test_ids_and_isos_come_from_objects(test_db):
-    """Mọi id/iso in trong khối bối cảnh phải khớp đúng object đã tạo (không
-    bịa chuỗi) — so bằng GIÁ TRỊ thời điểm (`datetime.fromisoformat`), không
-    so chuỗi: cùng một mốc đọc lại từ Mongo có offset UTC khác bản trong bộ
-    nhớ (cùng khoảnh khắc, khác cách viết)."""
+    """Mọi id trong khối bối cảnh phải là id THẬT của một lịch/đề xuất đang
+    có (task brief: "mọi id trong chuỗi ∈ id của upcoming / pending") — không
+    bịa chuỗi trông giống id. Gom id-shaped token bằng tay (không `re`), rồi
+    kiểm tập đó là TẬP CON của id các object đã tạo (⊆, không phải ngược
+    lại: khối bối cảnh không bắt buộc phải nhắc lại MỌI object, chỉ không
+    được nhắc tới object nào khác).
+
+    Các iso so bằng GIÁ TRỊ thời điểm (`datetime.fromisoformat`), không so
+    chuỗi: cùng một mốc đọc lại từ Mongo có offset khác bản trong bộ nhớ
+    (cùng khoảnh khắc, khác cách viết)."""
     from datetime import datetime as _dt
 
     user = await _make_user(test_db)
@@ -190,8 +215,12 @@ async def test_ids_and_isos_come_from_objects(test_db):
         now=now_utc(),
     )
 
+    known_ids = {str(appt.id), str(proposal.id)}
+    assert _hex24_tokens(text) <= known_ids
+    # Không chỉ là tập con rỗng — cả hai id phải thật sự có mặt:
     assert str(appt.id) in text
     assert str(proposal.id) in text
+
     assert snapshot.upcoming[0].id == str(appt.id)
     assert _dt.fromisoformat(snapshot.upcoming[0].at.iso) == appt.start_at
     assert snapshot.pending is not None
@@ -242,6 +271,68 @@ async def test_expired_pending_is_not_listed(test_db):
         now=now_utc(),
     )
     assert str(proposal.id) not in text
+
+
+async def test_closed_day_is_shown_in_vietnamese_and_marked_in_calendar(test_db):
+    """`ShopHours.closed_days` dùng quy ước 0=Chủ Nhật..6=Thứ Bảy (app/models/
+    shop.py), KHÁC quy ước `date.weekday()` của Python (0=Thứ Hai). `closed_days=[0]`
+    nghĩa là tiệm nghỉ CHỦ NHẬT — khối bối cảnh phải gọi đúng tên "Chủ Nhật"
+    (không phải "Thứ Hai"), và trong Lịch 14 ngày phải đánh dấu đúng NGÀY
+    CHỦ NHẬT là nghỉ, không phải ngày Thứ Hai."""
+    user = await _make_user(test_db)
+    await ShopService(test_db).set_hours("08:00", "19:00", closed_days=[0])
+
+    snapshot = await _snapshot(test_db, user)
+    text = render_context(
+        snapshot, audience="orchestrator", turn_facts=[], memory_text=None,
+        now=now_utc(),
+    )
+
+    shop_block = text.split("Shop hours / status:", 1)[1].split("\n\n", 1)[0]
+    assert "Chủ Nhật" in shop_block
+    assert "Thứ Hai" not in shop_block
+
+    sunday_label = next(label for day, label in snapshot.calendar_14d if day.weekday() == 6)
+    monday_label = next(
+        (label for day, label in snapshot.calendar_14d if day.weekday() == 0), None,
+    )
+    assert "(closed)" in sunday_label
+    if monday_label is not None:
+        assert "(closed)" not in monday_label
+
+
+async def test_times_in_context_block_use_vn_local_offset(test_db):
+    """`Today:` là giờ Việt Nam; mọi iso khác trong cùng khối (Upcoming,
+    Pending proposal, Waiting sessions) phải CÙNG quy ước +07:00, không phải
+    UTC Mongo trả về — hai quy ước lệch nhau trong cùng một khối là chỗ model
+    tính sai giờ (CONTEXT.md bẫy 8)."""
+    user = await _make_user(test_db)
+    catalog = ServiceCatalogService(test_db)
+    await catalog.upsert_many([HAIR])
+    appts = AppointmentService(test_db)
+    await appts.create(user, _tomorrow_at(10), None, service_ids=[HAIR.id])
+    proposals = ProposalService(test_db)
+    await proposals.create(user, "book", _tomorrow_at(15), None, service_ids=[HAIR.id])
+    waiting = WaitingSessionService(test_db)
+    now = now_utc()
+    question = SessionQuestion(field="time", options=[], text="Mấy giờ ạ?")
+    await waiting.open(WaitingSession(
+        user_id=str(user.id), agent="service", task="pick", memory={}, question=question,
+        asked_at=now, expires_at=now + timedelta(minutes=10), opened_turn_id="t1",
+    ))
+
+    snapshot = await _snapshot(test_db, user)
+    text = render_context(
+        snapshot, audience="orchestrator", turn_facts=[], memory_text=None,
+        now=now_utc(),
+    )
+
+    upcoming_block = text.split("Upcoming:", 1)[1].split("\n\n", 1)[0]
+    pending_block = text.split("Pending proposal:", 1)[1].split("\n\n", 1)[0]
+    sessions_block = text.split("Waiting sessions:", 1)[1].split("\n\n", 1)[0]
+    assert "+07:00" in upcoming_block
+    assert "+07:00" in pending_block
+    assert "+07:00" in sessions_block
 
 
 async def test_snapshot_lists_only_active_sessions(test_db):
