@@ -32,8 +32,10 @@ from langgraph.types import Command
 from pydantic import ValidationError
 
 from app.agents.salon.orchestrator.state import SalonState
-from app.agents.salon.orchestrator.tools import CONTROL_TOOLS
 from app.agents.salon.shared.context import SnapshotHolder, TurnSnapshot
+# Từ `shared/`, không qua `orchestrator/tools.py`: tools.py import
+# `middleware/budget.py`, import ngược lại sẽ thành vòng.
+from app.agents.salon.shared.tool_names import CONTROL_TOOLS
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)

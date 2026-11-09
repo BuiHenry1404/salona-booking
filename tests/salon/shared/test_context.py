@@ -436,3 +436,25 @@ async def test_holder_sees_a_session_opened_after_mark_stale(test_db):
     after = await holder.current()
 
     assert set(after.sessions) == {"service"}
+
+
+async def test_holder_never_caches_a_load_started_before_mark_stale(monkeypatch):
+    """Task 13: một lần đọc bắt đầu TRƯỚC `mark_stale()` (DB đổi giữa chừng,
+    vd hai tool cùng vòng) không được thành bối cảnh của cả lượt."""
+    from app.agents.salon.shared import context as context_module
+
+    holder = SnapshotHolder(None, None, asked_at=now_utc(), thread_id="t", services=_Ledger())
+    loads: list[str] = []
+
+    async def fake_load(db, user, **kwargs):
+        loads.append("load")
+        if len(loads) == 1:
+            holder.mark_stale()   # DB vừa đổi trong lúc lần đọc này đang chạy
+            return "stale"
+        return "fresh"
+
+    monkeypatch.setattr(context_module, "load_snapshot", fake_load)
+
+    assert await holder.current() == "fresh"
+    assert await holder.current() == "fresh"
+    assert len(loads) == 2

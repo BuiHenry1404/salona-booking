@@ -455,14 +455,22 @@ class SnapshotHolder:
         self._thread_id = thread_id
         self._services = services
         self._snapshot: Optional[TurnSnapshot] = None
+        # Tăng mỗi lần `mark_stale()` (Task 13): một lần đọc bắt đầu TRƯỚC khi
+        # DB đổi (vd hai tool cùng vòng, một cái vừa duyệt đề xuất) không được
+        # thành bối cảnh của cả lượt — đọc lại tới khi không ai báo cũ giữa chừng.
+        self._generation = 0
 
     async def current(self) -> TurnSnapshot:
-        if self._snapshot is None:
-            self._snapshot = await load_snapshot(
+        while self._snapshot is None:
+            generation = self._generation
+            snapshot = await load_snapshot(
                 self._db, self._user, asked_at=self._asked_at, thread_id=self._thread_id,
                 services=self._services,
             )
+            if generation == self._generation:
+                self._snapshot = snapshot
         return self._snapshot
 
     def mark_stale(self) -> None:
+        self._generation += 1
         self._snapshot = None

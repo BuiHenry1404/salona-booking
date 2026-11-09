@@ -25,11 +25,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import Field
 
 from app.agents.salon.orchestrator.decide import Aside, DecideLabel, apply_decision, veto
+from app.agents.salon.orchestrator.middleware.budget import BudgetMiddleware
 from app.agents.salon.orchestrator.state import SalonContext, SalonState
 from app.agents.salon.shared.context import SnapshotHolder, TurnSnapshot
 from app.agents.salon.shared.schemas import DecisionFact
 # `CONTROL_TOOLS` sống ở `shared/` (guard cần nó mà không được import
-# `orchestrator/`); re-export ở đây cho `middleware/tool_rules.py`.
+# `orchestrator/`); re-export ở đây cho code/test cũ đọc nó từ tools.
 from app.agents.salon.shared.tool_names import CONTROL_TOOLS  # noqa: F401
 from app.agents.salon.subagents.appointment.agent import APPOINTMENT
 from app.agents.salon.subagents.dispatch import run_subagent
@@ -71,6 +72,11 @@ def make_orchestrator_tools(
     """Tool của Orchestrator cho MỘT lượt. Chỉ phần thân tool đóng gói theo
     lượt (`db`, `user`, `holder`); schema không phụ thuộc lượt nào."""
 
+    def _budget() -> list[BudgetMiddleware]:
+        # Lời gọi model của agent con cũng tính vào `orch_llm_calls_per_user_per_hour`
+        # (spec §3.3); `run_subagent` đặt nó trong cùng, dưới retry.
+        return [BudgetMiddleware(db, str(user.id))]
+
     @tool
     async def appointment_task(
         request: Annotated[str, Field(description=_REQUEST_DESCRIPTION)],
@@ -87,6 +93,7 @@ def make_orchestrator_tools(
         return await run_subagent(
             APPOINTMENT, request=request, continue_session=continue_session,
             service_ids=list(service_ids or []), runtime=runtime, db=db, user=user, holder=holder,
+            middleware=_budget(),
         )
 
     @tool
@@ -99,7 +106,7 @@ def make_orchestrator_tools(
         is open at a given time, or whether it is busy right now."""
         return await run_subagent(
             SHOP_INFO, request=request, continue_session=continue_session, service_ids=[],
-            runtime=runtime, db=db, user=user, holder=holder,
+            runtime=runtime, db=db, user=user, holder=holder, middleware=_budget(),
         )
 
     @tool
