@@ -17,6 +17,7 @@ from typing import Optional
 
 from app.agents.salon.guard.facts import (
     ClockKey,
+    Reading,
     ReplyFacts,
     clocks_in_text,
     is_known,
@@ -45,21 +46,30 @@ REPEAT_LOOKBACK = 2
 # claim — nhận vơ đã đặt / dời / huỷ, giữ chỗ không có thật
 # ---------------------------------------------------------------------------
 
-# Động từ cam kết -> loại việc đã ghi cho phép nói nó. "đặt / ghi / chốt" cũng
-# đúng sau một lần dời đã duyệt (lịch mới đã được ghi); "đổi" cũng đúng sau một
-# lần đặt ("giờ đặt đã đổi thành …").
-_CLAIMS_FOR_VERB = {
-    "đặt": ("booked", "moved"),
-    "ghi": ("booked", "moved"),
-    "chốt": ("booked", "moved"),
-    "dời": ("moved",),
-    "đổi": ("moved", "booked"),
-    "hủy": ("cancelled",),
-    "huỷ": ("cancelled",),
+# Động từ cam kết (một hay hai từ) -> loại việc đã ghi cho phép nói nó.
+# "đặt / ghi / chốt / xác nhận / lên lịch" cũng đúng sau một lần dời đã duyệt
+# (lịch mới đã được ghi); "đổi" cũng đúng sau một lần đặt ("giờ đặt đã đổi
+# thành …").
+_CLAIMS_FOR_VERB: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("đặt",): ("booked", "moved"),
+    ("ghi",): ("booked", "moved"),
+    ("chốt",): ("booked", "moved"),
+    ("xác", "nhận"): ("booked", "moved"),
+    ("lên", "lịch"): ("booked", "moved"),
+    ("dời",): ("moved",),
+    ("đổi",): ("moved", "booked"),
+    ("hủy",): ("cancelled",),
+    ("huỷ",): ("cancelled",),
 }
-_HOLD = "giữ"
+_HOLD = ("giữ",)
+# Động từ ĐẶT: kể lại một lịch khách đang có (`existing_clocks`) là đúng
+# (Ruling R8). Dời / đổi / huỷ thì không bao giờ.
+_BOOKING_VERBS = frozenset({("đặt",), ("ghi",), ("chốt",), ("xác", "nhận"), ("lên", "lịch")})
+_VERBS = sorted([*_CLAIMS_FOR_VERB, _HOLD], key=len, reverse=True)
 _DONE_BEFORE = frozenset({"đã", "vừa", "đang"})
 _DONE_AFTER = frozenset({"rồi", "xong"})
+# Phủ định chỉ tính khi đứng NGAY TRƯỚC động từ ("chưa đặt", "không giữ") —
+# "đã đặt xong rồi, chị không phải lo" vẫn là nhận đã đặt (review Task 12 #4).
 _NEGATION = frozenset({"chưa", "không", "ko"})
 # "có người đặt rồi": người khác làm, không phải em nhận.
 _OTHER_SUBJECTS = frozenset({"người", "khách"})
@@ -68,41 +78,51 @@ _FUTURE = frozenset({"sẽ"})
 # "ghi nhận / ghi lại" không phải ghi lịch.
 _NOT_BOOKING_AFTER_GHI = frozenset({"nhận", "lại"})
 # "đã đổi ý rồi" không nói về lịch — dời/đổi/huỷ cần mệnh đề nói tới lịch.
-_NEEDS_APPOINTMENT = frozenset({"dời", "đổi", "hủy", "huỷ"})
+_NEEDS_APPOINTMENT = frozenset({("dời",), ("đổi",), ("hủy",), ("huỷ",)})
 _APPOINTMENT_WORDS = frozenset({"lịch", "chỗ", "hẹn"})
 # Cụm tách mệnh đề: "…, còn …" là hai việc khác nhau.
 _CLAUSE_BREAKS = ("còn",)
 
 
-def _claim_verbs(clause_words: list[str], has_clock: bool) -> set[str]:
+def _verb_at(clause_words: list[str], i: int) -> Optional[tuple[str, ...]]:
+    for verb in _VERBS:
+        if tuple(clause_words[i:i + len(verb)]) == verb:
+            return verb
+    return None
+
+
+def _claim_verbs(clause_words: list[str], has_clock: bool) -> set[tuple[str, ...]]:
     """Động từ cam kết mà mệnh đề nói là em ĐÃ / ĐANG làm: có "đã / vừa /
     đang" trong 2 từ trước, hoặc "rồi / xong" phía sau; riêng "giữ" còn tính ở
-    dạng trần ("em giữ chỗ 4 giờ chiều") khi mệnh đề nói tới lịch hay giờ."""
-    if any(word in _NEGATION for word in clause_words):
-        return set()
+    dạng trần ("em giữ chỗ 4 giờ chiều") khi mệnh đề nói tới lịch hay giờ.
+    Bỏ qua: phủ định trong 2 từ ngay trước động từ, chủ ngữ người khác,
+    tương lai "sẽ"."""
     about_appointment = has_clock or any(word in _APPOINTMENT_WORDS for word in clause_words)
     verbs = set()
-    for i, word in enumerate(clause_words):
-        if word != _HOLD and word not in _CLAIMS_FOR_VERB:
+    for i in range(len(clause_words)):
+        verb = _verb_at(clause_words, i)
+        if verb is None:
             continue
         before = set(clause_words[max(0, i - 2):i])
-        if before & (_OTHER_SUBJECTS | _FUTURE):
+        if before & (_OTHER_SUBJECTS | _FUTURE | _NEGATION):
             continue
-        after = clause_words[i + 1:]
-        if word == "ghi" and after[:1] and after[0] in _NOT_BOOKING_AFTER_GHI:
+        after = clause_words[i + len(verb):]
+        if verb == ("ghi",) and after[:1] and after[0] in _NOT_BOOKING_AFTER_GHI:
             continue
         done = bool(before & _DONE_BEFORE) or any(w in _DONE_AFTER for w in after)
-        if not (done or (word == _HOLD and about_appointment)):
+        if not (done or (verb == _HOLD and about_appointment)):
             continue
-        if word in _NEEDS_APPOINTMENT and not about_appointment:
+        if verb in _NEEDS_APPOINTMENT and not about_appointment:
             continue
-        verbs.add(word)
+        verbs.add(verb)
     return verbs
 
 
-def _commit_ok(verb: str, said: list[ClockKey], facts: ReplyFacts) -> bool:
+def _commit_ok(verb: tuple[str, ...], said: list[Reading], facts: ReplyFacts) -> bool:
     kinds = _CLAIMS_FOR_VERB[verb]
     done: set[ClockKey] = set().union(*(facts.done_claims.get(kind, set()) for kind in kinds))
+    if verb in _BOOKING_VERBS:
+        done |= facts.existing_clocks
     if not done:
         return False
     if all(is_known(clock, done) for clock in said):
@@ -122,8 +142,9 @@ def _clause_claims_falsely(clause: str, facts: ReplyFacts) -> bool:
     commit = verbs - {_HOLD}
     if commit:
         return not all(_commit_ok(verb, said, facts) for verb in commit)
-    # Chỉ "giữ": hợp lệ khi giờ đó đang có đề xuất chờ thật (hoặc đã ghi).
-    holdable = facts.held_clocks.union(*facts.done_claims.values())
+    # Chỉ "giữ": hợp lệ khi giờ đó đang có đề xuất chờ thật, đã ghi, hoặc là
+    # một lịch khách đang có ("em vẫn giữ lịch 3 giờ chiều mai cho chị").
+    holdable = facts.held_clocks.union(facts.existing_clocks, *facts.done_claims.values())
     if said:
         return not all(is_known(clock, holdable) for clock in said)
     return not holdable

@@ -3,12 +3,14 @@ cuối của Orchestrator với chúng (spec §7, docs/architech-agent.md luật
 Không tin chữ model: mọi giờ/giá ở đây đến từ `TurnSnapshot` (DB), `turn_facts`
 (code trích từ ToolMessage), câu khách, và danh mục dịch vụ đọc lại bằng code.
 
-Một dạng giờ DUY NHẤT cho cả hai phía so sánh — `ClockKey = (giờ đọc 1..12,
-phút, buổi không dấu | None)`, vd 15:00 -> `(3, 0, "chieu")`. Bài học Task 8:
-`scan_times` trả buổi CÓ DẤU ("tối") còn nơi khác dùng khoá không dấu; ở đây
-mọi buổi đều qua `strip_diacritics` (`_bare`) trước khi vào một `ClockKey`.
-Giờ của một `datetime` đi qua `format_vi_hhmm` -> `scan_spoken_clocks` — cùng
-một nguồn với cách bot đọc giờ cho khách, không tính buổi lần thứ hai.
+Giờ so theo GIÁ TRỊ TRONG NGÀY, không theo nhãn buổi (review Task 12 #6):
+dữ kiện là `ClockKey = (giờ 0..23, phút, nhãn buổi không dấu)` — vd 15:00 ->
+`(15, 0, "chieu")`, nhãn chỉ để đọc log; giờ trong câu (bot hay khách) là tập
+các giá trị 24h `(giờ, phút)` mà cách nói đó có thể mang (`readings`):
+"6 giờ chiều" và "6 giờ tối" cùng là 18:00, "11 giờ trưa" là 11:00, "3 giờ"
+chưa kèm buổi là {03:00, 15:00}, "3 giờ sáng" chỉ là 03:00. Bài học Task 8:
+`scan_times` trả buổi CÓ DẤU ("tối") — mọi buổi qua `strip_diacritics`
+(`_bare`) trước khi tra bảng `_PERIOD_HOURS`.
 
 Không regex (gói `salon` không `import re`).
 """
@@ -42,14 +44,21 @@ from app.models.service import Service
 from app.services.service_catalog import ServiceCatalogService
 
 ClockKey = tuple[int, int, Optional[str]]
+Reading = frozenset[tuple[int, int]]
 Claim = Literal["booked", "moved", "cancelled"]
 
 CLAIM_FOR_KIND: dict[str, Claim] = {"book": "booked", "move": "moved", "cancel": "cancelled"}
 
-# Mọi buổi một giờ 1..12 có thể mang (dạng không dấu) — khách nói "3 giờ" chưa
-# kèm buổi thì bot được nhắc lại với buổi nào cũng được ("3 giờ sáng hay 3 giờ
-# chiều ạ?").
-_ALL_PERIODS = ("sang", "trua", "chieu", "toi", "dem")
+# Giờ đọc 1..12 + buổi -> giờ trong ngày, theo cách người Việt nói (cả cách
+# chồng lấn: "6 giờ chiều" = "6 giờ tối" = 18:00, "1 giờ trưa" = "1 giờ chiều").
+# Một cặp không có ở đây ("3 giờ tối") không mang giờ nào -> không khớp dữ kiện.
+_PERIOD_HOURS: dict[str, dict[int, int]] = {
+    "sang": {h: h for h in range(1, 12)},
+    "trua": {11: 11, 12: 12, 1: 13, 2: 14},
+    "chieu": {12: 12, **{h: h + 12 for h in range(1, 8)}},
+    "toi": {12: 0, **{h: h + 12 for h in range(5, 12)}},
+    "dem": {12: 0, **{h: h for h in range(1, 5)}, **{h: h + 12 for h in range(9, 12)}},
+}
 
 # Quyết định mà câu trả lời phải nêu giờ: kết quả duyệt (xong / thất bại /
 # không duyệt được) và hỏi lại khi khách trả lời chưa rõ. `kept` / `rejected` /
@@ -64,6 +73,10 @@ _STILL_PENDING = frozenset({"kept", "clarify"})
 class ReplyFacts(BaseModel):
     clocks: set[ClockKey]                 # mọi mốc giờ có thật của lượt
     held_clocks: set[ClockKey]            # giờ đang có đề xuất chờ thật
+    # Giờ các lịch ĐANG CÓ của khách (`snapshot.upcoming`) — "chị đã đặt lịch
+    # 3 giờ chiều mai rồi ạ" kể lại một lịch có thật là đúng (Ruling R8). Chỉ
+    # cho động từ đặt / giữ, không bao giờ cho dời / huỷ.
+    existing_clocks: set[ClockKey]
     done_claims: dict[Claim, set[ClockKey]]   # giờ của việc ĐÃ ghi thật, theo loại
     price_ranges: list[tuple[int, int]]   # từng dịch vụ + tổng của nhóm trong cùng lịch
     must_mention: list[str]
@@ -86,43 +99,42 @@ def _bare(period: Optional[str]) -> Optional[str]:
 
 
 def clock_of_24h(hour: int, minute: int) -> ClockKey:
-    """15:00 -> (3, 0, "chieu"); 00:30 -> (12, 30, "dem"); 12:00 -> (12, 0, "trua")."""
-    (display, minute, period), = scan_spoken_clocks(format_vi_hhmm(f"{hour:02d}:{minute:02d}"))
-    return display, minute, _bare(period)
-
-
-def said_clock(hour: int, period: Optional[str], minute: Optional[int]) -> Optional[ClockKey]:
-    """Một bộ `(hour, period, minute)` của `scan_times` -> `ClockKey`. Giờ 24h
-    ("15h", "15:00", "15 giờ chiều") quy về giờ đọc; 1..12 giữ buổi đã nói
-    (không nói buổi -> `None`, khớp với mọi buổi)."""
-    minute = minute or 0
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        return None
-    if hour == 0 or hour > 12:
-        return clock_of_24h(hour, minute)
+    """15:00 -> (15, 0, "chieu"); 00:30 -> (0, 30, "dem"). Nhãn buổi lấy từ
+    `format_vi_hhmm` — cùng một nguồn với cách bot đọc giờ cho khách."""
+    ((_, _, period),) = scan_spoken_clocks(format_vi_hhmm(f"{hour:02d}:{minute:02d}"))
     return hour, minute, _bare(period)
 
 
-def clocks_in_text(text: str) -> list[ClockKey]:
-    """Mọi giờ trong một câu (câu bot hay câu khách), dạng `ClockKey`."""
-    out = []
-    for hour, period, minute in scan_times(text or ""):
-        key = said_clock(hour, period, minute)
-        if key is not None:
-            out.append(key)
-    return out
+def readings(hour: int, period: Optional[str], minute: Optional[int]) -> Reading:
+    """Mọi giờ trong ngày mà một cách nói `(hour, period, minute)` có thể mang.
+    Giờ 24h ("15h", "15:00", "15 giờ chiều") là chính nó; 1..12 chưa kèm buổi
+    là hai cách đọc; kèm buổi thì tra `_PERIOD_HOURS`."""
+    minute = minute or 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return frozenset()
+    if hour == 0 or hour > 12:
+        return frozenset({(hour, minute)})
+    bare = _bare(period)
+    if bare is None:
+        return frozenset({(hour % 12, minute), (hour % 12 + 12, minute)})
+    hour24 = _PERIOD_HOURS.get(bare, {}).get(hour)
+    return frozenset() if hour24 is None else frozenset({(hour24, minute)})
 
 
-def same_clock(said: ClockKey, known: ClockKey) -> bool:
-    return said[:2] == known[:2] and (said[2] is None or said[2] == known[2])
+def clocks_in_text(text: str) -> list[Reading]:
+    """Mọi giờ trong một câu (câu bot hay câu khách), mỗi giờ là tập cách đọc."""
+    return [readings(hour, period, minute) for hour, period, minute in scan_times(text or "")]
 
 
-def is_known(said: ClockKey, known: Iterable[ClockKey]) -> bool:
-    return any(same_clock(said, key) for key in known)
+def is_known(said: Reading, known: Iterable[ClockKey]) -> bool:
+    return any(key[:2] in said for key in known)
 
 
 def _clocks_of_spoken(spoken: Optional[str]) -> set[ClockKey]:
-    return {(hour, minute, _bare(period)) for hour, minute, period in scan_spoken_clocks(spoken or "")}
+    clocks: set[ClockKey] = set()
+    for hour, minute, period in scan_spoken_clocks(spoken or ""):
+        clocks |= {clock_of_24h(h, m) for h, m in readings(hour, period, minute)}
+    return clocks
 
 
 def _clocks_of_moment(moment: Optional[Moment]) -> set[ClockKey]:
@@ -146,14 +158,9 @@ def _clocks_of_hhmm(hhmm: str) -> set[ClockKey]:
 
 
 def _customer_clocks(question: str) -> set[ClockKey]:
-    """Giờ khách vừa nói — bot được nhắc lại. Chưa nói buổi thì mọi buổi của
-    giờ đó đều tính (khớp cả khi bot hỏi lại "sáng hay chiều")."""
-    clocks: set[ClockKey] = set()
-    for hour, minute, period in clocks_in_text(question):
-        clocks.add((hour, minute, period))
-        if period is None:
-            clocks.update((hour, minute, p) for p in _ALL_PERIODS)
-    return clocks
+    """Giờ khách vừa nói — bot được nhắc lại. Chưa nói buổi thì cả hai cách
+    đọc đều tính (khớp cả khi bot hỏi lại "sáng hay chiều")."""
+    return {clock_of_24h(h, m) for said in clocks_in_text(question) for h, m in said}
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +274,10 @@ async def build_reply_facts(
     for proposal in proposals:
         held |= _clocks_of_moment(proposal.at)
 
+    existing: set[ClockKey] = set()
+    for appt in snapshot.upcoming:
+        existing |= _clocks_of_moment(appt.at)
+
     done: dict[Claim, set[ClockKey]] = {"booked": set(), "moved": set(), "cancelled": set()}
     approved = [d for d in decisions if d.outcome == "approved" and d.kind in CLAIM_FOR_KIND]
     for decision in approved:
@@ -297,6 +308,10 @@ async def build_reply_facts(
         # Orchestrator nhắc lại.
         must_mention += [d.at.spoken for d in decisions if d.outcome in _MUST_SAY_OUTCOMES]
     failed = next((d for d in decisions if d.outcome in FAILED_OUTCOMES), None)
+    if turn_kind == "button":
+        # Lượt nút bấm: `button_reply` đã báo (kèm số điện thoại nếu thất bại).
+        failed = None
+    r0_failed = unannounced is not None and unannounced.outcome == "failed"
 
     # -- câu mẫu code -----------------------------------------------------------
     if proposals:
@@ -307,7 +322,7 @@ async def build_reply_facts(
         held_proposal = None
     fallback = compose_fallback(
         address=address, shop_phone=settings.shop_phone,
-        failed_at=failed.at if failed is not None and turn_kind == "typed" else None,
+        failed_at=failed.at if failed is not None else None,
         approved=(approved[0].kind, approved[0].at) if approved and turn_kind == "typed" else None,
         proposal=held_proposal, announce=unannounced,
         opened_field=_opened_field(snapshot, turn_id),
@@ -316,11 +331,13 @@ async def build_reply_facts(
     return ReplyFacts(
         clocks=clocks,
         held_clocks=held,
+        existing_clocks=existing,
         done_claims=done,
         price_ranges=price_ranges,
         must_mention=list(dict.fromkeys(s for s in must_mention if s)),
         question_required=bool(proposals),
-        needs_phone=failed is not None,
+        # R0 thất bại cũng là ghi thất bại chưa báo — câu báo nó phải có số.
+        needs_phone=failed is not None or r0_failed,
         pending_undecided=turn_kind == "typed" and pending is not None and not pending_decided,
         announce=unannounced,
         address=address,

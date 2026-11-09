@@ -109,6 +109,10 @@ FALLBACK_ROWS = [
         dict(snapshot=dict(unannounced=r0(M15))),
         "Dạ em đã đặt xong Thứ Ba 10/11, 3 giờ chiều cho chị Lan ạ.", id="r0"),
     pytest.param(
+        dict(snapshot=dict(unannounced=r0(M15, outcome="failed"))),
+        f"Chị Lan ơi, Thứ Ba 10/11, 3 giờ chiều em chưa ghi được, chị Lan gọi giúp em số {PHONE} nhé ạ.",
+        id="r0_failed"),
+    pytest.param(
         dict(snapshot=dict(sessions={"appointment": a_session(field="day", opened_turn_id=TURN_ID)})),
         "Dạ chị Lan muốn ngày nào ạ?", id="opened_session"),
     pytest.param(

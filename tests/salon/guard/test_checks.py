@@ -167,6 +167,56 @@ ROWS = [
     pytest.param(
         dict(),
         "Để con xem lịch giúp chị nhé.", ["pronoun"], id="con_as_speaker"),
+    # --- fix round 1 -------------------------------------------------------
+    # Ruling R8: kể lại một lịch khách ĐANG CÓ không phải nhận vơ — nhưng chỉ
+    # với động từ đặt / giữ, không bao giờ với dời / huỷ.
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(M15)])),
+        "Dạ chị đã đặt lịch 3 giờ chiều mai rồi ạ.", [], id="existing_booking_described"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(M15)])),
+        "Dạ em vẫn giữ lịch 3 giờ chiều mai cho chị ạ.", [], id="existing_booking_held"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(M15)])),
+        "Dạ em đã dời sang 3 giờ chiều cho chị rồi ạ.", ["claim"], id="existing_is_not_a_move"),
+    # Lượt nút bấm: `button_reply` đã báo thất bại kèm số — không bắt lại.
+    pytest.param(
+        dict(turn_kind="button", pending_decided=True,
+             turn_facts=[DecisionFact(outcome="failed", proposal_kind="book", at=M15)]),
+        "Dạ chị cần gì thêm cứ nhắn em nhé.", [], id="button_failed_needs_no_phone"),
+    # R0 thất bại = ghi thất bại chưa báo: câu báo phải có số điện thoại tiệm.
+    pytest.param(
+        dict(snapshot=dict(unannounced=r0(M15, outcome="failed"))),
+        "Dạ lịch 3 giờ chiều hôm trước em chưa ghi được ạ.", ["missing_phone"],
+        id="r0_failed_no_phone"),
+    pytest.param(
+        dict(snapshot=dict(unannounced=r0(M15, outcome="failed"))),
+        f"Dạ lịch 3 giờ chiều hôm trước em chưa ghi được ạ, chị gọi giúp em số {PHONE} nhé.", [],
+        id="r0_failed_with_phone"),
+    # Phủ định chỉ tính khi đứng ngay trước động từ.
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
+        "Dạ em đã đặt xong 3 giờ chiều rồi chị không phải lo ạ.", ["claim"],
+        id="negation_later_in_clause"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
+        "Dạ em chưa đặt 3 giờ chiều đâu ạ, chị đồng ý không ạ?", [], id="negation_before_verb"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
+        "Dạ em đã xác nhận lịch 3 giờ chiều cho chị rồi ạ.", ["claim"], id="xac_nhan_is_a_claim"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
+        "Dạ em đã lên lịch 3 giờ chiều cho chị rồi ạ.", ["claim"], id="len_lich_is_a_claim"),
+    # Giờ so theo giá trị trong ngày, không theo nhãn buổi.
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(18))]),
+        "Dạ 6 giờ chiều còn trống ạ.", [], id="six_pm_said_as_chieu"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(11))]),
+        "Dạ 11 giờ trưa còn trống ạ.", [], id="eleven_am_said_as_trua"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=M15)]),
+        "Dạ 3 giờ sáng còn trống ạ.", ["unknown_time"], id="morning_is_not_afternoon"),
 ]
 
 

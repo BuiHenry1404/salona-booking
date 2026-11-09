@@ -41,7 +41,6 @@ DONE_REPLY = {
 PROPOSAL_REPLY = "Dạ em giữ chỗ {at} cho {address}, {address} đồng ý không ạ?"
 # Đề xuất huỷ: không có "chỗ" nào để giữ — hỏi khách có đồng ý huỷ không.
 CANCEL_PROPOSAL_REPLY = "Dạ em huỷ lịch {at} cho {address} nhé, {address} đồng ý không ạ?"
-R0_FAILED_REPLY = FAILED_NO_PHONE_REPLY
 
 # Câu hỏi của phiên chờ vừa mở, theo `SessionQuestion.field` (7 field của
 # `shared/schemas.py::QuestionField`). Field lạ -> `GENERIC_FALLBACK`.
@@ -93,17 +92,21 @@ def compose_fallback(
     approved: Optional[tuple[str, Moment]], proposal: Optional[tuple[str, Moment]],
     announce: Optional[UnannouncedDecision], opened_field: Optional[str],
 ) -> str:
-    """Câu mẫu của lượt, theo thứ tự: ghi thất bại -> duyệt xong -> đề xuất
-    đang giữ -> R0 -> phiên vừa mở -> câu chung.
+    """Câu mẫu của lượt, theo thứ tự: ghi thất bại (của lượt, hoặc R0 thất
+    bại — cả hai kèm số điện thoại tiệm) -> duyệt xong -> đề xuất đang giữ ->
+    R0 đã duyệt -> phiên vừa mở -> câu chung.
 
     Ghi thất bại / duyệt xong mà lượt còn có đề xuất mới: nối thêm câu hỏi
     đề xuất — nút Đồng ý/Không hiện ra thì câu phải có câu hỏi đi kèm.
     `failed_at` / `approved` là của lượt GÕ CHỮ (lượt nút bấm đã có câu báo
     của `button_reply`, caller truyền `None`)."""
+    r0_failed = announce is not None and announce.outcome == "failed"
     parts: list[str] = []
     if failed_at is not None:
         parts.append(_failed(failed_at, address=address, shop_phone=shop_phone))
-    elif approved is not None:
+    elif r0_failed:
+        parts.append(_failed(announce.at, address=address, shop_phone=shop_phone))
+    if approved is not None:
         parts.append(_done(approved[0], approved[1], address=address))
     if parts:
         if proposal is not None:
@@ -112,9 +115,7 @@ def compose_fallback(
     if proposal is not None:
         return _capitalized(_proposal(proposal[0], proposal[1], address=address))
     if announce is not None:
-        if announce.outcome == "approved":
-            return _capitalized(_done(announce.proposal_kind, announce.at, address=address))
-        return _capitalized(R0_FAILED_REPLY.format(at=announce.at.spoken, address=address))
+        return _capitalized(_done(announce.proposal_kind, announce.at, address=address))
     if opened_field in FIELD_QUESTION:
         return _capitalized(FIELD_QUESTION[opened_field].format(address=address))
     return _capitalized(GENERIC_FALLBACK.format(address=address))
