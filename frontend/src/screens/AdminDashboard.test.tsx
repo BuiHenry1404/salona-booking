@@ -29,16 +29,18 @@ const shop = {
   apply: vi.fn(),
 };
 
-/** Hình dạng thật của useAdminFeed() — payload `appointment_created` chỉ có
- * 5 field (id, start_at, user_name, phone, note) nên mảng appointments này
- * cũng chỉ dùng đúng những field đó. */
+/** Hình dạng thật của useAdminFeed() — payload `appointment_created` có 7
+ * field (id, start_at, end_at, user_name, phone, note, services) nên mảng
+ * appointments này cũng chỉ dùng đúng những field đó. */
 const feed = {
   appointments: [] as Array<{
     id: string;
     start_at: string;
+    end_at: string;
     user_name: string | null;
     phone: string | null;
     note: string | null;
+    services: Array<{ id: string; name: string }>;
   }>,
   newIds: new Set<string>(),
   error: null as string | null,
@@ -83,13 +85,15 @@ vi.mock("../hooks/useMonthlyCustomerStats", () => ({
   useMonthlyCustomerStats: () => stats,
 }));
 
-/** Lịch hẹn mẫu — đúng payload 5 field của appointment_created. */
+/** Lịch hẹn mẫu — đúng payload 7 field của appointment_created. */
 const appointment = {
   id: "a1",
   start_at: "2026-08-21T08:00:00Z",
+  end_at: "2026-08-21T09:00:00Z",
   user_name: "Cô Lan",
   phone: "0912345678",
   note: "làm tóc",
+  services: [],
 };
 
 /** Response thật của POST /shop/busy và /shop/free: ShopStatusResponse. */

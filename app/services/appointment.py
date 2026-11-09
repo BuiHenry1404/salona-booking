@@ -1,7 +1,8 @@
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel, Field
 
 from app.core.clock import local_day_bounds, now_utc
 from app.core.config import settings
@@ -10,12 +11,40 @@ from app.core.errors import (ForbiddenError, NotFoundError,
                              SlotTakenError)
 from app.core.slots import SLOT_MINUTES, quantize, slot_keys_for
 from app.models.appointment import Appointment, CreatedVia
+from app.models.service import Service
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
 from app.services.notifications import notifications
 from app.services.rate_limit import RateLimitService
 from app.services.service_catalog import ServiceCatalogService
 from app.services.shop import ShopService, fits_before_closing
+
+
+class ServiceRef(BaseModel):
+    """Dịch vụ tối giản để hiện tên (không giá, không thời lượng riêng) —
+    REST, Socket.IO và Telegram đều ghép lịch với dịch vụ qua hình này."""
+
+    id: str
+    name: str
+
+
+class AppointmentDetail(BaseModel):
+    """Một lịch đã "dựng" đủ để hiện cho người xem: tên dịch vụ (không chỉ
+    id) và giờ xong (`end_at`) — khách lớn tuổi cần MỐC giờ, không phải
+    khoảng thời gian còn lại (CONTEXT.md, ràng buộc giao diện). REST router
+    dùng `AppointmentService.describe` để dựng hình này thay vì tự tính lại
+    (AGENTS.md: logic đặt lịch chỉ ở `app/services/`)."""
+
+    id: str
+    start_at: datetime
+    end_at: datetime
+    duration_minutes: int
+    note: Optional[str] = None
+    status: Literal["booked", "cancelled"]
+    user_name: Optional[str] = None
+    phone: Optional[str] = None
+    services: List[ServiceRef] = Field(default_factory=list)
+
 
 class AppointmentService:
     """Toàn bộ nghiệp vụ đặt lịch. Tool của agent, handler Telegram và REST cho
@@ -211,6 +240,32 @@ class AppointmentService:
         """Khách đã đặt lịch mới nào kể từ mốc `since` chưa — dùng để quyết
         định còn hiện dòng "Lần trước" hay không (Task 14)."""
         return await self.repo.created_since(user_id, since)
+
+    async def describe(self, appointments: Sequence[Appointment]) -> List[AppointmentDetail]:
+        """Dựng view đầy đủ cho một danh sách lịch: tên dịch vụ tra MỘT LẦN
+        cho cả danh sách (không N+1 query mỗi lịch), rồi ghép lại theo
+        `service_ids` của từng lịch. REST router dùng hàm này thay vì tự
+        tính — logic đặt lịch chỉ ở `app/services/` (AGENTS.md)."""
+        all_ids = sorted({sid for appt in appointments for sid in (appt.service_ids or [])})
+        by_id: Dict[str, Service] = {}
+        if all_ids:
+            by_id = {service.id: service for service in await self.catalog.get_many(all_ids)}
+
+        details = []
+        for appt in appointments:
+            refs = [ServiceRef(id=sid, name=by_id[sid].name) for sid in (appt.service_ids or [])]
+            details.append(AppointmentDetail(
+                id=str(appt.id),
+                start_at=appt.start_at,
+                end_at=appt.start_at + timedelta(minutes=appt.duration_minutes),
+                duration_minutes=appt.duration_minutes,
+                note=appt.note,
+                status=appt.status,
+                user_name=appt.user_name,
+                phone=appt.phone,
+                services=refs,
+            ))
+        return details
 
     async def day_schedule(self, day: date) -> List[Appointment]:
         start, end = local_day_bounds(day)

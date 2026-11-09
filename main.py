@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
 
     notifications.clear()
     if app.state.socketio_service is not None:
-        notifications.register(SocketNotifier(app.state.socketio_service))
+        notifications.register(SocketNotifier(app.state.socketio_service, app.state.db))
 
     # Kênh Telegram của chỗ tỏa tin — chỉ đăng ký khi có token. Thiếu token thì
     # app chạy bình thường, không bot, không kênh Telegram rác. Phải đăng ký
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
     from app.telegram.client import TelegramClient, is_configured as telegram_is_configured
     from app.telegram.notify import TelegramNotifier
     if telegram_is_configured():
-        notifications.register(TelegramNotifier(TelegramClient()))
+        notifications.register(TelegramNotifier(TelegramClient(), app.state.db))
         logger.info("Telegram notifier registered")
 
     # Bot Telegram — long polling chạy như asyncio task trong lifespan, chỉ bật

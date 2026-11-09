@@ -123,6 +123,57 @@ async def test_booking_at_3am_returns_400(async_client, user_headers):
     assert resp.status_code == 400
 
 
+async def _seed_toc_nhuom(test_db):
+    from app.models.service import Service
+    from app.services.service_catalog import ServiceCatalogService
+
+    await ServiceCatalogService(test_db).upsert_many([
+        Service(
+            id="toc-nhuom", category="toc", name="Nhuộm",
+            aliases=["nhuộm tóc"], price_min=350000, price_max=700000,
+            duration_minutes=120,
+        ),
+    ])
+
+
+async def test_create_with_service_ids_returns_names_and_end(async_client, user_headers, test_db):
+    await _seed_toc_nhuom(test_db)
+    start = tomorrow_at(9)
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": start, "note": None, "service_ids": ["toc-nhuom"]},
+        headers=user_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["services"] == [{"id": "toc-nhuom", "name": "Nhuộm"}]
+    expected_end = datetime.fromisoformat(start) + timedelta(minutes=120)
+    assert datetime.fromisoformat(body["end_at"]) == expected_end
+
+
+async def test_create_without_service_ids_is_unchanged(async_client, user_headers, test_db):
+    from app.core.config import settings
+
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(10), "note": None},
+        headers=user_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["services"] == []
+    assert body["duration_minutes"] == settings.booking_slot_minutes
+
+
+async def test_unknown_service_id_is_400(async_client, user_headers):
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(11), "note": None, "service_ids": ["khong-ton-tai"]},
+        headers=user_headers,
+    )
+    assert resp.status_code == 400
+
+
 async def test_shop_status_flow(async_client, admin_headers, user_headers):
     free = await async_client.get("/api/v1/shop/status", headers=user_headers)
     assert free.json()["is_busy"] is False
