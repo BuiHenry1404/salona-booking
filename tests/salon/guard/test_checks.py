@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.salon.guard.checks import check_reply, strip_tool_text
-from app.agents.salon.shared.schemas import DecisionFact, ProposalFact, ServiceFact, TimeFact
+from app.agents.salon.shared.schemas import DecisionFact, Moment, ProposalFact, ServiceFact, TimeFact
 from app.core.config import settings
 from tests.salon.guard import (
     GEL,
@@ -36,6 +36,9 @@ from tests.salon.guard import (
 
 M15 = at(15)          # spoken "3 giờ chiều"
 M16 = at(16)          # spoken "4 giờ chiều"
+# Cùng 3 giờ chiều, hai ngày khác nhau (guard không so ngày).
+TUE_15 = at(15, spoken="Thứ Ba 10/11, 3 giờ chiều")
+WED_15 = Moment(iso="2026-11-11T15:00:00+07:00", spoken="Thứ Tư 11/11, 3 giờ chiều")
 
 
 @pytest.fixture(autouse=True)
@@ -217,6 +220,32 @@ ROWS = [
     pytest.param(
         dict(turn_facts=[TimeFact(role="free", moment=M15)]),
         "Dạ 3 giờ sáng còn trống ạ.", ["unknown_time"], id="morning_is_not_afternoon"),
+    # --- fix round 2 -------------------------------------------------------
+    # Lịch đang có chỉ bảo chứng khi mệnh đề NÊU giờ, và giờ đó không đồng
+    # thời là giờ của một đề xuất chờ / đề xuất mới.
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15), upcoming=[appointment_at(at(10))]),
+             turn_facts=[_kept()], pending_decided=True),
+        "Dạ em đã đặt xong lịch cho chị rồi ạ.", ["claim"], id="existing_never_vouches_clockless"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(at(10))])),
+        "Dạ em đang giữ chỗ cho chị ạ.", ["claim"], id="clockless_hold_needs_a_real_hold"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(WED_15), upcoming=[appointment_at(TUE_15)]),
+             turn_facts=[_kept(WED_15)], pending_decided=True),
+        "Dạ em đã chốt lịch 3 giờ chiều thứ Tư cho chị rồi ạ.", ["claim"],
+        id="existing_does_not_vouch_a_pending_clock"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(TUE_15)]), turn_facts=[_proposal(WED_15)]),
+        "Dạ em đã đặt lịch Thứ Tư 11/11, 3 giờ chiều cho chị rồi, chị đồng ý không ạ?", ["claim"],
+        id="existing_does_not_vouch_a_new_proposal_clock"),
+    # Câu hỏi "… chưa ạ?" không phải nhận đã làm.
+    pytest.param(
+        dict(question="mai 4 giờ chiều còn chỗ không em"),
+        "Dạ chị đã đặt lịch 4 giờ chiều chưa ạ?", [], id="question_ending_in_chua"),
+    pytest.param(
+        dict(),
+        "Dạ em đã xác nhận thông tin của chị rồi ạ.", [], id="xac_nhan_without_appointment"),
 ]
 
 

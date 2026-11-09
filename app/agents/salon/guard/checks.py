@@ -77,11 +77,15 @@ _OTHER_SUBJECTS = frozenset({"người", "khách"})
 _FUTURE = frozenset({"sẽ"})
 # "ghi nhận / ghi lại" không phải ghi lịch.
 _NOT_BOOKING_AFTER_GHI = frozenset({"nhận", "lại"})
-# "đã đổi ý rồi" không nói về lịch — dời/đổi/huỷ cần mệnh đề nói tới lịch.
-_NEEDS_APPOINTMENT = frozenset({("dời",), ("đổi",), ("hủy",), ("huỷ",)})
+# "đã đổi ý rồi", "đã xác nhận thông tin" không nói về lịch — các động từ này
+# chỉ là nhận vơ khi mệnh đề nói tới lịch hay một giờ.
+_NEEDS_APPOINTMENT = frozenset({("dời",), ("đổi",), ("hủy",), ("huỷ",), ("xác", "nhận")})
 _APPOINTMENT_WORDS = frozenset({"lịch", "chỗ", "hẹn"})
 # Cụm tách mệnh đề: "…, còn …" là hai việc khác nhau.
 _CLAUSE_BREAKS = ("còn",)
+# Mệnh đề cuối câu hỏi kết bằng "chưa (ạ)?" là hỏi ("chị đã đặt lịch chưa ạ?"),
+# không phải nói đã làm.
+_QUESTION_TAILS = (("chưa",), ("chưa", "ạ"))
 
 
 def _verb_at(clause_words: list[str], i: int) -> Optional[tuple[str, ...]]:
@@ -118,14 +122,23 @@ def _claim_verbs(clause_words: list[str], has_clock: bool) -> set[tuple[str, ...
     return verbs
 
 
+def _existing_vouches(clock: Reading, facts: ReplyFacts) -> bool:
+    """Một giờ NÊU RA là một lịch khách đang có — trừ khi giờ đó cũng là giờ
+    của một đề xuất chờ / đề xuất mới (guard không so ngày: "3 giờ chiều thứ
+    Tư" đang chờ duyệt không được ké lịch 3 giờ chiều thứ Ba đã có)."""
+    return is_known(clock, facts.existing_clocks) and not is_known(clock, facts.held_clocks)
+
+
 def _commit_ok(verb: tuple[str, ...], said: list[Reading], facts: ReplyFacts) -> bool:
     kinds = _CLAIMS_FOR_VERB[verb]
     done: set[ClockKey] = set().union(*(facts.done_claims.get(kind, set()) for kind in kinds))
-    if verb in _BOOKING_VERBS:
-        done |= facts.existing_clocks
-    if not done:
-        return False
-    if all(is_known(clock, done) for clock in said):
+    if not said:
+        # Không nêu giờ: chỉ một việc ĐÃ ghi trong lượt / R0 mới bảo chứng —
+        # lịch đang có thì không (mọi khách có lịch sẽ lọt).
+        return bool(done)
+    by_existing = verb in _BOOKING_VERBS
+    if all(is_known(clock, done) or (by_existing and _existing_vouches(clock, facts))
+           for clock in said):
         return True
     # "đã dời lịch từ 3 giờ sang 4 giờ": giờ cũ của lịch vừa dời không phải
     # giờ đã ghi, nhưng là giờ có thật — hợp lệ khi mệnh đề có giờ mới đã dời.
@@ -143,19 +156,28 @@ def _clause_claims_falsely(clause: str, facts: ReplyFacts) -> bool:
     if commit:
         return not all(_commit_ok(verb, said, facts) for verb in commit)
     # Chỉ "giữ": hợp lệ khi giờ đó đang có đề xuất chờ thật, đã ghi, hoặc là
-    # một lịch khách đang có ("em vẫn giữ lịch 3 giờ chiều mai cho chị").
-    holdable = facts.held_clocks.union(facts.existing_clocks, *facts.done_claims.values())
+    # một lịch khách đang có ("em vẫn giữ lịch 3 giờ chiều mai cho chị"). Không
+    # nêu giờ thì lịch đang có không bảo chứng.
+    holdable = facts.held_clocks.union(*facts.done_claims.values())
     if said:
-        return not all(is_known(clock, holdable) for clock in said)
+        return not all(is_known(clock, holdable) or is_known(clock, facts.existing_clocks)
+                       for clock in said)
     return not holdable
 
 
+def _is_question_tail(clause: str) -> bool:
+    clause_words = words(normalize_for_match(clause))
+    return any(tuple(clause_words[-len(tail):]) == tail for tail in _QUESTION_TAILS)
+
+
 def _has_false_claim(text: str, facts: ReplyFacts) -> bool:
-    return any(
-        _clause_claims_falsely(clause, facts)
-        for sentence in split_sentences(text)
-        for clause in split_clauses(sentence, break_words=_CLAUSE_BREAKS)
-    )
+    for sentence in split_sentences(text):
+        clauses = split_clauses(sentence, break_words=_CLAUSE_BREAKS)
+        if clauses and sentence.rstrip().endswith("?") and _is_question_tail(clauses[-1]):
+            clauses = clauses[:-1]
+        if any(_clause_claims_falsely(clause, facts) for clause in clauses):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

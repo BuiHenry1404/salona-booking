@@ -112,6 +112,15 @@ FALLBACK_ROWS = [
         dict(snapshot=dict(unannounced=r0(M15, outcome="failed"))),
         f"Chị Lan ơi, Thứ Ba 10/11, 3 giờ chiều em chưa ghi được, chị Lan gọi giúp em số {PHONE} nhé ạ.",
         id="r0_failed"),
+    # Thất bại của lượt VÀ R0 thất bại: nói cả hai (giờ R0 nằm trong must_mention).
+    pytest.param(
+        dict(snapshot=dict(unannounced=r0(at(10, spoken="Thứ Ba 10/11, 10 giờ sáng"),
+                                          outcome="failed")),
+             turn_facts=[DecisionFact(outcome="failed", proposal_kind="book", at=M15)],
+             pending_decided=True),
+        f"Chị Lan ơi, Thứ Ba 10/11, 3 giờ chiều em chưa ghi được, chị Lan gọi giúp em số {PHONE} nhé ạ. "
+        "Dạ lịch Thứ Ba 10/11, 10 giờ sáng em cũng chưa ghi được ạ.",
+        id="failed_and_r0_failed"),
     pytest.param(
         dict(snapshot=dict(sessions={"appointment": a_session(field="day", opened_turn_id=TURN_ID)})),
         "Dạ chị Lan muốn ngày nào ạ?", id="opened_session"),

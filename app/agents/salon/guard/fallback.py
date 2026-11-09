@@ -29,6 +29,8 @@ FAILED_NO_PHONE_REPLY = "Dạ {at} em chưa ghi được, {address} nhắn lại
 FAILED_NEAREST_REPLY = (
     "Dạ {at} vừa có người đặt mất rồi ạ. Còn trống {nearest}, {address} nhắn em giờ muốn đặt nhé."
 )
+# R0 thất bại khi lượt này CŨNG thất bại: câu trước đã có số điện thoại.
+ALSO_FAILED_REPLY = "Dạ lịch {at} em cũng chưa ghi được ạ."
 REJECTED_REPLY = "Dạ vâng, em bỏ lịch {at} rồi ạ. {address} muốn giờ khác thì nhắn em nhé."
 # Từ chối một đề xuất HUỶ = lịch vẫn còn nguyên — "em bỏ lịch …" sẽ làm khách
 # tưởng lịch đã mất.
@@ -104,6 +106,8 @@ def compose_fallback(
     parts: list[str] = []
     if failed_at is not None:
         parts.append(_failed(failed_at, address=address, shop_phone=shop_phone))
+        if r0_failed:
+            parts.append(ALSO_FAILED_REPLY.format(at=announce.at.spoken))
     elif r0_failed:
         parts.append(_failed(announce.at, address=address, shop_phone=shop_phone))
     if approved is not None:
