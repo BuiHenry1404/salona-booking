@@ -1,0 +1,102 @@
+[
+  {
+    "id": "nail-son-thuong",
+    "category": "nail",
+    "name": "Sơn thường",
+    "aliases": ["sơn móng thường", "sơn móng tay"],
+    "price_min": 50000,
+    "price_max": 80000,
+    "duration_minutes": 30,
+    "active": true
+  },
+  {
+    "id": "nail-son-gel",
+    "category": "nail",
+    "name": "Sơn gel",
+    "aliases": ["sơn móng gel"],
+    "price_min": 120000,
+    "price_max": 180000,
+    "duration_minutes": 45,
+    "active": true
+  },
+  {
+    "id": "nail-up-bot",
+    "category": "nail",
+    "name": "Úp móng / đắp bột",
+    "aliases": ["đắp bột", "úp bột"],
+    "price_min": 250000,
+    "price_max": 400000,
+    "duration_minutes": 90,
+    "active": true
+  },
+  {
+    "id": "nail-cat-da",
+    "category": "nail",
+    "name": "Cắt da, sửa móng",
+    "aliases": ["cắt da tay", "sửa móng"],
+    "price_min": 40000,
+    "price_max": 40000,
+    "duration_minutes": 30,
+    "active": true
+  },
+  {
+    "id": "nail-chan-spa",
+    "category": "nail",
+    "name": "Chăm sóc móng chân",
+    "aliases": ["spa chân", "chăm sóc chân"],
+    "price_min": 150000,
+    "price_max": 150000,
+    "duration_minutes": 60,
+    "active": true
+  },
+  {
+    "id": "toc-goi-say",
+    "category": "toc",
+    "name": "Gội sấy",
+    "aliases": ["gội đầu", "sấy tóc"],
+    "price_min": 50000,
+    "price_max": 70000,
+    "duration_minutes": 30,
+    "active": true
+  },
+  {
+    "id": "toc-cat-nu",
+    "category": "toc",
+    "name": "Cắt tóc nữ",
+    "aliases": ["cắt tóc"],
+    "price_min": 100000,
+    "price_max": 150000,
+    "duration_minutes": 45,
+    "active": true
+  },
+  {
+    "id": "toc-nhuom",
+    "category": "toc",
+    "name": "Nhuộm",
+    "aliases": ["nhuộm tóc", "nhuộm màu"],
+    "price_min": 350000,
+    "price_max": 700000,
+    "duration_minutes": 120,
+    "active": true
+  },
+  {
+    "id": "toc-uon",
+    "category": "toc",
+    "name": "Uốn",
+    "aliases": ["uốn tóc"],
+    "price_min": 450000,
+    "price_max": 900000,
+    "duration_minutes": 150,
+    "active": true
+  },
+  {
+    "id": "toc-hap-dau",
+    "category": "toc",
+    "name": "Hấp dầu, phục hồi",
+    "aliases": ["hấp dầu", "phục hồi tóc"],
+    "price_min": 150000,
+    "price_max": 250000,
+    "duration_minutes": 60,
+    "active": true
+  }
+]

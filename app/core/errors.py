@@ -53,3 +53,8 @@ class InvalidRefreshTokenError(AppError):
 class ForbiddenError(AppError):
     status_code = 403
     message = "Không có quyền"
+
+
+class UnknownServiceError(AppError):
+    status_code = 400
+    message = "Dịch vụ không có trong danh mục"

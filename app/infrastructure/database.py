@@ -112,6 +112,11 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     )
     await db["message_inbox"].create_index("expires_at", expireAfterSeconds=0)
 
+    # Danh mục dịch vụ: `id` là khoá nghiệp vụ dùng để upsert và tra cứu
+    # (không phải `_id` của Mongo); `active` tách riêng để lọc tra cứu nhanh.
+    await db["services"].create_index("id", unique=True)
+    await db["services"].create_index("active")
+
 
 async def create_mongodb_connection(uri: str = None, db_name: str = None) -> MongoDatabase:
     """Create and initialize a MongoDB connection."""

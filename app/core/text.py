@@ -22,6 +22,14 @@ def single_line(value: Optional[str], max_length: int) -> Optional[str]:
     return cleaned[:max_length] or None
 
 
+def normalize_for_match(text: str) -> str:
+    """Chuẩn hoá một chuỗi để so khớp: NFC rồi casefold rồi bỏ khoảng trắng
+    thừa. Dùng trước khi so sánh, không dùng để hiển thị lại cho khách.
+    """
+    cleaned = " ".join((text or "").split())
+    return unicodedata.normalize("NFC", cleaned).casefold()
+
+
 def strip_diacritics(text: str) -> str:
     """Bỏ dấu tiếng Việt. 'đúng rồi' và 'dung roi' phải cùng ra một chuỗi.
 
