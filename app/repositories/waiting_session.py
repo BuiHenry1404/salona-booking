@@ -2,6 +2,7 @@
 agent)` — mở phiên mới cùng agent ghi đè phiên cũ.
 """
 from datetime import datetime
+from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
@@ -41,10 +42,14 @@ class WaitingSessionRepository:
             {"$set": {"status": "closed", "closed_reason": reason, "updated_at": now_utc()}},
         )
 
-    async def close_opened_in_turn(self, user_id: str, turn_id: str, *, reason: str) -> list[str]:
-        """Đóng mọi phiên `waiting` được mở/đổi ở lượt `turn_id`; trả tên các
-        agent vừa đóng."""
-        filter_ = {"user_id": user_id, "opened_turn_id": turn_id, "status": "waiting"}
+    async def close_opened_in_turn(self, user_id: str, turn_id: str, *, reason: str,
+                                   keep: Optional[str] = None) -> list[str]:
+        """Đóng mọi phiên `waiting` được mở/đổi ở lượt `turn_id`, trừ phiên của
+        agent `keep` (câu mẫu code đã hỏi khách câu hỏi của phiên đó — Ruling
+        R12); trả tên các agent vừa đóng."""
+        filter_: dict = {"user_id": user_id, "opened_turn_id": turn_id, "status": "waiting"}
+        if keep is not None:
+            filter_["agent"] = {"$ne": keep}
         agents = [doc["agent"] async for doc in self.collection.find(filter_, {"agent": 1})]
         if agents:
             await self.collection.update_many(

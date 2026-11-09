@@ -27,7 +27,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents import checkpoint
 from app.agents.salon import TURN_ERROR_MESSAGE, AgentEvent, ButtonReply, run_turn
-from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, GENERIC_FALLBACK
+from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, FIELD_QUESTION, GENERIC_FALLBACK
 from app.agents.salon.memory import long_term
 from app.agents.salon.memory.long_term import MEMORY_NAMESPACE
 from app.agents.salon.orchestrator import agent as agent_module
@@ -38,6 +38,7 @@ from app.agents.salon.turn import run as run_module
 from app.agents.salon.turn.events import TOOL_LABELS
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
+from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
 from app.services.waiting_session import WaitingSessionService
@@ -255,6 +256,30 @@ async def test_typed_turn_emits_started_tools_and_complete_without_tokens(test_d
         ("user", "tiệm mở cửa mấy giờ vậy em", "llm"), ("assistant", HOURS, "llm")]
 
 
+async def test_typed_turn_seeds_self_address_once(test_db, monkeypatch):
+    """Ruling R13: khách tự xưng "chị" trong câu gõ → ghi `self_address` một lần."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [AIMessage(HOURS), AIMessage("Dạ tiệm mở cả tuần ạ.")])
+
+    completed(await turn(test_db, user, "chị muốn hỏi tiệm mở cửa mấy giờ"))
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "chị"
+
+    completed(await turn(test_db, user, "anh muốn hỏi tiệm có mở chủ nhật không"))
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "chị"
+
+
+async def test_button_turn_does_not_seed_self_address(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [RuntimeError("the model must not be called")])
+    proposal = await a_proposal(test_db, user)
+
+    completed(await turn(test_db, user, ButtonReply(str(proposal.id), "no")))
+
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address is None
+
+
 async def test_inner_tool_events_carry_vietnamese_labels(test_db, monkeypatch):
     await default_hours(test_db)
     await block_15(test_db)
@@ -438,6 +463,8 @@ async def test_button_reject_replies_in_code(test_db, monkeypatch):
     assert await booked_starts(test_db, user) == []
 
 
+# Cảnh báo serializer của Pydantic in nguyên SalonContext (có chữ khách) ra stderr.
+@pytest.mark.filterwarnings("error:Pydantic serializer warnings")
 async def test_second_request_is_proposed_after_the_first_is_approved(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
@@ -490,6 +517,33 @@ async def test_button_approve_then_model_error_still_announces_booking(test_db, 
     assert messages[-1].content == done["answer"]
 
 
+async def test_superseded_continue_turn_leaves_the_booking_unannounced(test_db, monkeypatch):
+    """Ruling R14: lượt nút (duyệt + yêu cầu kế) bị huỷ khi Orchestrator đang
+    chạy → câu "đã đặt xong" chưa tới khách → lượt gõ chữ sau phải báo (R0)."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    booked = f"Dạ em đã đặt xong {S15} cho chị Lan rồi ạ."
+    model = orchestrator(monkeypatch, [
+        tool_call("appointment_task", BOOK_15), AIMessage(OFFER_15), Hang(), AIMessage(booked)])
+    subagents(monkeypatch, two_requests())
+    first = completed(await turn(test_db, user, "đặt cho chị 3 giờ, với cho con gái 4 giờ"))
+
+    pressed: list = []
+    task = _consume(test_db, user, ButtonReply(first["proposal"]["id"], "yes"), pressed)
+    await wait_until(lambda: len(model.calls) >= 3)
+    after = await turn(test_db, user, "alo em")
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert "complete" not in [event.type for event in pressed]
+    block = model.calls[-1][1].content
+    assert f"Unannounced: approved book at {S15}" in block
+    assert completed(after)["answer"] == booked
+    rows = await ledger_rows(test_db, user)
+    assert rows[1]["decision"]["outcome"] == "approved"
+    assert rows[1]["announced"] is True          # báo ở lượt 3 (R0), không phải lượt 2
+
+
 # ---------------------------------------------------------------------------
 # Lỗi, trần, thời gian
 # ---------------------------------------------------------------------------
@@ -510,16 +564,14 @@ async def test_limit_error_gives_a_code_reply_not_english(test_db, monkeypatch):
     events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
 
     answer = completed(events)["answer"]
-    assert answer.startswith("Dạ ") and "limit" not in answer.casefold()
-    assert answer != "never reached"
+    # Câu mẫu hỏi câu hỏi của phiên vừa mở (field "time")…
+    assert answer == FIELD_QUESTION["time"].format(address="chị Lan")
     messages = await thread_messages(test_db, user)
     assert_valid_thread(messages)
     assert messages[-1].content == answer
     assert messages[-1].additional_kwargs["salon_source"] == "code"
-    # Khách không nghe câu hỏi của phiên vừa mở theo đúng nghĩa — phiên đóng.
-    assert "appointment" not in await active_sessions(test_db, user)
-    doc = await test_db["waiting_sessions"].find_one({"user_id": str(user.id)})
-    assert doc["closed_reason"] == "fallback"
+    # …nên phiên đó GIỮ mở: lượt sau "4 giờ đi" làm tiếp được (Ruling R12).
+    assert "appointment" in await active_sessions(test_db, user)
     [row] = await ledger_rows(test_db, user)
     assert (row["ended_by"], row["answer_source"]) == ("limit", "code")
     assert any(fact["kind"] == "agent_status" for fact in row["facts"])
@@ -686,3 +738,36 @@ async def test_first_turn_of_a_new_conversation_consolidates_memory(
     events = await turn(test_db, user, "alo em")
     assert completed(events)["answer"] == "Dạ em nghe đây ạ."
     assert len(no_azure.calls) == 2
+
+
+async def test_consolidation_finishes_even_if_its_turn_is_superseded(
+        test_db, monkeypatch, no_azure, memory_store):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [AIMessage("Dạ em chào chị Lan ạ."), AIMessage("Dạ em nghe đây ạ.")])
+    no_azure.replies[:] = [
+        Hang(0.5, then={"preferences": ["Thích sơn gel màu nhạt"], "notes": [], "last_visit": None})]
+    start = to_local(now_utc()).date() - timedelta(days=3)
+    clock: dict[str, Optional[datetime]] = {"now": _vn(start, 10, 0)}
+    monkeypatch.setattr(run_module, "now_ms", lambda: clock["now"])
+    completed(await turn(test_db, user, "chào em"))
+
+    clock["now"] = _vn(start + timedelta(days=1), 8, 0)
+    first: list = []
+    task = _consume(test_db, user, "chào buổi sáng", first)
+    await wait_until(lambda: len(no_azure.calls) >= 1)
+    clock["now"] = _vn(start + timedelta(days=1), 8, 1)
+    completed(await turn(test_db, user, "alo em"))
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Gom chạy tiếp ở nền sau khi lượt của nó bị huỷ.
+    namespace = (MEMORY_NAMESPACE, str(user.id))
+    for _ in range(100):
+        item = await memory_store.aget(namespace, "preferences")
+        if item is not None:
+            break
+        await asyncio.sleep(0.05)
+    assert item is not None, "consolidation never finished"
+    assert item.value["data"] == ["Thích sơn gel màu nhạt"]
+    assert len(no_azure.calls) == 1

@@ -141,8 +141,10 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
                 "jump_to": "model",
             }
 
+        # Phiên mà câu mẫu hỏi câu hỏi của nó vẫn mở (Ruling R12).
         closed = await WaitingSessionService(self.db).close_opened_in_turn(
-            context.user_id, state.get("turn_id") or context.turn_id, reason="fallback")
+            context.user_id, state.get("turn_id") or context.turn_id, reason="fallback",
+            keep=facts.asked_session)
         logger.warning("guard_violation", extra={**log_extra, "closed_sessions": closed})
         return {
             "messages": [

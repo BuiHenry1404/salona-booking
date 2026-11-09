@@ -61,7 +61,7 @@ def protected_moments(snapshot: TurnSnapshot) -> list[datetime]:
     return [datetime.fromisoformat(item["iso"]) for item in session.memory.get("next_requests", [])]
 
 
-def _error(runtime: ToolRuntime, code: str, hint: str) -> ToolMessage:
+def _error(runtime: ToolRuntime[SalonContext, SalonState], code: str, hint: str) -> ToolMessage:
     return ToolMessage(content=json.dumps({"error_code": code, "hint": hint}),
                        name="decide_pending", tool_call_id=runtime.tool_call_id, status="error")
 

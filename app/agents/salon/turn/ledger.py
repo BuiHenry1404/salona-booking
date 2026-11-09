@@ -144,6 +144,14 @@ class TurnLedger:
         )
         _warn_if_missing(result, turn_id, "mark_announced")
 
+    async def unmark_announced(self, turn_id: str) -> None:
+        """Hoàn lại `mark_announced` khi câu báo chưa tới khách (lượt bị huỷ
+        trước `complete`) — để R0 báo lại ở lượt sau (Ruling R14)."""
+        result = await self._collection.update_one(
+            {"turn_id": turn_id}, {"$set": {"announced": False}}
+        )
+        _warn_if_missing(result, turn_id, "unmark_announced")
+
     async def unannounced(self, user_id: str, *, today: date) -> UnannouncedDecision | None:
         doc = await self._collection.find_one(
             {

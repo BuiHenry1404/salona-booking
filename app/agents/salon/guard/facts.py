@@ -22,7 +22,7 @@ from typing import Iterable, Literal, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
-from app.agents.salon.guard.fallback import compose_fallback
+from app.agents.salon.guard.fallback import compose_fallback_asking
 from app.agents.salon.shared.context import TurnSnapshot
 from app.agents.salon.shared.schemas import (
     DecisionFact,
@@ -89,6 +89,9 @@ class ReplyFacts(BaseModel):
     address: str
     previous_replies: list[str]
     fallback: str
+    # Agent có phiên mà câu mẫu `fallback` hỏi câu hỏi của nó — phiên đó phải
+    # GIỮ mở khi lượt kết thúc bằng câu mẫu (Ruling R12).
+    asked_session: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -222,10 +225,11 @@ def _decisions(turn_facts: list[TurnFact], pending_outcome: Optional[PendingOutc
     return found
 
 
-def _opened_field(snapshot: TurnSnapshot, turn_id: str) -> Optional[str]:
-    for session in snapshot.sessions.values():
+def _opened_session(snapshot: TurnSnapshot, turn_id: str) -> Optional[tuple[str, str]]:
+    """(agent, field) của phiên mở / đổi trong lượt này, nếu có."""
+    for agent, session in snapshot.sessions.items():
         if session.opened_turn_id == turn_id:
-            return session.question.field
+            return agent, session.question.field
     return None
 
 
@@ -337,12 +341,13 @@ async def build_reply_facts(
         held_proposal = (pending.kind, pending.at)
     else:
         held_proposal = None
-    fallback = compose_fallback(
+    opened = _opened_session(snapshot, turn_id)
+    fallback, asks_session = compose_fallback_asking(
         address=address, shop_phone=settings.shop_phone,
         failed_at=failed.at if failed is not None else None,
         approved=(approved[0].kind, approved[0].at) if approved and turn_kind == "typed" else None,
         proposal=held_proposal, announce=unannounced,
-        opened_field=_opened_field(snapshot, turn_id),
+        opened_field=opened[1] if opened is not None else None,
     )
 
     return ReplyFacts(
@@ -360,4 +365,5 @@ async def build_reply_facts(
         address=address,
         previous_replies=list(previous_replies),
         fallback=fallback,
+        asked_session=opened[0] if opened is not None and asks_session else None,
     )

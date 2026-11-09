@@ -73,6 +73,19 @@ async def test_close_opened_in_turn_only_closes_that_turn(test_db):
     assert set(active) == {"appointment"}
 
 
+async def test_close_opened_in_turn_keeps_the_asked_session(test_db):
+    """Ruling R12: phiên mà câu mẫu code đã hỏi câu hỏi của nó vẫn mở."""
+    service = WaitingSessionService(test_db)
+    now = now_utc()
+    await service.open(a_session("u1", "appointment", now=now, turn_id="t1"))
+    await service.open(a_session("u1", "shop_info", now=now, turn_id="t1"))
+
+    closed = await service.close_opened_in_turn("u1", "t1", reason="fallback", keep="appointment")
+
+    assert closed == ["shop_info"]
+    assert set(await service.active("u1", now=now)) == {"appointment"}
+
+
 async def test_session_survives_a_new_service_instance(test_db):
     now = now_utc()
     await WaitingSessionService(test_db).open(a_session("u1", "appointment", now=now))

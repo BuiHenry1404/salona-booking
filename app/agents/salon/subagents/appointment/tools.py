@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
@@ -266,7 +266,10 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             reserved["proposal"] = False
         return _dumps(payload)
 
-    async def remember_next_request(iso: str, runtime: ToolRuntime) -> str:
+    # `ToolRuntime[Any]`, không để trần: kiểu context mặc định là `None`, mà
+    # context thật (SalonContext của lượt, lan từ Orchestrator) thì có chữ khách
+    # — Pydantic cảnh báo kèm nguyên giá trị ra stderr (review Task 15).
+    async def remember_next_request(iso: str, runtime: ToolRuntime[Any]) -> str:
         """Ghi một yêu cầu KẾ (khách xin thêm lịch) — chỉ nhận đúng một `iso`
         mà `parse_time` đã trả trong CHÍNH lần gọi agent con này (kiểm bằng
         code trên ToolMessage của run), để model không bịa được giờ."""

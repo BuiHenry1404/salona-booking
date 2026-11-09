@@ -66,9 +66,10 @@ from app.core.clock import now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
-from app.core.text import normalize_for_match, single_line
+from app.core.text import detect_self_address, normalize_for_match, single_line
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
+from app.repositories.user import UserRepository
 from app.services.conversation import ConversationService
 from app.services.conversation_thread import ConversationThreadService
 from app.services.proposal import ProposalService
@@ -130,6 +131,9 @@ class _Progress:
     turn_id: Optional[str] = None
     thread_id: Optional[str] = None
     completed: bool = False
+    # Lượt đã đánh dấu ĐÃ BÁO trước `complete` (nhánh nút + yêu cầu kế) — bị
+    # huỷ trước `complete` thì phải hoàn lại (Ruling R14).
+    premarked: bool = False
 
     def ids(self) -> dict[str, Optional[str]]:
         return {"user_id": self.user_id, "turn_id": self.turn_id, "thread_id": self.thread_id}
@@ -147,6 +151,7 @@ class _Turn:
     holder: SnapshotHolder
     agent: CompiledStateGraph
     config: dict
+    progress: _Progress
 
     @property
     def ids(self) -> dict[str, str]:
@@ -186,11 +191,13 @@ async def _supersede(me: Optional[asyncio.Task], previous: Optional[asyncio.Task
         await asyncio.wait({previous}, timeout=SUPERSEDE_WAIT_SECONDS)
 
 
-async def _close_sessions(db: AsyncIOMotorDatabase, ids: dict, *, reason: str) -> None:
-    """Đóng phiên chờ mở / đổi trong lượt — khách không nghe câu hỏi của chúng."""
+async def _close_sessions(db: AsyncIOMotorDatabase, ids: dict, *, reason: str,
+                          keep: Optional[str] = None) -> None:
+    """Đóng phiên chờ mở / đổi trong lượt — khách không nghe câu hỏi của chúng.
+    `keep`: phiên mà câu mẫu code đã hỏi câu hỏi của nó (Ruling R12) — giữ mở."""
     try:
         closed = await _shielded(WaitingSessionService(db).close_opened_in_turn(
-            ids["user_id"], ids["turn_id"], reason=reason))
+            ids["user_id"], ids["turn_id"], reason=reason, keep=keep))
     except Exception as exc:
         logger.warning("sessions_close_failed", extra={**ids, "error_type": type(exc).__name__})
         return
@@ -347,8 +354,9 @@ async def _fallback(turn: _Turn, opener: HumanMessage, *, question: str,
     decision = record.decision if record is not None else None
     if not (limit or facts or decision is not None):
         return None
-    text = fallback_reply(await _reply_facts(turn, state, facts, decision, question))
-    await _close_sessions(turn.db, turn.ids, reason="fallback")
+    reply_facts = await _reply_facts(turn, state, facts, decision, question)
+    text = fallback_reply(reply_facts)
+    await _close_sessions(turn.db, turn.ids, reason="fallback", keep=reply_facts.asked_session)
     await _shielded(_write_code_reply(turn, messages, opener, text))
     return _Answer(text, "code", "limit" if limit else "fallback", facts)
 
@@ -392,6 +400,8 @@ async def _continue_next(turn: _Turn, button: ButtonReply, outcome: PendingOutco
     vẫn chờ (không đóng)."""
     # Câu báo của code đã nói giờ vừa đặt: đánh dấu ĐÃ BÁO trước khi chạy
     # Orchestrator, để guard không bắt nó nhắc lại (khối Unannounced / R0).
+    # Bị huỷ trước `complete` → `run_turn` hoàn lại dấu này (Ruling R14).
+    turn.progress.premarked = True
     await turn.ledger.mark_announced(turn.turn_id)
     turn.holder.mark_stale()
     opener = HumanMessage(
@@ -475,6 +485,23 @@ async def _record(turn: _Turn, answer: _Answer, customer_text: str) -> None:
                      extra={**turn.ids, "error_type": type(exc).__name__})
 
 
+async def _seed_self_address(turn: _Turn, text: str) -> None:
+    """Khách CHƯA có `self_address` mà câu gõ chữ này tự xưng "chị"/"anh" → ghi
+    MỘT lần (CONTEXT.md "Xưng hô", Ruling R13). `set_self_address` tự lọc
+    `self_address: None` nên lượt chồng nhau / giá trị admin sửa tay không bị
+    ghi đè. Chỉ lượt gõ chữ — nút bấm không phải lời khách tự xưng. Lỗi chỉ
+    log id, không bao giờ log chữ khách."""
+    if turn.user.self_address is not None:
+        return
+    try:
+        self_address = detect_self_address(text)
+        if self_address:
+            await UserRepository(turn.db).set_self_address(str(turn.user.id), self_address)
+    except Exception as exc:
+        logger.warning("self_address_seed_failed",
+                       extra={**turn.ids, "error_type": type(exc).__name__})
+
+
 async def _mark_announced(turn: _Turn, text: str, r0: Optional[UnannouncedDecision]) -> None:
     """Đánh dấu ĐÃ BÁO khi câu khách vừa nhận có nêu giờ của quyết định: quyết
     định của chính lượt này, và quyết định chưa báo từ lượt trước (R0)."""
@@ -491,6 +518,14 @@ async def _mark_announced(turn: _Turn, text: str, r0: Optional[UnannouncedDecisi
             await turn.ledger.mark_announced(r0.turn_id)
     except Exception as exc:
         logger.warning("mark_announced_failed", extra={**turn.ids, "error_type": type(exc).__name__})
+
+
+async def _unmark_announced(db: AsyncIOMotorDatabase, ids: dict) -> None:
+    """Câu báo "đã đặt xong" của nút bấm không tới khách — R0 báo lại ở lượt sau."""
+    try:
+        await _shielded(TurnLedger(db).unmark_announced(ids["turn_id"]))
+    except Exception as exc:
+        logger.warning("unmark_announced_failed", extra={**ids, "error_type": type(exc).__name__})
 
 
 async def _end_with_error(turn: _Turn) -> None:
@@ -523,13 +558,15 @@ async def _proposal_payload(db: AsyncIOMotorDatabase, user: User, ids: dict) -> 
 async def _consolidate(db: AsyncIOMotorDatabase, user: User, previous_thread_id: str,
                        now: datetime, ids: dict) -> None:
     """Lượt đầu của cuộc mới: gom bộ nhớ dài hạn từ cuộc trước (spec §3.5).
-    Lỗi / quá giờ chỉ log — lượt vẫn chạy với bộ nhớ cũ."""
+    Lỗi / quá giờ chỉ log — lượt vẫn chạy với bộ nhớ cũ. Shield: lượt bị lượt
+    mới thay giữa chừng thì việc gom vẫn chạy xong ở nền — lượt sau cùng cuộc
+    không gom lại nữa (`created` đã là False)."""
     try:
-        await asyncio.wait_for(
+        await _shielded(asyncio.wait_for(
             consolidate_memory(db, get_store(), user, previous_thread_id=previous_thread_id,
                                now=now, turn_id=ids["turn_id"]),
             timeout=settings.salon_memory_timeout_seconds,
-        )
+        ))
     except Exception as exc:
         logger.warning("memory_consolidate_failed", extra={
             **ids, "previous_thread_id": previous_thread_id, "error_type": type(exc).__name__})
@@ -558,6 +595,8 @@ async def run_turn(db: AsyncIOMotorDatabase, user: User,
     except (asyncio.CancelledError, GeneratorExit):
         if progress.turn_id is not None and not progress.completed:
             await _close_sessions(db, progress.ids(), reason="superseded")
+            if progress.premarked:
+                await _unmark_announced(db, progress.ids())
         superseded = _ACTIVE_TURNS.get(user_id) is not me
         logger.info("turn_superseded" if superseded else "turn_cancelled", extra=progress.ids())
         raise
@@ -598,6 +637,7 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         turn = _Turn(
             db=db, user=user, turn_id=turn_id, thread_id=thread_id, asked_at=asked_at,
             kind=kind, ledger=ledger, holder=holder, agent=build_orchestrator(db, user, holder),
+            progress=progress,
             config={
                 "configurable": {"thread_id": thread_id},
                 "callbacks": get_callbacks(),
@@ -619,6 +659,8 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
 
         customer_text = BUTTON_LABELS[button.decision] if button is not None else text
         await _shielded(_record(turn, answer, customer_text))
+        if button is None:
+            await _shielded(_seed_self_address(turn, text))
         proposal = await _proposal_payload(db, user, turn.ids)
         progress.completed = True
         logger.info("turn_finished", extra={**turn.ids, "ended_by": answer.ended_by,
@@ -632,4 +674,6 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
             return
         if turn is not None:
             await _end_with_error(turn)
+        if progress.premarked:
+            await _unmark_announced(db, progress.ids())
         yield AgentEvent("error", {"message": TURN_ERROR_MESSAGE})

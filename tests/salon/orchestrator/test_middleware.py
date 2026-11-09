@@ -509,7 +509,8 @@ async def _open_session(db, user, *, agent: str, turn_id: str) -> None:
     ))
 
 
-async def test_second_rejection_uses_fallback_and_closes_opened_sessions(test_db):
+async def test_second_rejection_keeps_the_session_its_fallback_asks_about(test_db):
+    """Ruling R12: câu mẫu hỏi câu hỏi của phiên vừa mở → phiên đó giữ mở."""
     await default_hours(test_db)
     user = await a_user(test_db)
     await _open_session(test_db, user, agent="appointment", turn_id="this-turn")
@@ -524,7 +525,24 @@ async def test_second_rejection_uses_fallback_and_closes_opened_sessions(test_db
     assert CLAIM not in _texts(state["messages"])
     assert _hints(state["messages"]) == []
     statuses = {doc["agent"]: doc["status"] async for doc in test_db["waiting_sessions"].find({})}
-    assert statuses == {"appointment": "closed", "shop_info": "waiting"}
+    assert statuses == {"appointment": "waiting", "shop_info": "waiting"}
+
+
+async def test_second_rejection_closes_a_session_its_fallback_does_not_ask_about(test_db):
+    """Câu mẫu hỏi về đề xuất chờ, không hỏi câu của phiên vừa mở → phiên đó đóng."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    await _pending(test_db, user)
+    await _open_session(test_db, user, agent="appointment", turn_id="this-turn")
+    model = recorder([AIMessage(CLAIM), AIMessage(CLAIM)])
+
+    state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), turn_id="this-turn")
+
+    last = state["messages"][-1]
+    assert last.additional_kwargs.get("salon_source") == "code"
+    assert "đồng ý không ạ?" in last.content
+    doc = await test_db["waiting_sessions"].find_one({"agent": "appointment"})
+    assert (doc["status"], doc["closed_reason"]) == ("closed", "fallback")
 
 
 # ---------------------------------------------------------------------------

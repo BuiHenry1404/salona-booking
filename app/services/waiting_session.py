@@ -3,6 +3,7 @@ cho agent con/Orchestrator — không có logic nghiệp vụ nào khác ngoài 
 qua repository; hết hạn chỉ do `active()` kiểm lúc đọc, không TTL Mongo.
 """
 from datetime import datetime
+from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -26,5 +27,8 @@ class WaitingSessionService:
     async def close(self, user_id: str, agent: str, *, reason: str) -> None:
         await self.repository.close_one(user_id, agent, reason=reason)
 
-    async def close_opened_in_turn(self, user_id: str, turn_id: str, *, reason: str) -> list[str]:
-        return await self.repository.close_opened_in_turn(user_id, turn_id, reason=reason)
+    async def close_opened_in_turn(self, user_id: str, turn_id: str, *, reason: str,
+                                   keep: Optional[str] = None) -> list[str]:
+        """Đóng phiên mở / đổi trong lượt `turn_id`, trừ phiên của agent `keep`."""
+        return await self.repository.close_opened_in_turn(user_id, turn_id, reason=reason,
+                                                          keep=keep)

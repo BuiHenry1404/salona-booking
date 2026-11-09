@@ -8,7 +8,7 @@ docs/architech-agent.md luật 3).
 tiệm chỉ có trong nhánh ghi thất bại; `.env` chưa có số thì không bịa số.
 
 Không import `guard/facts.py` lúc chạy (facts dựng câu mẫu bằng
-`compose_fallback` ở đây — import ngược lại sẽ thành vòng).
+`compose_fallback_asking` ở đây — import ngược lại sẽ thành vòng).
 """
 from __future__ import annotations
 
@@ -89,12 +89,15 @@ def _spoken_list(moments: list[Moment]) -> str:
     return f"{', '.join(spoken[:-1])} hoặc {spoken[-1]}"
 
 
-def compose_fallback(
+def compose_fallback_asking(
     *, address: str, shop_phone: Optional[str], failed_at: Optional[Moment],
     approved: Optional[tuple[str, Moment]], proposal: Optional[tuple[str, Moment]],
     announce: Optional[UnannouncedDecision], opened_field: Optional[str],
-) -> str:
-    """Câu mẫu của lượt, theo thứ tự: ghi thất bại (của lượt, hoặc R0 thất
+) -> tuple[str, bool]:
+    """(câu mẫu, câu đó có hỏi câu hỏi của phiên vừa mở không). Phiên được hỏi
+    thì caller giữ nó mở (Ruling R12) — khách đã nghe câu hỏi của nó.
+
+    Câu mẫu của lượt, theo thứ tự: ghi thất bại (của lượt, hoặc R0 thất
     bại — cả hai kèm số điện thoại tiệm) -> duyệt xong -> đề xuất đang giữ ->
     R0 đã duyệt -> phiên vừa mở -> câu chung.
 
@@ -115,14 +118,14 @@ def compose_fallback(
     if parts:
         if proposal is not None:
             parts.append(_proposal(proposal[0], proposal[1], address=address))
-        return _capitalized(" ".join(parts))
+        return _capitalized(" ".join(parts)), False
     if proposal is not None:
-        return _capitalized(_proposal(proposal[0], proposal[1], address=address))
+        return _capitalized(_proposal(proposal[0], proposal[1], address=address)), False
     if announce is not None:
-        return _capitalized(_done(announce.proposal_kind, announce.at, address=address))
+        return _capitalized(_done(announce.proposal_kind, announce.at, address=address)), False
     if opened_field in FIELD_QUESTION:
-        return _capitalized(FIELD_QUESTION[opened_field].format(address=address))
-    return _capitalized(GENERIC_FALLBACK.format(address=address))
+        return _capitalized(FIELD_QUESTION[opened_field].format(address=address)), True
+    return _capitalized(GENERIC_FALLBACK.format(address=address)), False
 
 
 def fallback_reply(facts: "ReplyFacts") -> str:
