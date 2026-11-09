@@ -62,7 +62,7 @@ _CLAIMS_FOR_VERB: dict[tuple[str, ...], tuple[str, ...]] = {
     ("huỷ",): ("cancelled",),
 }
 _HOLD = ("giữ",)
-# Động từ ĐẶT: kể lại một lịch khách đang có (`existing_clocks`) là đúng
+# Động từ ĐẶT: kể lại một lịch khách đang có (`existing_only_clocks`) là đúng
 # (Ruling R8). Dời / đổi / huỷ thì không bao giờ.
 _BOOKING_VERBS = frozenset({("đặt",), ("ghi",), ("chốt",), ("xác", "nhận"), ("lên", "lịch")})
 _VERBS = sorted([*_CLAIMS_FOR_VERB, _HOLD], key=len, reverse=True)
@@ -123,10 +123,10 @@ def _claim_verbs(clause_words: list[str], has_clock: bool) -> set[tuple[str, ...
 
 
 def _existing_vouches(clock: Reading, facts: ReplyFacts) -> bool:
-    """Một giờ NÊU RA là một lịch khách đang có — trừ khi giờ đó cũng là giờ
-    của một đề xuất chờ / đề xuất mới (guard không so ngày: "3 giờ chiều thứ
-    Tư" đang chờ duyệt không được ké lịch 3 giờ chiều thứ Ba đã có)."""
-    return is_known(clock, facts.existing_clocks) and not is_known(clock, facts.held_clocks)
+    """Một giờ NÊU RA là một lịch khách đang có và không trùng giờ nào khác
+    của lượt (`existing_only_clocks`, Ruling R9) — guard không so ngày: "3 giờ
+    chiều thứ Tư" vừa duyệt hỏng không được ké lịch 3 giờ chiều thứ Ba."""
+    return is_known(clock, facts.existing_only_clocks)
 
 
 def _commit_ok(verb: tuple[str, ...], said: list[Reading], facts: ReplyFacts) -> bool:
@@ -160,7 +160,7 @@ def _clause_claims_falsely(clause: str, facts: ReplyFacts) -> bool:
     # nêu giờ thì lịch đang có không bảo chứng.
     holdable = facts.held_clocks.union(*facts.done_claims.values())
     if said:
-        return not all(is_known(clock, holdable) or is_known(clock, facts.existing_clocks)
+        return not all(is_known(clock, holdable) or _existing_vouches(clock, facts)
                        for clock in said)
     return not holdable
 

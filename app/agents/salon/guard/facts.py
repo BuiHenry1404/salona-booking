@@ -73,10 +73,12 @@ _STILL_PENDING = frozenset({"kept", "clarify"})
 class ReplyFacts(BaseModel):
     clocks: set[ClockKey]                 # mọi mốc giờ có thật của lượt
     held_clocks: set[ClockKey]            # giờ đang có đề xuất chờ thật
-    # Giờ các lịch ĐANG CÓ của khách (`snapshot.upcoming`) — "chị đã đặt lịch
-    # 3 giờ chiều mai rồi ạ" kể lại một lịch có thật là đúng (Ruling R8). Chỉ
-    # cho động từ đặt / giữ, không bao giờ cho dời / huỷ.
-    existing_clocks: set[ClockKey]
+    # Giờ các lịch ĐANG CÓ của khách (`snapshot.upcoming`) mà KHÔNG xuất hiện ở
+    # nguồn dữ kiện nào khác của lượt — "chị đã đặt lịch 3 giờ chiều mai rồi ạ"
+    # kể lại một lịch có thật là đúng (Ruling R8). Guard không so ngày, nên một
+    # giờ trùng với đề xuất / quyết định / giờ trống của lượt (dù ngày khác)
+    # không được lịch đang có bảo chứng (Ruling R9). Chỉ cho động từ đặt / giữ.
+    existing_only_clocks: set[ClockKey]
     done_claims: dict[Claim, set[ClockKey]]   # giờ của việc ĐÃ ghi thật, theo loại
     price_ranges: list[tuple[int, int]]   # từng dịch vụ + tổng của nhóm trong cùng lịch
     must_mention: list[str]
@@ -274,9 +276,24 @@ async def build_reply_facts(
     for proposal in proposals:
         held |= _clocks_of_moment(proposal.at)
 
-    existing: set[ClockKey] = set()
+    # Mọi nguồn giờ KHÁC lịch đang có: đề xuất chờ (bất kể quyết định), đề
+    # xuất / quyết định / giờ của lượt (trừ TimeFact "appointment" — chính là
+    # lịch đang có), `pending_outcome`, R0, lựa chọn của phiên chờ.
+    other: list[Optional[Moment]] = [pending.at if pending else None,
+                                     unannounced.at if unannounced else None]
+    for fact in turn_facts:
+        if isinstance(fact, TimeFact) and fact.role != "appointment":
+            other.append(fact.moment)
+        elif isinstance(fact, (ProposalFact, DecisionFact)):
+            other.append(fact.at)
+    if pending_outcome is not None:
+        other += [pending_outcome.at, *pending_outcome.nearest]
+    for session in snapshot.sessions.values():
+        other += [Moment(iso=option.iso, spoken=option.spoken) for option in session.question.options]
+    other_times = {key[:2] for moment in other for key in _clocks_of_moment(moment)}
+    existing_only: set[ClockKey] = set()
     for appt in snapshot.upcoming:
-        existing |= _clocks_of_moment(appt.at)
+        existing_only |= {key for key in _clocks_of_moment(appt.at) if key[:2] not in other_times}
 
     done: dict[Claim, set[ClockKey]] = {"booked": set(), "moved": set(), "cancelled": set()}
     approved = [d for d in decisions if d.outcome == "approved" and d.kind in CLAIM_FOR_KIND]
@@ -331,7 +348,7 @@ async def build_reply_facts(
     return ReplyFacts(
         clocks=clocks,
         held_clocks=held,
-        existing_clocks=existing,
+        existing_only_clocks=existing_only,
         done_claims=done,
         price_ranges=price_ranges,
         must_mention=list(dict.fromkeys(s for s in must_mention if s)),

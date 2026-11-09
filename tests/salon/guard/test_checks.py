@@ -246,6 +246,30 @@ ROWS = [
     pytest.param(
         dict(),
         "Dạ em đã xác nhận thông tin của chị rồi ạ.", [], id="xac_nhan_without_appointment"),
+    # --- fix round 3 (Ruling R9) -------------------------------------------
+    # Lịch đang có chỉ bảo chứng giờ KHÔNG có ở nguồn dữ kiện nào khác của
+    # lượt (guard không so ngày).
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(WED_15), upcoming=[appointment_at(TUE_15)]),
+             turn_facts=[DecisionFact(outcome="failed", proposal_kind="book", at=WED_15)],
+             pending_decided=True),
+        f"Dạ em đã đặt xong lịch Thứ Tư 11/11, 3 giờ chiều cho chị rồi ạ, có gì chị gọi số {PHONE} nhé.",
+        ["claim"], id="existing_does_not_vouch_a_failed_pending_clock"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(WED_15), upcoming=[appointment_at(TUE_15)]),
+             turn_facts=[DecisionFact(outcome="rejected", proposal_kind="book", at=WED_15)],
+             pending_decided=True),
+        "Dạ em đã đặt xong lịch Thứ Tư 11/11, 3 giờ chiều cho chị rồi ạ.", ["claim"],
+        id="existing_does_not_vouch_a_rejected_pending_clock"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(TUE_15)]),
+             turn_facts=[TimeFact(role="free", moment=WED_15)]),
+        "Dạ em đã chốt 3 giờ chiều cho chị rồi ạ.", ["claim"],
+        id="existing_does_not_vouch_a_free_clock"),
+    pytest.param(
+        dict(snapshot=dict(upcoming=[appointment_at(TUE_15)]),
+             turn_facts=[TimeFact(role="appointment", moment=TUE_15)]),
+        "Dạ em đã chốt 3 giờ chiều cho chị rồi ạ.", [], id="existing_alone_still_vouches"),
 ]
 
 
