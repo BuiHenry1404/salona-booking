@@ -1,7 +1,6 @@
 """Repository cho `conversation_threads` (spec §3.4) — mỗi document là MỘT
 cuộc trò chuyện (một ngày VN, trừ ca nửa đêm). Khác hẳn `conversations` (lịch
-sử chat nguyên văn, 1 document/khách) và `conversation_sessions` (bản nén
-theo ngày của agent cũ) — không dùng lại hai collection đó.
+sử chat nguyên văn, 1 document/khách) — không dùng lại collection đó.
 """
 from datetime import date, datetime
 from typing import Optional
@@ -14,8 +13,7 @@ from app.models.conversation_thread import ConversationThread
 
 
 def _as_datetime(day: date) -> datetime:
-    # Mongo không có kiểu date riêng — lưu dạng datetime nửa đêm, cùng quy
-    # ước với `ConversationState.day` / `ConversationSession.day`.
+    # Mongo không có kiểu date riêng — lưu dạng datetime nửa đêm.
     return datetime(day.year, day.month, day.day)
 
 

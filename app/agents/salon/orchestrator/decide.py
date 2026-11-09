@@ -5,12 +5,10 @@
 dò giờ/ngày/thứ trong câu khách bằng `shared.text_scan` (0 regex, 0 từ điển ý
 định), không đọc hiểu câu khách bằng model. `apply_decision` là ĐƯỜNG GHI DUY
 NHẤT cho cả nút bấm lẫn chữ gõ sau khi qua `veto()` — module DUY NHẤT của gói
-`salon` được phép gọi `ProposalService.approve` (`tests/test_write_fence.py`;
-gói `booking` cũ còn giữ bản tương đương của nó tới khi cả gói bị xoá).
+`salon` được phép gọi `ProposalService.approve` (`tests/test_write_fence.py`).
 
-Viết mới hoàn toàn cho gói `salon`; không import `app/agents/booking` (chỉ đọc
-`booking/orchestrator/decide.py` để biết cách transaction cũ được mở, không
-chép nguyên văn).
+Viết mới hoàn toàn cho gói `salon` (gói agent cũ đã xoá ở Task 16; chỉ đọc
+`decide.py` của nó để biết cách transaction cũ được mở, không chép nguyên văn).
 """
 from __future__ import annotations
 

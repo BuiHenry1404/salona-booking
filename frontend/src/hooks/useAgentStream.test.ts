@@ -102,13 +102,13 @@ describe("useAgentStream", () => {
     expect(result.current.messages.filter((m) => m.role === "user")).toHaveLength(2);
   });
 
-  it("E. MẤT MẠNG GIỮA CHỪNG: chữ đã stream giữ nguyên, offline=true", () => {
+  it("E. MẤT MẠNG GIỮA CHỪNG: câu đã hiện giữ nguyên, offline=true", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("token", { text: "Dạ mai 3 giờ" }));
+    act(() => socket.fire("complete", { answer: "Dạ mai 3 giờ còn trống ạ" }));
     act(() => socket.fire("disconnect"));
 
     expect(result.current.offline).toBe(true);
-    expect(result.current.messages.at(-1)?.text).toBe("Dạ mai 3 giờ");
+    expect(result.current.messages.at(-1)?.text).toBe("Dạ mai 3 giờ còn trống ạ");
     expect(result.current.messages.filter((m) => m.role === "bot")).toHaveLength(1);
   });
 
@@ -129,57 +129,73 @@ describe("useAgentStream", () => {
     expect(result.current.failed).toBe(false);
   });
 
-  it("H. tool_started known: phase tool, label tiếng Việt đúng", () => {
+  it("tool_started hiện label, không hiện tên tool", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
+    // Nhãn do server gửi (`TOOL_LABELS` của gói salon) — kể cả tool frontend
+    // chưa từng biết tên.
+    act(() =>
+      socket.fire("tool_started", { name: "appointment_task", label: "Đang xem lịch hẹn…" }),
+    );
 
     expect(result.current.phase).toBe("tool");
     expect(result.current.steps).toEqual([
-      { name: "find_free_slots", label: "Đang xem lịch trống…", done: false, ok: true },
+      { name: "appointment_task", label: "Đang xem lịch hẹn…", done: false, ok: true },
     ]);
+    expect(result.current.steps[0].label).not.toContain("appointment_task");
   });
 
-  it("I. tool lạ: fallback, không lộ tên thô/dấu gạch dưới", () => {
+  it("I. tool_started thiếu label: câu chung, không lộ tên thô/dấu gạch dưới", () => {
     const { result } = renderHook(() => useAgentStream());
     act(() => socket.fire("tool_started", { name: "some_new_internal_tool_v2" }));
+    act(() => socket.fire("tool_started", { name: "other_tool", label: "" }));
 
-    expect(result.current.steps[0].label).toBe("Đang xử lý…");
-    expect(result.current.steps[0].label).not.toMatch(/_/);
+    expect(result.current.steps.map((s) => s.label)).toEqual(["Đang xử lý…", "Đang xử lý…"]);
+    for (const step of result.current.steps) expect(step.label).not.toMatch(/_/);
   });
 
-  it("J. tool_finished: GIỮ LẠI dòng đã xong chứ không xoá", () => {
+  it("J. tool_finished: GIỮ LẠI dòng đã xong chứ không xoá, vẫn là label của server", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
-    act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
+    act(() =>
+      socket.fire("tool_started", { name: "find_free_slots", label: "Đang xem lịch trống…" }),
+    );
+    act(() =>
+      socket.fire("tool_finished", {
+        name: "find_free_slots",
+        label: "Đang xem lịch trống…",
+        ok: true,
+      }),
+    );
 
     expect(result.current.steps).toEqual([
-      { name: "find_free_slots", label: "Đã xem lịch trống", done: true, ok: true },
+      { name: "find_free_slots", label: "Đang xem lịch trống…", done: true, ok: true },
     ]);
   });
 
-  it("K. token đầu tiên: tạo đúng MỘT assistant bubble", () => {
+  it("không có token: turn_started → thinking, complete → một bubble", () => {
     const { result } = renderHook(() => useAgentStream());
+    act(() => result.current.send("mai 3h được không em"));
+    act(() => socket.fire("turn_started"));
+    expect(result.current.phase).toBe("thinking");
+
+    // Server không còn phát `token`: hook không nghe sự kiện đó nữa — lỡ có
+    // (server cũ) cũng không sinh bong bóng dở.
+    expect(socket.handlers.get("token")?.size ?? 0).toBe(0);
     act(() => socket.fire("token", { text: "Dạ" }));
+    expect(result.current.messages.filter((m) => m.role === "bot")).toHaveLength(0);
+    expect(result.current.phase).toBe("thinking");
+
+    act(() => socket.fire("complete", { answer: "Dạ mai 3 giờ chiều còn trống ạ", proposal: null }));
 
     const bot = result.current.messages.filter((m) => m.role === "bot");
     expect(bot).toHaveLength(1);
-    expect(bot[0].text).toBe("Dạ");
-    expect(result.current.phase).toBe("answering");
+    expect(bot[0].text).toBe("Dạ mai 3 giờ chiều còn trống ạ");
+    expect(result.current.phase).toBe("idle");
   });
 
-  it("L. nhiều token: append vào CÙNG bubble", () => {
+  it("M. complete sau tool: clear steps, phase idle", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("token", { text: "Xin " }));
-    act(() => socket.fire("token", { text: "chào" }));
-
-    const bot = result.current.messages.filter((m) => m.role === "bot");
-    expect(bot).toHaveLength(1);
-    expect(bot[0].text).toBe("Xin chào");
-  });
-
-  it("M. complete sau streaming: REPLACE bằng answer, clear steps, phase idle", () => {
-    const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("token", { text: "Dạ mai 3" }));
+    act(() => socket.fire("turn_started"));
+    act(() => socket.fire("tool_started", { name: "parse_time", label: "Đang xem lịch…" }));
     act(() => socket.fire("complete", { answer: "Dạ mai 3 giờ chiều còn trống ạ" }));
 
     const bot = result.current.messages.filter((m) => m.role === "bot");
@@ -202,7 +218,7 @@ describe("useAgentStream", () => {
 
   it("O. DUPLICATE complete cùng turn: chỉ finalize MỘT lần, không bubble thứ hai", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("token", { text: "Dạ được" }));
+    act(() => socket.fire("turn_started"));
     act(() => socket.fire("complete", { answer: "Dạ được ạ" }));
     act(() => socket.fire("complete", { answer: "Dạ được ạ" }));
 
@@ -217,7 +233,6 @@ describe("useAgentStream", () => {
 
     act(() => result.current.send("câu hỏi hai"));
     act(() => socket.fire("turn_started"));
-    act(() => socket.fire("token", { text: "câu trả lời " }));
     act(() => socket.fire("complete", { answer: "câu trả lời hai" }));
 
     const bot = result.current.messages.filter((m) => m.role === "bot");
@@ -227,8 +242,7 @@ describe("useAgentStream", () => {
   it("Q. error: failed=true, phase idle, clear steps, bot bubble xin lỗi, không kẹt", () => {
     const { result } = renderHook(() => useAgentStream());
     act(() => result.current.send("hỏi gì đó"));
-    act(() => socket.fire("tool_started", { name: "parse_time" }));
-    act(() => socket.fire("token", { text: "đang nói dở" }));
+    act(() => socket.fire("tool_started", { name: "parse_time", label: "Đang xem lịch…" }));
     act(() => socket.fire("error", { message: "Máy đang bận chút xíu ạ" }));
 
     expect(result.current.phase).toBe("idle");
@@ -242,19 +256,13 @@ describe("useAgentStream", () => {
     expect(result.current.messages[0]).toMatchObject({ role: "user", text: "hỏi gì đó" });
   });
 
-  it("Q2. error giữa stream: bỏ bubble dở (kể cả token nối của lần thử lại), chỉ còn câu lỗi", () => {
+  it("Q2. sau error, lượt sau vẫn ra bubble MỚI bằng complete", () => {
     const { result } = renderHook(() => useAgentStream());
     act(() => result.current.send("hỏi gì đó"));
-    act(() => socket.fire("token", { text: "Dạ em giữ" }));
-    act(() => socket.fire("token", { text: "Dạ em giữ chỗ" })); // lần thử lại stream lại từ đầu
     act(() => socket.fire("error", { message: "Máy đang bận chút xíu ạ" }));
-
-    const bot = result.current.messages.filter((m) => m.role === "bot");
-    expect(bot.map((m) => m.text)).toEqual(["Máy đang bận chút xíu ạ"]);
-
-    // Lượt sau stream bình thường vào bubble MỚI.
-    act(() => socket.fire("token", { text: "Dạ" }));
+    act(() => socket.fire("turn_started"));
     act(() => socket.fire("complete", { answer: "Dạ chị cần gì ạ?" }));
+
     expect(result.current.messages.filter((m) => m.role === "bot").map((m) => m.text))
       .toEqual(["Máy đang bận chút xíu ạ", "Dạ chị cần gì ạ?"]);
   });
@@ -265,17 +273,17 @@ describe("useAgentStream", () => {
 
     // Không gỡ thì mỗi lần vào lại màn hình chat sẽ có thêm một bộ handler.
     const owned = ["connect", "disconnect", "turn_started", "tool_started",
-      "tool_finished", "token", "complete", "error"];
+      "tool_finished", "complete", "error"];
     for (const event of owned) expect(socket.handlers.get(event)?.size ?? 0).toBe(0);
     expect(released).toBe(1);
   });
 
-  it("S. StrictMode mount→unmount→mount: token chỉ xử lý MỘT lần", () => {
+  it("S. StrictMode mount→unmount→mount: complete chỉ xử lý MỘT lần", () => {
     const first = renderHook(() => useAgentStream());
     first.unmount();
     const second = renderHook(() => useAgentStream());
 
-    act(() => socket.fire("token", { text: "Xin chào" }));
+    act(() => socket.fire("complete", { answer: "Xin chào" }));
 
     const bot = second.result.current.messages.filter((m) => m.role === "bot");
     expect(bot).toHaveLength(1);
@@ -304,7 +312,6 @@ describe("useAgentStream", () => {
 
     // Lượt mới: KHÔNG qua turn_started (đường gửi lại lỗi mạng vẫn có thể
     // thiếu) — complete đến trực tiếp. Chính onComplete phải reset failed.
-    act(() => socket.fire("token", { text: "Đã" }));
     act(() => socket.fire("complete", { answer: "Đã ổn ạ" }));
 
     expect(result.current.failed).toBe(false);
@@ -318,34 +325,30 @@ describe("useAgentStream", () => {
 
   it("V. REGRESSION: cùng tool chạy 2 lần — tool_finished chỉ đích MỘT invocation gần nhất", () => {
     const { result } = renderHook(() => useAgentStream());
-    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
-    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
+    const label = "Đang xem lịch trống…";
+    act(() => socket.fire("tool_started", { name: "find_free_slots", label }));
+    act(() => socket.fire("tool_started", { name: "find_free_slots", label }));
 
     expect(result.current.steps).toHaveLength(2);
     expect(result.current.steps.every((s) => !s.done)).toBe(true);
 
-    act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
+    act(() => socket.fire("tool_finished", { name: "find_free_slots", label, ok: true }));
 
     expect(result.current.steps).toHaveLength(2); // không xóa step
     const done = result.current.steps.filter((s) => s.done);
     const pending = result.current.steps.filter((s) => !s.done);
     expect(done).toHaveLength(1); // chỉ MỘT invocation được đánh dấu xong
     expect(pending).toHaveLength(1);
-    expect(done[0].label).toBe("Đã xem lịch trống");
-    expect(pending[0].label).toBe("Đang xem lịch trống…"); // invocation còn lại
+    expect(result.current.steps[1].done).toBe(true); // invocation GẦN NHẤT
     expect(result.current.steps.every((s) => !s.label.includes("find_free_slots"))).toBe(true);
 
-    act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
+    act(() => socket.fire("tool_finished", { name: "find_free_slots", label, ok: true }));
     expect(result.current.steps.every((s) => s.done)).toBe(true); // cả hai mới xong
   });
 
   /** TRÌNH DUYỆT THẬT chạy trong <StrictMode> (main.tsx) — StrictMode gọi updater
-   * của setState HAI LẦN cùng một `prev` để lộ updater không thuần. onToken cũ đặt
-   * `streamingId.current` ngay TRONG updater: lần gọi đầu tạo bubble + gán ref,
-   * lần gọi hai thấy ref đã có bèn đi nhánh append trên `prev` CHƯA có bubble →
-   * trả `prev` nguyên vẹn → React commit kết quả lần hai → bong bóng biến mất.
-   * Mọi token sau append vào bubble không tồn tại (no-op), complete thay bubble
-   * không tồn tại (no-op) → khách không thấy câu trả lời, dù tool đã chạy xong. */
+   * của setState HAI LẦN cùng một `prev` để lộ updater không thuần. Chuỗi sự
+   * kiện của một lượt thật (không còn `token`) phải ra đúng MỘT bong bóng. */
   it("W. REGRESSION live sequence dưới StrictMode: câu trả lời phải hiện sau complete", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(StrictMode, null, children);
@@ -356,50 +359,30 @@ describe("useAgentStream", () => {
     // Thinking xuất hiện ngay khi lượt bắt đầu.
     expect(result.current.phase).toBe("thinking");
 
-    act(() => socket.fire("tool_started", { name: "find_free_slots" }));
+    const label = "Đang xem lịch trống…";
+    act(() => socket.fire("tool_started", { name: "find_free_slots", label }));
     // Trạng thái tool ĐANG CHẠY phải hiện.
     expect(result.current.phase).toBe("tool");
     expect(result.current.steps).toEqual([
-      { name: "find_free_slots", label: "Đang xem lịch trống…", done: false, ok: true },
+      { name: "find_free_slots", label, done: false, ok: true },
     ]);
 
-    act(() => socket.fire("tool_finished", { name: "find_free_slots", ok: true }));
+    act(() => socket.fire("tool_finished", { name: "find_free_slots", label, ok: true }));
     // Trạng thái tool ĐÃ XONG phải hiện (và giữ lại trên màn hình).
     expect(result.current.steps).toEqual([
-      { name: "find_free_slots", label: "Đã xem lịch trống", done: true, ok: true },
+      { name: "find_free_slots", label, done: true, ok: true },
     ]);
 
-    // Chuỗi token + complete giống hệt lượt thật qua Socket.IO (12 token, 1 complete).
-    act(() => socket.fire("token", { text: "Dạ chào cô, " }));
-    // Câu trả lời PHẢI HIỆN DẦN trong lúc stream, không đợi complete.
-    expect(result.current.messages.filter((m) => m.role === "bot")[0]?.text).toBe("Dạ chào cô, ");
-    act(() => socket.fire("token", { text: "hôm nay tiệm còn trống" }));
-    act(() => socket.fire("token", { text: " buổi sáng ạ." }));
     act(() => socket.fire("complete", { answer: "Dạ chào cô, hôm nay tiệm còn trống buổi sáng ạ." }));
 
     // Câu của khách phải còn.
     expect(result.current.messages[0]).toMatchObject({ role: "user" });
-    // PHẢI có đúng MỘT bong bóng bot với câu chốt — bug cũ cho ra MẢNG RỖNG.
     const bot = result.current.messages.filter((m) => m.role === "bot");
     expect(bot).toHaveLength(1);
     expect(bot[0].text).toBe("Dạ chào cô, hôm nay tiệm còn trống buổi sáng ạ.");
-    // Câu chốt khác rỗng, và không có bong bóng fallback/error nào.
-    expect(bot[0].text.length).toBeGreaterThan(0);
     expect(result.current.steps).toEqual([]);
     expect(result.current.phase).toBe("idle");
     expect(result.current.failed).toBe(false);
-  });
-
-  it("X. REGRESSION StrictMode: MỘT token đơn lẻ cũng phải tạo bubble", () => {
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(StrictMode, null, children);
-    const { result } = renderHook(() => useAgentStream(), { wrapper });
-
-    act(() => socket.fire("token", { text: "Dạ" }));
-
-    const bot = result.current.messages.filter((m) => m.role === "bot");
-    expect(bot).toHaveLength(1);
-    expect(bot[0].text).toBe("Dạ");
   });
 
   it("Y. complete kèm proposal: proposal được điền từ data (snake_case → camelCase)", () => {

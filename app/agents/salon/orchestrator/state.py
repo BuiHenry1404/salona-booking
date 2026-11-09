@@ -2,9 +2,9 @@
 docs/architech-agent.md.
 
 Every value kept in the graph state must be plain JSON (dict / list / str /
-int), never a pydantic object: the project checkpointer serde only allows
-`ConversationSlots` to roundtrip as a model (`app/agents/checkpoint.py`). Every
-other pydantic model used here (`TurnFact`, `PendingOutcome`) is written with
+int), never a pydantic object: the project checkpointer serde allows no
+project model to roundtrip (`app/agents/checkpoint.py`). Every pydantic model
+used here (`TurnFact`, `PendingOutcome`) is written with
 `model.model_dump(mode="json")` and read back with the helpers below.
 
 Waiting sessions are NOT part of this state (spec §5): subagents read/write

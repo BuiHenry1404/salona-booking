@@ -4,9 +4,7 @@ from typing import Dict, Optional
 import socketio
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.booking import run_turn
-from app.agents.booking.button import BUTTON_LABELS, ButtonReply
-from app.agents.booking.events import TURN_ERROR_MESSAGE
+from app.agents.salon import TURN_ERROR_MESSAGE, ButtonReply, run_turn
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.errors import RateLimitedError
@@ -18,6 +16,9 @@ from app.services.dedupe import MessageDedupe
 from app.services.rate_limit import RateLimitService
 
 logger = get_logger(__name__)
+
+# Hai giá trị `decision` hợp lệ của nút Đồng ý / Không.
+BUTTON_DECISIONS = ("yes", "no")
 
 
 class SocketIOService:
@@ -198,10 +199,10 @@ class SocketIOService:
         payload = data if isinstance(data, dict) else {}
         proposal_id = payload.get("proposal_id")
         decision = payload.get("decision")
-        # `decision` sai kiểu (list/dict) không băm được — tra bằng `isinstance`
-        # trước để không nổ ở `.get()` thay vì trả `error` gọn gàng.
-        label = BUTTON_LABELS.get(decision) if isinstance(decision, str) else None
-        if not isinstance(proposal_id, str) or not proposal_id or label is None:
+        # `decision` sai kiểu (list/dict) không băm được — kiểm `isinstance`
+        # trước khi so để trả `error` gọn gàng thay vì nổ.
+        valid = isinstance(decision, str) and decision in BUTTON_DECISIONS
+        if not isinstance(proposal_id, str) or not proposal_id or not valid:
             await self.sio.emit("error", {"message": TURN_ERROR_MESSAGE}, room=sid)
             return
 
@@ -216,7 +217,7 @@ class SocketIOService:
             await self.sio.emit("complete", state, room=sid)
             return
 
-        reply = ButtonReply(decision=decision, proposal_id=proposal_id, label=label)
+        reply = ButtonReply(proposal_id=proposal_id, decision=decision)
         try:
             complete_payload = None
             async for event in run_turn(self.db, user, reply):

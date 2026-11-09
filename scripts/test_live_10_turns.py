@@ -9,16 +9,16 @@ from typing import Any, Dict, List
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from app.agents.booking.events import run_turn
-from app.core.clock import TZ, now_utc, to_local
+from app.agents.salon import run_turn
+from app.core.clock import now_utc, to_local
 from app.core.config import settings
 from app.infrastructure.database import ensure_indexes
 from app.models.user import User
 from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
-from app.services.conversation import ConversationService
 from app.services.proposal import ProposalService
 from app.services.auth import AuthService
+from app.services.waiting_session import WaitingSessionService
 from scripts.seed_dev_users import DEV_USERS
 
 
@@ -28,13 +28,16 @@ async def clear_database(db):
         "appointments",
         "checkpoint_writes",
         "checkpoints",
-        "conversation_sessions",
+        "conversation_threads",
         "conversations",
         "message_inbox",
         "proposals",
         "rate_limits",
         "refresh_tokens",
+        "salon_memories",
+        "salon_turns",
         "users",
+        "waiting_sessions",
     ]
     print("\n" + "=" * 60)
     print("🧹 BƯỚC 1: CLEAR DATABASE")
@@ -75,7 +78,6 @@ async def execute_turn(turn_idx: int, db, user: User, user_text: str, descriptio
     print("-" * 70)
 
     tools_called: List[Dict[str, Any]] = []
-    accumulated_tokens: List[str] = []
     final_complete: Dict[str, Any] = {}
     error_event = None
 
@@ -84,62 +86,30 @@ async def execute_turn(turn_idx: int, db, user: User, user_text: str, descriptio
         evt_data = event.data
 
         if evt_type == "tool_started":
-            print(f"  🛠️  [TOOL START]  name={evt_data.get('name')}")
+            print(f"  🛠️  [TOOL START]  name={evt_data.get('name')} | {evt_data.get('label')}")
             tools_called.append({"name": evt_data.get("name")})
         elif evt_type == "tool_finished":
             print(f"  ✅ [TOOL FINISH] name={evt_data.get('name')} | ok={evt_data.get('ok')}")
             if tools_called and tools_called[-1]["name"] == evt_data.get("name"):
                 tools_called[-1]["ok"] = evt_data.get("ok")
-        elif evt_type == "token":
-            accumulated_tokens.append(evt_data.get("text", ""))
         elif evt_type == "complete":
             final_complete = evt_data
         elif evt_type == "error":
             error_event = evt_data
             print(f"  ❌ [ERROR] {evt_data}")
 
-    # Đọc lại trạng thái Graph, Working Memory và DB
-    from app.agents.booking.graph import build_graph
-    from app.agents.booking.events import pick_thread
-    from app.core.clock import now_ms
-
-    graph = build_graph(db, user)
-    thread_id = await pick_thread(graph, str(user.id), now_ms())
-    snap = await graph.aget_state({"configurable": {"thread_id": thread_id}})
-    values = snap.values or {}
-    # Graph mới: route/luật nằm trong `resolve` (R0–R5), không còn `gate_next`.
-    resolve = values.get("resolve") or {}
-    route = resolve.get("route")
-    rule = resolve.get("rule")
-    answer_source = values.get("answer_source")
-
-    # Thu thập chi tiết tool calls từ messages
-    recent_tool_details = []
-    for msg in values.get("messages", [])[-6:]:
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
-            for tc in msg.tool_calls:
-                recent_tool_details.append({"name": tc.get("name"), "args": tc.get("args")})
-
-    conv_state = await ConversationService(db).get_state(str(user.id))
-    slots = conv_state.slots if conv_state else None
-    tool_day = conv_state.tool_day if conv_state else None
+    # Đọc lại trạng thái nghiệp vụ trong Mongo (gói salon không giữ phiên
+    # trong state của graph — spec §5).
+    sessions = await WaitingSessionService(db).active(str(user.id), now=now_utc())
     latest_proposal = await ProposalService(db).latest(user)
     appts = await AppointmentService(db).upcoming_for(user)
 
     print("\n  📊 [TRẠNG THÁI CUỘC TRÒ CHUYỆN SAU LƯỢT]")
-    print(f"     - Agent route    : {route} (rule={rule}, source={answer_source})")
-    if recent_tool_details:
-        print(f"     - Tool calls gần : {recent_tool_details}")
-    if slots:
-        print(f"     - slots.intent   : {slots.intent}")
-        print(f"     - slots.day      : {slots.day}")
-        print(f"     - slots.time     : {slots.time}")
-        print(f"     - slots.service  : {slots.service}")
-        print(f"     - slots.declined : {slots.declined}")
-        print(f"     - slots.stated   : {slots.stated}")
+    if sessions:
+        for agent, session in sessions.items():
+            print(f"     - Phiên chờ {agent}: {session.model_dump(exclude={'id'})}")
     else:
-        print("     - slots          : None")
-    print(f"     - state.tool_day : {tool_day}")
+        print("     - Phiên chờ      : không có")
 
     if latest_proposal:
         local_prop = to_local(latest_proposal.start_at)
@@ -161,10 +131,8 @@ async def execute_turn(turn_idx: int, db, user: User, user_text: str, descriptio
     return {
         "turn": turn_idx,
         "input": user_text,
-        "route": route,
-        "tools": recent_tool_details if recent_tool_details else tools_called,
-        "slots": slots.model_dump() if slots else None,
-        "tool_day": tool_day,
+        "tools": tools_called,
+        "sessions": sorted(sessions),
         "answer": answer,
         "proposal": prop_payload,
         "error": error_event,

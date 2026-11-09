@@ -62,21 +62,22 @@ def test_env_example_documents_the_ttl():
     assert "CHECKPOINT_TTL_DAYS=7" in text
 
 
-async def test_state_with_slots_and_datetimes_round_trips(monkeypatch, sync_client):
-    """State lượt chat mang ConversationSlots (pydantic) và datetime. Serializer
-    phải đọc lại được đúng kiểu — không thì lượt sau mất slots hoặc nổ."""
+async def test_state_with_messages_and_datetimes_round_trips(monkeypatch, sync_client):
+    """State lượt chat mang message LangChain (kèm tool call), dict JSON và
+    datetime. Serializer phải đọc lại đúng kiểu — không thì lượt sau nổ."""
     from datetime import datetime, timezone
     from typing import Any, Optional
 
+    from langchain_core.messages import AIMessage
     from langgraph.graph import END, START, StateGraph
 
     from app.agents.checkpoint import make_checkpointer
-    from app.models.conversation import ConversationSlots
     monkeypatch.setattr(settings, "mongo_db_name", TEST_DB_NAME)
     saver = make_checkpointer(sync_client)
 
     class S(TypedDict, total=False):
-        slots: Optional[Any]
+        message: Optional[Any]
+        facts: Optional[list]
         at: Optional[datetime]
 
     g = StateGraph(S)
@@ -85,13 +86,26 @@ async def test_state_with_slots_and_datetimes_round_trips(monkeypatch, sync_clie
     g.add_edge("n", END)
     graph = g.compile(checkpointer=saver)
     at = datetime(2026, 10, 17, 3, 4, 5, 6000, tzinfo=timezone.utc)
+    message = AIMessage("", tool_calls=[{"name": "parse_time", "args": {"hour": 3}, "id": "c1"}])
+    facts = [{"kind": "proposal", "iso": "2026-10-18T15:00:00+07:00"}]
     config = {"configurable": {"thread_id": "u:roundtrip"}}
-    await graph.ainvoke({"slots": ConversationSlots(intent="book", service="làm tóc"), "at": at},
-                        config)
+    await graph.ainvoke({"message": message, "facts": facts, "at": at}, config)
     values = (await graph.aget_state(config)).values
-    assert isinstance(values["slots"], ConversationSlots)
-    assert values["slots"].service == "làm tóc"
+    assert isinstance(values["message"], AIMessage)
+    assert values["message"].tool_calls[0]["args"] == {"hour": 3}
+    assert values["facts"] == facts
     assert values["at"] == at
+
+
+def test_serde_does_not_revive_project_models():
+    """Allowlist rỗng: kiểu pydantic của dự án lọt vào checkpoint KHÔNG được
+    dựng lại thành object (chỉ còn dict) — state `salon` chỉ mang JSON thuần."""
+    from app.agents.checkpoint import make_serde
+    from app.models.conversation import ChatMessage
+
+    serde = make_serde()
+    out = serde.loads_typed(serde.dumps_typed(ChatMessage(role="user", content="x")))
+    assert not isinstance(out, ChatMessage)
 
 
 def test_get_checkpointer_returns_what_was_set():

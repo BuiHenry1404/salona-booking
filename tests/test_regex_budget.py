@@ -1,21 +1,13 @@
-"""Hàng rào số lượng regex (`re.compile`) trong tầng AI Agent.
-
-Spec `2026-10-29-llm-orchestrator-design.md`: `app/agents/booking/` cắt xuống
-còn đúng 2 regex (`_TOOL_GROUP`, `_TOOL_BARE` trong `strip_tool_names`, dời từ
-`guard.py` của gói cũ ở Task 6.1 sang `draft_checks.py`). Mọi module khác
-(kể cả `timeparse.py`) — 0 regex. Task 6.3 (M6-cutover) xoá hẳn gói
-supervisor graph cũ — chỉ còn một gói để quét.
+"""Hàng rào regex trong tầng AI Agent: gói `salon` không `import re` ở đâu cả
+và không có `re.compile` nào (spec 2026-11-08-subagents-rebuild). Gói agent cũ
+(có ngân sách 2 regex) đã xoá ở Task 16 — chỉ còn một gói để quét.
 """
 import ast
 import pathlib
 import re
 
-ROOT = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "booking"
 ROOT_SALON = pathlib.Path(__file__).resolve().parents[1] / "app" / "agents" / "salon"
 
-EXPECTED_BUDGET = {
-    "draft_checks.py": 2,
-}
 EXPECTED_BUDGET_SALON: dict[str, int] = {}
 
 
@@ -36,14 +28,6 @@ def _scan(root: pathlib.Path) -> tuple[dict[str, int], set[str]]:
             elif isinstance(node, ast.ImportFrom) and node.module == "re":
                 re_importers.add(rel)
     return actual, re_importers
-
-
-def test_agent_regex_budget_is_at_most_two():
-    actual, re_importers = _scan(ROOT)
-    assert actual == EXPECTED_BUDGET, f"Vượt ngân sách regex tầng agent: {actual}"
-    assert re_importers == set(EXPECTED_BUDGET.keys()), (
-        f"Module ngoài ngân sách import re: {re_importers}"
-    )
 
 
 def test_salon_package_has_no_regex():

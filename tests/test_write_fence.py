@@ -1,4 +1,4 @@
-"""Hàng rào đường ghi (M3): trong `app/agents`, CHỈ `orchestrator/decide.py` được gọi
+"""Hàng rào đường ghi: trong `app/agents`, CHỈ `salon/orchestrator/decide.py` được gọi
 `ProposalService.approve`, và không chỗ nào gọi thẳng phương thức ghi của
 `AppointmentService` (create / reschedule / cancel). Tool chỉ được TẠO đề xuất.
 
@@ -14,14 +14,6 @@ WRITE_METHODS = {"create", "cancel", "reschedule", "approve"}
 
 # (file, chuỗi receiver, method) — mỗi dòng là một lời gọi đã duyệt.
 ALLOWED = {
-    # Tool tạo ĐỀ XUẤT (không phải lịch) — ProposalService.create.
-    ("app/agents/booking/tools.py", "proposals", "create"),
-    # Cổng ghi duy nhất của Orchestrator (M3) — decide_pending's apply_decision,
-    # sau khi veto() đã lọc nhãn. Gói supervisor graph cũ (và `confirm.py` cũ)
-    # đã bị gỡ ở Task 6.3 (M6-cutover).
-    ("app/agents/booking/orchestrator/decide.py", "ProposalService(db)", "approve"),
-    # Huỷ asyncio.Task của lượt cũ (supersede), không phải huỷ lịch.
-    ("app/agents/booking/events.py", "previous", "cancel"),
     # Cổng ghi duy nhất của gói `salon` mới (Task 8) — decide_pending's
     # apply_decision, sau khi veto() đã lọc nhãn.
     ("app/agents/salon/orchestrator/decide.py", "ProposalService(db)", "approve"),
@@ -52,7 +44,7 @@ def test_only_the_confirm_node_reaches_the_write_gate():
 
 def test_the_fence_actually_sees_calls():
     """Tự kiểm: nếu bộ quét hỏng (0 lời gọi) thì test trên vẫn có thể xanh giả."""
-    assert ("app/agents/booking/orchestrator/decide.py", "ProposalService(db)", "approve") in write_calls()
+    assert ("app/agents/salon/orchestrator/decide.py", "ProposalService(db)", "approve") in write_calls()
 
 
 def test_services_approve_is_the_only_appointment_writer_in_the_proposal_module():

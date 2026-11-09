@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Sequence, TypeVar
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import local_day_bounds, now_utc, to_local
-from app.models.conversation import ChatMessage, Conversation, DaySummary, ConversationState
+from app.models.conversation import ChatMessage, Conversation, DaySummary
 
 # Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
 # đếm token thật cần tokenizer của model và không đáng cho việc này.
@@ -25,9 +25,7 @@ T = TypeVar("T")
 def session_cutoff(now: Optional[datetime] = None) -> datetime:
     """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
 
-    MỘT hàm cho mọi chỗ đọc — `history()`, `session_messages()` (đầu vào nén) và
-    lịch sử model đọc từ thread checkpointer (`model_history`). Lệch nhau là có
-    tin rơi vào khe giữa state và phần nguyên văn.
+    MỘT hàm cho mọi chỗ đọc theo phiên (`history()`).
     """
     now = now or now_utc()
     day_start, _ = local_day_bounds(to_local(now).date())
@@ -118,15 +116,6 @@ class ConversationService:
 
     _session_cutoff = session_cutoff
 
-    async def session_messages(self, user_id: str) -> List[ChatMessage]:
-        """Toàn bộ tin của PHIÊN HÔM NAY, chưa cắt theo ngân sách token — đầu
-        vào cho state."""
-        def _to_utc(dt: datetime) -> datetime:
-            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-
-        cutoff = _to_utc(self.session_cutoff())
-        return [m for m in await self._all_messages(user_id) if _to_utc(m.created_at) >= cutoff]
-
     async def history(
         self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET,
         after: Optional[datetime] = None,
@@ -204,53 +193,3 @@ class ConversationService:
             for m in await self._all_messages(user_id)
             if start <= m.created_at < end
         ]
-
-    async def get_state(self, user_id: str) -> Optional[ConversationState]:
-        """ConversationState của HÔM NAY (giờ VN). Ngày khác coi như không có — cắt lúc
-        đọc, cùng nguyên tắc với history()."""
-        doc = await self.collection.find_one({"user_id": user_id}, {"state": 1})
-        raw = (doc or {}).get("state")
-        if not raw:
-            return None
-        state = ConversationState(**raw)
-        if state.day != to_local(now_utc()).date():
-            return None
-        if state.covers_until.tzinfo is None:
-            state = state.model_copy(
-                update={"covers_until": state.covers_until.replace(tzinfo=now_utc().tzinfo)}
-            )
-        return state
-
-    async def set_state(self, user_id: str, state: ConversationState) -> None:
-        payload = state.model_dump()
-        # Mongo không lưu `date` — ghi dạng datetime nửa đêm UTC, đọc lên Pydantic ép về date.
-        payload["day"] = datetime(state.day.year, state.day.month, state.day.day)
-        await self.collection.update_one(
-            {"user_id": user_id},
-            {"$set": {"state": payload, "updated_at": now_utc()},
-             "$setOnInsert": {"user_id": user_id, "messages": [], "created_at": now_utc()}},
-            upsert=True,
-        )
-
-    async def bump_state_failures(self, user_id: str) -> None:
-        """Cầu chì. Chưa có state hôm nay thì tạo state rỗng để đếm."""
-        if await self.get_state(user_id) is None:
-            await self.set_state(user_id, ConversationState(
-                day=to_local(now_utc()).date(),
-                covers_until=datetime(1970, 1, 1, tzinfo=now_utc().tzinfo),
-                summary=[], failures=1,
-            ))
-            return
-        await self.collection.update_one(
-            {"user_id": user_id}, {"$inc": {"state.failures": 1}}
-        )
-
-    async def context_window(self, user_id: str):
-        """Thứ LLM đọc: (dữ kiện đã nén, slots, tin nguyên văn sau mốc nén)."""
-        state = await self.get_state(user_id)
-        after = state.covers_until if state else None
-        return (
-            (state.summary if state else []),
-            (state.slots if state else None),
-            await self.history(user_id, after=after),
-        )

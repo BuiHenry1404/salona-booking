@@ -8,9 +8,10 @@ Ba điều không được đổi:
 2. **`MongoClient` sync riêng.** `langgraph-checkpoint-mongodb==0.5.1` chỉ có
    `MongoDBSaver` (pymongo sync); bản async của nó chạy hàm sync trong thread
    executor. Motor của app không dùng lại được ở đây.
-3. **Serializer có allowlist.** State mang `ConversationSlots` (pydantic); để
-   mặc định thì thư viện cho giải mã MỌI kiểu (kèm cảnh báo). Chỉ mở đúng kiểu
-   của mình.
+3. **Serializer chặt.** State của graph chỉ mang dữ liệu JSON thuần (dict /
+   list / str / int) cùng message của LangChain; để mặc định thì thư viện cho
+   giải mã MỌI kiểu (kèm cảnh báo). Allowlist rỗng (`None`) = chỉ các kiểu an
+   toàn có sẵn của thư viện — kiểu pydantic lạ trong checkpoint bị chặn.
 
 TTL (`CHECKPOINT_TTL_DAYS`) chỉ là dọn rác. Hạn nghiệp vụ (10 phút của câu hỏi
 xác nhận, cắt theo ngày của lịch sử) nằm ở code đọc, không dựa vào TTL.
@@ -52,15 +53,14 @@ def _sync_ttl(client: MongoClient, ttl: int) -> None:
 
 
 def make_serde() -> JsonPlusSerializer:
-    """Serializer của dự án, allowlist các kiểu pydantic mang trong state.
+    """Serializer của dự án — không mở thêm kiểu nào ngoài các kiểu an toàn
+    của thư viện (state `salon` không mang object pydantic).
 
     Tách khỏi `make_checkpointer` để test roundtrip (vd `SalonState`) dùng
     được serializer thật mà không mở `MongoClient` — serde không chạm Mongo,
     chỉ encode/decode bằng msgpack/json.
     """
-    return JsonPlusSerializer(
-        allowed_msgpack_modules=[("app.models.conversation", "ConversationSlots")]
-    )
+    return JsonPlusSerializer(allowed_msgpack_modules=None)
 
 
 def get_sync_client() -> MongoClient:

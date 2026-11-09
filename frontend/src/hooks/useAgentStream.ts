@@ -2,9 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { acquireSocket, releaseSocket } from "../lib/socket";
 import type { Socket } from "../lib/socket";
 import { newMessageId } from "../lib/id";
-import { toolLabel } from "../lib/toolLabels";
 
+/** "answering" không còn được đặt (server không stream `token` nữa) — giữ
+ * trong kiểu cho `ChatScreen` (caret) tới khi màn hình được dọn theo. */
 export type Phase = "idle" | "thinking" | "tool" | "answering";
+
+/** Câu chung khi server không gửi nhãn — không bao giờ hiện tên tool thô. */
+const GENERIC_TOOL_LABEL = "Đang xử lý…";
 
 export interface ChatMessage {
   id: string;
@@ -30,6 +34,14 @@ export interface Proposal {
   whenSpoken: string;
 }
 
+/** `tool_started` / `tool_finished`: `label` là câu tiếng Việt server dựng sẵn
+ * (`TOOL_LABELS` của gói salon); `name` chỉ để ghép cặp bắt đầu/xong. */
+interface ToolEvent {
+  name: string;
+  label?: string;
+  ok?: boolean;
+}
+
 /** Hình dạng `proposal` do backend gửi trong sự kiện `complete` (snake_case). */
 interface RawProposal {
   id: string;
@@ -45,6 +57,9 @@ const nextId = () => `m${++counter}`;
  * Một máy trạng thái duy nhất cho cả khung chat. Màn hình chat chỉ việc vẽ
  * `messages` + `steps` + `phase`, không tự ghép sự kiện — đó là chỗ dễ sinh ra
  * hai bong bóng cho cùng một câu trả lời.
+ *
+ * Server không stream câu trả lời (không có `token`): câu tới khách chỉ đến
+ * trong `complete`, sau khi đã qua kiểm tra — mỗi lượt đúng MỘT bong bóng.
  *
  * Socket lấy từ singleton `acquireSocket()` — auth/token do tầng đó lo (đọc
  * động từ session mỗi lần kết nối), hook không phụ thuộc token React và không
@@ -62,9 +77,6 @@ export function useAgentStream() {
   // Đề xuất GẦN NHẤT còn hiệu lực — null nghĩa là không có gì để Đồng ý/Không.
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const socketRef = useRef<Socket | null>(null);
-  // id của bong bóng bot đang được stream. Dùng ref chứ không dùng state vì
-  // handler socket đóng gói giá trị cũ nếu đọc từ state.
-  const streamingId = useRef<string | null>(null);
   // Backend không có turn_id — guard nội bộ chống complete kép của cùng turn.
   // Reset khi bắt đầu turn mới (gửi tin hoặc turn_started).
   const completed = useRef(false);
@@ -78,7 +90,6 @@ export function useAgentStream() {
     setConnected(socket.connected);
 
     const beginTurn = () => {
-      streamingId.current = null;
       completed.current = false;
       setSteps([]);
       setFailed(false);
@@ -102,29 +113,26 @@ export function useAgentStream() {
 
     const onDisconnect = () => {
       setConnected(false);
-      // KHÔNG xóa messages, KHÔNG reset streaming. Người lớn tuổi thấy chữ
-      // biến mất sẽ tưởng mình vừa làm hỏng máy. Chỉ thêm một dòng báo.
+      // KHÔNG xóa messages. Người lớn tuổi thấy chữ biến mất sẽ tưởng mình
+      // vừa làm hỏng máy. Chỉ thêm một dòng báo.
       setOffline(true);
     };
 
     const onTurnStarted = () => beginTurn();
 
-    const onToolStarted = (data: { name: string }) => {
+    const onToolStarted = (data: ToolEvent) => {
       setPhase("tool");
-      setSteps((prev) => [
-        ...prev,
-        { name: data.name, label: toolLabel(data.name).running, done: false, ok: true },
-      ]);
+      const label = data.label || GENERIC_TOOL_LABEL;
+      setSteps((prev) => [...prev, { name: data.name, label, done: false, ok: true }]);
     };
 
-    const onToolFinished = (data: { name: string; ok: boolean }) => {
+    const onToolFinished = (data: ToolEvent) => {
       // Thu thành dòng có dấu tích và GIỮ LẠI trên màn hình: khách phải thấy
       // máy đã làm gì, nếu không họ nghi câu trả lời là bịa.
       //
       // Cùng tool có thể chạy nhiều lần trong một turn — mỗi tool_finished
       // chỉ đích invocation CHƯA xong GẦN NHẤT, không đánh dấu đồng loạt.
       setSteps((prev) => {
-        const label = toolLabel(data.name).done;
         let targeted = -1;
         for (let i = prev.length - 1; i >= 0; i -= 1) {
           if (prev[i].name === data.name && !prev[i].done) {
@@ -134,28 +142,9 @@ export function useAgentStream() {
         }
         if (targeted < 0) return prev;
         return prev.map((step, i) =>
-          i === targeted ? { ...step, done: true, ok: data.ok, label } : step,
+          i === targeted ? { ...step, done: true, ok: data.ok ?? true } : step,
         );
       });
-    };
-
-    const onToken = (data: { text: string }) => {
-      setPhase("answering");
-      // Đọc/ghi ref ở ĐÂY (trong handler), KHÔNG trong updater của setState.
-      // StrictMode gọi updater HAI LẦN với cùng một `prev`: nếu gán
-      // `streamingId.current` trong updater thì lần gọi thứ hai thấy ref đã có,
-      // đi nhầm nhánh append trên `prev` chưa chứa bubble → trả `prev` nguyên vẹn
-      // → React commit kết quả lần hai → bong bóng bot biến mất hẳn.
-      if (streamingId.current) {
-        const id = streamingId.current;
-        setMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, text: m.text + data.text } : m)),
-        );
-        return;
-      }
-      const id = nextId();
-      streamingId.current = id;
-      setMessages((prev) => [...prev, { id, role: "bot" as const, text: data.text }]);
     };
 
     const onComplete = (data: { answer?: string; proposal?: RawProposal | null }) => {
@@ -176,19 +165,11 @@ export function useAgentStream() {
             }
           : null,
       );
-      // Capture TRƯỚC setState: updater có thể chạy sau dòng dưới, đọc ref
-      // lúc đó là null và rơi nhầm sang nhánh tạo bubble mới.
-      const streamId = streamingId.current;
-      streamingId.current = null;
-
-      setMessages((prev) => {
-        if (streamId) {
-          // Câu chốt của backend là nguồn đúng nhất: nếu vài token rơi mất
-          // giữa đường thì đây là lúc chữa lại.
-          return prev.map((m) => (m.id === streamId && answer ? { ...m, text: answer } : m));
-        }
-        return answer ? [...prev, { id: nextId(), role: "bot" as const, text: answer }] : prev;
-      });
+      // id tạo NGOÀI updater: StrictMode gọi updater hai lần, id phải giống nhau.
+      const id = nextId();
+      setMessages((prev) =>
+        answer ? [...prev, { id, role: "bot" as const, text: answer }] : prev,
+      );
       setSteps([]);
       setPhase("idle");
       // Lượt KẾT THÚC BÌNH THƯỜNG phải tự xóa cờ hỏng của lượt trước — không
@@ -197,20 +178,14 @@ export function useAgentStream() {
     };
 
     const onError = (data: { message?: string }) => {
-      // Lượt hỏng giữa lúc đang stream (model nổ sau vài token, hoặc thử lại
-      // một lần rồi vẫn hỏng — token của CẢ HAI lần đã nối vào cùng bubble):
-      // bỏ bubble dở đó, chỉ để lại câu lỗi. Như `complete` thay bubble bằng
-      // câu chốt, `error` thay nó bằng câu lỗi — khách lớn tuổi không phải
-      // đọc nửa câu rồi tới "Máy đang bận". Capture TRƯỚC setState (xem onComplete).
-      const streamId = streamingId.current;
-      streamingId.current = null;
       setSteps([]);
       setPhase("idle");
       setFailed(true);
+      const id = nextId();
       setMessages((prev) => [
-        ...(streamId ? prev.filter((m) => m.id !== streamId) : prev),
+        ...prev,
         {
-          id: nextId(),
+          id,
           role: "bot" as const,
           text: data?.message ?? "Máy đang bận chút xíu, anh chị nhắn lại giúp em nhé.",
         },
@@ -223,7 +198,6 @@ export function useAgentStream() {
       ["turn_started", onTurnStarted],
       ["tool_started", onToolStarted as (data: unknown) => void],
       ["tool_finished", onToolFinished as (data: unknown) => void],
-      ["token", onToken as (data: unknown) => void],
       ["complete", onComplete as (data: unknown) => void],
       ["error", onError as (data: unknown) => void],
     ];

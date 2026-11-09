@@ -2,7 +2,10 @@ import asyncio
 
 import pytest
 
-from app.agents.booking import AgentEvent
+from app.agents import salon
+from app.agents.salon import TURN_ERROR_MESSAGE, AgentEvent, ButtonReply
+from app.agents.salon.turn.events import TOOL_LABELS
+from app.services import socketio_service
 from app.services.auth import AuthService
 from app.services.socketio_service import SocketIOService
 
@@ -29,31 +32,46 @@ def service(test_db):
     return svc
 
 
-async def test_events_are_forwarded_in_order(service, test_db, monkeypatch):
+async def test_chat_is_served_by_the_salon_package():
+    """Task 16: Socket.IO chạy lượt của gói `salon`, không còn gói cũ."""
+    assert socketio_service.run_turn is salon.run_turn
+    assert socketio_service.ButtonReply is salon.ButtonReply
+    assert socketio_service.TURN_ERROR_MESSAGE == salon.TURN_ERROR_MESSAGE
+
+
+async def test_send_message_runs_the_salon_turn(service, test_db, monkeypatch):
+    """Câu gõ (đã `strip`) đi thẳng vào `run_turn`; mọi sự kiện của lượt — kể cả
+    `label` tiếng Việt của tool — tới đúng socket, đúng thứ tự, không thêm bớt."""
     user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
+    received = []
+    label = TOOL_LABELS["find_free_slots"]
+    script = [
+        AgentEvent("turn_started"),
+        AgentEvent("tool_started", {"name": "find_free_slots", "label": label}),
+        AgentEvent("tool_finished", {"name": "find_free_slots", "label": label, "ok": True}),
+        AgentEvent("complete", {"answer": "Dạ được ạ", "proposal": None}),
+    ]
 
     async def fake_turn(db, u, question):
-        yield AgentEvent("turn_started")
-        yield AgentEvent("tool_started", {"name": "find_free_slots"})
-        yield AgentEvent("tool_finished", {"name": "find_free_slots", "ok": True})
-        yield AgentEvent("token", {"text": "Dạ "})
-        yield AgentEvent("token", {"text": "được ạ"})
-        yield AgentEvent("complete", {"answer": "Dạ được ạ"})
+        received.append((db, str(u.id), question))
+        for event in script:
+            yield event
 
     monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
 
-    await service.handle_message(sid="s1", user=user, message="mai 3h được không")
+    await service.handle_message(sid="s1", user=user, message="  mai 3h được không  ")
 
-    assert service.sio.events() == [
-        "turn_started", "tool_started", "tool_finished", "token", "token", "complete",
-    ]
+    assert received == [(test_db, str(user.id), "mai 3h được không")]
+    assert service.sio.sent == [(event.type, event.data, "s1") for event in script]
+    assert "token" not in service.sio.events()
 
 
 async def test_every_event_goes_only_to_that_users_socket(service, test_db, monkeypatch):
     user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
 
     async def fake_turn(db, u, question):
-        yield AgentEvent("token", {"text": "riêng tư"})
+        yield AgentEvent("turn_started")
+        yield AgentEvent("complete", {"answer": "riêng tư", "proposal": None})
 
     monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
     await service.handle_message(sid="s1", user=user, message="hỏi gì đó")
@@ -263,8 +281,6 @@ class TestConfirmProposalEvent:
     async def test_confirm_proposal_runs_a_button_turn_without_rate_limit(
         self, service, test_db, monkeypatch
     ):
-        from app.agents.booking import ButtonReply
-
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         received = {}
 
@@ -283,15 +299,13 @@ class TestConfirmProposalEvent:
         await service.handle_button(sid="s1", user=user,
                                     data={"proposal_id": "p1", "decision": "yes"})
 
-        assert received["reply"] == ButtonReply("yes", "p1", "Đồng ý")
+        assert received["reply"] == ButtonReply(proposal_id="p1", decision="yes")
         assert rate_limit_calls == []
         assert ("complete", {"answer": "Dạ xong rồi ạ", "proposal": None}, "s1") in service.sio.sent
 
     async def test_confirm_proposal_rejects_bad_payload(
         self, service, test_db, monkeypatch
     ):
-        from app.agents.booking import TURN_ERROR_MESSAGE
-
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         called = []
 
@@ -312,8 +326,6 @@ class TestConfirmProposalEvent:
     ):
         """`decision` sai kiểu nặng (dict/list, không chỉ chuỗi lạ) không được
         làm nổ `.get()` trước khi kịp trả `error`."""
-        from app.agents.booking import TURN_ERROR_MESSAGE
-
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         called = []
 
@@ -337,8 +349,6 @@ class TestConfirmProposalEvent:
         nhầm một mảng) không được làm nổ `.get()` trước khi tới nhánh `error`
         — review finding sau Task 5 (lấy handler từ `AsyncServer` thật TRƯỚC
         khi thay `sio` bằng `Recorder`, vì đăng ký xảy ra trong `__init__`)."""
-        from app.agents.booking import TURN_ERROR_MESSAGE
-
         svc = SocketIOService(test_db)
         handler = svc.sio.handlers["/"]["confirm_proposal"]
         svc.sio = Recorder()
@@ -396,28 +406,33 @@ class TestMessageDedupe:
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         calls = []
         gate = asyncio.Event()
+        entered = {"a": asyncio.Event(), "b": asyncio.Event()}
 
         async def fake_turn(db, u, question):
             calls.append(question)
+            entered[question].set()
             await gate.wait()
             yield AgentEvent("complete", {"answer": "xong", "proposal": None})
 
         monkeypatch.setattr("app.services.socketio_service.run_turn", fake_turn)
 
+        # Chờ bằng sự kiện, không bằng `sleep(0)`: `dedupe.begin` đi Mongo thật,
+        # một vòng event loop không đủ để lượt đầu chắc chắn đã vào `run_turn`.
         first = asyncio.create_task(
             service.handle_message(sid="s1", user=user, message="a", message_id="m1")
         )
-        await asyncio.sleep(0)  # để lượt đầu chạy tới gate.wait() và còn treo
+        await asyncio.wait_for(entered["a"].wait(), 5)  # lượt đầu còn treo ở gate
 
         second = asyncio.create_task(
             service.handle_message(sid="s1", user=user, message="b", message_id="m2")
         )
-        await asyncio.sleep(0)
+        await asyncio.wait_for(entered["b"].wait(), 5)
 
         gate.set()
         await asyncio.gather(first, second)
 
         assert calls == ["a", "b"]
+        assert service.sio.events().count("complete") == 2
 
     async def test_duplicate_while_running_is_ignored_not_rerun(
         self, service, test_db, monkeypatch
@@ -427,9 +442,11 @@ class TestMessageDedupe:
         user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
         calls = []
         gate = asyncio.Event()
+        entered = asyncio.Event()
 
         async def fake_turn(db, u, question):
             calls.append(question)
+            entered.set()
             await gate.wait()
             yield AgentEvent("complete", {"answer": "xong", "proposal": None})
 
@@ -438,7 +455,7 @@ class TestMessageDedupe:
         first = asyncio.create_task(
             service.handle_message(sid="s1", user=user, message="a", message_id="m1")
         )
-        await asyncio.sleep(0)
+        await asyncio.wait_for(entered.wait(), 5)  # lượt đầu đã giữ khoá "đang chạy"
 
         await service.handle_message(sid="s1", user=user, message="a", message_id="m1")
 
@@ -472,114 +489,102 @@ class TestMessageDedupe:
         assert "error" not in service.sio.events()
 
 
+
+
 class TestCompleteProposalContract:
-    """`complete.proposal` qua ĐÚNG đường Socket.IO thật (không `run_turn` giả):
-    khác `None` khi và chỉ khi lượt kết thúc với một đề xuất còn `pending` và
-    chưa hết hạn (spec §6, AGENTS.md "Socket.IO protocol"). Model giả
-    (`ScriptedChatModel`/`EchoTool`), specialist THẬT tạo đề xuất, Mongo thật."""
+    """`complete.proposal` qua ĐÚNG đường Socket.IO thật với `run_turn` THẬT của
+    gói `salon` (không giả lượt): khác `None` khi và chỉ khi lượt kết thúc với
+    một đề xuất còn `pending` và chưa hết hạn (spec §6). Chỉ MODEL là giả
+    (`tests/fakes.py`, không Azure); Orchestrator, agent con, tool, Mongo thật."""
 
     @pytest.mark.parametrize("decision", ["yes", "no"])
     async def test_complete_proposal_follows_the_pending_proposal_rule(
         self, service, test_db, monkeypatch, decision
     ):
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
-        import structlog
         from langchain_core.messages import AIMessage
 
-        from app.agents.booking import events
-        from app.agents.booking.orchestrator.tools import CONTROL_TOOL_NAMES
-        from app.core.clock import TZ, now_utc, to_local
-        from app.core.vi_format import format_vi_datetime
+        from app.agents.salon.memory import long_term
+        from app.agents.salon.orchestrator import agent as agent_module
+        from app.agents.salon.orchestrator import middleware as middleware_pkg
+        from app.core.clock import now_utc, to_local
         from app.services.proposal import ProposalService
-        from tests.fakes import EchoTool, book_output, scripted, tool_call
+        from tests.fakes import scripted, tool_call
+        from tests.salon.subagents import (a_user, default_hours, moment, result,
+                                           tomorrow_at, use_model)
 
-        tomorrow = (to_local(now_utc()) + timedelta(days=1)).date()
-        when = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 15, tzinfo=TZ)
-        spoken = format_vi_datetime(when)
-        time_args = dict(day=None, weekday=None, day_offset=1, hour=15, minute=None,
-                         part_of_day=None, ambiguous_week=None, is_now=None, anchor=None,
-                         queue_id=None)
-        propose = {"action": "propose_book", "args": dict(
-            time=time_args, service=None, appointment_id=None, for_whom=None, also=None)}
-
-        finish = {"kind_hint": "answer", "service": None, "stated": []}
+        iso15, s15 = moment(tomorrow_at(15))["iso"], moment(tomorrow_at(15))["spoken"]
+        offer = f"Dạ vâng, em giữ chỗ {s15} cho chị Lan, chị Lan đồng ý không ạ?"
+        hours = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
         orchestrator = scripted([
-            # Lượt 1: đề xuất rồi kết thúc.
-            tool_call("appointment_task", propose),
-            tool_call("finish", finish),
-            # Lượt 2: giữ đề xuất (hoãn) rồi kết thúc — `decide_pending` không
-            # phải tool kết thúc lượt, thiếu `finish` là model bị gọi trên
-            # kịch bản rỗng (`orchestrate_failed`).
-            tool_call("decide_pending", {
-                "label": "none", "aside": "defer_with_request", "reason": "để hỏi con"}),
-            tool_call("finish", finish),
+            # Lượt 1: giao agent Đặt lịch → đề xuất 15:00.
+            tool_call("appointment_task", {"request": "Book tomorrow at 3pm.",
+                                           "continue_session": False, "service_ids": None}),
+            AIMessage(offer),
+            # Lượt 2: hỏi giờ mở cửa — lượt gõ chữ khi có đề xuất chờ phải
+            # `decide_pending` trước (nhãn `none`: nói chuyện khác), đề xuất
+            # vẫn chờ, nút vẫn hiện.
+            tool_call("decide_pending", {"label": "none", "aside": None,
+                                         "reason": "The customer asks about opening hours."}),
+            tool_call("shop_info_task", {"request": "Opening hours.", "continue_session": False}),
+            AIMessage(hours),
         ], tags=("orchestrate",))
-        # Mỗi lượt một câu KHÁC nhau: câu trùng lượt trước bị guard coi là lặp
-        # và đẩy sang `rewrite` (kịch bản rỗng → `rewrite_failed`).
-        conversation = scripted([
-            AIMessage(f"Dạ em giữ chỗ {spoken} cho chị nhé, chị đồng ý không ạ?"),
-            AIMessage("Dạ vâng, chị cứ hỏi con rồi báo em nhé."),
-            AIMessage(f"Dạ em đặt xong lịch {spoken} cho chị rồi nhé." if decision == "yes"
-                      else "Dạ em bỏ chỗ đó rồi ạ, chị cần giờ khác cứ nhắn em."),
-        ], tags=("respond",))
-        specialist = EchoTool(
-            tool_name="propose_appointment",
-            tool_args={"start_at": when.isoformat(), "note": "lam mong"},
-            build_output=book_output,
-        )
-        rewrite = scripted([], tags=("rewrite",))
-        monkeypatch.setattr("app.agents.booking.orchestrator.agent.build_chat_model",
-                            lambda **kw: orchestrator)
-        monkeypatch.setattr("app.agents.booking.conversation.build_chat_model",
-                            lambda **kw: conversation)
-        monkeypatch.setattr("app.agents.booking.specialists.base.build_chat_model",
-                            lambda **kw: specialist)
-        monkeypatch.setattr("app.agents.booking.rewrite.build_chat_model", lambda **kw: rewrite)
-        monkeypatch.setattr(events, "schedule_compaction", lambda db, user_id: None)
-        monkeypatch.setattr(events, "get_callbacks", lambda: [])
+        subagent = scripted([
+            tool_call("parse_time", {"day_offset": 1, "hour": 3, "part_of_day": "chieu"}),
+            tool_call("propose_appointment", {"start_at": iso15}),
+            result(status="ok"),
+            tool_call("get_shop_hours", {}),
+            result(status="ok"),
+        ], tags=("subagent",))
+        monkeypatch.setattr(agent_module, "build_chat_model", lambda **kw: orchestrator)
+        use_model(monkeypatch, subagent)
+        summary = scripted([AIMessage("The customer chatted.")] * 10, tags=("summary",))
+        monkeypatch.setattr(middleware_pkg, "build_chat_model", lambda **kw: summary)
+        monkeypatch.setattr(long_term, "build_chat_model",
+                            lambda **kw: scripted([], tags=("memory",)))
 
-        user = await AuthService(test_db).create_user("0912345678", "matkhau123", "Nguyễn Thị Lan")
+        await default_hours(test_db)
+        user = await a_user(test_db)
 
         def last_complete():
-            completes = [d for e, d, _ in service.sio.sent if e == "complete"]
             assert service.sio.events().count("error") == 0, service.sio.sent
-            return completes[-1]
+            return [d for e, d, _ in service.sio.sent if e == "complete"][-1]
 
-        with structlog.testing.capture_logs() as logs:
-            # Lượt 1: tạo đề xuất → nút hiện.
-            await service.handle_message(sid="s1", user=user, message="dat mai 3h chieu")
-            pending = await ProposalService(test_db).latest(user)
-            assert pending is not None and pending.status == "pending"
-            proposal = last_complete()["proposal"]
-            assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
-            assert proposal["id"] == str(pending.id)
-            assert proposal["kind"] == "book"
-            assert proposal["when_spoken"] == spoken
-            assert datetime.fromisoformat(proposal["expires_at"]) > now_utc()
+        # Lượt 1: tạo đề xuất → nút hiện.
+        await service.handle_message(sid="s1", user=user, message="đặt cho chị 3 giờ chiều mai")
+        pending = await ProposalService(test_db).latest(user)
+        assert pending is not None and pending.status == "pending"
+        assert to_local(pending.start_at) == tomorrow_at(15)
+        first = last_complete()
+        assert first["answer"] == offer
+        proposal = first["proposal"]
+        assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
+        assert proposal["id"] == str(pending.id)
+        assert proposal["kind"] == "book"
+        assert proposal["when_spoken"] == s15
+        assert datetime.fromisoformat(proposal["expires_at"]) > now_utc()
 
-            # Lượt 2: khách hoãn ("kept") → đề xuất vẫn chờ, nút vẫn hiện.
-            await service.handle_message(sid="s1", user=user, message="để chị hỏi con đã nha em")
-            assert last_complete()["proposal"] == proposal
+        # Lượt 2: hỏi chuyện khác → đề xuất vẫn chờ, nút vẫn hiện.
+        await service.handle_message(sid="s1", user=user, message="tiệm mở cửa mấy giờ vậy em")
+        assert last_complete() == {"answer": hours, "proposal": proposal}
 
-            # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
-            await service.handle_button(sid="s1", user=user,
-                                        data={"proposal_id": proposal["id"], "decision": decision})
+        # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
+        await service.handle_button(sid="s1", user=user,
+                                    data={"proposal_id": proposal["id"], "decision": decision})
         assert service.sio.events()[-1] == "complete"
         assert last_complete()["proposal"] is None
         decided = await ProposalService(test_db).get(user, proposal["id"])
         assert decided.status == ("approved" if decision == "yes" else "rejected")
-        # Ba lượt chạy đúng đường bình thường: không lượt nào rơi vào nhánh
-        # dự phòng (model hỏng, rewrite hỏng, TurnFacts hỏng) — kịch bản dùng
-        # hết không đủ chứng minh điều đó, nên đọc log.
-        fallbacks = {"orchestrate_failed", "rewrite_failed", "turn_facts_apply_failed"}
-        assert [e["event"] for e in logs if e.get("event") in fallbacks] == []
-        assert orchestrator.replies == [] and conversation.replies == []
-        # Mỗi lượt mở bằng `turn_started`, đóng bằng đúng một `complete`.
-        assert service.sio.events().count("turn_started") == 3
-        assert service.sio.events().count("complete") == 3
-        # Tool điều phối của Orchestrator không lên màn hình khách; tool của
-        # specialist (giữ chỗ) vẫn lên.
-        shown = {d["name"] for e, d, _ in service.sio.sent if e in ("tool_started", "tool_finished")}
-        assert not shown & CONTROL_TOOL_NAMES
-        assert "propose_appointment" in shown
+        assert orchestrator.replies == [] and subagent.replies == []
+        # Mỗi lượt mở bằng `turn_started`, đóng bằng đúng một `complete`; không
+        # còn `token` — câu tới khách chỉ đi qua `complete`.
+        events = service.sio.events()
+        assert events.count("turn_started") == 3 and events.count("complete") == 3
+        assert "token" not in events
+        # Tool lên màn hình luôn kèm nhãn tiếng Việt, không bao giờ tên kỹ thuật.
+        shown = [d for e, d, _ in service.sio.sent if e in ("tool_started", "tool_finished")]
+        assert "propose_appointment" in {d["name"] for d in shown}
+        for data in shown:
+            assert data["label"] == TOOL_LABELS[data["name"]]
+            assert "_" not in data["label"]

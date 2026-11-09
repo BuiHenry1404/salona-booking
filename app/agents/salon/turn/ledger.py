@@ -1,7 +1,7 @@
 """`salon_turns` — một doc/lượt, ledger của bản thiết kế subagents mới.
 
-Collection mới hoàn toàn, không trộn với `turn_ledger` của gói `booking` cũ
-(xem `app/agents/booking/ledger.py` chỉ để đối chiếu cách làm, không import).
+Collection mới hoàn toàn, không trộn với `turn_ledger` của gói agent cũ (đã
+xoá ở Task 16; ledger cũ chỉ được đọc để đối chiếu cách làm).
 Mỗi lượt có một bản ghi: `start()` tạo doc; `add_facts`/`set_decision`/
 `finish`/`mark_announced` cập nhật nó trong lúc lượt chạy; `record`/
 `unannounced`/`service_facts` là các cách đọc lại cho orchestrator và agent

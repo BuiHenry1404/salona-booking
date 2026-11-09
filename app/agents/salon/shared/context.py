@@ -5,8 +5,8 @@ duyệt 08/11, xem task brief), `SnapshotHolder` giữ một bối cảnh cho c�
 và đọc lại khi được báo DB vừa đổi (sau một `ProposalService.approve`, một
 `WaitingSessionService.open`...).
 
-Viết mới hoàn toàn — không import `app/agents/booking/context.py` (chỉ đọc nó
-để biết cách render lịch/giờ tiệm của gói cũ, xem task brief).
+Viết mới hoàn toàn — không dùng `context.py` của gói agent cũ (đã xoá ở Task
+16; chỉ đọc nó để biết cách render lịch/giờ tiệm của gói cũ).
 
 Nhãn render tiếng Anh; GIÁ TRỊ (spoken, tên dịch vụ...) vẫn tiếng Việt —
 không phải "câu mẫu tiếng Việt" trong prompt (CONTEXT.md bẫy 17-19), mà là dữ

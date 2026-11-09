@@ -9,7 +9,7 @@ Dựng lại MỖI LẦN GỌI agent con (`make_appointment_tools(ctx)`): `user`
 `service_ids` đóng trong closure (model không gõ được id khách khác hay thời
 lượng), enum `appointment_id` là lịch sắp tới của CHÍNH khách này, lượt này.
 
-Viết mới, không import `app/agents/booking` — chỉ đọc `booking/tools.py` để
+Viết mới (gói agent cũ đã xoá ở Task 16) — chỉ đọc `tools.py` cũ để
 giữ đúng các mã lỗi và bài học đã trả giá (giờ chỉ có ngày, `already_yours`,
 mọi lỗi về giờ mang `asked`).
 """

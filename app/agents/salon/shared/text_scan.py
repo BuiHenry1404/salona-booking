@@ -1,8 +1,8 @@
 """Bộ đọc từ, câu, mệnh đề, mốc giờ và số tiền tiếng Việt bằng Python thuần — 0 regex.
 
-Chép lại từ `app/agents/booking/tokens.py` (chỉ 8 hàm quét dữ kiện cần cho gói
-`salon` mới, kèm các hàm phụ riêng tư chúng cần) và bổ sung `scan_money`.
-Phần còn lại của `tokens.py` (`has_next_week`, `has_slash_date`, `names_a_day`,
+Chép lại từ `tokens.py` của gói agent cũ (đã xoá ở Task 16; chỉ 8 hàm quét dữ
+kiện cần cho gói `salon` mới, kèm các hàm phụ riêng tư chúng cần) và bổ sung
+`scan_money`. Phần còn lại của `tokens.py` (`has_next_week`, `has_slash_date`, `names_a_day`,
 `names_a_clock`, `padded*`, `has_phrase`, `unaccented_words`, `cased_words`)
 phục vụ resolver của pipeline cũ, không mang sang.
 """
