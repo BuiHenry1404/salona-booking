@@ -27,6 +27,7 @@ from app.agents.salon.shared.timeparse import _to_24h
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import to_local
 from app.core.logging import get_logger
+from app.core.text import strip_diacritics
 from app.core.vi_format import format_vi_datetime
 from app.models.proposal import Proposal
 from app.models.user import User
@@ -65,7 +66,12 @@ class Veto(BaseModel):
 
 def _hour_differs(raw_hour: int, period: Optional[str], minute: Optional[int],
                   target: datetime) -> bool:
-    resolved = _to_24h(raw_hour, period) if period else None
+    # `scan_times` trả buổi CÓ dấu ("tối"); `_to_24h` (bảng `_PART_OF_DAY_LABEL`)
+    # chỉ nhận khoá KHÔNG dấu ("toi") — bỏ dấu trước khi tra, không thì mọi giờ
+    # có buổi đều rơi vào nhánh "không chắc buổi" và so sai bằng mod-12 (lỗi
+    # review round 1, Task 8: "9 giờ tối" lẫn với "9 giờ sáng").
+    bare_period = strip_diacritics(period) if period else None
+    resolved = _to_24h(raw_hour, bare_period) if bare_period else None
     if resolved is not None:
         if resolved != target.hour:
             return True
@@ -88,14 +94,38 @@ def _mentions_other_time(question: str, target: datetime, now: datetime) -> bool
     return False
 
 
+def _day_matches(offset: int, target: datetime, now: datetime) -> bool:
+    return now.date() + timedelta(days=offset) == target.date()
+
+
 def _other_time(question: str, pending_at: datetime, protected: Sequence[datetime],
                 now: datetime) -> bool:
-    """Khách nói một giờ/ngày/thứ khác `pending_at` MÀ cũng khác mọi mốc
-    `protected` — một câu chỉ nhắc lại một lịch đang chờ khác (đã được
-    `protected` che) không tính là "giờ khác" của ĐỀ XUẤT đang xét."""
-    if not _mentions_other_time(question, pending_at, now):
-        return False
-    return all(_mentions_other_time(question, p, now) for p in protected)
+    """∃ một mốc khách nêu (giờ, HOẶC ngày tương đối, HOẶC thứ — xét riêng
+    từng loại) khác `pending_at` MÀ CŨNG khác MỌI mốc trong `protected`.
+
+    Mỗi mốc khách nêu được xét RIÊNG (không gộp "có mốc nào khác" của cả
+    câu rồi mới so protected — review round 1, Task 8 #2): một câu nói hai
+    giờ, một giờ khớp đề xuất và giờ kia khớp một lịch đang `protected`,
+    không được tính là "nói giờ khác" — mỗi giờ đã có chỗ của nó."""
+    for hour, period, minute in scan_times(question):
+        if not _hour_differs(hour, period, minute, pending_at):
+            continue
+        if any(not _hour_differs(hour, period, minute, p) for p in protected):
+            continue
+        return True
+    for offset in scan_day_offsets(question):
+        if _day_matches(offset, pending_at, now):
+            continue
+        if any(_day_matches(offset, p, now) for p in protected):
+            continue
+        return True
+    for weekday in scan_weekdays(question):
+        if weekday == pending_at.weekday():
+            continue
+        if any(weekday == p.weekday() for p in protected):
+            continue
+        return True
+    return False
 
 
 def _restates_proposal_time(question: str, pending_at: datetime, now: datetime) -> bool:
@@ -176,13 +206,32 @@ async def _apply_approved(result: ApprovalResult, pending: PendingView) -> Pendi
     return _outcome("approved", pending, appointment_id=appointment_id)
 
 
+async def _current_state_outcome(
+    db: AsyncIOMotorDatabase, user: User, pending: PendingView, session
+) -> PendingOutcome:
+    """Đề xuất không còn `pending` (bị đóng ở nơi khác đúng lúc này — nút bấm,
+    lượt khác) khi `reject`/`supersede` trả `False` hay `mark_unclear` trả
+    `None`. Đọc lại TRẠNG THÁI THẬT trong CÙNG session thay vì ghi liều nhãn
+    của `label` (review round 1, Task 8 #3): đã `approved` thì báo `approved`
+    với đúng lịch đã ghi, không phải `rejected`/`superseded` bịa; còn lại báo
+    `not_approvable` với `reason` là trạng thái thật."""
+    current = await ProposalService(db).get(user, pending.id, session=session)
+    if current is None:
+        return _outcome("not_approvable", pending, reason="not_found")
+    if current.status == "approved":
+        appointment = await AppointmentService(db).repo.get_by_id(
+            current.result_appointment_id or "", session=session
+        )
+        appointment_id = str(appointment.id) if appointment is not None else current.result_appointment_id
+        return _outcome("approved", pending, appointment_id=appointment_id)
+    return _outcome("not_approvable", pending, reason=current.status)
+
+
 async def _apply_unclear(db: AsyncIOMotorDatabase, user: User, pending: PendingView,
                          session) -> PendingOutcome:
     proposal = await ProposalService(db).mark_unclear(user, pending.id, session=session)
     if proposal is None:
-        # Đề xuất không còn `pending` (bị đóng ở nơi khác đúng lúc này, vd nút
-        # bấm) — không có gì để tăng `unclear_count` nữa.
-        return _outcome("not_approvable", pending, reason="not_found")
+        return await _current_state_outcome(db, user, pending, session)
     if proposal.status == "rejected":
         return _outcome("rejected", pending)
     return _outcome("clarify", pending)
@@ -190,7 +239,7 @@ async def _apply_unclear(db: AsyncIOMotorDatabase, user: User, pending: PendingV
 
 async def apply_decision(
     db: AsyncIOMotorDatabase, user: User, *, pending: PendingView, label: DecideLabel,
-    turn_id: str, asked_at: datetime, ledger: TurnLedger,
+    turn_id: str, asked_at: datetime, ledger: TurnLedger, thread_id: Optional[str] = None,
 ) -> PendingOutcome:
     """Ghi lịch (nếu `approve`) và quyết định (`salon_turns`) trong CÙNG MỘT
     transaction Mongo (CONTEXT.md quyết định 4): cả hai cùng có hoặc cùng
@@ -198,7 +247,14 @@ async def apply_decision(
 
     `label` đã qua `veto()` — `reject_code` của nó bị chặn TRƯỚC khi gọi đây
     (caller không bao giờ truyền label của một veto bị từ chối).
+
+    `thread_id`: chỉ để GHI LOG có cấu trúc (`user_id`/`turn_id`/`thread_id`
+    luôn đi cùng nhau — Global Constraints); không ảnh hưởng quyết định ghi.
+    Task 11's tool biết `thread_id` của lượt nên truyền vào; không có thì log
+    thiếu trường đó, không chặn đường ghi.
     """
+    log_extra = {"user_id": str(user.id), "turn_id": turn_id, "thread_id": thread_id}
+
     if label == "none":
         # Không đụng đề xuất — một lệnh ghi ledger duy nhất, tự nó đã nguyên tử.
         outcome = _outcome("kept", pending)
@@ -221,11 +277,13 @@ async def apply_decision(
             else:
                 outcome = _outcome("not_approvable", pending, reason=result.reason)
         elif label == "reject":
-            await ProposalService(db).reject(user, pending.id, session=session)
-            outcome = _outcome("rejected", pending)
+            flipped = await ProposalService(db).reject(user, pending.id, session=session)
+            outcome = (_outcome("rejected", pending) if flipped
+                      else await _current_state_outcome(db, user, pending, session))
         elif label == "change":
-            await ProposalService(db).supersede(user, pending.id, session=session)
-            outcome = _outcome("superseded", pending)
+            flipped = await ProposalService(db).supersede(user, pending.id, session=session)
+            outcome = (_outcome("superseded", pending) if flipped
+                      else await _current_state_outcome(db, user, pending, session))
         else:  # "unclear"
             outcome = await _apply_unclear(db, user, pending, session)
         await ledger.set_decision(turn_id, outcome, session=session)
@@ -235,17 +293,19 @@ async def apply_decision(
         async with await db.client.start_session() as session:
             outcome = await session.with_transaction(_write)
     except ApprovalFailed as exc:
-        return await _record_failure(db, user, pending, exc.result, turn_id=turn_id, ledger=ledger)
+        return await _record_failure(
+            db, user, pending, exc.result, turn_id=turn_id, ledger=ledger, log_extra=log_extra,
+        )
 
     if notices:
         # Lịch đã COMMIT — gửi sau, ngoài transaction (app/services/appointment.py::send_notices).
-        await _send_notices(notices)
+        await _send_notices(notices, log_extra=log_extra)
     return outcome
 
 
 async def _record_failure(
     db: AsyncIOMotorDatabase, user: User, pending: PendingView, result: ApprovalResult, *,
-    turn_id: str, ledger: TurnLedger,
+    turn_id: str, ledger: TurnLedger, log_extra: dict,
 ) -> PendingOutcome:
     """Transaction duyệt đã abort sạch (`ApprovalFailed`, vd giờ vừa bị người
     khác lấy) — đọc 3 mốc trống gần nhất NGOÀI transaction, rồi ghi `failed` +
@@ -260,7 +320,7 @@ async def _record_failure(
         if not flipped:
             logger.warning(
                 "approve_failed_not_recorded",
-                extra={"user_id": str(user.id), "turn_id": turn_id, "proposal_id": pending.id},
+                extra={**log_extra, "proposal_id": pending.id},
             )
         await ledger.set_decision(turn_id, outcome, session=session)
         return outcome
@@ -269,18 +329,20 @@ async def _record_failure(
         return await session.with_transaction(_write)
 
 
-async def _send_notices(notices: list) -> None:
+async def _send_notices(notices: list, *, log_extra: dict) -> None:
     """`await` trong `asyncio.shield` — lượt chat bị huỷ (lượt mới thay) đúng
     lúc đang gửi thì việc gửi VẪN chạy xong; lỗi chỉ log, không làm hỏng câu
     trả lời cho khách (lịch đã ghi thật rồi)."""
     task = asyncio.ensure_future(send_notices(notices))
     _INFLIGHT_NOTICES.add(task)
     task.add_done_callback(_INFLIGHT_NOTICES.discard)
-    task.add_done_callback(_log_notice_failure)
+    task.add_done_callback(lambda t: _log_notice_failure(t, log_extra=log_extra))
     await asyncio.shield(task)
 
 
-def _log_notice_failure(task: asyncio.Future) -> None:
+def _log_notice_failure(task: asyncio.Future, *, log_extra: dict) -> None:
     if task.cancelled() or task.exception() is None:
         return
-    logger.warning("owner_notice_failed", extra={"error": type(task.exception()).__name__})
+    logger.warning(
+        "owner_notice_failed", extra={**log_extra, "error": type(task.exception()).__name__},
+    )
