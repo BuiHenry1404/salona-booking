@@ -14,6 +14,7 @@ from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
 from app.services.notifications import notifications
 from app.services.rate_limit import RateLimitService
+from app.services.service_catalog import ServiceCatalogService
 from app.services.shop import ShopService, fits_before_closing
 
 class AppointmentService:
@@ -24,6 +25,7 @@ class AppointmentService:
         self.repo = AppointmentRepository(db)
         self.shop = ShopService(db)
         self.rate_limit = RateLimitService(db)
+        self.catalog = ServiceCatalogService(db)
         # Báo tin của các lệnh ghi chạy TRONG transaction (`session`): chưa
         # commit thì chưa được báo chủ tiệm — transaction có thể abort (lịch
         # biến mất) hoặc chạy lại callback (báo hai lần). Caller gửi sau commit
@@ -43,12 +45,18 @@ class AppointmentService:
         note: Optional[str],
         created_via: CreatedVia = "chat",
         *,
+        service_ids: Optional[List[str]] = None,
         session=None,
     ) -> Appointment:
         """`session`: mọi đọc/ghi Mongo đi trong transaction của caller (chỉ
-        `ProposalService.approve` dùng); None = hành vi cũ (REST, Telegram)."""
+        `ProposalService.approve` dùng); None = hành vi cũ (REST, Telegram).
+
+        `service_ids`: dịch vụ của lịch này — thời lượng là TỔNG thời lượng
+        các dịch vụ (`ServiceCatalogService.duration_for`); không có dịch vụ
+        nào (None hoặc rỗng) giữ hành vi cũ: `settings.booking_slot_minutes`.
+        """
         start = quantize(start_at)
-        duration = settings.booking_slot_minutes
+        duration = await self.catalog.duration_for(service_ids or [])
         # Giờ mở cửa đọc ngoài session (qua cache) — cấu hình, không phải dữ
         # liệu transaction cần cô lập.
         await self._validate_time(start, duration)
@@ -76,6 +84,7 @@ class AppointmentService:
                 duration_minutes=duration,
                 note=note,
                 created_via=created_via,
+                service_ids=service_ids,
                 session=session,
             )
         except SlotTakenError:
@@ -116,9 +125,16 @@ class AppointmentService:
         note: Optional[str],
         created_via: CreatedVia = "chat",
         *,
+        service_ids: Optional[List[str]] = None,
         session=None,
     ) -> Appointment:
         """Dời một lịch sang giờ khác. Kết quả LUÔN là đúng một lịch.
+
+        `service_ids`: `None` giữ nguyên dịch vụ (và thời lượng) của lịch cũ —
+        khách không nhắc lại dịch vụ thì không có lý do đổi thời lượng. Khác
+        `None` (kể cả `[]` tường minh) tính lại thời lượng từ danh sách MỚI
+        (spec §6.2: danh sách này là TOÀN BỘ dịch vụ của lịch sau khi dời, không
+        phải phần thêm vào).
 
         `session`: như `create` — trong transaction thì hai bước đặt/huỷ cùng
         commit hoặc cùng mất.
@@ -144,7 +160,13 @@ class AppointmentService:
             return old
         note = note or old.note   # khách không nhắc lại dịch vụ thì giữ dịch vụ cũ
 
-        duration = settings.booking_slot_minutes
+        if service_ids is None:
+            new_service_ids: Optional[List[str]] = old.service_ids or None
+            duration = old.duration_minutes
+        else:
+            new_service_ids = service_ids
+            duration = await self.catalog.duration_for(service_ids)
+
         overlaps_itself = set(slot_keys_for(start, duration)) & set(old.slot_keys)
         if overlaps_itself:
             await self._validate_time(start, duration)
@@ -153,9 +175,11 @@ class AppointmentService:
                 session=session,
             )
             await self.repo.cancel(appointment_id, session=session)
-            appointment = await self.create(user, start, note, created_via, session=session)
+            appointment = await self.create(user, start, note, created_via,
+                                             service_ids=new_service_ids, session=session)
         else:
-            appointment = await self.create(user, start, note, created_via, session=session)
+            appointment = await self.create(user, start, note, created_via,
+                                             service_ids=new_service_ids, session=session)
             await self.repo.cancel(appointment_id, session=session)
 
         await self._notify("appointment_cancelled", old, session)
@@ -193,13 +217,18 @@ class AppointmentService:
         return await self.repo.booked_between(start, end)
 
     async def find_free_slots(
-        self, day: date, limit: int = 12, ignore_appointment_id: Optional[str] = None
+        self, day: date, limit: int = 12, ignore_appointment_id: Optional[str] = None,
+        *, duration_minutes: Optional[int] = None,
     ) -> List[datetime]:
         """Các mốc còn trống trong ngày: nằm trong giờ mở cửa, không trùng lịch
         đã có, và không ở quá khứ.
 
         `ignore_appointment_id`: coi lịch đó như không có — dùng khi khách đang
         DỜI chính lịch ấy, các mốc nó chiếm sẽ được nhả ra nên phải tính là trống.
+
+        `duration_minutes`: thời lượng của lịch khách SẮP đặt (tổng thời lượng
+        dịch vụ đã chọn) — mốc phải còn đủ chỗ cho NÓ, không phải cho lịch mặc
+        định. `None` giữ hành vi cũ: `settings.booking_slot_minutes`.
         """
         start, end = local_day_bounds(day)
         taken: set = set()
@@ -209,7 +238,8 @@ class AppointmentService:
             steps = appt.duration_minutes // SLOT_MINUTES
             for i in range(steps):
                 taken.add(appt.start_at + timedelta(minutes=SLOT_MINUTES * i))
-        duration = settings.booking_slot_minutes
+        duration = (duration_minutes if duration_minutes is not None
+                   else settings.booking_slot_minutes)
         now = now_utc()
         hours = await self.shop.get_hours()  # lấy một lần, không hỏi lại mỗi mốc
 

@@ -26,6 +26,7 @@ class AppointmentRepository(BaseRepository[Appointment]):
         note: Optional[str],
         created_via: CreatedVia,
         *,
+        service_ids: Optional[List[str]] = None,
         session=None,
     ) -> Appointment:
         """Ghi lịch mới. Chặn trùng do chính MongoDB làm qua unique partial index
@@ -43,6 +44,7 @@ class AppointmentRepository(BaseRepository[Appointment]):
                 "start_at": start_at,
                 "duration_minutes": duration_minutes,
                 "slot_keys": slot_keys_for(start_at, duration_minutes),
+                "service_ids": list(service_ids) if service_ids else [],
                 "note": note,
                 "status": "booked",
                 "created_via": created_via,

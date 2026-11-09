@@ -91,11 +91,21 @@ class ProposalService:
         self.appointments = AppointmentService(db)
 
     async def create(self, user: User, kind: ProposalKind, start_at: datetime,
-                     note: Optional[str], *, target: Optional[Appointment] = None) -> Proposal:
+                     note: Optional[str], *, target: Optional[Appointment] = None,
+                     service_ids: Optional[List[str]] = None) -> Proposal:
         """Đề xuất mới; đề xuất pending trước đó của khách thành `superseded`.
 
         Kiểm nghiệp vụ (giờ trống, lịch đích của chính khách) vẫn do tool làm
         TRƯỚC khi gọi đây, đúng như A. `target` là lịch đã qua `own_booked`.
+
+        `service_ids`: dịch vụ khách chọn cho đề xuất này (toàn bộ, không phải
+        phần thêm). `move` mà không mang dịch vụ (`None`) thì thời lượng lấy
+        từ chính lịch đích (`target.duration_minutes`) — khách không nhắc lại
+        dịch vụ thì không đổi thời lượng; `service_ids` trên đề xuất khi đó để
+        rỗng, `_execute` đọc rỗng là "không mang dịch vụ mới" và truyền `None`
+        cho `reschedule` để nó tự giữ dịch vụ/thời lượng hiện có của lịch. Mọi
+        trường hợp khác (book, cancel, hoặc move có mang dịch vụ) tính bằng
+        `ServiceCatalogService.duration_for`.
         """
         if kind in ("move", "cancel") and target is None:
             raise ValueError(f"proposal kind {kind!r} needs a target appointment")
@@ -104,12 +114,19 @@ class ProposalService:
         user_id = str(user.id)
         await self.repo.supersede_pending(user_id)
         now = now_utc()
+        if kind == "move" and service_ids is None:
+            duration = target.duration_minutes
+            stored_service_ids: List[str] = []
+        else:
+            duration = await self.appointments.catalog.duration_for(service_ids or [])
+            stored_service_ids = list(service_ids) if service_ids else []
         data = {
             "user_id": user_id,
             "kind": kind,
             "start_at": start_at,
             "note": note,
-            "duration_minutes": settings.booking_slot_minutes,
+            "duration_minutes": duration,
+            "service_ids": stored_service_ids,
             "appointment_id": str(target.id) if target else None,
             "target_snapshot": ({"status": target.status, "start_at": target.start_at}
                                 if target else None),
@@ -218,8 +235,10 @@ class ProposalService:
                 await self.appointments.cancel(user, p.appointment_id, session=session)
                 return current
             return await self.appointments.reschedule(user, p.appointment_id, p.start_at, p.note,
+                                                      service_ids=(p.service_ids or None),
                                                       session=session)
-        return await self.appointments.create(user, p.start_at, p.note, session=session)
+        return await self.appointments.create(user, p.start_at, p.note,
+                                              service_ids=(p.service_ids or None), session=session)
 
     async def mark_failed(self, user: User, proposal_id: str, error: str, *,
                           session=None) -> bool:

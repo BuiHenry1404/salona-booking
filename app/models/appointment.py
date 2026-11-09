@@ -24,6 +24,7 @@ class Appointment(BaseDocument):
     start_at: datetime
     duration_minutes: int
     slot_keys: List[str] = Field(default_factory=list)
+    service_ids: List[str] = Field(default_factory=list)
     note: Optional[str] = None
     status: Status = "booked"
     created_via: CreatedVia = "chat"

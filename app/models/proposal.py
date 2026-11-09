@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.base import BaseDocument
 
@@ -40,6 +40,7 @@ class Proposal(BaseDocument):
     start_at: datetime
     note: Optional[str] = None
     duration_minutes: int
+    service_ids: List[str] = Field(default_factory=list)
     appointment_id: Optional[str] = None          # lịch đích của move/cancel
     target_snapshot: Optional[TargetSnapshot] = None
     status: ProposalStatus = "pending"
