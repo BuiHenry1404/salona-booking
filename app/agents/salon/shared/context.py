@@ -199,8 +199,16 @@ def _appointment_view(appt: Appointment, names_by_id: dict[str, str]) -> Appoint
 
 def _pending_view(proposal, *, now: datetime) -> Optional[PendingView]:
     """Chỉ đề xuất CÒN HẠN mới vào khối bối cảnh — hết hạn phải kiểm bằng
-    code lúc đọc (CONTEXT.md bẫy 4), không dựa TTL Mongo."""
-    if proposal is None or proposal.status != "pending" or proposal.expires_at <= now:
+    code lúc đọc (CONTEXT.md bẫy 4), không dựa TTL Mongo.
+
+    `now` là mốc câu khách của lượt (`asked_at`). Đề xuất tạo TRONG lượt này
+    (`created_at >= asked_at`) chưa phải "đề xuất chờ khách quyết": cùng luật
+    với `ProposalService.approve` (chỉ duyệt đề xuất tạo trước lượt). Không có
+    luật này, bối cảnh đọc lại sau khi agent con tạo đề xuất sẽ coi chính đề
+    xuất đó là đề xuất chờ — guard bắt `pending_undecided`, `decide_pending`
+    hiện ra cho nó (Task 15)."""
+    if (proposal is None or proposal.status != "pending" or proposal.expires_at <= now
+            or proposal.created_at >= now):
         return None
     return PendingView(
         id=str(proposal.id),

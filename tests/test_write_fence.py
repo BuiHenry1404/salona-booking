@@ -28,6 +28,9 @@ ALLOWED = {
     # Tool tạo ĐỀ XUẤT (không phải lịch) của agent Đặt lịch gói `salon` (Task 9)
     # — `propose_appointment` / `propose_cancel`, ProposalService.create.
     ("app/agents/salon/subagents/appointment/tools.py", "proposals", "create"),
+    # Huỷ asyncio.Task của lượt cũ (supersede) trong `run_turn` của gói `salon`
+    # (Task 15), không phải huỷ lịch.
+    ("app/agents/salon/turn/run.py", "previous", "cancel"),
 }
 
 
