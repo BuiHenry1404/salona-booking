@@ -23,38 +23,32 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách, đặt hộ |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — 09/11/2026
+## Trạng thái — 10/11/2026
 
 - Nhánh **`feat/llm-orchestrator`**, chưa push, chưa merge. Quy ước: nhánh việc → `henry/develop` →
   `main`, không commit thẳng `main`. Commit message tiếng Anh, ngắn.
-- **Đang phục vụ khách**: gói `app/agents/booking/` dạng pipeline cố định (`graph.py`: `resolve →
-  button_path | orchestrate → brief → respond → record`). Orchestrator gọi hai "agent con" như tool
-  không trạng thái; Conversation Agent viết câu, stream tag `respond`. Gói cũ `booking_graph/` đã
-  xoá (`3907927`). `app/agents/booking/reply_check.py` (`72c98fc`) là phần kiểm câu của hướng
-  "Orchestrator tự nói" đã bị thay — **không** dùng lại, xoá cùng gói cũ.
-- **Hướng đi đã chốt 08/11**: **đập đi xây lại** tầng agent theo mẫu **Subagents** của LangChain —
-  spec `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md` (đã qua reviewer Fable, chủ dự
-  án đã trả lời mọi câu mở). Sơ đồ kiến trúc: https://claude.ai/artifact/CCinuSWJv3LybFPAeivH39
-- **Plan đã viết, CHƯA chạy**: `docs/superpowers/plans/2026-11-08-subagents-rebuild.md` — 19 task, 3
-  phần: (1) Task 1–3 danh mục dịch vụ + lịch dài theo dịch vụ + REST/Telegram/frontend (không LLM);
-  (2) Task 4–16 gói mới `app/agents/salon/` viết từ đầu, Task 16 chuyển Socket.IO sang gói mới và
-  **xoá toàn bộ** `app/agents/booking/`; (3) Task 17–19 agent Dịch vụ & giá, tài liệu, chạy thật 2 lần
-  rồi PR. Chủ dự án **chưa chọn** cách chạy (đề xuất: `superpowers:subagent-driven-development`).
-- **Cây làm việc lúc ghi (08/11)**: spec và plan trên **chưa commit**; có đợt dọn tài liệu của chủ dự
-  án đã stage (xoá spec/plan agent cũ, `REPO_AUDIT.md`, `docs/test-scenarios/`…) và sửa `AGENTS.md`,
-  `CONTEXT.md`, `RUNBOOK.md`, `PROD_CHECKLIST.md` chưa commit. Khi chạy plan: **chỉ `git add` file của
-  task**, không commit lẫn. Workspace SDD cũ `.superpowers/sdd/2026-11-08-orchestrator-speaks/` (đợt A,
-  dừng sau Task 2) và `.superpowers/sdd/M6b-live-fixes/` đã lỗi thời, xoá được.
-- **09/11**: spike `interrupt()` trên Azure thật (kết quả ở `docs/architech-agent.md` luật 7) → giữ phiên
-  chờ, không `interrupt()`. Chủ dự án duyệt chuyển phiên chờ sang Mongo và đổi thread sang
-  `conversation_id`; sơ đồ, spec, plan đã sửa theo (plan Task 5 thêm hai dịch vụ mới).
-- **Làm tiếp sau khi mở phiên mới**: (1) chủ dự án commit đợt dọn tài liệu + spec + plan; (2) chọn
-  cách chạy plan; (3) chạy từ Task 1. Làm trên nhánh này, xong mới mở **một** PR vào `henry/develop`.
-- **Để sau spec đó**: đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
+- **Đã đập đi xây lại xong (Task 1–17 của plan).** Toàn bộ chat thật chạy qua gói mới
+  `app/agents/salon/` (`run_turn` / `ButtonReply`, xem mục kiến trúc bên dưới và
+  `docs/architech-agent.md`). Gói cũ `app/agents/booking/` (pipeline cố định `resolve →
+  orchestrate → brief → respond → record`) đã **xoá hẳn** ở Task 16 — không còn trong cây thư mục,
+  xem lại bằng git (`git show c98413b:app/agents/booking/...`) chỉ để tham khảo lịch sử. Dữ liệu
+  Mongo của gói cũ (`conversation_sessions`, `turn_ledger`, `conversations.state`/
+  `pending_confirmation`, checkpoint cũ dạng `thread_id = <user_id>:<ngày VN>`) đã dọn trên DB dev
+  bằng `scripts/drop_legacy_agent_data.py --yes` (chạy 10/11; script vẫn còn, mặc định dry-run).
+- **Chốt kiến trúc đích**: spec `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md` +
+  `docs/architech-agent.md` (thắng khi spec/plan lệch). Plan thực thi:
+  `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`, chạy bằng
+  `superpowers:subagent-driven-development`, sổ theo dõi
+  `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md` (có các "Ruling" của controller khi
+  plan lệch thực tế — xem file đó để biết hành vi đã XÂY khác plan ở đâu).
+- **Việc còn lại trước PR**: Task 18 (tài liệu này + kịch bản chạy thật
+  `scripts/test_live_10_turns.py`) và Task 19 (hai lần chạy thật trên Azure, chủ dự án duyệt từng
+  lần trước khi chạy — xem CONTEXT.md quyết định 7). Sau đó mới mở **một** PR vào `henry/develop`.
+- **Để sau đợt rebuild này**: đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
   2a26e28:docs/superpowers/specs/2026-11-08-multi-booking-holds-design.md`, phải viết lại cho kiến
   trúc mới.
 
-### Hướng dựng lại (tóm tắt spec)
+### Kiến trúc đã dựng (tóm tắt spec — xem chi tiết ở `docs/architech-agent.md`)
 
 - **4 agent**: Orchestrator (`create_agent` + checkpointer Mongo, thread `conversation_id`) gọi 3
   agent con như tool: Đặt lịch, Thông tin tiệm, **Dịch vụ & giá** (mới). Agent con không trạng thái,
@@ -136,7 +130,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 | Ghi lịch | **Agent không có tool ghi, cũng không huỷ ngay** (kể cả bọc HITL). `propose_appointment` / `cancel_appointment` chỉ tạo **đề xuất** trong `proposals`. Chỉ `ProposalService.approve` ghi, và trong `app/agents/` chỉ `orchestrator/decide.py::apply_decision` gọi nó (nút bấm cũng qua đó). `approve` kiểm: đúng chủ, còn hạn 10 phút, tạo trước lượt duyệt, một lần duy nhất, lịch đích của dời/huỷ chưa đổi. | Khách luôn có một bước đồng ý; giá trị lấy từ DB, không từ chữ model gõ lại. `tests/test_write_fence.py` canh |
 | Câu trả lời | **Mọi câu qua guard code trước khi tới khách**; viết lại tối đa 1 lần; vẫn sai thì câu mẫu code | Prompt không chặn được nhận vơ / bịa giờ |
 | Memory | **Theo LangGraph "Add memory"** (chủ dự án 08/11): ngắn hạn = checkpointer theo thread + `SummarizationMiddleware`; dài hạn = `MongoDBStore` namespace `("memories", user_id)`, 3 mục cố định, do bước gom (code + một lời gọi model nhỏ có schema) ghi ở lượt đầu của cuộc trò chuyện mới. **Không vector / embedding** | Mỗi khách chỉ vài mục nên đọc hết namespace; vector cần `mongot` / Atlas và tốn gọi embedding. Không Postgres, namespace theo khách nên không lộ chéo. Memory không chứa giờ / giá / id / mệnh lệnh; hồ sơ do code dựng (`self_address`, `staff_note`) vẫn nằm ngoài memory |
-| Phiên hội thoại | **Một cuộc trò chuyện mỗi ngày VN** (chủ dự án 09/11). `thread_id = conversation_id`, bản ghi trong `conversation_threads` do `ConversationThreadService.current` chọn: tiếp cuộc cũ nếu cùng ngày VN hoặc lượt trước cách chưa tới 30 phút (đáp lúc 00:01 câu hỏi lúc 23:58), không thì mở cuộc mới trỏ `previous_id` về cuộc cũ. `conversations` vẫn là nhật ký hiển thị. *(Áp dụng khi gói `salon/` thay gói cũ; gói cũ vẫn dùng `<user>:<ngày VN>` + `pick_thread`.)* | Id riêng cho mỗi cuộc: Langfuse nhóm trace theo cuộc, bước gom memory biết chắc cuộc trước là cuộc nào |
+| Phiên hội thoại | **Một cuộc trò chuyện mỗi ngày VN** (chủ dự án 09/11). `thread_id = conversation_id`, bản ghi trong `conversation_threads` do `ConversationThreadService.current` chọn: tiếp cuộc cũ nếu cùng ngày VN hoặc lượt trước cách chưa tới 30 phút (đáp lúc 00:01 câu hỏi lúc 23:58), không thì mở cuộc mới trỏ `previous_id` về cuộc cũ. `conversations` vẫn là nhật ký hiển thị. | Id riêng cho mỗi cuộc: Langfuse nhóm trace theo cuộc, bước gom memory biết chắc cuộc trước là cuộc nào |
 | Phiên chờ | **Collection Mongo `waiting_sessions`** qua `WaitingSessionService`, mỗi khách một phiên mỗi agent con, hết hạn 10 phút kiểm lúc đọc. **Không** `interrupt()`, không trong state graph | Spike 09/11: resume bằng câu chuyện khác làm sai câu trả lời và mất câu hỏi; tin thường lúc graph treo làm Azure trả 400 và hỏng thread; câu hỏi của `interrupt()` không qua guard |
 | Checkpoint | **Không phải nguồn sự thật** cho lịch / đề xuất (TTL xoá được) | Lịch và đề xuất luôn đọc lại từ DB |
 | Kênh chủ tiệm | **Telegram**, không Zalo OA, không SMS | Bot API miễn phí, không khung 48h |
@@ -186,8 +180,9 @@ gọi "Chị ơi" hai lượt đầu rồi "Anh chị ơi" từ lượt 3. Hàng
    chuỗi ISO vẫn hợp lệ.
 9. Khối bối cảnh **không nằm trong system prompt** (đổi mỗi lượt, cache không bao giờ trúng); đặt
    ngay sau system prompt. Thứ tự này từng bị code làm ngược và có test khoá cái sai lại.
-10. Chỉ token được phép mới tới màn hình khách. Lọt tag là JSON chạy ngang màn hình. (Hiện: chỉ tag
-    `respond`; sau dựng lại: không stream, chỉ `complete` sau guard.)
+10. Gói cũ chỉ cho tag `respond` stream tới khách — lọt tag khác là JSON chạy ngang màn hình. Gói
+    `salon/` **không stream gì cả**: Socket.IO không còn sự kiện `token`, câu tới khách chỉ đi qua
+    `complete` sau khi guard duyệt.
 11. Cạnh tools→END của `create_agent` xét theo **tên** tool, bỏ qua `ToolMessage.status` — một tool
     `return_direct` bị guard từ chối vẫn kết thúc lượt. Đừng dùng `return_direct` cho tool kết thúc.
 12. Nhiều tool call cùng vòng chạy trong **cùng một superstep**, đọc cùng snapshot; khoá state nào
@@ -282,5 +277,6 @@ Khách bấm điện thoại ngoài đường hoặc trong tiệm ồn. Đây kh
 - `slot_unavailable` vẫn gộp ba nguyên nhân (tiệm nghỉ, ngoài giờ, giờ quá khứ); `already_yours` đã
   tách riêng.
 - Test DB không chịu được hai `pytest` song song (chung `chatbot_test_db`) — chạy một lần một.
-- `scripts/terminal_chat.py` (untracked, của chủ dự án) — import `booking_graph` nên đã hỏng; đổi
-  import sang `app.agents.salon` khi được bảo (sau Task 16 của plan dựng lại).
+- `scripts/terminal_chat.py` (untracked, của chủ dự án, không được sửa thay) — vẫn import gói
+  `booking_graph` đã xoá nên đang hỏng; Task 16 (chuyển Socket.IO + xoá `app/agents/booking/`) đã
+  xong, chủ dự án tự đổi sang `app.agents.salon` khi cần dùng lại script này.
