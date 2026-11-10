@@ -91,7 +91,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 2. Bám sát docs LangChain; chỉ tự viết phần docs không lo.
 3. Thêm agent **Dịch vụ & giá**; Hồ sơ khách / Hỏi đáp chính sách / Chuyển cho chủ tiệm để sau, và
    nếu làm thì là tool của agent đã có, không phải agent mới.
-4. Giữ **transaction Mongo** (replica set 1 node `rs0`); duyệt đề xuất và ghi `turn_ledger` trong
+4. Giữ **transaction Mongo** (replica set 1 node `rs0`); duyệt đề xuất và ghi `salon_turns` trong
    một transaction.
 5. Guard sự thật **bằng code**, không LLM giám khảo.
 6. Bỏ cơ chế "3 lượt không tiến triển → mời gọi tiệm"; câu "gọi tiệm" chỉ dùng khi ghi lịch thất bại.

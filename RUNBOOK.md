@@ -42,9 +42,9 @@ khởi động, kèm tên trường bị thiếu. Thêm thiết lập mới ph�
 
 ### Mongo: replica set một node (bắt buộc)
 
-`decide_pending` ghi lịch và `turn_ledger` trong **một transaction Mongo**
-(Task 3.6) — transaction chỉ chạy trên replica set, standalone sẽ lỗi
-`Transaction numbers are only allowed on a replica set member or mongos`.
+`apply_decision` ghi lịch và `salon_turns` trong **một transaction Mongo**
+(CONTEXT.md quyết định 4) — transaction chỉ chạy trên replica set, standalone
+sẽ lỗi `Transaction numbers are only allowed on a replica set member or mongos`.
 Compose chạy `mongod --replSet rs0`; healthcheck tự `rs.initiate` lần đầu (đã
 khởi tạo thì bỏ qua) với thành viên `mongo:27017`, healthy = đã là PRIMARY.
 
@@ -269,10 +269,16 @@ docker compose exec -T mongo mongosh salon_booking --quiet --eval \
 
 Bộ nhớ dài hạn (`MongoDBStore`, namespace `("memories", user_id)`, 3 mục cố
 định `preferences`/`notes`/`last_visit`, tổng tối đa
-`salon_memory_max_chars` ký tự) nằm trong collection của thư viện
-`langgraph-store-mongodb` (mặc định `store`); gom lại ở lượt đầu của một
-cuộc trò chuyện mới, log `memory_consolidate_failed` nếu lỗi/quá giờ (lượt
-vẫn chạy tiếp với bộ nhớ cũ).
+`salon_memory_max_chars` ký tự) nằm trong collection **`salon_memories`**
+của chính DB `MONGO_DB_NAME` (`app/agents/salon/memory/store.py::
+MEMORY_COLLECTION` — không phải collection mặc định `store` của thư viện);
+gom lại ở lượt đầu của một cuộc trò chuyện mới, log `memory_consolidate_failed`
+nếu lỗi/quá giờ (lượt vẫn chạy tiếp với bộ nhớ cũ).
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.salon_memories.find({namespace_str:"memories/"+String(u._id)}).forEach(printjson)'
+```
 
 Log cần theo dõi (qua `structlog`, không ném lỗi ra khách):
 
