@@ -134,6 +134,16 @@ FALLBACK_ROWS = [
              turn_facts=[TimeFact(role="taken", moment=M15)]),
         "Dạ Thứ Ba 10/11, 3 giờ chiều đã có khách rồi ạ. Dạ chị Lan muốn mấy giờ ạ?",
         id="taken_then_session_question"),
+    # Final review 11/11: the fallback of a just-opened time session names its free times.
+    pytest.param(
+        dict(snapshot=dict(sessions={"appointment": a_session(
+                 field="time", opened_turn_id=TURN_ID,
+                 options=[at(13, spoken="Thứ Ba 10/11, 1 giờ chiều"),
+                          at(16, spoken="Thứ Ba 10/11, 4 giờ chiều")])}),
+             turn_facts=[TimeFact(role="taken", moment=M15)]),
+        "Dạ Thứ Ba 10/11, 3 giờ chiều đã có khách rồi ạ. Dạ còn trống Thứ Ba 10/11, 1 giờ chiều "
+        "hoặc Thứ Ba 10/11, 4 giờ chiều, chị Lan chọn giờ nào ạ?",
+        id="taken_then_session_options"),
     pytest.param(
         dict(turn_facts=[TimeFact(role="taken", moment=M15),
                          ProposalFact(proposal_id="p-2", proposal_kind="book",

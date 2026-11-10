@@ -12,7 +12,7 @@ Không import `guard/facts.py` lúc chạy (facts dựng câu mẫu bằng
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from app.agents.salon.shared.schemas import Moment, PendingOutcome, UnannouncedDecision
 from app.agents.salon.shared.text_scan import digits_in, split_sentences
@@ -43,6 +43,8 @@ DONE_REPLY = {
 PROPOSAL_REPLY = "Dạ em giữ chỗ {at} cho {address}, {address} đồng ý không ạ?"
 # Giờ khách hỏi bị kín trong lượt (mục F3): câu mẫu báo trước rồi mới hỏi.
 TAKEN_REPLY = "Dạ {at} đã có khách rồi ạ."
+# Phiên hỏi giờ vừa mở có giờ trống (review cuối 11/11): nêu luôn các giờ đó.
+TIME_OPTIONS_QUESTION = "Dạ còn trống {options}, {address} chọn giờ nào ạ?"
 # Đề xuất huỷ: không có "chỗ" nào để giữ — hỏi khách có đồng ý huỷ không.
 CANCEL_PROPOSAL_REPLY = "Dạ em huỷ lịch {at} cho {address} nhé, {address} đồng ý không ạ?"
 
@@ -95,7 +97,7 @@ def compose_fallback_asking(
     *, address: str, shop_phone: Optional[str], failed_at: Optional[Moment],
     approved: Optional[tuple[str, Moment]], proposal: Optional[tuple[str, Moment]],
     announce: Optional[UnannouncedDecision], opened_field: Optional[str],
-    taken_at: Optional[Moment] = None,
+    taken_at: Optional[Moment] = None, opened_options: Sequence[Moment] = (),
 ) -> tuple[str, bool]:
     """(câu mẫu, câu đó có hỏi câu hỏi của phiên vừa mở không). Phiên được hỏi
     thì caller giữ nó mở (Ruling R12) — khách đã nghe câu hỏi của nó.
@@ -133,6 +135,9 @@ def compose_fallback_asking(
         return _led(_proposal(proposal[0], proposal[1], address=address)), False
     if announce is not None:
         return _led(_done(announce.proposal_kind, announce.at, address=address)), False
+    if opened_field == "time" and opened_options:
+        options = _spoken_list(list(opened_options))
+        return _led(TIME_OPTIONS_QUESTION.format(options=options, address=address)), True
     if opened_field in FIELD_QUESTION:
         return _led(FIELD_QUESTION[opened_field].format(address=address)), True
     return _led(GENERIC_FALLBACK.format(address=address)), False

@@ -148,6 +148,9 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
             if data.get("error") == "slot_unavailable" and asked is not None:
                 collector.time("taken", asked)
                 taken.append(asked)
+                # Giờ kín không còn là yêu cầu kế (review cuối 11/11): giữ lại thì
+                # confirm → `_continue_next` hỏi lại đúng giờ kín đó mãi.
+                done.add(_instant(asked))
                 nearest = [m for m in (_moment_of(s) for s in data.get("nearest") or []) if m]
                 for slot in nearest:
                     collector.time("free", slot)
@@ -192,8 +195,9 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
     # Yêu cầu kế (spec §5.1, ruling review T9): CHỈ những giờ model ghi qua
     # `remember_next_request` (code đã khớp với parse_time) cộng yêu cầu kế của
     # phiên trước — code không tự đoán "A hay B" với "A và B" từ parse_time.
-    # Chỉ bỏ khi giờ đó đã thật sự thành đề xuất (hoặc là lịch vừa dời đi); bị
-    # từ chối vì hạn mức đề xuất hay chỉ đem đi kiểm chỗ thì vẫn giữ.
+    # Chỉ bỏ khi giờ đó đã thật sự thành đề xuất, là lịch vừa dời đi, hoặc
+    # `propose_appointment` báo kín; bị từ chối vì hạn mức đề xuất hay chỉ đem đi
+    # kiểm chỗ thì vẫn giữ.
     prior_next = [m for m in (_moment_of(x) for x in prior.get("next_requests") or []) if m]
     next_requests = [m for m in _dedupe(prior_next + remembered) if _instant(m) not in done]
 

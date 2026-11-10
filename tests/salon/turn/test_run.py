@@ -599,8 +599,12 @@ async def test_limit_error_gives_a_code_reply_not_english(test_db, monkeypatch):
     events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
 
     answer = completed(events)["answer"]
-    # Câu mẫu hỏi câu hỏi của phiên vừa mở (field "time")…
-    assert answer == f"{TAKEN_REPLY.format(at=S15)} {FIELD_QUESTION['time'].format(address='chị Lan')}"
+    # Câu mẫu báo giờ kín rồi hỏi câu của phiên vừa mở (field "time"), kèm giờ trống…
+    session = (await active_sessions(test_db, user))["appointment"]
+    assert answer.startswith(TAKEN_REPLY.format(at=S15))
+    assert answer.endswith("chị Lan chọn giờ nào ạ?")
+    assert session.question.options
+    assert all(option.spoken in answer for option in session.question.options)
     messages = await thread_messages(test_db, user)
     assert_valid_thread(messages)
     assert messages[-1].content == answer

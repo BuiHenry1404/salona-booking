@@ -353,6 +353,8 @@ async def build_reply_facts(
         proposal=held_proposal, announce=unannounced,
         opened_field=opened[1] if opened is not None else None,
         taken_at=taken[0] if taken else None,
+        opened_options=[Moment(iso=o.iso, spoken=o.spoken)
+                        for o in snapshot.sessions[opened[0]].question.options] if opened else [],
     )
 
     return ReplyFacts(

@@ -250,6 +250,30 @@ async def test_refused_second_propose_keeps_the_next_request(test_db, monkeypatc
     assert command.update["proposals_created"] == 1
 
 
+async def test_a_taken_next_request_is_dropped_from_the_session(test_db, monkeypatch):
+    # Final review 11/11: "9 giờ và 4 giờ" with 4pm taken. The refused next request
+    # must leave next_requests, or confirm → _continue_next asks 4pm again forever.
+    await default_hours(test_db)
+    other = await a_user(test_db, phone="0987654321", name="Chú Ba")
+    await AppointmentService(test_db).create(other, tomorrow_at(16), None)
+    user = await a_user(test_db)
+    await _open_session(test_db, user, memory={
+        "day": tomorrow_at(16).date().isoformat(), "service_ids": [], "offered": [],
+        "taken": [], "next_requests": [moment(tomorrow_at(16))],
+    })
+    use_model(monkeypatch, scripted([
+        tool_call("parse_time", {"day_offset": 1, "hour": 4, "part_of_day": "chieu"}),
+        tool_call("propose_appointment", {"start_at": moment(tomorrow_at(16))["iso"]}),
+        result(status="ok"),
+    ]))
+
+    await _run(test_db, user, continue_session=True, request="Book the next requested time")
+
+    session = (await _active(test_db, user))["appointment"]
+    assert session.question.field == "time"
+    assert session.memory["next_requests"] == []
+
+
 async def test_alternatives_are_not_next_requests(test_db, monkeypatch):
     # "3 giờ hoặc 4 giờ": hai lần parse_time nhưng không remember → không có yêu cầu kế.
     await default_hours(test_db)
