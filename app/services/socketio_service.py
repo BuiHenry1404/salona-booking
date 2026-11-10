@@ -240,9 +240,6 @@ class SocketIOService:
                 room=sid,
             )
 
-    async def emit_to_user(self, user_id: str, event: str, data: dict) -> None:
-        await self.sio.emit(event, data, room=self._room(user_id))
-
     async def broadcast(self, event: str, data: dict) -> None:
         """Dùng cho shop_status_changed: mọi khách đang mở app phải thấy thẻ
         trạng thái đổi mà không cần tải lại."""

@@ -71,12 +71,3 @@ class User(BaseDocument):
     # nếu không nạn nhân đổi lại mật khẩu mà token của kẻ chiếm vẫn sống tới
     # hết JWT_EXPIRE_MINUTES.
     token_version: int = 0
-
-
-class CurrentUser(BaseDocument):
-    """User đã xác thực, không mang trường nhạy cảm."""
-
-    phone: str
-    full_name: Optional[str] = None
-    role: Role
-    is_active: bool

@@ -95,23 +95,6 @@ class BaseRepository(Generic[T]):
             return self.model_class(**doc)
         return None
     
-    async def bulk_create(self, data_list: List[Dict]) -> List[T]:
-        """Create multiple documents."""
-        now = now_utc()
-        for data in data_list:
-            data.update({
-                "created_at": now,
-                "updated_at": now
-            })
-        
-        result = await self.collection.insert_many(data_list)
-        
-        # Add inserted IDs back to the data
-        for i, inserted_id in enumerate(result.inserted_ids):
-            data_list[i]["_id"] = inserted_id
-        
-        return [self.model_class(**data) for data in data_list]
-    
     async def delete_many(self, filter_dict: Dict) -> int:
         """Delete multiple documents."""
         result = await self.collection.delete_many(filter_dict)

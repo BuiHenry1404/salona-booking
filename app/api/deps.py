@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.core.security import verify_token, verify_api_key
+from app.core.security import verify_token
 from app.models.user import User
 from app.services.auth import AuthService
 
@@ -46,44 +46,3 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Không có quyền")
     return user
-
-
-async def get_current_active_user(
-    current_user: User = Depends(get_current_user)
-) -> User:
-    """Get current active user."""
-    if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
-    return current_user
-
-
-def verify_api_key_dependency(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> bool:
-    """Verify API key for internal services."""
-    api_key = credentials.credentials
-    if not verify_api_key(api_key):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    return True
-
-
-class CommonQueryParams:
-    """Common query parameters for list endpoints."""
-    
-    def __init__(
-        self,
-        skip: int = 0,
-        limit: int = 20,
-        sort_by: str = "created_at",
-        sort_order: int = -1  # -1 for desc, 1 for asc
-    ):
-        self.skip = max(0, skip)
-        self.limit = min(100, max(1, limit))  # Cap at 100 items
-        self.sort_by = sort_by
-        self.sort_order = sort_order 

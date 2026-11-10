@@ -57,21 +57,6 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
     return index // 12, index % 12 + 1
 
 
-def month_key(dt: datetime) -> str:
-    """Nhãn 'YYYY-MM' của một thời điểm, tính theo giờ Việt Nam.
-
-    Mongo lưu start_at là UTC. 23:00 ngày 31/8 giờ VN là 16:00 UTC cùng ngày,
-    còn 01:00 ngày 1/9 giờ VN đã là 18:00 UTC ngày 31/8 — quy đổi trước khi
-    cắt tháng, nếu không lịch đầu/cuối tháng sẽ bị đếm nhầm sang tháng khác.
-
-    Không service nào gọi hàm này — nó là bản mirror phía Python của bước
-    `$dateToString` trong aggregation pipeline, tồn tại để pin quy tắc cắt
-    tháng giờ VN bằng test thuần Python.
-    """
-    local = to_local(dt)
-    return f"{local.year:04d}-{local.month:02d}"
-
-
 def recent_month_keys(months: int, now: datetime) -> list[str]:
     """`months` nhãn tháng gần nhất theo giờ VN, cũ -> mới, gồm cả tháng hiện tại."""
     local = to_local(now)

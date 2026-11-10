@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     log_level: str
 
     # LLM Configuration
-    llm_provider: Literal["openai", "azure", "anthropic", "gemini", "openai_compatible"]
+    llm_provider: Literal["openai", "azure", "openai_compatible"]
 
     # OpenAI-compatible — endpoint bất kỳ nói giao thức OpenAI: gateway tự dựng,
     # nhà cung cấp khác, hoặc gateway chạy local. URL/key/model chỉ đến từ .env,
@@ -55,14 +55,6 @@ class Settings(BaseSettings):
     openai_api_key: Optional[SecretStr] = None
     openai_model: str
 
-    # Anthropic
-    anthropic_api_key: Optional[SecretStr] = None
-    anthropic_model: str
-
-    # Gemini
-    gemini_api_key: Optional[SecretStr] = None
-    gemini_model: str
-
     # Booking
     booking_slot_minutes: int
     booking_max_per_hour: int
@@ -76,9 +68,7 @@ class Settings(BaseSettings):
     # nhật ký hiển thị nằm ở `conversations`, không bị TTL này chạm tới.
     checkpoint_ttl_days: int = 7
 
-    # Orchestrator: timeout (giây) của lượt, của vòng orchestrate, của một task.
-    # Vòng orchestrate phải dừng sớm hơn trần lượt để còn chỗ cho guard và ghi DB.
-    orch_turn_timeout_seconds: int = 150
+    # Orchestrator: timeout (giây) của vòng orchestrate, của một task.
     orch_orchestrate_timeout_seconds: int = 110
     orch_task_timeout_seconds: int = 40
     # Orchestrator: trần số lượt gọi LLM mỗi khách mỗi giờ, và số ngày giữ sổ cái chi phí.

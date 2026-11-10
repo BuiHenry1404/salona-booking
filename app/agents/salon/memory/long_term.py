@@ -37,7 +37,6 @@ from app.models.user import User
 logger = get_logger(__name__)
 
 MEMORY_NAMESPACE = "memories"
-MEMORY_KEYS = ("preferences", "notes", "last_visit")
 
 # "Tóm tắt + 6 message khách/bot cuối" (task brief) — đủ cho model viết bộ
 # nhớ mà không phải đọc lại cả cuộc trò chuyện trước.

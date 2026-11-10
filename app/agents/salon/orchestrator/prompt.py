@@ -53,8 +53,9 @@ Services:
 - When the service agent returns need_info or failed, ask the customer which
   service they mean; do not ask for a booking until the service is clear.
 - When the appointment agent fails with service_required, call it again with
-  the identified service ids; with service_unclear, ask the customer which
-  service they mean.
+  the identified service ids; if the service the customer wants is not among
+  the identified ones, call service_task first. With service_unclear, ask the
+  customer which service they mean.
 - Prices are ranges. Say the range, or one amount inside it.
 
 Pending proposal:

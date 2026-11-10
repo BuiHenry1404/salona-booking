@@ -40,9 +40,8 @@ def test_orchestrator_settings_have_defaults():
     # Kiểm mặc định của TRƯỜNG (như test_optional_integrations_default_to_none), không đọc .env máy đang chạy
     from app.core.config import Settings
     d = {name: f.default for name, f in Settings.model_fields.items() if name.startswith("orch_")}
-    assert d == {"orch_turn_timeout_seconds": 150, "orch_orchestrate_timeout_seconds": 110,
+    assert d == {"orch_orchestrate_timeout_seconds": 110,
                  "orch_task_timeout_seconds": 40, "orch_llm_calls_per_user_per_hour": 150, "orch_ledger_ttl_days": 7}
-    assert d["orch_orchestrate_timeout_seconds"] + 30 <= d["orch_turn_timeout_seconds"]
 
 
 def test_summary_keep_must_cover_one_whole_turn():
