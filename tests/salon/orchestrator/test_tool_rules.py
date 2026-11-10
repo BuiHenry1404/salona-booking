@@ -26,7 +26,7 @@ from app.agents.salon.orchestrator.middleware.tool_rules import ToolRulesMiddlew
 from app.agents.salon.orchestrator.state import SalonContext, SalonState
 from app.agents.salon.orchestrator.tools import CONTROL_TOOLS, make_orchestrator_tools
 from app.agents.salon.shared.context import SnapshotHolder
-from app.agents.salon.shared.schemas import ServiceFact
+from app.agents.salon.shared.schemas import AgentStatusFact, ServiceFact
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import now_utc
 from app.models.waiting_session import SessionOption, SessionQuestion, WaitingSession
@@ -57,6 +57,10 @@ class Ledger:
 def _service_fact(service_id: str = "toc-nhuom") -> ServiceFact:
     return ServiceFact(service_id=service_id, name="Nhuộm", price_min=350000, price_max=700000,
                        duration_minutes=120)
+
+
+def _status(status: str) -> dict:
+    return AgentStatusFact(agent="service", status=status).model_dump(mode="json")
 
 
 def _context(user, *, asked_at, turn_id="turn-1", question="") -> SalonContext:
@@ -124,7 +128,7 @@ async def test_orchestrator_tool_schemas_do_not_change_between_turns(test_db):
     dumped_b = json.dumps(_schemas(tools_b), sort_keys=True)
     assert dumped_a == dumped_b
     names = {tool.name for tool in tools_a}
-    assert names == {"appointment_task", "shop_info_task", "decide_pending"}
+    assert names == {"appointment_task", "shop_info_task", "service_task", "decide_pending"}
     assert names <= CONTROL_TOOLS
     for schema in _schemas(tools_a):
         params = schema["function"]["parameters"]
@@ -157,8 +161,9 @@ _RULES = [
      {"state": {"turn_facts": [_service_fact().model_dump(mode="json")]}}, None),
     ("service_known_earlier", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
      {"known": [_service_fact()]}, None),
+    # Id của phiên Dịch vụ qua được 1b, nhưng phiên đó còn chờ → luật 8 chặn.
     ("service_from_service_session", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
-     {"session": ("service", 0, {"service_ids": ["toc-nhuom"]})}, None),
+     {"session": ("service", 0, {"service_ids": ["toc-nhuom"]})}, "service_unclear"),
     ("service_from_pending", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
      {"pending": True, "pending_services": ["toc-nhuom"], "state": {"pending_decided": True}}, None),
     ("empty_service_ids", "appointment_task", {**_APPT, "service_ids": []}, {}, None),
@@ -201,6 +206,30 @@ _RULES = [
      {"round": (["shop_info_task", "shop_info_task"], 0)}, None),
     ("two_agents_in_round", "shop_info_task", _SHOP,
      {"round": (["appointment_task", "shop_info_task"], 1)}, None),
+    # 8 — dịch vụ khách nhắc mà chưa rõ: hỏi trước, không đề xuất
+    ("service_session_waiting", "appointment_task", _APPT,
+     {"session": ("service", 0, {"candidates": ["nail-sua", "blk-45"], "service_ids": []})},
+     "service_unclear"),
+    ("service_failed_this_turn", "appointment_task", _APPT,
+     {"state": {"turn_facts": [_status("failed")]}}, "service_unclear"),
+    ("service_need_info_this_turn", "appointment_task", _APPT,
+     {"state": {"turn_facts": [_status("need_info")]}}, "service_unclear"),
+    ("service_ok_then_appointment", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
+     {"state": {"turn_facts": [_service_fact().model_dump(mode="json"), _status("ok")]}}, None),
+    ("service_failed_then_ok", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
+     {"state": {"turn_facts": [_status("failed"), _service_fact().model_dump(mode="json"),
+                               _status("ok")]}}, None),
+    ("shop_info_while_service_waits", "shop_info_task", _SHOP,
+     {"session": ("service", 0, {"candidates": [], "service_ids": []})}, None),
+    # 8b — cuộc trò chuyện đã có dịch vụ thì lịch phải mang nó
+    ("service_known_earlier_no_ids", "appointment_task", _APPT, {"known": [_service_fact()]},
+     "service_required"),
+    ("service_this_turn_no_ids", "appointment_task", {**_APPT, "service_ids": []},
+     {"state": {"turn_facts": [_service_fact().model_dump(mode="json"), _status("ok")]}},
+     "service_required"),
+    ("service_task_allowed", "service_task", {"request": "Price of dyeing",
+                                              "continue_session": False},
+     {"known": [_service_fact()]}, None),
 ]
 
 

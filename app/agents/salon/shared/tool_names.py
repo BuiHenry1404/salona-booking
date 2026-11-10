@@ -9,8 +9,7 @@ vào câu tới khách). Ở `shared/` vì `guard/` không được import `orch
 canh, thêm tool mới thì thêm tên vào đây.
 """
 
-# Tool điều khiển của Orchestrator — `service_task` có sẵn từ trước (Task 17
-# mới thêm tool) để luật và bộ lọc chữ dùng chung một tập.
+# Tool điều khiển của Orchestrator — luật tool và bộ lọc chữ dùng chung một tập.
 CONTROL_TOOLS = frozenset({"appointment_task", "shop_info_task", "service_task", "decide_pending"})
 
 SUBAGENT_TOOLS = frozenset({
@@ -21,4 +20,6 @@ SUBAGENT_TOOLS = frozenset({
     "propose_appointment", "propose_cancel",
     # agent Thông tin tiệm
     "get_shop_hours", "get_shop_status", "is_open_at",
+    # agent Dịch vụ & giá
+    "search_services", "get_service", "list_services",
 })

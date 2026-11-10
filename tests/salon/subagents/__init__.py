@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -92,6 +93,15 @@ async def seed_services(db) -> None:
         Service(id="blk-45", category="nail", name="Sơn gel", price_min=120000,
                 price_max=180000, duration_minutes=45),
     ])
+
+
+MOCK_SERVICES = Path(__file__).resolve().parents[3] / "data" / "mock" / "services.json"
+
+
+async def seed_mock_catalogue(db) -> None:
+    """Danh mục mock thật (`data/mock/services.json`, như `scripts/seed_services.py`)."""
+    rows = json.loads(MOCK_SERVICES.read_text(encoding="utf-8"))
+    await ServiceCatalogService(db).upsert_many([Service(**row) for row in rows])
 
 
 def human_text(model) -> str:

@@ -21,11 +21,12 @@ class AgentEvent:
 
 
 # Tên tool (Orchestrator + agent con) → nhãn cho khách. Thêm tool mới mà muốn
-# khách thấy thì thêm dòng ở đây (Task 17: `service_task` và tool Dịch vụ).
+# khách thấy thì thêm dòng ở đây.
 TOOL_LABELS: dict[str, str] = {
     # Orchestrator giao việc
     "appointment_task": "Đang xem lịch hẹn…",
     "shop_info_task": "Đang xem thông tin tiệm…",
+    "service_task": "Đang xem dịch vụ và bảng giá…",
     # dùng chung
     "parse_time": "Đang xem lịch…",
     # agent Đặt lịch
@@ -38,6 +39,10 @@ TOOL_LABELS: dict[str, str] = {
     "get_shop_hours": "Đang xem giờ mở cửa…",
     "get_shop_status": "Đang xem tiệm có rảnh không…",
     "is_open_at": "Đang xem giờ mở cửa…",
+    # agent Dịch vụ & giá
+    "search_services": "Đang tìm dịch vụ…",
+    "get_service": "Đang xem bảng giá…",
+    "list_services": "Đang xem bảng giá…",
 }
 
 

@@ -20,6 +20,7 @@ còn lại nằm ở đây, viết MỘT lần:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from dataclasses import dataclass
 from datetime import timedelta
@@ -124,7 +125,8 @@ class RunContext:
 class SubagentSpec:
     name: AgentName
     prompt: str
-    build_tools: Callable[[RunContext], list[BaseTool]]
+    # Đồng bộ, hoặc async khi enum phải đọc DB (agent Dịch vụ: id đang hoạt động).
+    build_tools: Callable[[RunContext], list[BaseTool] | Awaitable[list[BaseTool]]]
     extract: Callable[[list[BaseMessage], RunContext], Awaitable[Extracted]]
 
 
@@ -189,10 +191,18 @@ def subagent_message(spec: SubagentSpec, ctx: RunContext) -> HumanMessage:
 # ---------------------------------------------------------------------------
 
 
-def _build_agent(spec: SubagentSpec, ctx: RunContext, middleware: Sequence[AgentMiddleware]):
+async def tools_for(spec: SubagentSpec, ctx: RunContext) -> list[BaseTool]:
+    """Tool của agent con cho MỘT lần gọi — `build_tools` đồng bộ hay async đều được."""
+    tools = spec.build_tools(ctx)
+    if inspect.isawaitable(tools):
+        tools = await tools
+    return list(tools)
+
+
+def _build_agent(spec: SubagentSpec, tools: list[BaseTool], middleware: Sequence[AgentMiddleware]):
     return create_agent(
         model=build_chat_model(tags=[spec.name], streaming=False, max_retries=0),
-        tools=spec.build_tools(ctx),
+        tools=tools,
         system_prompt=spec.prompt,
         middleware=[
             # Đếm lời gọi MODEL (≤ 4 vòng tool + lời gọi kết quả cuối) — không
@@ -328,7 +338,7 @@ async def run_subagent(
         allow_propose=runtime.state.get("proposals_created", 0) < 1,
     )
 
-    agent = _build_agent(spec, ctx, middleware)
+    agent = _build_agent(spec, await tools_for(spec, ctx), middleware)
     result, messages, error = await _invoke(agent, subagent_message(spec, ctx), log_extra=log_extra,
                                             timeout=settings.orch_task_timeout_seconds)
     extracted = await spec.extract(messages, ctx)

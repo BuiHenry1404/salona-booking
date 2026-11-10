@@ -2,7 +2,7 @@
 luật 3, 6).
 
 Orchestrator KHÔNG có tool nghiệp vụ riêng: ba tool giao việc cho agent con
-(`appointment_task`, `shop_info_task`; `service_task` thêm ở Task 17) chỉ khai
+(`appointment_task`, `shop_info_task`, `service_task`) chỉ khai
 schema rồi gọi `run_subagent`, và `decide_pending` đưa nhãn của model qua
 `veto` rồi `apply_decision` — đường ghi duy nhất cho chữ khách gõ.
 
@@ -34,6 +34,7 @@ from app.agents.salon.shared.schemas import DecisionFact
 from app.agents.salon.shared.tool_names import CONTROL_TOOLS  # noqa: F401
 from app.agents.salon.subagents.appointment.agent import APPOINTMENT
 from app.agents.salon.subagents.dispatch import run_subagent
+from app.agents.salon.subagents.service.agent import SERVICE
 from app.agents.salon.subagents.shop_info.agent import SHOP_INFO
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.logging import get_logger
@@ -110,6 +111,20 @@ def make_orchestrator_tools(
         )
 
     @tool
+    async def service_task(
+        request: Annotated[str, Field(description=_REQUEST_DESCRIPTION)],
+        continue_session: Annotated[bool, Field(description=_CONTINUE_DESCRIPTION)],
+        runtime: ToolRuntime[SalonContext, SalonState],
+    ) -> Command:
+        """Give a task to the Services agent: find the service the customer named, its
+        price range and duration, or the price list. Its facts carry the service ids to
+        pass to appointment_task."""
+        return await run_subagent(
+            SERVICE, request=request, continue_session=continue_session, service_ids=[],
+            runtime=runtime, db=db, user=user, holder=holder, middleware=_budget(),
+        )
+
+    @tool
     async def decide_pending(
         label: Annotated[DecideLabel, Field(
             description="What the customer's message means for the pending proposal: approve "
@@ -169,4 +184,4 @@ def make_orchestrator_tools(
             "turn_facts": [fact.model_dump(mode="json")],
         })
 
-    return [appointment_task, shop_info_task, decide_pending]
+    return [appointment_task, shop_info_task, service_task, decide_pending]

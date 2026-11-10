@@ -53,7 +53,7 @@ def _words(text: str) -> set[str]:
 def test_every_known_prompt_is_discovered():
     names = {key.rsplit(".", 1)[1] for key in PROMPTS}
     assert {"ORCHESTRATOR_PROMPT", "SUMMARY_PROMPT", "APPOINTMENT_PROMPT",
-            "SHOP_INFO_PROMPT"} <= names
+            "SHOP_INFO_PROMPT", "SERVICE_PROMPT"} <= names
 
 
 @pytest.mark.parametrize("key", sorted(PROMPTS), ids=sorted(PROMPTS))
