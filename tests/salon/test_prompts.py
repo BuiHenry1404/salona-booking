@@ -13,6 +13,7 @@ import pytest
 
 import app.agents.salon as salon_package
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
+from app.agents.salon.subagents.appointment.prompt import APPOINTMENT_PROMPT
 
 # Bộ chữ có dấu tiếng Việt — một ký tự là đủ để biết prompt có câu mẫu tiếng Việt.
 _VIETNAMESE = set(
@@ -74,3 +75,9 @@ def _flat(prompt: str) -> str:
 
 def test_orchestrator_prompt_forbids_markdown():
     assert "no Markdown" in _flat(ORCHESTRATOR_PROMPT)
+
+
+def test_appointment_prompt_never_reports_a_taken_time_as_ok():
+    flat = _flat(APPOINTMENT_PROMPT)
+    assert "or the information asked for is in the tool results" not in flat
+    assert "turned out taken and no proposal was created, the result is never ok" in flat

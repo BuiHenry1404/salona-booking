@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+import structlog.testing
 from langchain_core.messages import ToolMessage
 
 from app.agents.salon.subagents.appointment.agent import APPOINTMENT
@@ -69,6 +70,49 @@ def _summary(command) -> dict:
     assert isinstance(message, ToolMessage)
     assert message.tool_call_id == "call-parent"
     return json.loads(message.content)
+
+
+async def _taken_at_15(db):
+    await default_hours(db)
+    other = await a_user(db, phone="0987654321", name="Chú Ba")
+    await AppointmentService(db).create(other, tomorrow_at(15), None)
+    return await a_user(db)
+
+
+async def test_ok_after_a_refused_proposal_opens_a_time_session(test_db, monkeypatch):
+    # Live run 2, turn 2, replayed: 15:00 is taken, the model finishes with ok.
+    user = await _taken_at_15(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("parse_time", {"day_offset": 1, "hour": 3, "part_of_day": "chieu"}),
+        tool_call("propose_appointment", {"start_at": moment(tomorrow_at(15))["iso"]}),
+        result(status="ok"),
+    ]))
+
+    with structlog.testing.capture_logs() as logs:
+        command = await _run(test_db, user)
+
+    summary = _summary(command)
+    assert (summary["status"], summary["question_field"]) == ("need_info", "time")
+    assert summary["options"]
+    session = (await _active(test_db, user))["appointment"]
+    assert session.question.field == "time"
+    assert [o.spoken for o in session.question.options] == summary["options"]
+    assert any(log["event"] == "subagent_status_corrected" for log in logs)
+
+
+async def test_availability_question_on_a_taken_time_opens_a_time_session(test_db, monkeypatch):
+    # Owner 11/11, option 1: a customer who only asks whether a taken time is free
+    # also gets the free times and a session, so "4 giờ đi" books next turn.
+    user = await _taken_at_15(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("find_free_slots", {"day": tomorrow_at(15).date().isoformat(), "around": "15:00"}),
+        result(status="ok"),
+    ]))
+
+    command = await _run(test_db, user, request="Is 3pm tomorrow free?")
+
+    assert _summary(command)["status"] == "need_info"
+    assert (await _active(test_db, user))["appointment"].question.field == "time"
 
 
 async def test_need_info_opens_a_session_with_code_extracted_options(test_db, monkeypatch):

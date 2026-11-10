@@ -32,7 +32,8 @@ Rules:
   to that appointment's id. Cancelling: propose_cancel. If the customer has
   several appointments and it is unclear which one, ask (which_appointment).
 - A tool error carries `asked`, the time that was actually checked; report
-  about THAT time. `slot_unavailable` carries `nearest`: offer those.
+  about THAT time. `slot_unavailable` carries `nearest`: offer those through
+  need_info.
 - propose_appointment refuses a NEW booking with service_unclear (the service
   the customer named is not settled yet) or service_required (this
   conversation identified a service but your task carries none). Do not retry
@@ -42,8 +43,10 @@ Rules:
 - Use at most 4 tool rounds, then finish.
 
 Finish with SubagentResult:
-- ok: the task is done (a proposal was created, or the information asked for
-  is in the tool results).
+- ok: the task is done: a proposal was created, or the information asked for
+  (free times, the customer's appointments) is in the tool results. If a time
+  the customer asked about turned out taken and no proposal was created, the
+  result is never ok: finish need_info with question_field time.
 - need_info: exactly ONE missing piece must be asked from the customer. Set
   question_field (day, week, time, part_of_day, service, which_appointment)
   and a short English question_text for the Orchestrator naming the options

@@ -16,7 +16,7 @@ from langchain_core.messages import BaseMessage, ToolMessage
 from app.agents.salon.shared.schemas import Moment, ProposalFact, TimeFact, TimeRole, TurnFact
 from app.agents.salon.subagents.appointment.prompt import APPOINTMENT_PROMPT
 from app.agents.salon.subagents.appointment.tools import make_appointment_tools
-from app.agents.salon.subagents.dispatch import Extracted, RunContext, SubagentSpec
+from app.agents.salon.subagents.dispatch import Extracted, RunContext, SubagentResult, SubagentSpec
 from app.core.clock import to_local
 from app.core.vi_format import format_vi_datetime
 from app.services.proposal import ProposalService
@@ -210,9 +210,36 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
                      proposal_created=created)
 
 
+# Ghi chú cho Orchestrator khi code hạ `ok` thành `need_info` (mục F1 spec
+# 2026-11-11): phát hiện kín thì phải báo khách trước rồi mới hỏi.
+TAKEN_ASK_OFFERED = ("The time the customer asked for is taken. Tell the customer, then ask "
+                     "which of the offered times they want.")
+TAKEN_ASK_OTHER = ("The time the customer asked for is taken. Tell the customer, then ask "
+                   "which other time they want.")
+
+
+def reconcile_appointment(result: SubagentResult, extracted: Extracted) -> SubagentResult:
+    """Model báo `ok` mà lần gọi này có giờ khách hỏi bị KÍN và không tạo đề
+    xuất nào → `need_info` (field `time`). Live run 2, lượt 2: propose bị từ
+    chối vì 15:00 kín, agent vẫn báo ok, không phiên chờ, bot mời khách giờ kín.
+    Khách chỉ hỏi giờ đó còn trống không cũng vậy (chủ dự án 11/11, phương án 1):
+    được đưa giờ trống và mở phiên chờ. Có đề xuất (vd 3 giờ kín, 4 giờ được
+    đề xuất) thì giữ `ok`."""
+    if result.status != "ok" or extracted.proposal_created:
+        return result
+    if not any(isinstance(fact, TimeFact) and fact.role == "taken" for fact in extracted.facts):
+        return result
+    return result.model_copy(update={
+        "status": "need_info",
+        "question_field": "time",
+        "question_text": TAKEN_ASK_OFFERED if extracted.options else TAKEN_ASK_OTHER,
+    })
+
+
 APPOINTMENT = SubagentSpec(
     name="appointment",
     prompt=APPOINTMENT_PROMPT,
     build_tools=make_appointment_tools,
     extract=extract_appointment,
+    reconcile=reconcile_appointment,
 )

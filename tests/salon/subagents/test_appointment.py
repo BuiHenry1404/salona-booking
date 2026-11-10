@@ -10,14 +10,20 @@ import json
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
 from bson import ObjectId
 from langchain_core.messages import SystemMessage, ToolMessage
 
 from app.agents.salon.shared.context import UNTRUSTED_LABEL
-from app.agents.salon.shared.schemas import AgentStatusFact, ServiceFact
-from app.agents.salon.subagents.appointment.agent import APPOINTMENT
+from app.agents.salon.shared.schemas import AgentStatusFact, Moment, ServiceFact, TimeFact
+from app.agents.salon.subagents.appointment.agent import (
+    APPOINTMENT,
+    TAKEN_ASK_OFFERED,
+    TAKEN_ASK_OTHER,
+    reconcile_appointment,
+)
 from app.agents.salon.subagents.appointment.tools import make_appointment_tools
-from app.agents.salon.subagents.dispatch import RunContext, run_subagent
+from app.agents.salon.subagents.dispatch import Extracted, RunContext, SubagentResult, run_subagent
 from app.agents.salon.subagents.time_tool import parse_time
 from app.core.clock import now_utc, to_local
 from app.services.appointment import AppointmentService
@@ -343,3 +349,53 @@ async def test_run_subagent_reads_the_service_state_of_the_turn(test_db, monkeyp
 
         [out] = tool_json(model, "propose_appointment")
         assert out.get("error") == expected, (facts, out)
+
+
+# ---------------------------------------------------------------------------
+# reconcile_appointment — code sửa `ok` khi giờ khách hỏi đã kín (live run 2)
+# ---------------------------------------------------------------------------
+
+TAKEN = Moment(iso="2026-11-12T15:00:00+07:00", spoken="Thứ Năm 12/11, 3 giờ chiều")
+FREE = Moment(iso="2026-11-12T16:00:00+07:00", spoken="Thứ Năm 12/11, 4 giờ chiều")
+
+
+def _result(status="ok", **fields) -> SubagentResult:
+    return SubagentResult(status=status, question_field=fields.get("question_field"),
+                          question_text=fields.get("question_text"),
+                          error_code=fields.get("error_code"))
+
+
+def test_ok_with_a_taken_time_and_no_proposal_becomes_need_info():
+    # Live run 2, turn 2: propose refused 15:00 (taken), the agent still said ok.
+    extracted = Extracted(facts=[TimeFact(role="asked", moment=TAKEN),
+                                 TimeFact(role="taken", moment=TAKEN),
+                                 TimeFact(role="free", moment=FREE)], options=[FREE])
+    fixed = reconcile_appointment(_result(), extracted)
+    assert (fixed.status, fixed.question_field, fixed.question_text) == (
+        "need_info", "time", TAKEN_ASK_OFFERED)
+
+
+def test_taken_time_without_free_options_asks_for_another_time():
+    extracted = Extracted(facts=[TimeFact(role="taken", moment=TAKEN)], options=[])
+    assert reconcile_appointment(_result(), extracted).question_text == TAKEN_ASK_OTHER
+
+
+def test_ok_with_a_proposal_stays_ok():
+    # Two times in one message: 15:00 taken, 16:00 proposed.
+    extracted = Extracted(facts=[TimeFact(role="taken", moment=TAKEN)], options=[FREE],
+                          proposal_created=True)
+    assert reconcile_appointment(_result(), extracted) == _result()
+
+
+def test_ok_without_a_taken_time_stays_ok():
+    extracted = Extracted(facts=[TimeFact(role="free", moment=FREE)], options=[FREE])
+    assert reconcile_appointment(_result(), extracted) == _result()
+
+
+@pytest.mark.parametrize("given", [
+    _result("need_info", question_field="day", question_text="Ask which day."),
+    _result("failed", error_code="service_required"),
+])
+def test_reconcile_leaves_need_info_and_failed_alone(given):
+    extracted = Extracted(facts=[TimeFact(role="taken", moment=TAKEN)], options=[FREE])
+    assert reconcile_appointment(given, extracted) == given

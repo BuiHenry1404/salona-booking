@@ -134,6 +134,9 @@ class SubagentSpec:
     # Đồng bộ, hoặc async khi enum phải đọc DB (agent Dịch vụ: id đang hoạt động).
     build_tools: Callable[[RunContext], list[BaseTool] | Awaitable[list[BaseTool]]]
     extract: Callable[[list[BaseMessage], RunContext], Awaitable[Extracted]]
+    # Code đối chiếu `status` model tự điền với dữ kiện đã trích (bẫy 16) — chạy
+    # ngay sau `extract`, trước khi ghi phiên chờ và dựng ToolMessage.
+    reconcile: Optional[Callable[["SubagentResult", Extracted], "SubagentResult"]] = None
 
 
 def is_transient(exc: BaseException) -> bool:
@@ -374,6 +377,12 @@ async def run_subagent(
                                             log_extra=log_extra,
                                             timeout=settings.orch_task_timeout_seconds)
     extracted = await spec.extract(messages, ctx)
+    if result is not None and spec.reconcile is not None:
+        corrected = spec.reconcile(result, extracted)
+        if corrected.status != result.status:
+            logger.warning("subagent_status_corrected", extra={
+                **log_extra, "from": result.status, "to": corrected.status})
+        result = corrected
     if result is None and error is None:
         error = "schema_invalid"
     status = result.status if result is not None else "failed"
