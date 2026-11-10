@@ -76,13 +76,8 @@ class Settings(BaseSettings):
     # nhật ký hiển thị nằm ở `conversations`, không bị TTL này chạm tới.
     checkpoint_ttl_days: int = 7
 
-    # Orchestrator: trần số vòng gọi tool, số tool mỗi vòng, và số vòng không tiến triển liên tiếp trước khi dừng.
-    orch_max_tool_rounds: int = 8
-    orch_max_calls_per_round: int = 3
-    orch_no_progress_streak: int = 2
-    # Orchestrator: số lượt tối đa một mục tiêu được kéo dài, và timeout (giây) của lượt, của vòng orchestrate, của một task.
-    # Vòng orchestrate phải dừng sớm hơn trần lượt để còn chỗ cho Conversation, classify và ghi DB.
-    orch_goal_turns_limit: int = 3
+    # Orchestrator: timeout (giây) của lượt, của vòng orchestrate, của một task.
+    # Vòng orchestrate phải dừng sớm hơn trần lượt để còn chỗ cho guard và ghi DB.
     orch_turn_timeout_seconds: int = 150
     orch_orchestrate_timeout_seconds: int = 110
     orch_task_timeout_seconds: int = 40
@@ -101,11 +96,6 @@ class Settings(BaseSettings):
     salon_memory_max_chars: int = 1200
     salon_memory_timeout_seconds: int = 8
     timezone: str
-
-    # Luật giọng trong guard (lặp/xưng hô/giờ viết sai dạng): tắt (false) để đo
-    # ảnh hưởng tới điểm "tự nhiên" của judge — `claim`/`ask_without_proposal`
-    # và việc xoá tên tool luôn chạy, không phụ thuộc cờ này.
-    guard_voice_rules: bool = True
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.
     # Bắt buộc có giá trị thật trước khi chạy production.

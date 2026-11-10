@@ -36,22 +36,6 @@ describe("MessageBubble", () => {
     expect(screen.getByText(/đang gửi lại/i)).toBeInTheDocument();
   });
 
-  it("bot streaming: caret cuối bubble, KHÔNG tạo bubble thứ hai", () => {
-    render(<MessageBubble role="bot" text="Dạ mai" streaming />);
-    expect(document.querySelectorAll(".bubble").length).toBe(1);
-    expect(document.querySelector(".bubble .caret")).not.toBeNull();
-  });
-
-  it("user streaming: không có caret", () => {
-    render(<MessageBubble role="user" text="đang nói dở" streaming />);
-    expect(document.querySelector(".caret")).toBeNull();
-  });
-
-  it("không streaming: không có caret", () => {
-    render(<MessageBubble role="bot" text="câu đã hoàn chỉnh" />);
-    expect(document.querySelector(".caret")).toBeNull();
-  });
-
   it("nhiều dòng: giữ nguyên dấu xuống dòng trong cùng MỘT bong bóng", () => {
     render(
       <MessageBubble

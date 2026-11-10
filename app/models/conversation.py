@@ -1,10 +1,9 @@
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.clock import now_utc
-from app.models.base import BaseDocument
 
 Role = Literal["user", "assistant"]
 
@@ -35,24 +34,3 @@ class DaySummary(BaseModel):
     # chuyện gì. Lấy câu của khách chứ không lấy câu mở đầu của AI, vì câu của
     # AI ngày nào cũng na ná nhau.
     preview: str
-
-
-class Conversation(BaseDocument):
-    """Mỗi khách đúng MỘT document, chứa toàn bộ tin nhắn từ trước tới nay.
-
-    Không có `session_id`. Ranh giới phiên được áp lúc ĐỌC (`history()`), không
-    phải lúc ghi — nhờ vậy đổi quy tắc cắt phiên về sau không cần migrate gì.
-
-    Document phình dần vì tin cũ không bị xoá, chỉ không được nạp. Mongo giới
-    hạn 16MB mỗi document; với vài trăm khách và vài tin mỗi tuần thì còn hàng
-    chục năm mới chạm, nên chưa xử — nhưng đừng quên là nó có trần.
-    """
-
-    user_id: str
-    messages: List[ChatMessage] = Field(default_factory=list)
-    # Không còn ghi (M3): cờ chờ xác nhận nay là đề xuất trong `proposals`
-    # (ProposalService). Giữ field để document cũ vẫn đọc được.
-    pending_confirmation: Optional[Dict[str, Any]] = None
-    # Trường `state` (bản nén hội thoại của gói agent cũ, đã xoá ở Task 16)
-    # không còn trong model; document cũ còn trường này vẫn đọc được vì
-    # pydantic bỏ qua trường lạ.

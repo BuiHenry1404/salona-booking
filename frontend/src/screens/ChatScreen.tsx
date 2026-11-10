@@ -14,7 +14,7 @@ import { useSpeechInput } from "../hooks/useSpeechInput";
 import "./ChatScreen.css";
 
 /**
- * Màn hình chính: thẻ trạng thái tiệm, khung chat streaming, ô nhập có mic.
+ * Màn hình chính: thẻ trạng thái tiệm, khung chat, ô nhập có mic.
  * Chỉ VẼ — mọi logic dòng chở (queue offline, stream token, canonical
  * complete, tool state) đã nằm trong `useAgentStream`.
  */
@@ -78,11 +78,6 @@ export function ChatScreen() {
     sendDraft();
   }
 
-  // Caret chỉ thuộc về tin CUỐI CÙNG của toàn timeline khi nó là bot đang
-  // stream — không phải "bot cuối bất kể phía sau còn user". Khách nhắn thêm
-  // giữa chừng thì bot cũ phải ngừng nhấp nháy, mắt họ đang ở tin mới nhất.
-  const lastMessageId = messages[messages.length - 1]?.id;
-
   return (
     <div className="chat">
       <header className="chat__head">
@@ -121,7 +116,6 @@ export function ChatScreen() {
             role={m.role}
             text={m.text}
             pending={m.pending}
-            streaming={phase === "answering" && m.role === "bot" && m.id === lastMessageId}
           />
         ))}
 

@@ -256,6 +256,24 @@ async def test_typed_turn_emits_started_tools_and_complete_without_tokens(test_d
         ("user", "tiệm mở cửa mấy giờ vậy em", "llm"), ("assistant", HOURS, "llm")]
 
 
+async def test_customer_text_is_one_line_and_capped_at_1000_chars(test_db, monkeypatch):
+    """Chữ khách gõ thành ĐÚNG MỘT dòng (xuống dòng là lối chèn luật vào prompt)
+    và tối đa `CUSTOMER_TEXT_MAX_CHARS` ký tự — cả câu model đọc lẫn nhật ký."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = orchestrator(monkeypatch, [AIMessage(HOURS)])
+    raw = "tiệm mở\nmấy giờ\r\n\tvậy em  " + "à" * 2000
+    expected = " ".join(raw.split())[:run_module.CUSTOMER_TEXT_MAX_CHARS]
+    assert run_module.CUSTOMER_TEXT_MAX_CHARS == 1000 and len(expected) == 1000
+
+    completed(await turn(test_db, user, raw))
+
+    humans = [m.content for m in model.calls[0] if isinstance(m, HumanMessage)]
+    assert humans and humans[-1] == f"{context_module.UNTRUSTED_LABEL}\n{expected}"
+    log = await test_db["conversations"].find_one({"user_id": str(user.id)})
+    assert log["messages"][0]["content"] == expected
+
+
 async def test_typed_turn_seeds_self_address_once(test_db, monkeypatch):
     """Ruling R13: khách tự xưng "chị" trong câu gõ → ghi `self_address` một lần."""
     await default_hours(test_db)

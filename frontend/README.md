@@ -21,7 +21,7 @@ lỗi. Dev đọc từ `.env.development`, build đọc từ `.env.production`.
 |---|---|
 | Tương phản ≥ 4.5:1 | `src/styles/tokens.test.ts` |
 | Cỡ chữ nền ≥ 19px, nút ≥ 56px | cùng file test trên |
-| Không hiện tên tool thô cho khách | `src/lib/toolLabels.test.ts` + grep ở task 8 |
+| Không hiện tên tool thô cho khách | `src/hooks/useAgentStream.test.ts` (nhãn do server gửi) |
 | Mất mạng không xóa chữ đã stream | `src/hooks/useAgentStream.test.ts` |
 | Hủy lịch phải xác nhận | `src/screens/MyAppointmentsScreen.test.tsx` |
 | Câu gõ lúc mất mạng không được biến mất | `src/hooks/useAgentStream.test.ts` — `có mạng lại thì tự gửi nốt hàng đợi` |

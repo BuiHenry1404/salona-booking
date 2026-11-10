@@ -319,6 +319,47 @@ async def test_approve_sends_deferred_notices_after_commit(test_db, monkeypatch)
     assert len(sent[0]) == 1
 
 
+async def test_owner_notice_survives_a_turn_cancelled_right_after_the_commit(
+        test_db, monkeypatch):
+    """Lượt mới thay lượt này (huỷ task) đúng lúc đang báo chủ tiệm sau khi lịch
+    đã commit: lượt dừng, nhưng việc báo tin (trong `asyncio.shield`) vẫn chạy
+    xong — chủ tiệm không bỏ lỡ một lịch đã ghi thật."""
+    from app.agents.salon.orchestrator import decide as decide_module
+    from app.services.appointment import AppointmentService
+
+    started, gate, sent = asyncio.Event(), asyncio.Event(), []
+
+    async def slow_send_notices(notices):
+        started.set()
+        await gate.wait()
+        sent.append(list(notices))
+
+    monkeypatch.setattr(decide_module, "send_notices", slow_send_notices)
+
+    user = await a_user(test_db)
+    proposal = await ProposalService(test_db).create(user, "book", tomorrow_at(15), None)
+    ledger, turn_id, asked_at = await _turn(test_db)
+
+    turn = asyncio.create_task(apply_decision(
+        test_db, user, pending=_pending_view(proposal), label="approve", turn_id=turn_id,
+        asked_at=later(asked_at), ledger=ledger,
+    ))
+    await asyncio.wait_for(started.wait(), 5)   # transaction đã commit, đang báo tin
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    assert [to_local(a.start_at) for a in await AppointmentService(test_db).upcoming_for(user)] \
+        == [tomorrow_at(15)]
+    assert sent == []
+    gate.set()
+    for _ in range(50):
+        if sent:
+            break
+        await asyncio.sleep(0.01)
+    assert len(sent) == 1 and len(sent[0]) == 1
+
+
 async def test_failed_approve_sends_no_notice(test_db, monkeypatch):
     from app.agents.salon.orchestrator import decide as decide_module
     from app.services.appointment import AppointmentService

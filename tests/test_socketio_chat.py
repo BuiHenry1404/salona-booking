@@ -489,8 +489,6 @@ class TestMessageDedupe:
         assert "error" not in service.sio.events()
 
 
-
-
 class TestCompleteProposalContract:
     """`complete.proposal` qua ĐÚNG đường Socket.IO thật với `run_turn` THẬT của
     gói `salon` (không giả lượt): khác `None` khi và chỉ khi lượt kết thúc với

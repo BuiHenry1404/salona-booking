@@ -271,16 +271,6 @@ class AppointmentService:
     async def upcoming_for(self, user: User) -> List[Appointment]:
         return await self.repo.upcoming_for_user(str(user.id), now=now_utc())
 
-    async def recent_visits(self, user: User, limit: int = 3) -> List[Appointment]:
-        """`limit` lịch đã qua gần nhất của khách — dòng "Khách đã đến:" của
-        khối bối cảnh (Task 14)."""
-        return await self.repo.recent_past_for_user(str(user.id), now=now_utc(), limit=limit)
-
-    async def booked_since(self, user_id: str, since: datetime) -> bool:
-        """Khách đã đặt lịch mới nào kể từ mốc `since` chưa — dùng để quyết
-        định còn hiện dòng "Lần trước" hay không (Task 14)."""
-        return await self.repo.created_since(user_id, since)
-
     async def describe(self, appointments: Sequence[Appointment]) -> List[AppointmentDetail]:
         """Dựng view đầy đủ cho một danh sách lịch — REST router dùng hàm
         này thay vì tự tính. Logic thật nằm ở `describe_appointments` (hàm

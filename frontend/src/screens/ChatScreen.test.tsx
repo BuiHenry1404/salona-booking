@@ -15,7 +15,7 @@ const stream = {
     pending?: boolean;
   }>,
   steps: [] as Array<{ name: string; label: string; done: boolean; ok: boolean }>,
-  phase: "idle" as "idle" | "thinking" | "tool" | "answering",
+  phase: "idle" as "idle" | "thinking" | "tool",
   connected: true,
   offline: false,
   failed: false,
@@ -140,24 +140,6 @@ describe("ChatScreen", () => {
     expect(screen.getByText("Dạ mai 3 giờ chiều còn trống ạ")).toBeInTheDocument();
   });
 
-  it("7. answering: CHỈ bot cuối có caret, bot cũ không có, đúng số bubble", () => {
-    stream.messages = [
-      { id: "1", role: "bot", text: "câu bot cũ" },
-      { id: "2", role: "user", text: "hỏi tiếp" },
-      { id: "3", role: "bot", text: "đang stream" },
-    ];
-    stream.phase = "answering";
-    renderChat();
-
-    const bubbles = document.querySelectorAll(".bubble");
-    expect(bubbles.length).toBe(3);
-    const carets = document.querySelectorAll(".caret");
-    expect(carets.length).toBe(1);
-    // Caret nằm trong bubble "đang stream".
-    expect(bubbles[2].querySelector(".caret")).not.toBeNull();
-    expect(bubbles[0].querySelector(".caret")).toBeNull();
-  });
-
   it("8. thinking: role=status, chữ cho trình đọc màn hình", () => {
     stream.phase = "thinking";
     renderChat();
@@ -219,7 +201,7 @@ describe("ChatScreen", () => {
   });
 
   it("16. KHÔNG có nút dừng AI", () => {
-    stream.phase = "answering";
+    stream.phase = "tool";
     renderChat();
     expect(screen.queryByRole("button", { name: /dừng/i })).not.toBeInTheDocument();
   });
@@ -347,21 +329,6 @@ describe("ChatScreen", () => {
       "href",
       "/lich-cua-toi",
     );
-  });
-
-  it("31. answering nhưng tin CUỐI timeline là user: KHÔNG bubble nào có caret", () => {
-    // Bot đang stream giữa chừng thì khách nhắn thêm — caret trên bot cũ
-    // là sai vì mắt người dùng đang ở tin user dưới cùng.
-    stream.messages = [
-      { id: "bot1", role: "bot", text: "đang trả lời" },
-      { id: "user2", role: "user", text: "hỏi thêm" },
-    ];
-    stream.phase = "answering";
-    renderChat();
-
-    const bubbles = document.querySelectorAll(".bubble");
-    expect(bubbles.length).toBe(2);
-    expect(document.querySelectorAll(".caret").length).toBe(0);
   });
 
   it("32. append transcript: draft dư whitespace đuôi + transcript thừa khoảng trắng → nối đúng MỘT khoảng trắng", async () => {

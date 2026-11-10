@@ -3,9 +3,7 @@ import { acquireSocket, releaseSocket } from "../lib/socket";
 import type { Socket } from "../lib/socket";
 import { newMessageId } from "../lib/id";
 
-/** "answering" không còn được đặt (server không stream `token` nữa) — giữ
- * trong kiểu cho `ChatScreen` (caret) tới khi màn hình được dọn theo. */
-export type Phase = "idle" | "thinking" | "tool" | "answering";
+export type Phase = "idle" | "thinking" | "tool";
 
 /** Câu chung khi server không gửi nhãn — không bao giờ hiện tên tool thô. */
 const GENERIC_TOOL_LABEL = "Đang xử lý…";

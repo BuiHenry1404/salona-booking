@@ -1,96 +1,33 @@
-from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Sequence, TypeVar
+"""Nhật ký chat hiển thị (`conversations`, 1 document/khách) cho màn lịch sử
+của khách. Lịch sử model đọc nằm ở thread checkpointer của Orchestrator, không
+ở đây — `run_turn` chỉ ghi thêm vào nhật ký này sau mỗi lượt.
+"""
+from datetime import date, datetime
+from typing import Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.clock import local_day_bounds, now_utc, to_local
-from app.models.conversation import ChatMessage, Conversation, DaySummary
+from app.models.conversation import ChatMessage, DaySummary
 
-# Ước lượng thô cho tiếng Việt: ~3 ký tự một token. Đủ chính xác để cắt lịch sử;
-# đếm token thật cần tokenizer của model và không đáng cho việc này.
-CHARS_PER_TOKEN = 3
-DEFAULT_TOKEN_BUDGET = 1500
-
-# Tin trong ngần này phút luôn được giữ, kể cả khi đã sang ngày mới — xem
-# `ConversationService.history`.
+# Cuộc trò chuyện còn được dùng tiếp qua nửa đêm nếu lượt cuối cách chưa tới
+# ngần này phút — xem `ConversationThreadService.current`.
 CARRY_OVER_MINUTES = 30
 
 # Độ dài dòng xem trước trong màn lịch sử.
 PREVIEW_CHARS = 80
 
 
-T = TypeVar("T")
-
-
-def session_cutoff(now: Optional[datetime] = None) -> datetime:
-    """Mốc cắt phiên: đầu ngày VN, hoặc 30 phút trước nếu sớm hơn (ca nửa đêm).
-
-    MỘT hàm cho mọi chỗ đọc theo phiên (`history()`).
-    """
-    now = now or now_utc()
-    day_start, _ = local_day_bounds(to_local(now).date())
-    return min(day_start, now - timedelta(minutes=CARRY_OVER_MINUTES))
-
-
-def select_window(
-    items: Sequence[T], *, cutoff: datetime, after: Optional[datetime], token_budget: int,
-) -> List[T]:
-    """Thuật toán cửa sổ lịch sử, thuần — xem docstring `ConversationService.history`.
-
-    `items` có `.role` ("user" | "assistant"), `.content`, `.created_at`, xếp cũ
-    → mới. Giữ tin `created_at >= cutoff` và (nếu có `after`) `> after`, rồi cắt
-    từ cuối theo ngân sách token.
-    """
-    def _to_utc(dt: datetime) -> datetime:
-        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-
-    co = _to_utc(cutoff)
-    af = _to_utc(after) if after is not None else None
-    # `after`: mốc covers_until của state — tin đã nén không gửi nguyên văn.
-    messages = [
-        m for m in items
-        if _to_utc(m.created_at) >= co and (af is None or _to_utc(m.created_at) > af)
-    ]
-    kept: List[T] = []
-    used = 0
-    truncated = False
-    for message in reversed(messages):
-        cost = max(1, len(message.content) // CHARS_PER_TOKEN)
-        if used + cost > token_budget and kept:
-            truncated = True
-            break
-        kept.append(message)
-        used += cost
-    kept.reverse()
-    # Chỉ bỏ khi ngân sách THỰC SỰ cắt mất câu hỏi. Cửa sổ mở đầu bằng câu
-    # đáp mà không cắt gì thì đó là khởi đầu hợp lệ — ca nửa đêm: bot hỏi
-    # xác nhận lúc 23:58, khách đáp "ừ" lúc 00:01. Bỏ câu hỏi đó là phá
-    # đúng thứ mà luật giữ-30-phút sinh ra để giữ.
-    if truncated and kept and kept[0].role == "assistant":
-        kept.pop(0)
-    return kept
-
-
 class ConversationService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["conversations"]
-
-    async def get_or_create(self, user_id: str) -> Conversation:
-        doc = await self.collection.find_one({"user_id": user_id})
-        if doc:
-            return Conversation(**doc)
-        now = now_utc()
-        payload = {"user_id": user_id, "messages": [], "created_at": now, "updated_at": now}
-        result = await self.collection.insert_one(payload)
-        payload["_id"] = result.inserted_id
-        return Conversation(**payload)
 
     async def append(
         self, user_id: str, role: str, content: str, source: str = "llm",
         created_at: Optional[datetime] = None,
     ) -> None:
-        """`created_at`: mốc dùng chung với message trong thread checkpointer
-        (`now_ms()`), để `covers_until` đọc từ đây khớp đúng tin bên thread."""
+        """`created_at`: mốc của lượt (`now_ms()`), dùng chung với message
+        trong thread checkpointer."""
         message = ChatMessage(role=role, content=content, source=source)
         if created_at is not None:
             message.created_at = created_at
@@ -109,52 +46,6 @@ class ConversationService:
         if not doc:
             return []
         return [ChatMessage(**m) for m in doc.get("messages", [])]
-
-    def session_cutoff(self) -> datetime:
-        """Mốc cắt phiên lúc này — xem hàm module `session_cutoff`."""
-        return session_cutoff()
-
-    _session_cutoff = session_cutoff
-
-    async def history(
-        self, user_id: str, token_budget: int = DEFAULT_TOKEN_BUDGET,
-        after: Optional[datetime] = None,
-    ) -> List[ChatMessage]:
-        """Lịch sử của PHIÊN HÔM NAY, cắt thêm theo ngân sách token.
-
-        Hai lớp cắt, cả hai đều cần:
-
-        1. **Theo ngày** — chỉ nạp tin của ngày hôm nay theo giờ Việt Nam. Lịch
-           sử chat chỉ dùng để hiểu các tham chiếu trong cùng mạch nói ("giờ đó",
-           "ừ", "đổi giúp cô"); những thứ đó không có nghĩa sau vài tuần. Mọi
-           thông tin bền của khách — tên, SĐT, lịch sắp tới, trạng thái tiệm —
-           đã nằm trong khối bối cảnh dựng bằng code ở mỗi lượt, không lấy từ
-           đây. Giữ lịch sử vài tháng chỉ tốn token và khiến model tưởng chuyện
-           tháng trước vừa mới xảy ra, vì prompt KHÔNG mang mốc thời gian của
-           từng tin.
-
-           Cắt theo giờ Việt Nam chứ không theo UTC: nửa đêm UTC là 7 giờ sáng ở
-           VN, cắt đúng giữa buổi làm việc.
-
-        2. **Theo ngân sách token** — một khách nói dài dòng chiếm gấp nhiều lần
-           một khách nói cộc lốc, nên đếm lượt là sai đơn vị.
-
-        Ngoại lệ nửa đêm: mọi tin trong 30 phút gần nhất luôn được giữ, kể cả khi
-        chúng thuộc hôm qua. Không có nó thì khách nhắn 23:58, AI hỏi xác nhận,
-        khách đáp "ừ" lúc 00:01 — và câu "ừ" mất sạch ngữ cảnh.
-
-        Ranh giới là NGÀY TRÔI QUA, không phải lần đăng nhập. Đăng nhập do vòng
-        đời cookie quyết định (30 ngày), không phải một mốc có nghĩa trong hội
-        thoại: khách đăng nhập ba lần một buổi chiều vẫn là một mạch nói, còn
-        khách giữ đăng nhập nửa năm thì không bao giờ có ranh giới nào.
-
-        `after` (tuỳ chọn): chỉ giữ tin SAU mốc này — dùng cho state: tin đã
-        được nén thành dữ kiện thì không gửi nguyên văn nữa.
-        """
-        return select_window(
-            await self._all_messages(user_id), cutoff=self.session_cutoff(),
-            after=after, token_budget=token_budget,
-        )
 
     async def list_days(self, user_id: str) -> List[DaySummary]:
         """Các ngày khách từng nhắn, mới nhất trước.

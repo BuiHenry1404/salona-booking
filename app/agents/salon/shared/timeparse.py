@@ -11,7 +11,6 @@ from app.services.shop import is_within
 
 logger = get_logger(__name__)
 
-PARSE_TIMEOUT_SECONDS = 8.0
 MAX_DAYS_AHEAD = 90
 
 # Bộ câu hỏi ĐÓNG mà lễ tân được phép hỏi lại khách.

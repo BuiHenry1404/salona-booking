@@ -95,11 +95,6 @@ class BaseRepository(Generic[T]):
             return self.model_class(**doc)
         return None
     
-    async def exists(self, filter_dict: Dict) -> bool:
-        """Check if document exists."""
-        doc = await self.collection.find_one(filter_dict, {"_id": 1})
-        return doc is not None
-    
     async def bulk_create(self, data_list: List[Dict]) -> List[T]:
         """Create multiple documents."""
         now = now_utc()
