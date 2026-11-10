@@ -138,6 +138,13 @@ def _comma_before_digit(text: str, idx: int) -> bool:
     return j < n and text[j].isdigit()
 
 
+def _inside_number(text: str, idx: int) -> bool:
+    """Dấu `.`/`,` tại `idx` kẹp giữa hai chữ số là dấu ngăn hàng nghìn / thập
+    phân (`'350.000đ'`, `'1,5'`), không phải dấu ngắt mệnh đề."""
+    return (text[idx] in ".," and 0 < idx < len(text) - 1
+            and text[idx - 1].isdigit() and text[idx + 1].isdigit())
+
+
 def split_clauses(text: str, *, break_words: Sequence[str] = (),
                   preserve_date_comma: bool = True) -> List[str]:
     """Tách mệnh đề theo dấu câu và các từ nối `break_words` (không dùng regex)."""
@@ -147,7 +154,9 @@ def split_clauses(text: str, *, break_words: Sequence[str] = (),
     buf: List[str] = []
     chunks: List[str] = []
     for idx, ch in enumerate(s):
-        if ch in _CLAUSE_PUNCT or (ch == "," and not (preserve_date_comma and _comma_before_digit(s, idx))):
+        if _inside_number(s, idx):
+            buf.append(ch)
+        elif ch in _CLAUSE_PUNCT or (ch == "," and not (preserve_date_comma and _comma_before_digit(s, idx))):
             piece = "".join(buf).strip()
             if piece:
                 chunks.append(piece)

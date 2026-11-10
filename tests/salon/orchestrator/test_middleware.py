@@ -16,6 +16,7 @@ from typing import Any, List, Optional
 
 import httpx
 import pytest
+import structlog.testing
 from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
@@ -443,6 +444,22 @@ async def test_rejected_reply_is_removed_and_rewritten_once(test_db):
     assert len(model.calls) == 2
     assert CLAIM not in _texts(state["messages"])
     assert state["guard_rewrites"] == 1
+
+
+async def test_guard_logs_the_rejected_bot_reply(test_db):
+    # Live run 1 (11/11): log chỉ có mã `unknown_price`, không biết câu nào bị
+    # loại. Ghi câu của BOT (không phải câu khách) cho cả hai lần bị loại.
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    second = "Dạ em đặt rồi 3 giờ chiều mai cho chị Lan ạ."
+
+    with structlog.testing.capture_logs() as logs:
+        await _turn(test_db, user, recorder([AIMessage(CLAIM), AIMessage(second)]), "chào em",
+                    saver=InMemorySaver())
+
+    by_event = {log["event"]: log for log in logs}
+    assert by_event["guard_rejected"]["extra"]["rejected_reply"] == CLAIM
+    assert by_event["guard_violation"]["extra"]["rejected_reply"] == second
 
 
 async def test_guard_hint_is_removed_after_the_rewrite(test_db):

@@ -35,6 +35,12 @@ def test_split_sentences_and_clauses_preserve_date_commas():
     assert clauses == ["Thứ Tư 21/10, 9 giờ sáng", "2 giờ chiều thì sao"]
 
 
+def test_split_clauses_keeps_thousands_separator_inside_a_number():
+    # Live run 1 (11/11): "350.000đ" bị cắt thành "350" | "000đ" → guard đọc ra 0đ.
+    assert split_clauses("giá từ 350.000đ đến 700.000đ ạ") == ["giá từ 350.000đ đến 700.000đ ạ"]
+    assert split_clauses("uốn 1.200.000đ. Nhuộm 350,000đ") == ["uốn 1.200.000đ", "Nhuộm 350,000đ"]
+
+
 def test_scan_spoken_clocks_and_scan_times():
     assert scan_spoken_clocks("Thứ Tư 21/10, 9 giờ sáng và 3 giờ rưỡi chiều") == [
         (9, 0, "sáng"),

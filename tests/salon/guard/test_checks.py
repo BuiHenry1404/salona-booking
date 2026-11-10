@@ -93,6 +93,13 @@ ROWS = [
     pytest.param(
         dict(turn_facts=[_service_fact()]),
         "Dạ từ 120 tới 180 nghìn ạ.", [], id="price_range_inside"),
+    # Live run 1 (11/11): dấu "." ngăn hàng nghìn từng bị coi là hết mệnh đề.
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        "Dạ sơn gel giá từ 120.000đ đến 180.000đ ạ.", [], id="price_thousands_separator"),
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        "Dạ sơn gel giá 200.000đ ạ.", ["unknown_price"], id="price_thousands_outside"),
     pytest.param(
         dict(snapshot=dict(pending=pending_at(M15, service_ids=[GEL.id, GOI.id])),
              turn_facts=[_kept()], pending_decided=True),

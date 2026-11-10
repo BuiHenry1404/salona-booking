@@ -129,6 +129,9 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
                 updates.append(reply.model_copy(update={"content": text}))
             return {"messages": updates} if updates else None
 
+        # Câu của BOT bị loại (không phải câu khách) — thiếu nó thì không biết
+        # guard chặn vì số / giờ nào (live run 1, 11/11).
+        log_extra["rejected_reply"] = text
         if state.get("guard_rewrites", 0) == 0:
             logger.info("guard_rejected", extra=log_extra)
             return {
