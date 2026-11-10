@@ -23,30 +23,57 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách, đặt hộ |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — 10/11/2026
+## Trạng thái — 11/11/2026
 
 - Nhánh **`feat/llm-orchestrator`**, chưa push, chưa merge. Quy ước: nhánh việc → `henry/develop` →
   `main`, không commit thẳng `main`. Commit message tiếng Anh, ngắn.
-- **Đã đập đi xây lại xong (Task 1–17 của plan).** Toàn bộ chat thật chạy qua gói mới
-  `app/agents/salon/` (`run_turn` / `ButtonReply`, xem mục kiến trúc bên dưới và
-  `docs/architech-agent.md`). Gói cũ `app/agents/booking/` (pipeline cố định `resolve →
-  orchestrate → brief → respond → record`) đã **xoá hẳn** ở Task 16 — không còn trong cây thư mục,
-  xem lại bằng git (`git show c98413b:app/agents/booking/...`) chỉ để tham khảo lịch sử. Dữ liệu
-  Mongo của gói cũ (`conversation_sessions`, `turn_ledger`, `conversations.state`/
-  `pending_confirmation`, checkpoint cũ dạng `thread_id = <user_id>:<ngày VN>`) đã dọn trên DB dev
-  bằng `scripts/drop_legacy_agent_data.py --yes` (chạy 10/11; script vẫn còn, mặc định dry-run).
-- **Chốt kiến trúc đích**: spec `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md` +
-  `docs/architech-agent.md` (thắng khi spec/plan lệch). Plan thực thi:
-  `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`, chạy bằng
-  `superpowers:subagent-driven-development`, sổ theo dõi
-  `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md` (có các "Ruling" của controller khi
-  plan lệch thực tế — xem file đó để biết hành vi đã XÂY khác plan ở đâu).
-- **Việc còn lại trước PR**: Task 18 (tài liệu này + kịch bản chạy thật
-  `scripts/test_live_10_turns.py`) và Task 19 (hai lần chạy thật trên Azure, chủ dự án duyệt từng
-  lần trước khi chạy — xem CONTEXT.md quyết định 7). Sau đó mới mở **một** PR vào `henry/develop`.
+- **Đã đập đi xây lại xong: Task 1–18 của plan + một đợt xoá code thừa theo chủ dự án.** Mọi task
+  qua review (spec + chất lượng) từng task. Chat thật chạy qua gói mới `app/agents/salon/`. Gói cũ
+  `app/agents/booking/` đã xoá hẳn (xem lịch sử bằng `git show c98413b:app/agents/booking/...`).
+  Dữ liệu Mongo của gói cũ đã dọn trên DB dev (`scripts/drop_legacy_agent_data.py --yes`, 10/11).
+  Test: 867 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
+- **Tài liệu nguồn**: kiến trúc đích `docs/architech-agent.md` (thắng khi lệch), spec
+  `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`, plan
+  `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`. **Sổ thực thi**
+  `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md` (git-ignored): từng task, commit, các
+  dòng `Ruling:` (chỗ đã XÂY khác plan, R1–R16) và `minor (deferred)` (việc nhỏ để review cuối xét).
+- **Đang dở — Task 19 (chạy thật trên Azure, 2 lần)**: chủ dự án đã duyệt **lần 1** (11/11), lần 1
+  đã khởi chạy; log ở
+  `/tmp/claude-1002/-home-henryb1-Desktop-HenryB1-data-salona-booking/459b24bd-1a61-43d6-b3d7-67dac9af8c1d/scratchpad/live-1.log`
+  (nếu mất thì chạy lại sau khi hỏi). Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
+  (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
+- **Làm tiếp sau khi mở phiên mới**:
+  1. Đọc log lần 1, chấm theo plan Task 19 Step 2 (10/10 `complete`; không nhận vơ; không giá ngoài
+     khoảng; đề xuất mới đều hỏi xác nhận; "4 giờ đi" làm tiếp đúng phiên; không hỏi lại điều đã nói;
+     lịch nhuộm 2 tiếng; DB cuối khớp). Ghi bảng kết quả vào sổ. Không đạt → dừng, báo chủ dự án.
+  2. **Hỏi chủ dự án** rồi mới chạy lần 2 (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`).
+  3. Review cả nhánh bằng model mạnh nhất (`superpowers:requesting-code-review`, gói diff
+     `git merge-base main HEAD..HEAD`, kèm danh sách `Ruling:` và `minor (deferred)` trong sổ); sửa
+     Critical/Important trong một lượt.
+  4. `superpowers:finishing-a-development-branch` → **một** PR `feat/llm-orchestrator` → `henry/develop`.
+- **File chưa commit của chủ dự án, đừng add**: `docs/superpowers/review.md`, `image.png`,
+  `scripts/terminal_chat.py` (script này import gói đã xoá nên đang hỏng).
 - **Để sau đợt rebuild này**: đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
   2a26e28:docs/superpowers/specs/2026-11-08-multi-booking-holds-design.md`, phải viết lại cho kiến
   trúc mới.
+
+### Đã xây khác plan (controller quyết khi chạy plan, chi tiết trong sổ)
+
+- **R5** agent Đặt lịch có thêm tool `remember_next_request(iso)` để ghi rõ yêu cầu lịch kế ("3h và
+  4h"), iso phải trùng kết quả `parse_time`; code không đoán "A hoặc B" thành hai lịch.
+- **R8/R9** guard: lịch sắp tới của khách được "bảo lãnh" cho câu "đã đặt X" chỉ khi giờ X không xuất
+  hiện ở nguồn dữ kiện nào khác của lượt (guard chỉ so giờ, không so ngày).
+- **R11** nén lịch sử: trigger AND `{tokens ≥ salon_summary_trigger_tokens, messages ≥ keep + 20}` để
+  không tóm tắt lại ở mỗi lần gọi model; config kiểm `keep ≥ 2*tool + model + 2`.
+- **R12** câu mẫu hỏi câu của phiên nào thì giữ phiên đó mở (không đóng như các phiên khác của lượt).
+- **R13** `run_turn` ghi `users.self_address` từ câu khách tự xưng (lượt gõ chữ) — gói cũ có, plan sót.
+- **R14** lượt bấm nút có lịch kế bị cắt ngang thì bỏ đánh dấu "đã báo" để R0 báo lại.
+- **R16** dịch vụ: chỉ dịch vụ khách **thật sự chọn** (`ServiceFact.identified`) mới là "đã biết"; luật
+  `service_unclear` / `service_required` kiểm trong `propose_appointment` **chỉ cho lịch mới** — dời /
+  huỷ / xem lịch không bị chặn, dời không kèm dịch vụ giữ thời lượng cũ.
+- Khác: R1 `AppointmentDetail` (REST) tách tên khỏi `AppointmentView`; R4 `LedgerReader` Protocol ở
+  `shared/`; R6/R7 câu mẫu khi từ chối đề xuất huỷ / `not_approvable`; R10 hàng rào prompt chỉ bắt
+  "Address" ở prompt Orchestrator; R15 câu mẫu nút bấm kèm câu hỏi đề xuất mới khi Orchestrator lỗi.
 
 ### Kiến trúc đã dựng (tóm tắt spec — xem chi tiết ở `docs/architech-agent.md`)
 
@@ -77,7 +104,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 - **Bộ nhớ** theo LangGraph "Add memory": ngắn hạn = checkpointer theo thread (cắt khi gửi model,
   `RemoveMessage`, `SummarizationMiddleware` thay `digest`/`slots`); dài hạn = `MongoDBStore`
   namespace `("memories", user_id)`, 3 mục `preferences` / `notes` / `last_visit` (thay dòng "Lần
-  trước" đã mất), do một **bước gom** ghi ở lượt đầu của ngày mới, in vào khối bối cảnh dưới nhãn dữ
+  trước" đã mất), do một **bước gom** ghi ở lượt đầu của cuộc trò chuyện mới (mỗi ngày VN một cuộc), in vào khối bối cảnh dưới nhãn dữ
   liệu. Không tìm kiếm ngữ nghĩa (Mongo không có `mongot`).
 - **Guard câu cuối** (code, `after_model`): nhận vơ, giờ bịa, giá ngoài khoảng, thiếu điều bắt buộc,
   xưng hô, lặp câu, lọt tên tool. Sai → xoá câu khỏi state, viết lại 1 lần → câu mẫu code. Trần dùng
@@ -121,6 +148,10 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 20. **Nút bấm là API bằng code** (09/11): bấm Đồng ý / Không thì code duyệt và trả câu báo, không gọi
     model. Chỉ khi khách nói hai lịch trong một tin, bấm Đồng ý lịch đầu thì Orchestrator đề xuất lịch kế
     và khách bấm nút lần nữa.
+21. **Không dùng thì xoá** (10/11): code, setting, helper, test không còn ai gọi thì xoá, kể cả dữ liệu
+    Mongo cũ. Đã xoá: `orch_turn_timeout_seconds` (gói mới không có trần cả lượt, chỉ trần Orchestrator
+    `orch_orchestrate_timeout_seconds`), provider Anthropic/Gemini (luồng chat chưa từng hỗ trợ),
+    `api_key` / `verify_api_key`, các helper không ai gọi.
 
 ## Chốt cứng — đừng mở lại
 
