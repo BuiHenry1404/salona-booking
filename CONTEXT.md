@@ -37,16 +37,20 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`. **Sổ thực thi**
   `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md` (git-ignored): từng task, commit, các
   dòng `Ruling:` (chỗ đã XÂY khác plan, R1–R16) và `minor (deferred)` (việc nhỏ để review cuối xét).
-- **Đang dở — Task 19 (chạy thật trên Azure, 2 lần)**: chủ dự án đã duyệt **lần 1** (11/11), lần 1
-  đã khởi chạy; log ở
-  `/tmp/claude-1002/-home-henryb1-Desktop-HenryB1-data-salona-booking/459b24bd-1a61-43d6-b3d7-67dac9af8c1d/scratchpad/live-1.log`
-  (nếu mất thì chạy lại sau khi hỏi). Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
+- **Đang dở — Task 19 (chạy thật trên Azure, 2 lần)**: lần 1 chạy 11/11, **chưa đạt**; log ở
+  `.superpowers/sdd/2026-11-08-subagents-rebuild/live-1.log`, chấm điểm trong sổ (dòng "live run 1").
+  Ba việc phải sửa trước khi chạy lại: (a) `GraphRecursionError` (giới hạn 25 bước của LangGraph quá
+  thấp khi lượt có 2 agent con + 1 lần viết lại → `run_turn` phải đặt `recursion_limit` theo trần gọi
+  model/tool); (b) guard chặn nhầm câu báo giá nhuộm (`unknown_price` 2 lần dù dữ kiện giá 350k–700k
+  có trong lượt) → câu chung chung "nói lại giúp em" — chưa rõ nguyên nhân vì không log câu bị loại;
+  (c) kịch bản: lịch chặn 15:00 dài 90 phút nên 16:00 cũng kín, lượt "4 giờ đi" không ra đề xuất.
+  Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
   (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
 - **Làm tiếp sau khi mở phiên mới**:
-  1. Đọc log lần 1, chấm theo plan Task 19 Step 2 (10/10 `complete`; không nhận vơ; không giá ngoài
-     khoảng; đề xuất mới đều hỏi xác nhận; "4 giờ đi" làm tiếp đúng phiên; không hỏi lại điều đã nói;
-     lịch nhuộm 2 tiếng; DB cuối khớp). Ghi bảng kết quả vào sổ. Không đạt → dừng, báo chủ dự án.
-  2. **Hỏi chủ dự án** rồi mới chạy lần 2 (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`).
+  1. Sửa (a), (b), (c) ở trên (TDD, review như các task khác); với (b) trước hết ghi câu bị guard loại
+     vào log (câu của bot, không phải câu khách) để biết guard chặn vì số nào.
+  2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),
+     cần 2 lần đạt.
   3. Review cả nhánh bằng model mạnh nhất (`superpowers:requesting-code-review`, gói diff
      `git merge-base main HEAD..HEAD`, kèm danh sách `Ruling:` và `minor (deferred)` trong sổ); sửa
      Critical/Important trong một lượt.
