@@ -57,6 +57,9 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   `must_mention` (F2, so nguyên văn như giờ đề xuất — cố ý, đừng nới), câu mẫu `TAKEN_REPLY` báo
   trước (F3). B (luật `missing_option`) bỏ. Chủ dự án 11/11: **phương án 1** — giờ hỏi kín không đề
   xuất luôn là `need_info`, kể cả khi khách chỉ hỏi; **phát hiện kín thì luôn báo khách**.
+  **Lần 3 chạy 11/11, ĐẠT** (log `live-3.log`, sổ dòng "live run 3"): lượt 2 báo 3 giờ đã có người
+  và đưa 1/2/4 giờ, mở phiên chờ; không Markdown, không tiếng Anh, DB khớp. **Cần thêm 1 lần đạt.**
+  Ghi chú chất lượng: bot nói "em đã tạo đề xuất … để em chốt lịch" (chữ hệ thống, không phạm luật).
   **Bước thiết kế kế tiếp (chủ dự án 11/11): mức C** — câu trả lời tham chiếu dữ kiện
   (`{kín:t1}`, `{mời:t3}`), code kiểm vai trò giờ bằng cấu trúc; gộp thêm kiểm lộ prompt / lọt
   tiếng Anh và lưu câu bị guard loại vào `salon_turns`. Cần spec riêng + một lần thử nhỏ trên Azure.
