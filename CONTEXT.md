@@ -31,7 +31,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   qua review (spec + chất lượng) từng task. Chat thật chạy qua gói mới `app/agents/salon/`. Gói cũ
   `app/agents/booking/` đã xoá hẳn (xem lịch sử bằng `git show c98413b:app/agents/booking/...`).
   Dữ liệu Mongo của gói cũ đã dọn trên DB dev (`scripts/drop_legacy_agent_data.py --yes`, 10/11).
-  Test: 867 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
+  Test: 874 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
 - **Tài liệu nguồn**: kiến trúc đích `docs/architech-agent.md` (thắng khi lệch), spec
   `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`, plan
   `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`. **Sổ thực thi**
@@ -39,16 +39,16 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   dòng `Ruling:` (chỗ đã XÂY khác plan, R1–R16) và `minor (deferred)` (việc nhỏ để review cuối xét).
 - **Đang dở — Task 19 (chạy thật trên Azure, 2 lần)**: lần 1 chạy 11/11, **chưa đạt**; log ở
   `.superpowers/sdd/2026-11-08-subagents-rebuild/live-1.log`, chấm điểm trong sổ (dòng "live run 1").
-  Ba việc phải sửa trước khi chạy lại: (a) `GraphRecursionError` (giới hạn 25 bước của LangGraph quá
-  thấp khi lượt có 2 agent con + 1 lần viết lại → `run_turn` phải đặt `recursion_limit` theo trần gọi
-  model/tool); (b) guard chặn nhầm câu báo giá nhuộm (`unknown_price` 2 lần dù dữ kiện giá 350k–700k
-  có trong lượt) → câu chung chung "nói lại giúp em" — chưa rõ nguyên nhân vì không log câu bị loại;
-  (c) kịch bản: lịch chặn 15:00 dài 90 phút nên 16:00 cũng kín, lượt "4 giờ đi" không ra đề xuất.
-  Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
+  Ba lỗi của lần 1 **đã sửa (11/11)**: (a) `GraphRecursionError` — `astream_events` lấy mặc định 25
+  bước của langchain-core; `run_turn` giờ đặt `recursion_limit = số node × (salon_model_calls_per_turn
+  + 1)` (`orchestrator/agent.py::recursion_limit`), trước đó trần 10 lần gọi model không bao giờ chạm
+  tới; (b) guard chặn nhầm "350.000đ" — `split_clauses` cắt ở dấu `.` ngăn hàng nghìn nên đọc ra 0đ
+  (câu bị loại lấy lại từ checkpoint Mongo); log `guard_rejected` / `guard_violation` giờ có
+  `rejected_reply` (câu của bot); (c) lịch chặn của script bỏ dịch vụ → dài 60', 16:00 trống.
+  Chủ dự án 11/11: **giữ** thời lượng theo dịch vụ trong DB. Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
   (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
 - **Làm tiếp sau khi mở phiên mới**:
-  1. Sửa (a), (b), (c) ở trên (TDD, review như các task khác); với (b) trước hết ghi câu bị guard loại
-     vào log (câu của bot, không phải câu khách) để biết guard chặn vì số nào.
+  1. ~~Sửa (a), (b), (c)~~ — xong 11/11.
   2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),
      cần 2 lần đạt.
   3. Review cả nhánh bằng model mạnh nhất (`superpowers:requesting-code-review`, gói diff
