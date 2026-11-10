@@ -12,7 +12,7 @@ from app.agents.salon.guard.fallback import (
     button_reply,
     fallback_reply,
 )
-from app.agents.salon.shared.schemas import DecisionFact, PendingOutcome, ProposalFact
+from app.agents.salon.shared.schemas import DecisionFact, PendingOutcome, ProposalFact, TimeFact
 from app.core.config import settings
 from tests.salon.guard import (
     PHONE,
@@ -128,6 +128,19 @@ FALLBACK_ROWS = [
         dict(snapshot=dict(sessions={"appointment": a_session(field="day", opened_turn_id="turn-0")})),
         "Dạ chị Lan nói lại giúp em được không ạ?", id="old_session_is_generic"),
     pytest.param(dict(), "Dạ chị Lan nói lại giúp em được không ạ?", id="generic"),
+    # F3 (owner 11/11): a taken time found this turn is announced first.
+    pytest.param(
+        dict(snapshot=dict(sessions={"appointment": a_session(field="time", opened_turn_id=TURN_ID)}),
+             turn_facts=[TimeFact(role="taken", moment=M15)]),
+        "Dạ Thứ Ba 10/11, 3 giờ chiều đã có khách rồi ạ. Dạ chị Lan muốn mấy giờ ạ?",
+        id="taken_then_session_question"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="taken", moment=M15),
+                         ProposalFact(proposal_id="p-2", proposal_kind="book",
+                                      at=at(16, spoken="Thứ Ba 10/11, 4 giờ chiều"), service_ids=[])]),
+        "Dạ Thứ Ba 10/11, 3 giờ chiều đã có khách rồi ạ. "
+        "Dạ em giữ chỗ Thứ Ba 10/11, 4 giờ chiều cho chị Lan, chị Lan đồng ý không ạ?",
+        id="taken_then_proposal"),
 ]
 
 

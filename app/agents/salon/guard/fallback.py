@@ -41,6 +41,8 @@ DONE_REPLY = {
     "cancel": "Dạ em đã huỷ lịch {at} cho {address} ạ.",
 }
 PROPOSAL_REPLY = "Dạ em giữ chỗ {at} cho {address}, {address} đồng ý không ạ?"
+# Giờ khách hỏi bị kín trong lượt (mục F3): câu mẫu báo trước rồi mới hỏi.
+TAKEN_REPLY = "Dạ {at} đã có khách rồi ạ."
 # Đề xuất huỷ: không có "chỗ" nào để giữ — hỏi khách có đồng ý huỷ không.
 CANCEL_PROPOSAL_REPLY = "Dạ em huỷ lịch {at} cho {address} nhé, {address} đồng ý không ạ?"
 
@@ -93,13 +95,16 @@ def compose_fallback_asking(
     *, address: str, shop_phone: Optional[str], failed_at: Optional[Moment],
     approved: Optional[tuple[str, Moment]], proposal: Optional[tuple[str, Moment]],
     announce: Optional[UnannouncedDecision], opened_field: Optional[str],
+    taken_at: Optional[Moment] = None,
 ) -> tuple[str, bool]:
     """(câu mẫu, câu đó có hỏi câu hỏi của phiên vừa mở không). Phiên được hỏi
     thì caller giữ nó mở (Ruling R12) — khách đã nghe câu hỏi của nó.
 
     Câu mẫu của lượt, theo thứ tự: ghi thất bại (của lượt, hoặc R0 thất
     bại — cả hai kèm số điện thoại tiệm) -> duyệt xong -> đề xuất đang giữ ->
-    R0 đã duyệt -> phiên vừa mở -> câu chung.
+    R0 đã duyệt -> phiên vừa mở -> câu chung. Lượt có giờ bị kín (`taken_at`):
+    bốn nhánh sau cùng báo giờ kín trước (mục F3); nhánh thất bại / duyệt xong
+    giữ nguyên.
 
     Ghi thất bại / duyệt xong mà lượt còn có đề xuất mới: nối thêm câu hỏi
     đề xuất — nút Đồng ý/Không hiện ra thì câu phải có câu hỏi đi kèm.
@@ -119,13 +124,18 @@ def compose_fallback_asking(
         if proposal is not None:
             parts.append(_proposal(proposal[0], proposal[1], address=address))
         return _capitalized(" ".join(parts)), False
+    lead = [TAKEN_REPLY.format(at=taken_at.spoken)] if taken_at is not None else []
+
+    def _led(text: str) -> str:
+        return _capitalized(" ".join([*lead, text]))
+
     if proposal is not None:
-        return _capitalized(_proposal(proposal[0], proposal[1], address=address)), False
+        return _led(_proposal(proposal[0], proposal[1], address=address)), False
     if announce is not None:
-        return _capitalized(_done(announce.proposal_kind, announce.at, address=address)), False
+        return _led(_done(announce.proposal_kind, announce.at, address=address)), False
     if opened_field in FIELD_QUESTION:
-        return _capitalized(FIELD_QUESTION[opened_field].format(address=address)), True
-    return _capitalized(GENERIC_FALLBACK.format(address=address)), False
+        return _led(FIELD_QUESTION[opened_field].format(address=address)), True
+    return _led(GENERIC_FALLBACK.format(address=address)), False
 
 
 def fallback_reply(facts: "ReplyFacts") -> str:

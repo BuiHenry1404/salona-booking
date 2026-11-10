@@ -27,7 +27,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents import checkpoint
 from app.agents.salon import TURN_ERROR_MESSAGE, AgentEvent, ButtonReply, run_turn
-from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, FIELD_QUESTION, GENERIC_FALLBACK
+from app.agents.salon.guard.fallback import (
+    BUTTON_STALE_REPLY,
+    FIELD_QUESTION,
+    GENERIC_FALLBACK,
+    TAKEN_REPLY,
+)
 from app.agents.salon.memory import long_term
 from app.agents.salon.memory.long_term import MEMORY_NAMESPACE
 from app.agents.salon.orchestrator import agent as agent_module
@@ -595,7 +600,7 @@ async def test_limit_error_gives_a_code_reply_not_english(test_db, monkeypatch):
 
     answer = completed(events)["answer"]
     # Câu mẫu hỏi câu hỏi của phiên vừa mở (field "time")…
-    assert answer == FIELD_QUESTION["time"].format(address="chị Lan")
+    assert answer == f"{TAKEN_REPLY.format(at=S15)} {FIELD_QUESTION['time'].format(address='chị Lan')}"
     messages = await thread_messages(test_db, user)
     assert_valid_thread(messages)
     assert messages[-1].content == answer

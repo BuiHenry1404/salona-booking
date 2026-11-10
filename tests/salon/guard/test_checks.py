@@ -100,6 +100,20 @@ ROWS = [
     pytest.param(
         dict(turn_facts=[_service_fact()]),
         "Dạ sơn gel giá 200.000đ ạ.", ["unknown_price"], id="price_thousands_outside"),
+    # F2 (owner 11/11): a taken time found this turn must be mentioned.
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
+                         TimeFact(role="free", moment=M16)]),
+        "Dạ chị chọn 4 giờ chiều được không ạ?", ["missing_fact"], id="taken_time_not_mentioned"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
+                         TimeFact(role="free", moment=M16)]),
+        "Dạ 3 giờ chiều đã có khách rồi ạ, chị chọn 4 giờ chiều được không ạ?", [],
+        id="taken_time_mentioned"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="taken", moment=M15), _proposal(M16)]),
+        "Dạ em giữ chỗ 4 giờ chiều cho chị, chị đồng ý không ạ?", ["missing_fact"],
+        id="taken_with_proposal_needs_mention"),
     pytest.param(
         dict(snapshot=dict(pending=pending_at(M15, service_ids=[GEL.id, GOI.id])),
              turn_facts=[_kept()], pending_decided=True),

@@ -324,6 +324,10 @@ async def build_reply_facts(
     if unannounced is not None:
         must_mention.append(unannounced.at.spoken)
     must_mention += [p.at.spoken for p in proposals]
+    # Phát hiện kín thì phải báo khách (chủ dự án 11/11, mục F2): mọi giờ bị
+    # báo kín trong lượt phải có trong câu trả lời, kể cả lượt có đề xuất.
+    taken = [f.moment for f in turn_facts if isinstance(f, TimeFact) and f.role == "taken"]
+    must_mention += [moment.spoken for moment in taken]
     if turn_kind == "typed":
         # Lượt nút bấm: code đã báo quyết định (`button_reply`) — không bắt
         # Orchestrator nhắc lại.
@@ -348,6 +352,7 @@ async def build_reply_facts(
         approved=(approved[0].kind, approved[0].at) if approved and turn_kind == "typed" else None,
         proposal=held_proposal, announce=unannounced,
         opened_field=opened[1] if opened is not None else None,
+        taken_at=taken[0] if taken else None,
     )
 
     return ReplyFacts(
