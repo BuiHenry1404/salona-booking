@@ -66,9 +66,10 @@ async def test_search_returns_service_facts_with_catalogue_prices(test_db, monke
     command = await _run(test_db, user, question="nhuộm tóc giá bao nhiêu em",
                          request="Price of hair dyeing")
 
+    # Một kết quả tra duy nhất + `ok` → dịch vụ được chốt (`identified`).
     assert _service_facts(command) == [{
         "kind": "service", "service_id": "toc-nhuom", "name": "Nhuộm",
-        "price_min": 350000, "price_max": 700000, "duration_minutes": 120,
+        "price_min": 350000, "price_max": 700000, "duration_minutes": 120, "identified": True,
     }]
     assert _status(command) == "ok"
     summary = json.loads(command.update["messages"][0].content)
@@ -99,11 +100,12 @@ async def test_extract_reads_prices_back_from_the_catalogue(test_db):
 
     extracted = await SERVICE.extract([forged], await _ctx(test_db, user))
 
+    # Không có lời gọi `SubagentResult` ok → chưa chốt, dù chỉ một kết quả.
     assert [fact.model_dump() for fact in extracted.facts] == [{
         "kind": "service", "service_id": "toc-nhuom", "name": "Nhuộm",
-        "price_min": 350000, "price_max": 700000, "duration_minutes": 120,
+        "price_min": 350000, "price_max": 700000, "duration_minutes": 120, "identified": False,
     }]
-    assert extracted.memory == {"candidates": ["toc-nhuom"], "service_ids": ["toc-nhuom"]}
+    assert extracted.memory == {"candidates": ["toc-nhuom"], "service_ids": []}
 
 
 async def test_ambiguous_service_opens_a_session(test_db, monkeypatch):
@@ -119,7 +121,8 @@ async def test_ambiguous_service_opens_a_session(test_db, monkeypatch):
     command = await _run(test_db, user, question="làm móng cho chị", request="Nail service")
 
     assert _status(command) == "need_info"
-    assert [f["service_id"] for f in _service_facts(command)] == ["nail-son-thuong", "nail-son-gel"]
+    assert [(f["service_id"], f["identified"]) for f in _service_facts(command)] == [
+        ("nail-son-thuong", False), ("nail-son-gel", False)]
     session = (await WaitingSessionService(test_db).active(str(user.id), now=now_utc()))["service"]
     assert session.question.field == "service"
     assert session.memory == {"candidates": ["nail-son-thuong", "nail-son-gel"], "service_ids": []}
@@ -139,7 +142,8 @@ async def test_answering_the_session_pins_the_service(test_db, monkeypatch):
     command = await _run(test_db, user, question="sơn gel em", continue_session=True)
 
     assert _status(command) == "ok"
-    assert [f["service_id"] for f in _service_facts(command)] == ["nail-son-gel"]
+    assert [(f["service_id"], f["identified"]) for f in _service_facts(command)] == [
+        ("nail-son-gel", True)]
     assert await WaitingSessionService(test_db).active(str(user.id), now=now_utc()) == {}
 
 
@@ -169,3 +173,48 @@ async def test_empty_catalogue_has_no_get_service(test_db):
     user = await a_user(test_db)
     tools = await _tools(test_db, user)
     assert set(tools) == {"search_services", "list_services"}
+
+
+async def test_single_match_is_identified_only_when_ok(test_db, monkeypatch):
+    """Một kết quả tra duy nhất mà agent vẫn `need_info` → chưa chốt."""
+    await seed_mock_catalogue(test_db)
+    user = await a_user(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("search_services", {"query": "nhuộm"}),
+        result(status="need_info", question_field="service", question_text="Which colour?"),
+    ]))
+
+    command = await _run(test_db, user, question="nhuộm tóc")
+
+    assert [(f["service_id"], f["identified"]) for f in _service_facts(command)] == [
+        ("toc-nhuom", False)]
+
+
+async def test_price_list_identifies_nothing(test_db, monkeypatch):
+    await seed_mock_catalogue(test_db)
+    user = await a_user(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("list_services", {"category": "toc"}), result(status="ok")]))
+
+    command = await _run(test_db, user, question="bảng giá làm tóc", request="Hair price list")
+
+    facts = _service_facts(command)
+    assert len(facts) > 1 and not any(f["identified"] for f in facts)
+
+
+async def test_catalogue_error_while_building_tools_is_a_failed_result(test_db, monkeypatch):
+    """Dựng tool (đọc DB cho enum) nằm trong vùng quy lỗi của `run_subagent`:
+    Mongo lỗi → `failed`/`model_error`, không văng ra khỏi tool của Orchestrator."""
+    user = await a_user(test_db)
+
+    async def broken(self, category=None):
+        raise RuntimeError("mongo down")
+
+    monkeypatch.setattr(ServiceCatalogService, "list", broken)
+    use_model(monkeypatch, scripted([]))
+
+    command = await _run(test_db, user, question="bảng giá")
+
+    assert _status(command) == "failed"
+    assert json.loads(command.update["messages"][0].content)["error_code"] == "model_error"
+    assert command.update["failed_calls"] == ["service"]

@@ -60,6 +60,10 @@ class ServiceFact(BaseModel):
     price_min: int
     price_max: int
     duration_minutes: int
+    # True: dịch vụ khách CHỌN (chốt qua `get_service`, hoặc tra ra đúng một và
+    # agent Dịch vụ `ok`). False: chỉ được tra / liệt kê (ứng viên, bảng giá) —
+    # guard vẫn cho báo giá của nó, nhưng nó không thành "dịch vụ đã biết".
+    identified: bool = False
 
 
 class AgentStatusFact(BaseModel):

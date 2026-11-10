@@ -145,7 +145,8 @@ async def test_service_facts_of_the_thread(test_db):
 
     ledger, turn_1, _, _, _ = await _started(test_db, thread_id=thread_a, asked_at=base)
     old_hair = ServiceFact(
-        service_id="hair", name="Cắt tóc", price_min=50000, price_max=50000, duration_minutes=30
+        service_id="hair", name="Cắt tóc", price_min=50000, price_max=50000, duration_minutes=30,
+        identified=True,
     )
     await ledger.add_facts(turn_1, [old_hair])
 
@@ -153,23 +154,32 @@ async def test_service_facts_of_the_thread(test_db):
         test_db, thread_id=thread_a, asked_at=base + timedelta(minutes=5)
     )
     new_hair = ServiceFact(
-        service_id="hair", name="Cắt tóc", price_min=60000, price_max=60000, duration_minutes=30
+        service_id="hair", name="Cắt tóc", price_min=60000, price_max=60000, duration_minutes=30,
+        identified=True,
     )
     nail = ServiceFact(
-        service_id="nail", name="Sơn móng", price_min=80000, price_max=80000, duration_minutes=45
+        service_id="nail", name="Sơn móng", price_min=80000, price_max=80000, duration_minutes=45,
+        identified=True,
     )
-    await ledger.add_facts(turn_2, [new_hair, nail])
+    # Chỉ được tra/liệt kê (bảng giá, ứng viên) — không phải dịch vụ đã chốt.
+    listed = ServiceFact(
+        service_id="gel", name="Sơn gel", price_min=120000, price_max=180000, duration_minutes=45
+    )
+    listed_hair = new_hair.model_copy(update={"identified": False, "price_min": 1})
+    await ledger.add_facts(turn_2, [new_hair, nail, listed, listed_hair])
 
     _, turn_other_thread, _, _, _ = await _started(test_db, thread_id=thread_b, asked_at=base)
     await ledger.add_facts(
         turn_other_thread,
-        [ServiceFact(service_id="spa", name="Spa", price_min=1, price_max=1, duration_minutes=1)],
+        [ServiceFact(service_id="spa", name="Spa", price_min=1, price_max=1, duration_minutes=1,
+                     identified=True)],
     )
 
     facts = await ledger.service_facts(thread_id=thread_a)
 
     by_id = {f.service_id: f for f in facts}
-    assert set(by_id) == {"hair", "nail"}
+    assert set(by_id) == {"hair", "nail"}   # "gel" chỉ được liệt kê
+    assert all(f.identified for f in facts)
     assert by_id["hair"].price_min == 60000  # bản sau (turn_2) đè bản trước
     assert "spa" not in by_id
 

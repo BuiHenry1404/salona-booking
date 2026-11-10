@@ -7,13 +7,16 @@ Model là `scripted` (không Azure); Mongo thật.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import timedelta
 
 from bson import ObjectId
 from langchain_core.messages import SystemMessage, ToolMessage
 
 from app.agents.salon.shared.context import UNTRUSTED_LABEL
+from app.agents.salon.shared.schemas import AgentStatusFact, ServiceFact
 from app.agents.salon.subagents.appointment.agent import APPOINTMENT
+from app.agents.salon.subagents.appointment.tools import make_appointment_tools
 from app.agents.salon.subagents.dispatch import RunContext, run_subagent
 from app.agents.salon.subagents.time_tool import parse_time
 from app.core.clock import now_utc, to_local
@@ -244,3 +247,99 @@ async def test_parse_time_resolves_offsets_and_weekdays(test_db):
     missing = json.loads(await parse_time.ainvoke({"day_offset": 1, "hour": 3}))
     assert missing["missing"] == ["part_of_day"]
     assert missing["day"] == (today + timedelta(days=1)).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Luật dịch vụ (Ruling R16): chỉ chặn đề xuất ĐẶT MỚI; dời / huỷ / xem không bị ảnh hưởng
+# ---------------------------------------------------------------------------
+
+
+async def _service_tools(db, user, *, service_state="clear", require_service=False,
+                         service_ids=()):
+    ctx = replace(await _ctx(db, user), service_state=service_state,
+                  require_service=require_service, service_ids=list(service_ids))
+    return {t.name: t for t in make_appointment_tools(ctx)}
+
+
+async def _propose(tools, **args) -> dict:
+    return json.loads(await tools["propose_appointment"].ainvoke(args))
+
+
+async def test_new_booking_refused_while_the_service_is_unclear(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    tools = await _service_tools(test_db, user, service_state="unclear")
+
+    refused = await _propose(tools, start_at=tomorrow_at(9).isoformat())
+
+    assert refused == {"error": "service_unclear", "asked": moment(tomorrow_at(9))}
+    assert await test_db.proposals.count_documents({}) == 0
+
+
+async def test_new_booking_without_ids_refused_when_a_service_is_identified(test_db):
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+
+    tools = await _service_tools(test_db, user, require_service=True)
+    refused = await _propose(tools, start_at=tomorrow_at(9).isoformat())
+    assert refused["error"] == "service_required"
+
+    tools = await _service_tools(test_db, user, require_service=True, service_ids=["toc-nhuom"])
+    allowed = await _propose(tools, start_at=tomorrow_at(9).isoformat())
+    assert "proposal_id" in allowed
+    assert (await ProposalService(test_db).latest(user)).duration_minutes == 120
+
+
+async def test_move_and_cancel_ignore_the_service_rules(test_db):
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+    appt = await AppointmentService(test_db).create(user, tomorrow_at(15), None,
+                                                    service_ids=["blk-45"])
+    for state, required in (("unclear", False), ("clear", True)):
+        await test_db.proposals.delete_many({})
+        tools = await _service_tools(test_db, user, service_state=state, require_service=required)
+
+        moved = await _propose(tools, start_at=tomorrow_at(9).isoformat(),
+                               replaces_appointment_id=str(appt.id))
+        assert "proposal_id" in moved, moved
+        proposal = await ProposalService(test_db).latest(user)
+        assert (proposal.kind, proposal.duration_minutes, proposal.service_ids) == ("move", 45, [])
+
+        tools = await _service_tools(test_db, user, service_state=state, require_service=required)
+        cancel = json.loads(await tools["propose_cancel"].ainvoke({"appointment_id": str(appt.id)}))
+        assert "proposal_id" in cancel, cancel
+
+
+async def test_run_subagent_reads_the_service_state_of_the_turn(test_db, monkeypatch):
+    """`run_subagent` tính `service_state` / `require_service` từ phiên Dịch vụ,
+    trạng thái agent Dịch vụ mới nhất của lượt và dịch vụ ĐÃ CHỐT."""
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+    listed = ServiceFact(service_id="toc-nhuom", name="Nhuộm", price_min=350000,
+                         price_max=700000, duration_minutes=120)
+    cases = [
+        ([AgentStatusFact(agent="service", status="need_info")], "service_unclear"),
+        ([AgentStatusFact(agent="service", status="failed"), listed.model_copy(
+            update={"identified": True}), AgentStatusFact(agent="service", status="ok")],
+         "service_required"),
+        ([listed, AgentStatusFact(agent="service", status="ok")], None),   # chỉ liệt kê
+    ]
+    for facts, expected in cases:
+        await test_db.proposals.delete_many({})
+        model = scripted([
+            tool_call("propose_appointment", {"start_at": tomorrow_at(9).isoformat()}),
+            result(status="ok"),
+        ])
+        use_model(monkeypatch, model)
+        runtime = a_runtime(user)
+        runtime.state["turn_facts"] = [fact.model_dump(mode="json") for fact in facts]
+
+        await run_subagent(APPOINTMENT, request="Book", continue_session=False, service_ids=[],
+                           runtime=runtime, db=test_db, user=user,
+                           holder=a_holder(test_db, user))
+
+        [out] = tool_json(model, "propose_appointment")
+        assert out.get("error") == expected, (facts, out)

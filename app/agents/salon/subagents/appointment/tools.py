@@ -126,6 +126,17 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
             return "one_proposal_per_call"
         return None
 
+    def _service_refusal() -> Optional[str]:
+        """Luật dịch vụ của đề xuất ĐẶT MỚI (Ruling R16; spec §4.1, §6.2): dịch
+        vụ khách nhắc còn chưa rõ → hỏi trước; cuộc trò chuyện đã chốt dịch vụ
+        mà việc này không mang nó → không đặt lịch dài mặc định. Dời (giữ thời
+        lượng lịch cũ), huỷ, xem lịch không bị ảnh hưởng."""
+        if ctx.service_state == "unclear":
+            return "service_unclear"
+        if ctx.require_service and not service_ids:
+            return "service_required"
+        return None
+
     async def _duration(old: Optional[Appointment]) -> int:
         # Dời mà không mang dịch vụ mới → giữ thời lượng của lịch cũ (spec §6.2).
         if old is not None and not service_ids:
@@ -253,6 +264,10 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
         except ValueError:
             return _dumps({"error": "bad_time_format"})
         asked = _moment(start)
+        if not replaces_appointment_id:
+            service_error = _service_refusal()
+            if service_error:
+                return _dumps({"error": service_error, "asked": asked})
         refusal = _refusal()
         if refusal:
             return _dumps({"error": refusal, "asked": asked})
@@ -371,7 +386,10 @@ def make_appointment_tools(ctx: RunContext) -> list[BaseTool]:
                 "`outside_hours`, `closed_day`, `time_passed` (the salon cannot take it — "
                 "nobody booked it), `already_yours` (the customer already has that slot), "
                 "`one_proposal_per_call` / `one_proposal_per_turn` (stop proposing). "
-                "`missing_time`: only a date was sent."),
+                "`missing_time`: only a date was sent. A NEW booking may also get "
+                "`service_unclear` (the service the customer named is not settled yet) or "
+                "`service_required` (the conversation identified a service this task does not "
+                "carry): do not retry, finish failed with that code."),
             args_schema=create_model("ProposeAppointmentArgs", __base__=BaseModel,
                                      **propose_fields),
         ),

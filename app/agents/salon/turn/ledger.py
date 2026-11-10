@@ -182,9 +182,10 @@ class TurnLedger:
         )
 
     async def service_facts(self, *, thread_id: str) -> list[ServiceFact]:
-        """`ServiceFact` của mọi lượt trong thread, mỗi `service_id` một bản
-        mới nhất — duyệt theo thứ tự `asked_at` tăng dần nên bản ghi sau đè
-        bản trước."""
+        """`ServiceFact` ĐÃ CHỐT (`identified`) của mọi lượt trong thread, mỗi
+        `service_id` một bản mới nhất — duyệt theo thứ tự `asked_at` tăng dần
+        nên bản ghi sau đè bản trước. Dịch vụ chỉ được tra / liệt kê (bảng giá,
+        ứng viên) không tính (Ruling R16)."""
         cursor = self._collection.find({"thread_id": thread_id}).sort("asked_at", 1)
         latest: dict[str, ServiceFact] = {}
         async for doc in cursor:
@@ -192,5 +193,6 @@ class TurnLedger:
                 if raw.get("kind") != "service":
                     continue
                 fact = ServiceFact.model_validate(raw)
-                latest[fact.service_id] = fact
+                if fact.identified:
+                    latest[fact.service_id] = fact
         return list(latest.values())

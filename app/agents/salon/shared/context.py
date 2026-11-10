@@ -97,6 +97,8 @@ class AppointmentView(BaseModel):
     id: str
     at: Moment
     service_names: list[str]
+    # Id dịch vụ của lịch — dời lịch THÊM dịch vụ truyền cả id cũ lẫn id mới (spec §6.2).
+    service_ids: list[str] = []
     note: Optional[str] = None
 
 
@@ -121,7 +123,9 @@ class LedgerReader(Protocol):
     tại. Đổi tên từ `ServiceFactSource` lúc thêm `unannounced`: tên cũ không
     còn mô tả đúng nữa (đọc CẢ dữ kiện dịch vụ LẪN quyết định chưa báo)."""
 
-    async def service_facts(self, *, thread_id: str) -> list[ServiceFact]: ...
+    async def service_facts(self, *, thread_id: str) -> list[ServiceFact]:
+        """Chỉ dịch vụ đã chốt (`ServiceFact.identified`)."""
+        ...
 
     async def unannounced(self, user_id: str, *, today: date) -> Optional[UnannouncedDecision]: ...
 
@@ -193,6 +197,7 @@ def _appointment_view(appt: Appointment, names_by_id: dict[str, str]) -> Appoint
         id=str(appt.id),
         at=_local_moment(appt.start_at),
         service_names=[names_by_id[sid] for sid in appt.service_ids if sid in names_by_id],
+        service_ids=list(appt.service_ids),
         note=single_line(appt.note, NOTE_MAX),
     )
 
@@ -326,7 +331,10 @@ def _render_upcoming(snapshot: TurnSnapshot) -> str:
     for appt in snapshot.upcoming:
         services = ", ".join(appt.service_names) if appt.service_names else "unspecified"
         note = f"; note: {appt.note}" if appt.note else ""
-        lines.append(f"- {appt.id}: {appt.at.spoken} ({appt.at.iso}) — {services}{note}")
+        # Id dịch vụ để dời lịch THÊM dịch vụ truyền đủ id cũ + mới (spec §6.2).
+        ids = ",".join(appt.service_ids)
+        lines.append(f"- {appt.id}: {appt.at.spoken} ({appt.at.iso}) — {services} "
+                     f"services=[{ids}]{note}")
     return "\n".join(lines)
 
 

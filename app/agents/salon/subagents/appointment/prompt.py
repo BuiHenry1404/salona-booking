@@ -33,6 +33,12 @@ Rules:
   several appointments and it is unclear which one, ask (which_appointment).
 - A tool error carries `asked`, the time that was actually checked; report
   about THAT time. `slot_unavailable` carries `nearest`: offer those.
+- propose_appointment refuses a NEW booking with service_unclear (the service
+  the customer named is not settled yet) or service_required (this
+  conversation identified a service but your task carries none). Do not retry
+  and do not look for other times: finish failed with that error_code, so the
+  Orchestrator settles the service first. Moving or cancelling is never
+  refused for these reasons.
 - Use at most 4 tool rounds, then finish.
 
 Finish with SubagentResult:

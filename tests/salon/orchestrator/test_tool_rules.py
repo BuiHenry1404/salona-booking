@@ -56,7 +56,7 @@ class Ledger:
 
 def _service_fact(service_id: str = "toc-nhuom") -> ServiceFact:
     return ServiceFact(service_id=service_id, name="Nhuộm", price_min=350000, price_max=700000,
-                       duration_minutes=120)
+                       duration_minutes=120, identified=True)
 
 
 def _status(status: str) -> dict:
@@ -161,9 +161,6 @@ _RULES = [
      {"state": {"turn_facts": [_service_fact().model_dump(mode="json")]}}, None),
     ("service_known_earlier", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
      {"known": [_service_fact()]}, None),
-    # Id của phiên Dịch vụ qua được 1b, nhưng phiên đó còn chờ → luật 8 chặn.
-    ("service_from_service_session", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
-     {"session": ("service", 0, {"service_ids": ["toc-nhuom"]})}, "service_unclear"),
     ("service_from_pending", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
      {"pending": True, "pending_services": ["toc-nhuom"], "state": {"pending_decided": True}}, None),
     ("empty_service_ids", "appointment_task", {**_APPT, "service_ids": []}, {}, None),
@@ -206,27 +203,21 @@ _RULES = [
      {"round": (["shop_info_task", "shop_info_task"], 0)}, None),
     ("two_agents_in_round", "shop_info_task", _SHOP,
      {"round": (["appointment_task", "shop_info_task"], 1)}, None),
-    # 8 — dịch vụ khách nhắc mà chưa rõ: hỏi trước, không đề xuất
-    ("service_session_waiting", "appointment_task", _APPT,
+    # Ruling R16: luật dịch vụ nằm ở `propose_appointment` (chỉ đặt MỚI), không
+    # ở đây — xem lịch / huỷ / dời khi phiên Dịch vụ còn chờ vẫn giao được.
+    ("appointment_while_service_waits", "appointment_task", _APPT,
      {"session": ("service", 0, {"candidates": ["nail-sua", "blk-45"], "service_ids": []})},
-     "service_unclear"),
-    ("service_failed_this_turn", "appointment_task", _APPT,
-     {"state": {"turn_facts": [_status("failed")]}}, "service_unclear"),
-    ("service_need_info_this_turn", "appointment_task", _APPT,
-     {"state": {"turn_facts": [_status("need_info")]}}, "service_unclear"),
-    ("service_ok_then_appointment", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
-     {"state": {"turn_facts": [_service_fact().model_dump(mode="json"), _status("ok")]}}, None),
-    ("service_failed_then_ok", "appointment_task", {**_APPT, "service_ids": ["toc-nhuom"]},
-     {"state": {"turn_facts": [_status("failed"), _service_fact().model_dump(mode="json"),
-                               _status("ok")]}}, None),
-    ("shop_info_while_service_waits", "shop_info_task", _SHOP,
-     {"session": ("service", 0, {"candidates": [], "service_ids": []})}, None),
-    # 8b — cuộc trò chuyện đã có dịch vụ thì lịch phải mang nó
-    ("service_known_earlier_no_ids", "appointment_task", _APPT, {"known": [_service_fact()]},
-     "service_required"),
-    ("service_this_turn_no_ids", "appointment_task", {**_APPT, "service_ids": []},
-     {"state": {"turn_facts": [_service_fact().model_dump(mode="json"), _status("ok")]}},
-     "service_required"),
+     None),
+    ("appointment_after_service_failed", "appointment_task", _APPT,
+     {"state": {"turn_facts": [_status("failed")]}}, None),
+    ("known_service_without_ids", "appointment_task", _APPT, {"known": [_service_fact()]}, None),
+    # 1b — dời lịch THÊM dịch vụ: id cũ của lịch sắp tới + id mới đều hợp lệ
+    ("service_from_upcoming", "appointment_task", {**_APPT, "service_ids": ["blk-45"]},
+     {"upcoming_services": ["blk-45"]}, None),
+    ("upcoming_plus_new_service", "appointment_task",
+     {**_APPT, "service_ids": ["blk-45", "toc-nhuom"]},
+     {"upcoming_services": ["blk-45"],
+      "state": {"turn_facts": [_service_fact().model_dump(mode="json")]}}, None),
     ("service_task_allowed", "service_task", {"request": "Price of dyeing",
                                               "continue_session": False},
      {"known": [_service_fact()]}, None),
@@ -238,6 +229,9 @@ async def _request(db, user, tool_name, args, setup) -> tuple[ToolCallRequest, S
     await seed_services(db)
     if setup.get("pending"):
         await _pending(db, user, service_ids=setup.get("pending_services"))
+    if "upcoming_services" in setup:
+        await AppointmentService(db).create(user, tomorrow_at(10), None,
+                                            service_ids=setup["upcoming_services"])
     if "session" in setup:
         agent, minutes_ago, memory = setup["session"]
         await _open_session(db, user, agent=agent, asked_minutes_ago=minutes_ago, memory=memory)

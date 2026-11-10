@@ -119,6 +119,12 @@ class RunContext:
     turn_id: str
     service_ids: list[str]
     allow_propose: bool
+    # Luật dịch vụ của đề xuất ĐẶT MỚI (Ruling R16; spec §4.1, §6.2) — code tính
+    # trong `run_subagent`, chỉ `propose_appointment` đọc:
+    # "unclear" = phiên Dịch vụ đang chờ / agent Dịch vụ mới nhất của lượt chưa chốt;
+    # `require_service` = cuộc trò chuyện đã CHỐT dịch vụ (lượt trước hoặc lượt này).
+    service_state: Literal["clear", "unclear"] = "clear"
+    require_service: bool = False
 
 
 @dataclass
@@ -224,14 +230,17 @@ def _build_agent(spec: SubagentSpec, tools: list[BaseTool], middleware: Sequence
     )
 
 
-async def _invoke(agent, message: HumanMessage, *, timeout: float, log_extra: dict,
+async def _invoke(make_agent: Callable[[], Awaitable[Any]], message: HumanMessage, *,
+                  timeout: float, log_extra: dict,
                   ) -> tuple[Optional[SubagentResult], list[BaseMessage], Optional[ErrorCode]]:
-    """Chạy agent, giữ state MỚI NHẤT qua `astream(values)` — quá giờ giữa
-    chừng vẫn còn các ToolMessage đã có (vd một đề xuất đã tạo), để `extract`
-    không bỏ sót dữ kiện đã thật sự xảy ra trong DB."""
+    """Dựng rồi chạy agent, giữ state MỚI NHẤT qua `astream(values)` — quá giờ
+    giữa chừng vẫn còn các ToolMessage đã có (vd một đề xuất đã tạo), để
+    `extract` không bỏ sót dữ kiện đã thật sự xảy ra trong DB. Dựng agent (có
+    thể đọc DB cho enum) cũng nằm trong trần thời gian và cách quy lỗi."""
     latest: dict = {"messages": [message]}
 
     async def _drive() -> None:
+        agent = await make_agent()
         async for state in agent.astream({"messages": [message]}, stream_mode="values"):
             latest.update(state)
 
@@ -247,7 +256,7 @@ async def _invoke(agent, message: HumanMessage, *, timeout: float, log_extra: di
                        extra={**log_extra, "error_type": type(exc).__name__})
     except Exception as exc:
         # Lỗi model (đã hết lượt thử lại), chạm trần lời gọi model
-        # (`ModelCallLimitExceededError`), lỗi tool ngoài dự kiến.
+        # (`ModelCallLimitExceededError`), lỗi tool ngoài dự kiến, lỗi DB lúc dựng tool.
         error = "model_error"
         # Có traceback để soi lỗi lập trình trong tool; không có chữ khách.
         logger.exception("subagent_error", extra={**log_extra, "error_type": type(exc).__name__})
@@ -296,6 +305,23 @@ async def _write_session(spec: SubagentSpec, ctx: RunContext, status: str,
     return False
 
 
+def _service_state(snapshot: TurnSnapshot, turn_facts: list[dict]) -> Literal["clear", "unclear"]:
+    """Phiên Dịch vụ đang chờ, hoặc lần gọi agent Dịch vụ MỚI NHẤT của lượt
+    trả `need_info` / `failed` → "unclear" (gọi lại thành công thì thôi)."""
+    if "service" in snapshot.sessions:
+        return "unclear"
+    statuses = [fact.get("status") for fact in turn_facts
+                if fact.get("kind") == "agent_status" and fact.get("agent") == "service"]
+    return "unclear" if statuses and statuses[-1] in ("need_info", "failed") else "clear"
+
+
+def _service_identified(snapshot: TurnSnapshot, turn_facts: list[dict]) -> bool:
+    """Cuộc trò chuyện đã CHỐT dịch vụ: lượt trước (`known_services`, chỉ dịch
+    vụ đã chốt) hoặc `ServiceFact.identified` của lượt này."""
+    return bool(snapshot.known_services) or any(
+        fact.get("kind") == "service" and fact.get("identified") for fact in turn_facts)
+
+
 def _summary(spec: SubagentSpec, status: str, result: Optional[SubagentResult],
              error: Optional[str], extracted: Extracted) -> str:
     """ToolMessage cho Orchestrator: JSON có cấu trúc, dữ kiện là của code."""
@@ -329,6 +355,7 @@ async def run_subagent(
                  "thread_id": context.thread_id, "agent": spec.name}
 
     snapshot = await holder.current()
+    turn_facts = list(runtime.state.get("turn_facts", []))
     ctx = RunContext(
         db=db, user=user, snapshot=snapshot,
         session=snapshot.sessions.get(spec.name) if continue_session else None,
@@ -336,10 +363,15 @@ async def run_subagent(
         service_ids=list(service_ids),
         # Một đề xuất mới mỗi lượt (spec §8): lượt đã có đề xuất thì tool từ chối.
         allow_propose=runtime.state.get("proposals_created", 0) < 1,
+        service_state=_service_state(snapshot, turn_facts),
+        require_service=_service_identified(snapshot, turn_facts),
     )
 
-    agent = _build_agent(spec, await tools_for(spec, ctx), middleware)
-    result, messages, error = await _invoke(agent, subagent_message(spec, ctx), log_extra=log_extra,
+    async def make_agent():
+        return _build_agent(spec, await tools_for(spec, ctx), middleware)
+
+    result, messages, error = await _invoke(make_agent, subagent_message(spec, ctx),
+                                            log_extra=log_extra,
                                             timeout=settings.orch_task_timeout_seconds)
     extracted = await spec.extract(messages, ctx)
     if result is None and error is None:

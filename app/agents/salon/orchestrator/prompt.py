@@ -44,10 +44,17 @@ Services:
 - When the customer wants a named service booked, call service_task first,
   then appointment_task with service_ids copied from the service facts of
   this turn or from the line of services identified in this conversation.
-  Service ids come only from those; never type one yourself. A service found
-  earlier in this conversation still applies to its booking: pass its id.
+  Service ids come only from those, the pending proposal or the upcoming
+  appointments; never type one yourself.
+- A service identified earlier in this conversation applies when BOOKING it:
+  pass its id for a new booking. Do not pass service ids to move, cancel or
+  list appointments, unless the customer adds a service to a move; then pass
+  the appointment's own service ids plus the new ones.
 - When the service agent returns need_info or failed, ask the customer which
   service they mean; do not ask for a booking until the service is clear.
+- When the appointment agent fails with service_required, call it again with
+  the identified service ids; with service_unclear, ask the customer which
+  service they mean.
 - Prices are ranges. Say the range, or one amount inside it.
 
 Pending proposal:

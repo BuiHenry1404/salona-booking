@@ -18,12 +18,10 @@ Thứ tự kiểm (dừng ở luật đầu tiên trượt):
 5. `one_proposal_per_turn` — `appointment_task` khi lượt đã có đề xuất mới.
 6. `retry_exhausted` — gọi lại agent đã `failed` hai lần trong lượt.
 7. `same_agent_twice_in_round` — hai call cùng agent con trong một vòng.
-8. `service_unclear` — `appointment_task` khi dịch vụ khách nhắc còn chưa rõ:
-   phiên Dịch vụ đang chờ, hoặc lần gọi agent Dịch vụ MỚI NHẤT của lượt trả
-   `need_info` / `failed` (spec §6.2: hỏi rõ trước, không đề xuất).
-8b. `service_required` — cuộc trò chuyện đã có dịch vụ (lượt trước hoặc lượt
-   này) mà `appointment_task` không kèm `service_ids` (để lịch nhuộm không bị
-   đặt 30 phút, spec §4.1).
+
+`service_unclear` / `service_required` (spec §4.1, §6.2) KHÔNG ở đây (Ruling
+R16): chúng chỉ áp cho đề xuất ĐẶT MỚI, nên nằm trong `propose_appointment` của
+agent Đặt lịch — xem lịch, huỷ, dời không bị chặn vì dịch vụ.
 """
 from __future__ import annotations
 
@@ -70,12 +68,6 @@ _HINTS = {
                        "answer the customer with what is known.",
     "same_agent_twice_in_round": "Only one call per agent in the same step. Put everything "
                                  "into one request.",
-    "service_unclear": "The service the customer named is not clear yet. Ask the customer the "
-                       "service agent's question first; do not book until the service agent "
-                       "returns ok.",
-    "service_required": "This conversation already identified services. Pass their ids as "
-                        "service_ids, or call service_task to settle which service this "
-                        "appointment is for.",
 }
 
 Handler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]
@@ -103,33 +95,17 @@ def _bad_args(request: ToolCallRequest) -> bool:
 
 
 def _service_choices(snapshot: TurnSnapshot, state: dict) -> set[str]:
-    """Id dịch vụ code đã biết (spec §4.1): `ServiceFact` lượt này ∪ phiên
-    Dịch vụ đang chờ ∪ đề xuất chờ ∪ dịch vụ đã nhận ra ở lượt trước."""
+    """Id dịch vụ code đã biết (spec §4.1): `ServiceFact` lượt này ∪ đề xuất
+    chờ ∪ dịch vụ đã chốt ở lượt trước ∪ dịch vụ của lịch sắp tới (dời lịch
+    THÊM dịch vụ truyền cả id cũ, spec §6.2)."""
     choices = {fact["service_id"] for fact in state.get("turn_facts", [])
                if fact.get("kind") == "service"}
-    service_session = snapshot.sessions.get("service")
-    if service_session is not None:
-        choices.update(service_session.memory.get("service_ids", []))
+    for appt in snapshot.upcoming:
+        choices.update(appt.service_ids)
     if snapshot.pending is not None:
         choices.update(snapshot.pending.service_ids)
     choices.update(fact.service_id for fact in snapshot.known_services)
     return choices
-
-
-def _service_unclear(snapshot: TurnSnapshot, state: dict) -> bool:
-    """Phiên Dịch vụ đang chờ, hoặc lần gọi agent Dịch vụ MỚI NHẤT của lượt
-    chưa chốt được dịch vụ (gọi lại thành công sau đó thì thôi chặn)."""
-    if "service" in snapshot.sessions:
-        return True
-    statuses = [fact.get("status") for fact in state.get("turn_facts", [])
-                if fact.get("kind") == "agent_status" and fact.get("agent") == "service"]
-    return bool(statuses) and statuses[-1] in ("need_info", "failed")
-
-
-def _has_services(snapshot: TurnSnapshot, state: dict) -> bool:
-    """Cuộc trò chuyện đã có dịch vụ: nhận ra ở lượt trước hoặc trong lượt này."""
-    return bool(snapshot.known_services) or any(
-        fact.get("kind") == "service" for fact in state.get("turn_facts", []))
 
 
 def _earlier_in_round(request: ToolCallRequest, state: dict) -> bool:
@@ -189,11 +165,6 @@ class ToolRulesMiddleware(AgentMiddleware[SalonState, Any]):
             return "retry_exhausted"
         if _earlier_in_round(request, state):
             return "same_agent_twice_in_round"
-        if name == "appointment_task":
-            if _service_unclear(snapshot, state):
-                return "service_unclear"
-            if not service_ids and _has_services(snapshot, state):
-                return "service_required"
         return None
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler: Handler,
