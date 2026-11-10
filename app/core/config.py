@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     # Prod chạy HTTPS thì BẮT BUỘC true. Dev chạy HTTP nên phải tắt được,
     # vì trình duyệt không gửi cookie Secure qua http://.
     cookie_secure: bool
-    api_key: SecretStr
     login_max_attempts: int
     login_window_seconds: int
 
