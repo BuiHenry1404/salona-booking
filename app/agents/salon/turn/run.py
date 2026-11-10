@@ -43,7 +43,7 @@ from app.agents.salon.guard.facts import ReplyFacts, build_reply_facts
 from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, button_reply, fallback_reply
 from app.agents.salon.memory.long_term import consolidate_memory
 from app.agents.salon.memory.store import get_store
-from app.agents.salon.orchestrator.agent import build_orchestrator
+from app.agents.salon.orchestrator.agent import build_orchestrator, recursion_limit
 from app.agents.salon.orchestrator.decide import apply_decision
 from app.agents.salon.orchestrator.middleware.budget import LlmBudgetExceeded
 from app.agents.salon.orchestrator.middleware.turn_start import broken_message_ids
@@ -634,12 +634,15 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         # Quyết định chưa báo từ lượt trước (R0) — đọc ở đầu lượt, trước khi
         # quyết định của lượt này (nếu có) thành "mới nhất".
         r0 = (await holder.current()).unannounced
+        agent = build_orchestrator(db, user, holder)
         turn = _Turn(
             db=db, user=user, turn_id=turn_id, thread_id=thread_id, asked_at=asked_at,
-            kind=kind, ledger=ledger, holder=holder, agent=build_orchestrator(db, user, holder),
+            kind=kind, ledger=ledger, holder=holder, agent=agent,
             progress=progress,
             config={
                 "configurable": {"thread_id": thread_id},
+                # Khoá cấp cao nhất, không nằm trong `configurable` (docs LangGraph).
+                "recursion_limit": recursion_limit(agent),
                 "callbacks": get_callbacks(),
                 "metadata": get_trace_metadata(user_id=progress.user_id, conversation_id=thread_id),
             },

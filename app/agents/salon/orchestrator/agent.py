@@ -24,6 +24,7 @@ from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 from app.agents.salon.orchestrator.state import SalonContext, SalonState
 from app.agents.salon.orchestrator.tools import make_orchestrator_tools
 from app.agents.salon.shared.context import SnapshotHolder
+from app.core.config import settings
 from app.models.user import User
 
 
@@ -45,3 +46,17 @@ def build_orchestrator(db: AsyncIOMotorDatabase, user: User,
         store=store,
         name="orchestrator",
     )
+
+
+def recursion_limit(agent: CompiledStateGraph) -> int:
+    """`recursion_limit` cho config của một lượt — lưới an toàn, không phải trần.
+
+    Mỗi hook middleware (`before_model`, `after_model`, …) là một node riêng, mỗi
+    node chạy là một bước; một vòng gọi model đi qua mỗi node nhiều nhất một
+    lần. Nên `số node × (trần gọi model + 1)` không bao giờ chạm trước
+    `ModelCallLimitMiddleware` (`+1`: lần thử thứ trần+1 vẫn chạy các
+    `before_model` rồi mới bị chặn). Không đặt thì `astream_events` lấy mặc
+    định 25 của langchain-core — live run 1 (11/11) nổ ở lượt 2 agent con +
+    1 lần viết lại."""
+    nodes = sum(1 for name in agent.nodes if not name.startswith("__"))
+    return nodes * (settings.salon_model_calls_per_turn + 1)

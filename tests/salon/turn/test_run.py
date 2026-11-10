@@ -610,6 +610,21 @@ async def test_limit_without_facts_still_gives_a_code_reply(test_db, monkeypatch
     assert_valid_thread(await thread_messages(test_db, user))
 
 
+async def test_model_call_limit_not_graph_recursion_ends_a_long_turn(test_db, monkeypatch):
+    # Với trần mặc định (`salon_model_calls_per_turn`), cái dừng lượt phải là
+    # ModelCallLimit (câu mẫu, ended_by="limit"), không phải GraphRecursionError.
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    calls = settings.salon_model_calls_per_turn
+    orchestrator(monkeypatch, [tool_call("no_such_tool", {})] * calls + [AIMessage("never reached")])
+
+    events = await turn(test_db, user, "alo")
+
+    assert completed(events)["answer"] == GENERIC_FALLBACK.format(address="chị Lan")
+    [row] = await ledger_rows(test_db, user)
+    assert (row["ended_by"], row["answer_source"]) == ("limit", "code")
+
+
 async def test_budget_exhausted_before_any_call_gives_the_turn_error_message(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
@@ -857,6 +872,27 @@ async def gel_at_10(db, user):
     """Lịch sơn gel (45') của khách lúc 10:00 mai."""
     return await AppointmentService(db).create(user, tomorrow_at(10), None,
                                                service_ids=["nail-son-gel"])
+
+
+async def test_two_subagents_and_a_rewrite_fit_in_one_turn(test_db, monkeypatch):
+    # Live run 1 (11/11), lượt 7: agent Dịch vụ + agent Đặt lịch + guard bắt viết
+    # lại = 4 lần gọi model, ~28 bước graph > 25 mặc định của langchain-core →
+    # GraphRecursionError dù còn xa trần `salon_model_calls_per_turn`.
+    await default_hours(test_db)
+    await seed_mock_catalogue(test_db)
+    user = await a_user(test_db)
+    no_question = f"Dạ em giữ chỗ {S9} cho chị Lan ạ."
+    orchestrator(monkeypatch, [
+        tool_call("service_task", DYE), tool_call("appointment_task", book_9(["toc-nhuom"])),
+        AIMessage(no_question), AIMessage(OFFER_9),
+    ])
+    subagents(monkeypatch, dye_found() + propose_9())
+
+    done = completed(await turn(test_db, user, "chị muốn đặt nhuộm tóc sáng mai lúc 9 giờ"))
+
+    assert done["answer"] == OFFER_9
+    [row] = await ledger_rows(test_db, user)
+    assert (row["ended_by"], row["answer_source"]) == ("answer", "llm")
 
 
 async def test_service_known_earlier_is_reusable(test_db, monkeypatch):
