@@ -113,7 +113,9 @@ async def seed_services(db) -> None:
 
 async def create_blocking_appointment(db) -> datetime:
     """Tạo sẵn lịch của MỘT khách khác (Chú Hùng) lúc 15:00 ngày mai — tiệm
-    phục vụ từng khách một nên giờ này coi như kín, bất kể dịch vụ. Trả về
+    phục vụ từng khách một nên giờ này coi như kín, bất kể dịch vụ. Không gắn
+    dịch vụ → dài `booking_slot_minutes` (60'), chặn 15:00–16:00: lượt 4 "4 giờ
+    đi" phải đặt được (live run 1 dùng úp móng 90' nên 16:00 cũng kín). Trả về
     mốc giờ VN đã chặn để in ra màn hình."""
     print("\n" + "=" * 60)
     print("BƯỚC 3: TẠO LỊCH CHẶN 15:00 NGÀY MAI (khách khác)")
@@ -122,7 +124,7 @@ async def create_blocking_appointment(db) -> datetime:
     tomorrow_local = to_local(now_utc()).date() + timedelta(days=1)
     blocked_at = datetime.combine(tomorrow_local, datetime.min.time(), tzinfo=TZ).replace(hour=15)
     appt = await AppointmentService(db).create(
-        chu_hung, blocked_at, "Lịch chặn test (Task 18)", service_ids=["nail-up-bot"],
+        chu_hung, blocked_at, "Lịch chặn test (Task 18)",
     )
     print(f"  - đã đặt cho {chu_hung.full_name}: {to_local(appt.start_at).isoformat()} "
           f"({appt.duration_minutes} phút)")
