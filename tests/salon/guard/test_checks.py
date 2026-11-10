@@ -341,6 +341,18 @@ def test_strip_tool_text_keeps_clean_text_untouched():
     assert strip_tool_text(clean) == clean
 
 
+def test_strip_tool_text_removes_markdown_emphasis():
+    # Live run 2: 8/10 replies had **...**; the chat shows raw characters.
+    text = ("Dạ chị Lan, em đã giữ giờ **Thứ Năm 12/11, 4 giờ chiều** cho __sơn gel__ rồi ạ.  \n"
+            "Chị đồng ý giờ này nhé?")
+    assert strip_tool_text(text) == ("Dạ chị Lan, em đã giữ giờ Thứ Năm 12/11, 4 giờ chiều cho "
+                                     "sơn gel rồi ạ.\nChị đồng ý giờ này nhé?")
+
+
+def test_strip_tool_text_removes_an_unpaired_bold_marker():
+    assert strip_tool_text("Dạ tiệm mở từ **8 giờ sáng ạ.") == "Dạ tiệm mở từ 8 giờ sáng ạ."
+
+
 def test_strip_tool_text_keeps_words_that_only_contain_a_tool_name():
     text = "Dạ my_parse_time_x không phải tên tool ạ."
     assert strip_tool_text(text) == text

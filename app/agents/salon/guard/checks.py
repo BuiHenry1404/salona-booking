@@ -437,13 +437,19 @@ def _tidy_line(line: str) -> str:
     return "".join(out).strip()
 
 
+def _drop_markdown(text: str) -> str:
+    """Bỏ dấu in đậm Markdown `**` / `__` — khung chat hiện chữ thô (live run 2:
+    8/10 câu có `**…**`). `*` lẻ, tiêu đề, gạch đầu dòng: chỉ luật prompt chặn."""
+    return text.replace("**", "").replace("__", "")
+
+
 def strip_tool_text(text: str) -> str:
-    """Bỏ tên tool kỹ thuật (`CONTROL_TOOLS` + tool agent con) và khối JSON
-    `{...}` khỏi câu sắp gửi khách, rồi gộp khoảng trắng. Câu sạch trả NGUYÊN
-    VĂN (kể cả xuống dòng)."""
+    """Bỏ dấu in đậm Markdown, tên tool kỹ thuật (`CONTROL_TOOLS` + tool agent
+    con) và khối JSON `{...}` khỏi câu sắp gửi khách, rồi gộp khoảng trắng. Câu
+    sạch trả NGUYÊN VĂN (kể cả xuống dòng)."""
     if not text:
         return text
-    cleaned = _drop_empty_brackets(_drop_tool_names(_drop_json(text)))
+    cleaned = _drop_empty_brackets(_drop_tool_names(_drop_json(_drop_markdown(text))))
     if cleaned == text:
         return text
     return "\n".join(_tidy_line(line) for line in cleaned.split("\n")).strip()

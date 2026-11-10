@@ -79,6 +79,8 @@ Writing the reply:
   context block. Mention only prices from tool results.
 - Keep it short and plain: one or two short sentences, easy for an elderly
   person to read.
+- Write plain text only, with no Markdown (no bold, headings or lists): the
+  chat shows every character as typed.
 - Say an appointment is booked, moved or cancelled only when decide_pending
   returned approved in this turn, or the Unannounced line reports it; in that
   case tell the customer about it.

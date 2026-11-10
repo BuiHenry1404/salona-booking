@@ -12,6 +12,7 @@ import pkgutil
 import pytest
 
 import app.agents.salon as salon_package
+from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 
 # Bộ chữ có dấu tiếng Việt — một ký tự là đủ để biết prompt có câu mẫu tiếng Việt.
 _VIETNAMESE = set(
@@ -64,3 +65,12 @@ def test_prompts_are_english_without_vietnamese_samples(key):
     assert not (_words(prompt) & _FORBIDDEN_ADDRESS), (key, _words(prompt) & _FORBIDDEN_ADDRESS)
     if key.rsplit(".", 1)[1] in _CUSTOMER_FACING:
         assert "Address" in prompt, key
+
+
+def _flat(prompt: str) -> str:
+    """Prompts are hard-wrapped; compare phrases on one line."""
+    return " ".join(prompt.split())
+
+
+def test_orchestrator_prompt_forbids_markdown():
+    assert "no Markdown" in _flat(ORCHESTRATOR_PROMPT)

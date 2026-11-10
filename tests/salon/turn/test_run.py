@@ -258,6 +258,16 @@ async def test_typed_turn_emits_started_tools_and_complete_without_tokens(test_d
         ("user", "tiệm mở cửa mấy giờ vậy em", "llm"), ("assistant", HOURS, "llm")]
 
 
+async def test_markdown_never_reaches_the_customer(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [tool_call("shop_info_task", SHOP),
+                               AIMessage("Dạ tiệm mở cửa từ **8 giờ sáng tới 7 giờ tối** ạ.")])
+    subagents(monkeypatch, shop_hours())
+
+    assert completed(await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em"))["answer"] == HOURS
+
+
 async def test_customer_text_is_one_line_and_capped_at_1000_chars(test_db, monkeypatch):
     """Chữ khách gõ thành ĐÚNG MỘT dòng (xuống dòng là lối chèn luật vào prompt)
     và tối đa `CUSTOMER_TEXT_MAX_CHARS` ký tự — cả câu model đọc lẫn nhật ký."""
