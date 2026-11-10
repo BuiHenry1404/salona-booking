@@ -31,7 +31,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   qua review (spec + chất lượng) từng task. Chat thật chạy qua gói mới `app/agents/salon/`. Gói cũ
   `app/agents/booking/` đã xoá hẳn (xem lịch sử bằng `git show c98413b:app/agents/booking/...`).
   Dữ liệu Mongo của gói cũ đã dọn trên DB dev (`scripts/drop_legacy_agent_data.py --yes`, 10/11).
-  Test: 874 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
+  Test: 893 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
 - **Tài liệu nguồn**: kiến trúc đích `docs/architech-agent.md` (thắng khi lệch), spec
   `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`, plan
   `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`. **Sổ thực thi**
@@ -45,10 +45,25 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   tới; (b) guard chặn nhầm "350.000đ" — `split_clauses` cắt ở dấu `.` ngăn hàng nghìn nên đọc ra 0đ
   (câu bị loại lấy lại từ checkpoint Mongo); log `guard_rejected` / `guard_violation` giờ có
   `rejected_reply` (câu của bot); (c) lịch chặn của script bỏ dịch vụ → dài 60', 16:00 trống.
-  Chủ dự án 11/11: **giữ** thời lượng theo dịch vụ trong DB. Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
+  Chủ dự án 11/11: **giữ** thời lượng theo dịch vụ trong DB.
+  **Lần 2 chạy 11/11, chưa đạt** (log `live-2.log`, sổ dòng "live run 2"): ba sửa trên chạy đúng,
+  nhưng lượt 2 agent Đặt lịch báo `ok` dù 3 giờ kín (không đề xuất, không phiên chờ) và bot mời khách
+  giờ kín; 8/10 câu có Markdown `**`. **Đã sửa (11/11)** theo spec/plan
+  `docs/superpowers/{specs,plans}/2026-11-11-live-run-2-fixes*` (sổ `.superpowers/sdd/2026-11-11-live-run-2-fixes/`):
+  A `SubagentSpec.reconcile` — code hạ `ok` → `need_info` (`time`) khi giờ hỏi kín và không có đề
+  xuất, log `subagent_status_corrected`; C luật "plain text" + `strip_tool_text` xoá `**`/`__`;
+  D định nghĩa lại "ok" trong prompt agent Đặt lịch; E prompt Orchestrator: dữ kiện `taken` không
+  bao giờ được mời; F giờ kín phải được báo khách — ghi chú code (F1), guard thêm giờ kín vào
+  `must_mention` (F2, so nguyên văn như giờ đề xuất — cố ý, đừng nới), câu mẫu `TAKEN_REPLY` báo
+  trước (F3). B (luật `missing_option`) bỏ. Chủ dự án 11/11: **phương án 1** — giờ hỏi kín không đề
+  xuất luôn là `need_info`, kể cả khi khách chỉ hỏi; **phát hiện kín thì luôn báo khách**.
+  **Bước thiết kế kế tiếp (chủ dự án 11/11): mức C** — câu trả lời tham chiếu dữ kiện
+  (`{kín:t1}`, `{mời:t3}`), code kiểm vai trò giờ bằng cấu trúc; gộp thêm kiểm lộ prompt / lọt
+  tiếng Anh và lưu câu bị guard loại vào `salon_turns`. Cần spec riêng + một lần thử nhỏ trên Azure.
+  Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
   (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
 - **Làm tiếp sau khi mở phiên mới**:
-  1. ~~Sửa (a), (b), (c)~~ — xong 11/11.
+  1. ~~Sửa (a), (b), (c)~~ và ~~A, C, D, E, F của lần 2~~ — xong 11/11.
   2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),
      cần 2 lần đạt.
   3. Review cả nhánh bằng model mạnh nhất (`superpowers:requesting-code-review`, gói diff

@@ -81,3 +81,9 @@ def test_appointment_prompt_never_reports_a_taken_time_as_ok():
     flat = _flat(APPOINTMENT_PROMPT)
     assert "or the information asked for is in the tool results" not in flat
     assert "turned out taken and no proposal was created, the result is never ok" in flat
+
+
+def test_orchestrator_prompt_says_taken_times_are_not_offered():
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert "role taken is already booked by another customer" in flat
+    assert "When suggesting other times" in flat
