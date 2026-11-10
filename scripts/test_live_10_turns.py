@@ -3,7 +3,14 @@ thử thuộc Task 19, chủ dự án duyệt từng lần). Gọi Azure OpenAI 
 tự động — chỉ `py_compile` trong CI/kiểm thử (xem `.superpowers/sdd/...`).
 
     docker compose up -d mongo
-    PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py
+    PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py             # xoá DB, kịch bản A
+    PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py --keep-db   # giữ DB, kịch bản B
+
+Kịch bản B (`--keep-db`, chủ dự án 11/11): KHÔNG xoá gì, tạo một khách mới
+(Chị Mai, số điện thoại chưa có) và chạy 10 lượt trên lịch đang có của DB dev
+(sau kịch bản A: Cô Lan nhuộm 9:00–11:00, Chú Hùng 15:00–16:00, Cô Lan sơn gel
+16:00–16:45 ngày mai). Trước khi gọi Azure, script kiểm điều kiện của kịch bản
+(giờ phải kín thì kín, giờ phải trống thì trống) và dừng nếu sai.
 
 Trình tự: xoá sạch dữ liệu hội thoại/lịch, seed lại user dev + danh mục dịch
 vụ (`scripts/seed_services.py`), tạo sẵn MỘT lịch chặn lúc 15:00 ngày mai
@@ -25,6 +32,7 @@ Mỗi lượt in: câu khách, các tool đã gọi, câu bot đáp, nguồn câ
 đọc từ `salon_turns` — ledger của gói mới), thời gian chạy lượt, và trạng thái
 nghiệp vụ trong Mongo sau lượt (phiên chờ, đề xuất gần nhất, lịch sắp tới).
 """
+import argparse
 import asyncio
 import time
 from datetime import datetime, timedelta
@@ -36,6 +44,7 @@ from app.agents.salon import ButtonReply, run_turn
 from app.agents.salon.turn.ledger import LEDGER_COLLECTION
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
+from app.core.slots import slot_keys_for
 from app.infrastructure.database import ensure_indexes
 from app.models.user import User
 from app.repositories.user import UserRepository
@@ -220,44 +229,107 @@ async def execute_turn(turn_idx: int, db, user: User, description: str,
     }
 
 
-async def main() -> None:
+# ---------------------------------------------------------------------------
+# Kịch bản B — giữ DB, khách mới
+# ---------------------------------------------------------------------------
+
+def _tomorrow_at(hour: int) -> datetime:
+    day = to_local(now_utc()).date() + timedelta(days=1)
+    return datetime.combine(day, datetime.min.time(), tzinfo=TZ).replace(hour=hour)
+
+
+async def _is_taken(db, start: datetime, minutes: int) -> bool:
+    """Lịch đã ghi nào chiếm một mốc 15 phút của [start, start + minutes)."""
+    keys = slot_keys_for(start, minutes)
+    return await db["appointments"].find_one(
+        {"status": "booked", "slot_keys": {"$in": keys}}) is not None
+
+
+async def check_keep_db_scenario(db) -> bool:
+    """Điều kiện của kịch bản B trên lịch đang có. Sai thì không chạy (bài học
+    live run 1: kịch bản lệch dữ liệu làm hỏng cả lượt sau)."""
+    catalog = ServiceCatalogService(db)
+    gel = await catalog.duration_for(["nail-son-gel"])
+    cut = await catalog.duration_for(["toc-cat-nu"])
+    checks = [
+        ("9:00 sơn gel phải KÍN (lượt 2)", _tomorrow_at(9), gel, True),
+        ("11:00 sơn gel phải TRỐNG (lượt 4)", _tomorrow_at(11), gel, False),
+        ("16:00 cắt tóc phải KÍN (lượt 7)", _tomorrow_at(16), cut, True),
+        ("17:00 cắt tóc phải TRỐNG (lượt 8)", _tomorrow_at(17), cut, False),
+    ]
+    print("\n" + "=" * 60)
+    print("KIỂM ĐIỀU KIỆN KỊCH BẢN B (giữ DB)")
+    print("=" * 60)
+    ok = True
+    for label, start, minutes, want_taken in checks:
+        taken = await _is_taken(db, start, minutes)
+        good = taken == want_taken
+        ok = ok and good
+        print(f"  [{'OK ' if good else 'SAI'}] {label}: {'kín' if taken else 'trống'}")
+    return ok
+
+
+async def create_new_customer(db) -> User:
+    """Khách mới cho mỗi lần chạy kịch bản B — số điện thoại chưa có trong DB."""
+    users = UserRepository(db)
+    seed = int(time.time())
+    while True:
+        phone = f"08{seed % 10**8:08d}"
+        if await users.get_by_phone(phone) is None:
+            break
+        seed += 1
+    user = await AuthService(db).create_user(phone, "test123456", "Chị Mai", role="user")
+    print(f"  - đã tạo khách mới: {user.full_name} ({user.phone})")
+    return user
+
+
+KEEP_DB_TURNS: List[tuple] = [
+    (1, "Chào hỏi, khách mới.", "Chào em, chị là khách mới, lần đầu nhắn tiệm"),
+    (2, "Đặt sơn gel 9 giờ sáng mai — giờ này đang có khách nhuộm (9:00–11:00).",
+     "Em ơi mai chị muốn sơn gel lúc 9 giờ sáng"),
+    (3, "Hỏi giá sơn gel giữa chừng (phiên Đặt lịch vẫn phải còn chờ).",
+     "Mà sơn gel bên em bao nhiêu tiền vậy em?"),
+    (4, "Chốt giờ trống cho phiên đang chờ.", "11 giờ đi em"),
+    (5, "Bấm Đồng ý trên đề xuất (nút bấm, không gọi model).", None),
+    (6, "Hỏi tiệm có mở Chủ nhật không.", "Chủ nhật tiệm có mở cửa không em?"),
+    (7, "Đặt thêm cắt tóc 4 giờ chiều mai — giờ này đang có khách sơn gel (16:00–16:45).",
+     "Chị muốn đặt thêm cắt tóc lúc 4 giờ chiều mai nữa"),
+    (8, "Chốt giờ trống cho phiên đang chờ.", "Vậy 5 giờ chiều nha"),
+    (9, "Đồng ý bằng chữ (không bấm nút, qua Decision Gate).", "Ừ chị đồng ý"),
+    (10, "Xem lại lịch hẹn.", "Chị xem lại lịch hẹn của chị với"),
+]
+
+
+async def main(keep_db: bool = False) -> None:
     client = AsyncIOMotorClient(str(settings.mongo_uri))
     db = client[settings.mongo_db_name]
 
-    await clear_database(db)
-    await seed_services(db)
-    blocked_at = await create_blocking_appointment(db)
-
-    user = await UserRepository(db).get_by_phone("0912345678")
-    if user is None:
-        print("Không tìm thấy user 0912345678!")
-        client.close()
-        return
-    print(f"\nBắt đầu 10 lượt với khách: {user.full_name} ({user.phone})")
+    if keep_db:
+        if not await check_keep_db_scenario(db):
+            print("\nDừng: lịch trong DB không khớp kịch bản B, không gọi Azure.")
+            client.close()
+            return
+        user = await create_new_customer(db)
+        turns = KEEP_DB_TURNS
+    else:
+        await clear_database(db)
+        await seed_services(db)
+        blocked_at = await create_blocking_appointment(db)
+        user = await UserRepository(db).get_by_phone("0912345678")
+        if user is None:
+            print("Không tìm thấy user 0912345678!")
+            client.close()
+            return
+        turns = scenario_a_turns(blocked_at)
+    print(f"\nBắt đầu {len(turns)} lượt với khách: {user.full_name} ({user.phone})")
 
     results: List[Dict[str, Any]] = []
     proposal_id: Optional[str] = None
 
-    turns: List[tuple] = [
-        (1, "Chào hỏi mở đầu.", "Chào em, chị mới qua tiệm lần đầu nè"),
-        (2, f"Đặt sơn gel 3 giờ chiều mai — giờ này đã có khách khác "
-            f"({to_local(blocked_at).isoformat()}).",
-         "Em ơi chị muốn đặt sơn gel lúc 3 giờ chiều mai cho chị"),
-        (3, "Hỏi giờ mở cửa (lạc đề, phiên Đặt lịch vẫn phải còn chờ).",
-         "À mà tiệm mình mở cửa tới mấy giờ vậy em?"),
-        (4, "Chốt giờ mới cho phiên đang chờ.", "4 giờ đi"),
-        (5, "Bấm Đồng ý trên đề xuất (nút bấm, không gọi model).", None),  # điền ở dưới
-        (6, "Hỏi giá dịch vụ nhuộm tóc.", "Nhuộm tóc bên em giá nhiêu vậy em?"),
-        (7, "Đặt nhuộm tóc sáng mai.", "Chị muốn đặt nhuộm tóc sáng mai lúc 9 giờ cho chị"),
-        (8, "Đồng ý bằng chữ (không bấm nút, qua Decision Gate).", "Ừ chị đồng ý"),
-        (9, "Cảm ơn.", "Cảm ơn em nhiều nha"),
-        (10, "Xem lại lịch hẹn.", "Chị xem lại lịch hẹn của chị với"),
-    ]
-
     for turn_idx, description, text in turns:
-        if turn_idx == 5:
+        if text is None:
             if proposal_id is None:
-                print("\n  [BỎ QUA] lượt 5: chưa có đề xuất đang chờ để bấm Đồng ý.")
+                print(f"\n  [BỎ QUA] lượt {turn_idx}: chưa có đề xuất đang chờ để bấm Đồng ý.")
                 continue
             question: "str | ButtonReply" = ButtonReply(proposal_id=proposal_id, decision="yes")
         else:
@@ -271,7 +343,7 @@ async def main() -> None:
     client.close()
 
     print("\n" + "=" * 70)
-    print("TỔNG KẾT 10 LƯỢT")
+    print(f"TỔNG KẾT {len(turns)} LƯỢT")
     print("=" * 70)
     for r in results:
         icon = "LỖI" if r["error"] else "OK "
@@ -286,5 +358,27 @@ async def main() -> None:
         print("\nKhông lượt nào trả về error.")
 
 
+def scenario_a_turns(blocked_at: datetime) -> List[tuple]:
+    """Kịch bản A (xoá DB): 10 lượt của Cô Lan. `None` = bấm nút Đồng ý."""
+    return [
+        (1, "Chào hỏi mở đầu.", "Chào em, chị mới qua tiệm lần đầu nè"),
+        (2, f"Đặt sơn gel 3 giờ chiều mai — giờ này đã có khách khác "
+            f"({to_local(blocked_at).isoformat()}).",
+         "Em ơi chị muốn đặt sơn gel lúc 3 giờ chiều mai cho chị"),
+        (3, "Hỏi giờ mở cửa (lạc đề, phiên Đặt lịch vẫn phải còn chờ).",
+         "À mà tiệm mình mở cửa tới mấy giờ vậy em?"),
+        (4, "Chốt giờ mới cho phiên đang chờ.", "4 giờ đi"),
+        (5, "Bấm Đồng ý trên đề xuất (nút bấm, không gọi model).", None),
+        (6, "Hỏi giá dịch vụ nhuộm tóc.", "Nhuộm tóc bên em giá nhiêu vậy em?"),
+        (7, "Đặt nhuộm tóc sáng mai.", "Chị muốn đặt nhuộm tóc sáng mai lúc 9 giờ cho chị"),
+        (8, "Đồng ý bằng chữ (không bấm nút, qua Decision Gate).", "Ừ chị đồng ý"),
+        (9, "Cảm ơn.", "Cảm ơn em nhiều nha"),
+        (10, "Xem lại lịch hẹn.", "Chị xem lại lịch hẹn của chị với"),
+    ]
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--keep-db", action="store_true",
+                        help="giữ DB dev, tạo khách mới, chạy kịch bản B")
+    asyncio.run(main(keep_db=parser.parse_args().keep_db))
