@@ -179,6 +179,32 @@ async def test_continue_session_passes_memory_in_the_message(test_db, monkeypatc
     assert text.index("Session memory:") < text.index("Task: Customer picked a time")
 
 
+async def test_continue_session_keeps_the_service_of_the_session(test_db, monkeypatch):
+    # Live run 4, turn 8: the session was opened for a haircut, the Orchestrator
+    # continued it passing sơn gel, and 17:00 was booked as sơn gel. On a continued
+    # session, the service the session was opened with wins.
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+    await _open_session(test_db, user, memory={
+        "day": tomorrow_at(16).date().isoformat(), "service_ids": ["toc-nhuom"],
+        "offered": [moment(tomorrow_at(16))], "taken": [], "next_requests": [],
+    })
+    use_model(monkeypatch, scripted([
+        tool_call("parse_time", {"day_offset": 1, "hour": 4, "part_of_day": "chieu"}),
+        tool_call("propose_appointment", {"start_at": moment(tomorrow_at(16))["iso"]}),
+        result(status="ok"),
+    ]))
+
+    with structlog.testing.capture_logs() as logs:
+        command = await _run(test_db, user, continue_session=True, service_ids=["blk-45"],
+                             request="The customer chooses 4 pm")
+
+    [proposal] = [f for f in _facts(command) if f["kind"] == "proposal"]
+    assert proposal["service_ids"] == ["toc-nhuom"]
+    assert any(log["event"] == "subagent_service_ids_from_session" for log in logs)
+
+
 async def test_ok_closes_the_session(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)

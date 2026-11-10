@@ -308,6 +308,23 @@ async def _write_session(spec: SubagentSpec, ctx: RunContext, status: str,
     return False
 
 
+def _session_service_ids(session: Optional[WaitingSession], passed: list[str],
+                         log_extra: dict[str, Any]) -> list[str]:
+    """Làm tiếp một phiên chờ: dịch vụ phiên được mở cùng THẮNG dịch vụ
+    Orchestrator truyền (live run 4, lượt 8: phiên mở cho cắt tóc, Orchestrator
+    truyền sơn gel, lịch 17:00 bị ghi nhầm sơn gel). Khách đổi dịch vụ là việc
+    mới (`continue_session=false`), không đi qua đây."""
+    if session is None:
+        return passed
+    kept = session.memory.get("service_ids")
+    kept = [sid for sid in kept if isinstance(sid, str)] if isinstance(kept, list) else []
+    if not kept or kept == passed:
+        return passed
+    logger.warning("subagent_service_ids_from_session",
+                   extra={**log_extra, "passed": passed, "session": kept})
+    return kept
+
+
 def _service_state(snapshot: TurnSnapshot, turn_facts: list[dict]) -> Literal["clear", "unclear"]:
     """Phiên Dịch vụ đang chờ, hoặc lần gọi agent Dịch vụ MỚI NHẤT của lượt
     trả `need_info` / `failed` → "unclear" (gọi lại thành công thì thôi)."""
@@ -359,11 +376,13 @@ async def run_subagent(
 
     snapshot = await holder.current()
     turn_facts = list(runtime.state.get("turn_facts", []))
+    session = snapshot.sessions.get(spec.name) if continue_session else None
+    ids = _session_service_ids(session, list(service_ids), log_extra)
     ctx = RunContext(
         db=db, user=user, snapshot=snapshot,
-        session=snapshot.sessions.get(spec.name) if continue_session else None,
+        session=session,
         request=request, question=context.question, turn_id=context.turn_id,
-        service_ids=list(service_ids),
+        service_ids=ids,
         # Một đề xuất mới mỗi lượt (spec §8): lượt đã có đề xuất thì tool từ chối.
         allow_propose=runtime.state.get("proposals_created", 0) < 1,
         service_state=_service_state(snapshot, turn_facts),
