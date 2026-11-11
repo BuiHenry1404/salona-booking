@@ -29,7 +29,7 @@
   - `role` is the fixed enum `SEGMENT_ROLES`;
   - the format is passed explicitly as `ProviderStrategy(REPLY_SCHEMA, strict=True)`. Never use `ToolStrategy` or a raw schema;
   - never add a separate model call to format the reply.
-- Azure validity (trap 13): never a tool call without its ToolMessage. Never send an empty `tools` list together with a `response_format`; verified offline, langchain-openai sends `"tools": []` in that case.
+- Azure validity (trap 13): never a tool call without its ToolMessage. The guard rewrite keeps hiding every tool. Under `ProviderStrategy` langchain-openai then sends `"tools": []` with the strict `response_format`, and Azure accepts it (spike E, 11/11: 2 calls, no error).
 - Guard-rejected replies are only logged (`rejected_reply`), never stored in the DB. Logs never carry customer text.
 - No Azure call (live run, probe) without the owner's explicit approval. `scripts/test_live_10_turns.py` without `--keep-db` wipes the dev DB.
 - Unchanged: subagents, the button API, the `guard/fallback.py` templates, REST, Telegram, frontend.
@@ -38,7 +38,7 @@
 
 ## Review Focus
 
-1. **A guard rewrite turn with no allowed tool.** Today the rewrite call hides every tool. With a `response_format` bound, langchain-openai then sends `tools: []`, which OpenAI-compatible APIs reject. The rewrite must keep the offered tools and set `tool_choice="none"`. Test: `test_rewrite_turn_forbids_tool_calls` (Task 7).
+1. **The model returns invalid JSON twice in a turn** (the first reply and the rewrite). The turn must end on the code template (`ended_by` `fallback`), never on `TURN_ERROR_MESSAGE`. Test: `test_two_bad_structures_end_on_the_template` (Task 7).
 2. **Two facts at the same instant.** Example: the customer asked for 3 pm and 3 pm is taken. That gives one id with roles `[asked, taken]`; citing it as `offer` must still be `wrong_role`. Test: `test_same_instant_union_still_rejects_offer` (Task 2).
 3. **Segment text arriving in NFD** (combining accents, which some keyboards and paste paths produce). Neither `foreign_script` nor `english` may fire. Test: `test_nfd_vietnamese_is_not_foreign_or_english` (Task 4).
 4. **`{"segments": []}`, or segments whose texts are only whitespace.** The result is `empty`, not a crash and not `bad_structure`. Test: `test_empty_segment_list_is_empty` (Task 3).
@@ -621,9 +621,7 @@ This task flips the switch. Every scripted Orchestrator final reply in the suite
 
 **Files:**
 - Modify: `app/agents/salon/orchestrator/agent.py`: add `reply_format()` and pass `response_format=reply_format()`.
-- Modify: `app/agents/salon/orchestrator/middleware/context.py`:
-  - a rewrite with no allowed tool sets `tool_choice="none"`;
-  - catch `StructuredOutputValidationError`.
+- Modify: `app/agents/salon/orchestrator/middleware/context.py`: catch `StructuredOutputValidationError`. Tool hiding on rewrite stays as it is.
 - Modify: `app/agents/salon/orchestrator/middleware/reply_guard.py`: switch to `check_structured`; update `_CODE_HINTS` and `guard_hint`; write `announced_turn_ids`.
 - Modify: `app/agents/salon/orchestrator/state.py`: add `announced_turn_ids: NotRequired[list[str]]`.
 - Modify: `app/agents/salon/orchestrator/middleware/turn_start.py`: reset `"announced_turn_ids": []`.
@@ -634,7 +632,7 @@ This task flips the switch. Every scripted Orchestrator final reply in the suite
 
   Tests that called `check_reply` call `check_text` (or `check_structured` for the old `unknown_*` / `missing_fact` rows).
 - Modify tests:
-  - `tests/salon/orchestrator/test_middleware.py`: `_agent` passes `response_format=reply_format()`; `Recorder.bind_tools` appends its kwargs to `bind_kwargs`;
+  - `tests/salon/orchestrator/test_middleware.py`: `_agent` passes `response_format=reply_format()`;
   - `tests/salon/orchestrator/test_state.py`;
   - `tests/salon/turn/test_run.py`;
   - `tests/test_socketio_chat.py`;
@@ -646,9 +644,6 @@ This task flips the switch. Every scripted Orchestrator final reply in the suite
 - Produces:
   ```python
   def reply_format() -> ProviderStrategy            # ProviderStrategy(schema=REPLY_SCHEMA, strict=True)
-  def offered_tools(tools, *, has_pending, pending_decided, rewriting, codes) -> tuple[list, Optional[str]]
-      # (tools, tool_choice); tool_choice is "none" when rewriting and no tool is allowed
-      # (then the tools are the normal offered list), else None
   def guard_hint(codes: list[str], facts: ReplyFacts, problems: list[str]) -> str
   # _Answer gains: announced: list[str] = field(default_factory=list)
   async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[UnannouncedDecision]) -> None
@@ -657,7 +652,6 @@ This task flips the switch. Every scripted Orchestrator final reply in the suite
 **Behaviour:**
 
 1. **`ContextMiddleware`**
-   - **Tool choice:** when `offered_tools` returns `"none"`, override with `model_settings={**request.model_settings, "tool_choice": "none"}`. Under `ProviderStrategy` the factory passes `model_settings`, not `request.tool_choice`, into `bind_tools`.
    - **Parse errors:** wrap `await handler(...)`:
      ```python
      except StructuredOutputValidationError as exc:
@@ -702,9 +696,9 @@ async def test_plain_text_reply_is_bad_structure_and_rewritten(test_db): ...
 async def test_accepted_reply_is_stored_as_joined_text(test_db): ...
     # reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ", cite("hours", "7 giờ tối"), " ạ.")
     # -> state's last AI content == "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
-async def test_rewrite_turn_forbids_tool_calls(test_db): ...        # replaces test_rewrite_turn_offers_no_tools
-    # a rejected first reply -> the 2nd call's offered tools are non-empty and its bind kwargs have tool_choice "none";
-    # with code pending_undecided -> offered == ["decide_pending"] and no tool_choice "none"
+async def test_two_bad_structures_end_on_the_template(test_db): ...
+    # replies [AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")] -> the last message is the code fallback
+    # (additional_kwargs salon_source == "code"); no exception escapes the graph
 async def test_announced_ids_are_written_only_on_acceptance(test_db): ...
     # R0 approved in the ledger; the 1st reply cites R0 as booked plus cite(..., ref="t99") -> rejected,
     # state["announced_turn_ids"] == [] while rewriting; an accepted 2nd reply citing R0 -> == [r0 turn id]
@@ -719,8 +713,8 @@ async def test_r0_cited_in_a_short_phrase_marks_the_r0_turn(test_db, monkeypatch
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `.venv/bin/python -m pytest -q tests/salon/orchestrator/test_middleware.py tests/salon/turn/test_run.py -k "bad_structure or joined_text or forbids_tool or announced or reply_format"`
-Expected: FAIL. `reply_format` is missing, the reply is still stored as raw text, and tools are hidden on rewrite.
+Run: `.venv/bin/python -m pytest -q tests/salon/orchestrator/test_middleware.py tests/salon/turn/test_run.py -k "bad_structure or joined_text or announced or reply_format"`
+Expected: FAIL. `reply_format` is missing, and the reply is still stored as raw text.
 
 - [ ] **Step 3: Implement** the production changes listed under Files and Behaviour.
 
