@@ -36,7 +36,8 @@ không dùng LLM giám khảo.
    - phần chữ thường không nhắc giờ, dịch vụ, giá nào ngoài tham chiếu.
 3. Bot **nói gọn tự nhiên** (chủ dự án chọn): "4 giờ chiều mai", "cắt tóc", "khoảng 150
    nghìn". Không bắt đọc nguyên dạng `spoken` của tool.
-4. Chặn chữ nước ngoài (mục H) và lộ prompt / lọt tiếng Anh, bằng code.
+4. Chặn chữ nước ngoài (mục H) và lộ prompt / lọt tiếng Anh, bằng code. Lộ prompt do luật
+   `english` phủ (mục 6).
 
 ## Không làm (non-goals)
 
@@ -207,6 +208,13 @@ Sai vai trò sinh mã guard mới (vd `wrong_role`). Lời nhắc viết lại p
 sai, vai trò dữ kiện thật và vai trò được phép, ví dụ *"t1 is a proposal waiting for the
 customer, not booked"*.
 
+Thứ tự ưu tiên các mã cấu trúc *(quyết định của tôi, review Fable)*:
+- đoạn có `ref` mà `role` null, hoặc ngược lại: `bad_structure`;
+- `ref` không có trong dữ kiện của lượt: `unknown_ref`, và bỏ qua kiểm vai trò / kiểm chữ của
+  riêng đoạn đó;
+- các mã này có thể đi cùng các mã kiểm trên chữ đã ghép (`claim`, `english`…). Thứ tự trong
+  `CHECK_CODES` theo đúng thứ tự trên.
+
 ### 4. Luật kiểm chữ
 - Đoạn **giờ**: giờ đọc từ `text` (hàm đọc giờ sẵn có của guard) phải khớp **giờ** (giờ:phút)
   của id. **Chỉ so giờ, không so ngày**, giống R8/R9 hiện nay. "mai", "thứ Năm", "12/11"
@@ -218,10 +226,15 @@ customer, not booked"*.
 - Đoạn **giá**: mọi số tiền đọc được nằm trong khoảng giá của id.
 - Đoạn tham chiếu **chỉ chứa đúng mention** (giờ / tên dịch vụ / giá, kèm từ đi liền như
   "khoảng", "từ … đến"). Không chứa dấu kết câu hay câu hỏi.
-- Luật cụ thể cho đoạn **giờ**: bỏ giờ, phần ngày ("mai", "hôm nay", thứ, dd/mm, đọc bằng các
-  hàm quét sẵn có) và vài từ nối ngắn ("lúc", "vào", "ngày") đi, thì không còn chữ nào. Phần
-  ngày không bị so với dữ kiện (vẫn chỉ so giờ). Ví dụ đoạn *"hoặc 4 giờ chiều nhé."* bị chặn.
-  *(Quyết định của tôi, review Fable I5.)*
+- Luật cụ thể cho đoạn **giờ**: mọi từ trong đoạn phải thuộc **danh sách từ cho phép**, không
+  còn từ nào khác. Các hàm quét giờ / ngày hiện có (`scan_times`, `scan_day_offsets`,
+  `scan_weekdays`, `text_scan.py:240-347`) chỉ trả giá trị, không trả vị trí, nên **không** dùng
+  cách "cắt phần quét được ra". Danh sách gồm: số, `giờ` / `h` / `rưỡi` / `kém` / `phút`, từ chỉ
+  buổi (sáng, trưa, chiều, tối, đêm), từ chỉ ngày (mai, hôm nay, ngày kia, mốt), `thứ` + tên thứ,
+  chủ nhật, `tuần này` / `tuần sau` / `tuần tới`, dd/mm, và từ nối ngắn (lúc, vào, ngày). Phần
+  ngày không bị so với dữ kiện (vẫn chỉ so giờ), và giờ vẫn phải đọc được và khớp id. Ví dụ
+  *"hoặc 4 giờ chiều nhé."* bị chặn; *"3 giờ rưỡi chiều mai"*, *"9h30 sáng ngày mai"*, *"4 giờ
+  chiều thứ Năm tuần sau"* qua. *(Quyết định của tôi, review Fable I5 và lần review lại.)*
 - **Lỗ hổng đã biết, chấp nhận:** nếu model gắn đúng vai trò (`taken`) cho một giờ kín, nhưng
   phần chữ thường lại mời giờ đó (*"em tìm được … chị đồng ý nhé?"*), thì vai trò không bắt
   được, vì vai trò kiểm nhãn chứ không đọc nghĩa câu. Câu sai của lần chạy 2, lượt 2 bị chặn
@@ -243,10 +256,20 @@ Câu mẫu code, viết lại tối đa 1 lần, `exit_behavior="error"` của t
 Phải đổi kèm *(quyết định của tôi, review Fable C1 và các điểm nhỏ)*:
 - **Đánh dấu "đã báo"** (`turn/run.py::_mark_announced`, dòng 505) đang so nguyên văn `spoken`
   trong câu đã gửi. Câu nói gọn ("9 giờ sáng mai") sẽ không bao giờ được đánh dấu, nên dòng
-  Unannounced (R0) hiện lại mỗi lượt và ép bot báo lại mãi. Đổi sang: guard trả về các id
-  quyết định / R0 đã được tham chiếu với vai trò `booked` / `moved` / `cancelled` / `failed`
-  trong câu đã nhận, và `_mark_announced` dùng danh sách đó. Câu mẫu code không có đoạn tham
-  chiếu nhưng luôn chứa nguyên `spoken`, nên giữ cách so nguyên văn cho câu mẫu.
+  Unannounced (R0) hiện lại mỗi lượt và ép bot báo lại mãi. Đổi sang:
+  - Guard chạy trong graph (`aafter_model`), còn `_mark_announced` chạy sau đó trong `run_turn`
+    (`run.py:672`) và chỉ thấy chữ. Nên đường chuyển là **một key mới trong state**, dạng JSON
+    thuần, ví dụ `announced_turn_ids`: danh sách `turn_id` trong sổ lượt cần đánh dấu (quyết
+    định của lượt qua `DecisionFact`, R0 qua `UnannouncedDecision.turn_id`).
+  - Guard chỉ ghi key này khi **nhận** câu, có đoạn tham chiếu quyết định / R0 với vai trò
+    `booked` / `moved` / `cancelled` / `failed`, đúng các kết quả `approved` / `failed` mà
+    `_mark_announced` đang xét. Câu bị loại thì không ghi.
+  - `TurnStartMiddleware` reset key này như các key theo lượt khác (`turn_start.py:81-90`).
+  - `_final_answer` đọc key này vào `_Answer` (có kiểm `_same_turn`), rồi `_mark_announced` gọi
+    `mark_announced` cho từng `turn_id`.
+  - Câu mẫu code (`_fallback`, `button_reply`) không có đoạn tham chiếu nhưng luôn chứa nguyên
+    `spoken`, nên giữ cách so nguyên văn cho câu mẫu, và câu mẫu bỏ qua key này.
+  - Phải đổi kèm: `SalonState`, `_Answer`, test roundtrip của state.
 - Lời nhắc viết lại `_CODE_HINTS` (`middleware/reply_guard.py:52`): `unknown_time` /
   `missing_fact` đang bảo "copied exactly as their spoken value", phải đổi theo luật tham
   chiếu.
@@ -321,8 +344,10 @@ Ngưỡng chuyển do chủ dự án quyết khi xem transcript. Không làm tro
 ## Lưu ý kỹ thuật cho người làm
 - `create_agent` lưu `structured_response` vào state; với model pydantic dựng động, serde của
   checkpointer ghi cảnh báo "Blocked deserialization" mỗi lần đọc (Fable đã thử), và nó không
-  bao giờ bị xoá khi `create_agent` dựng không có `response_format` (factory dòng 1534). Dùng
-  **schema dạng dict**. Guard parse `reply.text`, không đọc `state["structured_response"]`.
+  bao giờ bị xoá khi `create_agent` dựng không có `response_format` (factory dòng 1534). Truyền
+  `response_format` vào `create_agent` thì nó được xoá; cả hai đường đều không sao nếu guard
+  không đọc nó. Dùng **schema dạng dict**. Guard parse `reply.text`, không đọc
+  `state["structured_response"]`.
 - `ProviderStrategy` ép `strict=True` cho cả schema của tool Orchestrator (factory 1.4.6,
   khoảng dòng 1452). **Đã kiểm** (bản thử c, cùng `convert_to_openai_tool(strict=True)`):
   schema 4 tool hiện có hợp strict. Tool thêm sau này cũng phải hợp: mọi trường bắt buộc,
@@ -339,16 +364,19 @@ Ngưỡng chuyển do chủ dự án quyết khi xem transcript. Không làm tro
   thêm lần gọi riêng để định dạng câu cuối.
 - Cách đánh số id cụ thể, và dữ kiện nào hiện ở đâu trong khối bối cảnh.
 - Luật so khớp tên dịch vụ, và danh sách "từ đi liền" cho đoạn giá.
-- Ngưỡng của `prompt_leak` và `english`.
+- Ngưỡng của `english`.
 - Tên mã guard mới.
 
 ## Tiêu chí xong
 - Test viết trước (TDD): mỗi vai trò đúng / sai; chữ khớp / không khớp; chữ thường có giờ /
   giá / dịch vụ; ghép khoảng trắng; các luật mục 6, kèm câu thật "Եթե" của lần chạy 4; câu sai
   của lần chạy 2 lượt 2 và lần chạy 4 lượt 8 phải bị chặn; quyết định được báo bằng câu nói
-  gọn vẫn được đánh dấu "đã báo"; câu mẫu vẫn được đánh dấu như cũ; JSON hỏng ra
-  `bad_structure`, không ra câu báo lỗi của lượt. Toàn bộ pytest + vitest xanh.
+  gọn vẫn được đánh dấu "đã báo"; câu bị loại thì không đánh dấu; câu mẫu vẫn được đánh dấu
+  như cũ; JSON hỏng ra `bad_structure`, không ra câu báo lỗi của lượt; `unknown_ref` (id có
+  thật thì qua, id lạ bị chặn, lời nhắc liệt kê id hợp lệ); luật từ cho phép của đoạn giờ
+  (các ví dụ chặn / qua ở mục 4). Toàn bộ pytest + vitest xanh.
 - Chạy thật (hỏi chủ dự án trước): kịch bản A, và kịch bản B tự chọn giờ trên DB cũ. Đọc tay
-  transcript theo các anti-goal ở trên.
+  transcript theo các anti-goal ở trên. Riêng câu cứng (đọc nguyên "Thứ Năm 12/11, …", tên dịch
+  vụ viết hoa giữa câu): bản thử (d) vẫn còn, nên phải soi kỹ.
 - Ghi lại số lượt rơi xuống câu mẫu và số lần viết lại vì `wrong_role`. Số liệu này dùng để
   quyết có cần phương án dự phòng không.
