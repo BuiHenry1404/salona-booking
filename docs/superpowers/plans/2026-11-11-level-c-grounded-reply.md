@@ -38,7 +38,7 @@
 
 ## Review Focus
 
-1. **The model returns invalid JSON twice in a turn** (the first reply and the rewrite). The turn must end on the code template (`ended_by` `fallback`), never on `TURN_ERROR_MESSAGE`. Test: `test_two_bad_structures_end_on_the_template` (Task 7).
+1. **The model returns invalid JSON twice in a turn** (the first reply and the rewrite). The turn must end on the code template (`ended_by` `fallback`), never on `TURN_ERROR_MESSAGE`. Tests: `test_two_bad_structures_end_on_the_template` (graph) and `test_two_bad_structures_end_the_turn_on_the_template` (run level), both in Task 7.
 2. **Two facts at the same instant.** Example: the customer asked for 3 pm and 3 pm is taken. That gives one id with roles `[asked, taken]`; citing it as `offer` must still be `wrong_role`. Test: `test_same_instant_union_still_rejects_offer` (Task 2).
 3. **Segment text arriving in NFD** (combining accents, which some keyboards and paste paths produce). Neither `foreign_script` nor `english` may fire. Test: `test_nfd_vietnamese_is_not_foreign_or_english` (Task 4).
 4. **`{"segments": []}`, or segments whose texts are only whitespace.** The result is `empty`, not a crash and not `bad_structure`. Test: `test_empty_segment_list_is_empty` (Task 3).
@@ -108,7 +108,10 @@
 
 **How the catalog is built** (no signature or test can fix this; implement it exactly):
 
-1. **Times.** Walk the sources in the order below. Merge every source with the same instant (the UTC ISO of `datetime.fromisoformat(moment.iso)`; skip a moment whose iso does not parse) into one entry. The first appearance fixes the number and the label (that moment's `spoken`). Roles add up. `clocks` = the `[:2]` of `clocks_of_moment`.
+1. **Times.** Walk the sources in the order below. Merge every source with the same instant into one entry. The instant is `datetime.fromisoformat(moment.iso).astimezone(timezone.utc).isoformat()`; skip a moment whose iso does not parse or is naive.
+   - The first appearance fixes the number and the label (that moment's `spoken`).
+   - Roles add up, and `announce_turn_ids` stays unique.
+   - `clocks = sorted({key[:2] for key in clocks_of_moment(moment)})`.
    1. `turn_facts`, in order:
       - `TimeFact`, by role: `free→offer`, `taken→taken`, `held→held`, `appointment→appointment`, `asked→asked`, `at→asked`, `shop_open→hours`, `shop_close→hours`, `busy_until→busy`.
       - `ProposalFact`: `held`, and its `service_ids` go into the entry's `service_ids`.
@@ -118,7 +121,9 @@
         - `not_approvable` → `failed`;
         - `rejected` and `superseded` → `released`;
         - `kept` and `clarify` → `held`.
-   2. `pending_outcome`, only when `turn_facts` has no `DecisionFact`: its `at` uses the same outcome rules; its `nearest` → `offer`.
+   2. `pending_outcome`, **always** when present. `decide_pending` writes both a `DecisionFact` and `pending_outcome` (`orchestrator/tools.py:182-184`).
+      - Its `at` uses the same outcome rules; the same instant merges with the `DecisionFact`.
+      - Its `nearest` → `offer`. These are the free times shown to the model after a failed approval.
    3. `snapshot.pending` → `held` (plus its `service_ids`), only when every decision from `turn_decisions` is `kept` or `clarify`, or there is none.
    4. `snapshot.unannounced`: `approved` → `CLAIM_FOR_KIND[proposal_kind]`; `failed` → `failed`. Both get `announce_turn_ids=[unannounced.turn_id]`.
    5. `snapshot.upcoming` → `appointment`.
@@ -134,7 +139,7 @@
    - label `"customer said " + " or ".join(f"{h:02d}:{m:02d}")`. Never put customer words in the label.
    - A button turn has `question == ""`, so it has none.
 4. **Services.** Collect distinct service ids in this order: `ServiceFact`s in `turn_facts` → `snapshot.known_services` → `pending.service_ids` → each `ProposalFact.service_ids` → each `upcoming[].service_ids` → each session's `memory["service_ids"]` (list entries that are strings only).
-   - Name and price come from the `ServiceFact` when there is one, else from `services_by_id`. Skip an id found in neither.
+   - Name and price come from the DB catalog (`services_by_id`) when the id is there, else from the `ServiceFact`. The guard never trusts prices from a ServiceFact over the catalog (`facts.py:172-173`). Skip an id found in neither.
    - roles `["service", "price"]`, label `f"{name}, {format_price(low, high)}"`.
 5. **Groups.** For each multi-service list (pending, proposals, upcoming, sessions) with at least 2 distinct ids, all resolved:
    - roles `["price"]`;
@@ -183,6 +188,12 @@ def test_render_lists_ids_roles_and_labels():
                             "- s1 [service, price]: Sơn gel, 120.000đ-180.000đ")
 async def test_catalog_is_deterministic(test_db): ...   # two builds from the same inputs are equal
 async def test_id_of_finds_a_moment_by_instant(test_db): ...
+async def test_nearest_free_is_offer_even_with_a_decision_fact(test_db): ...
+    # DecisionFact failed book 15:00 + pending_outcome(failed, at 15:00, nearest [16:00, 17:00])
+    # -> t(15:00) roles ["failed"]; t(16:00) and t(17:00) roles ["offer"]
+async def test_busy_and_at_roles(test_db): ...   # TimeFact busy_until -> ["busy"]; TimeFact at -> ["asked"]
+async def test_announce_ids_stay_unique(test_db): ...
+    # DecisionFact approved book 9:00 + unannounced(turn_id=TURN_ID, approved, 9:00) -> announce_turn_ids == [TURN_ID]
     # id_of(Moment(iso=same instant, spoken="khác")) == "t1"
 ```
 
@@ -255,7 +266,7 @@ REPLY_SCHEMA = {
    1. **Half reference.** `(ref is None) != (role is None)` → `bad_structure`. Skip the segment.
    2. **Unknown id.** `ref` not in the catalog → `unknown_ref`, problem `f"{ref} is not in Reply facts (valid ids: {', '.join(ids)})"`. Skip the segment.
    3. **Role.** `role not in entry.roles` → `wrong_role`, problem `f"{ref} allows {', '.join(entry.roles)}, not {role}"`. Skip the text check.
-   4. **Held-service rule.** `held_services` is the union of `entry.service_ids` over the segments cited `held`. When it is non-empty, a `service` segment whose entry's id is not in it → `wrong_role`, problem `f"{ref} is not a service of the held proposal"`.
+   4. **Held-service rule.** Before the main loop, make a first pass. `held_services` is the union of `entry.service_ids` over the segments that cite a known id with role `held`, in any position (a service segment may come before the held one). When `held_services` is non-empty, a `service` segment whose `entry.service_ids[0]` is not in it → `wrong_role`, problem `f"{ref} is not a service of the held proposal"`.
    5. **Text, by entry kind** (any failure → `ref_mismatch`, problem `f"{ref} is {entry.label}; the segment text {text!r} does not match it"`):
       - **`time` and `customer_clock`:**
         - `clocks_in_text(text)` is non-empty, and every reading shares a value with `entry.clocks`;
@@ -263,7 +274,7 @@ REPLY_SCHEMA = {
         - the text has none of `. ? !`.
 
         `TIME_WORDS = {"giờ", "h", "rưỡi", "kém", "phút", "sáng", "trưa", "chiều", "tối", "đêm", "mai", "hôm", "nay", "ngày", "kia", "mốt", "thứ", "hai", "ba", "tư", "năm", "sáu", "bảy", "chủ", "nhật", "cn", "tuần", "này", "sau", "tới", "lúc", "vào"}`.
-      - **`service`:** the words share at least one word with `entry.names[0]`, and the text contains no name of another catalog `service` entry (compared after `normalize_for_match`).
+      - **`service`:** the words share at least one word with `entry.names[0]`. The text contains no name of another catalog `service` entry (compared after `normalize_for_match`), except names that are part of the cited entry's own name.
       - **`price`:**
         - `scan_money(text)` is non-empty, and every amount is inside `entry.price`;
         - the text has no `?` or `!`, and does not end with `.`.
@@ -325,6 +336,7 @@ def test_check_segments_table(catalog, segments, expected): ...
 def test_same_instant_union_still_rejects_offer(): ...   # entry roles ["asked", "taken"]; offer -> wrong_role
 def test_problems_name_the_id_and_allowed_roles(catalog): ...  # "t1 allows taken, not offer" in problems
 def test_cited_lists_only_valid_refs(catalog): ...
+def test_unknown_ref_problem_lists_valid_ids(catalog): ...   # problem contains "valid ids: t1, t2, t3, s1, s2, c1"
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -398,7 +410,12 @@ git commit -m "feat: parse reply segments and check each cited fact"
 5. `codes = report.codes | {missing_fact if any} | check_text(text, facts)`, ordered by `CHECK_CODES`.
 6. `announce_turn_ids` lists the unique `entry.announce_turn_ids` of cited `(ref, role)` pairs whose role is in `ANNOUNCE_ROLES`, in citation order.
 
-- [ ] **Step 1: Write the failing tests** in `tests/salon/guard/test_checks.py`. Build the replies with a local helper `_raw(*parts)` that makes the JSON; a part is a str (plain) or a `(text, ref, role)` tuple.
+- [ ] **Step 1: Write the failing tests** in `tests/salon/guard/test_checks.py`. Build the replies with a local helper `_raw(facts, *parts)` that makes the JSON. A part is either a str (a plain segment) or a `(text, target, role)` tuple, where `target` is:
+  - a `Moment`, resolved by `facts.catalog.id_of`;
+  - a `Service` (e.g. `GEL`), resolved to the catalog entry whose `service_ids == [service.id]`;
+  - a str, used as the ref as-is.
+
+  Task 7 converts the old `check_reply` table rows with the same helper.
 
 ```python
 async def test_required_refs_cover_proposal_taken_r0_and_decision(test_db): ...
@@ -531,7 +548,8 @@ git commit -m "feat: block foreign scripts and English runs in replies"
 ```python
 async def test_context_block_lists_reply_facts(test_db): ...
     # any one-turn run; the first model call's SystemMessage (the context block) contains
-    # "Reply facts (cite by id):" and lines matching "[hours]: opens 8 giờ sáng" and "[hours]: closes"
+    # "Reply facts (cite by id):" and lines containing "[hours]: opens " and "[hours]: closes "
+    # (seed hours with tests.salon.subagents.default_hours(test_db) first if the harness has none)
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -684,7 +702,22 @@ This task flips the switch. Every scripted Orchestrator final reply in the suite
    - Otherwise it becomes `reply(...)`, with each time, service and price as a `cite(role, text)` whose role is allowed in that turn's catalog. The joined text must equal the old string, so assertions on the answer text still hold; give the old strings their own `*_TEXT` constants.
    - Replies that a test means to be rejected must still be JSON, so the asserted code fires and not `bad_structure`.
    - Keep every test's asserted codes. Where the old expectation was `unknown_time`, `unknown_price` or verbatim `missing_fact`, assert the new code (`unreferenced`, `ref_mismatch`, `missing_fact` by reference).
+   - **Scale.** About 75 scripted final replies:
+     - `test_middleware.py` has about 30 (`GOOD` ×24, `CLAIM` ×8, …);
+     - `test_run.py` has about 40 (`OFFER_9`, `HOURS`, `ASK_OTHER_TIME`, `OFFER_15`, `OFFER_16`, `price`, `LISTED`, `cancel`, `booked`, …);
+     - `test_socketio_chat.py` has 2.
+
+     About 30 of them need `cite(...)`. Convert each shared constant once.
+   - **A mention with no catalog fact** (e.g. `CLAIM`'s "3 giờ chiều mai" with no pending proposal, "5 giờ chiều" at `test_middleware.py:319`, the "9 giờ tối" / "3 giờ sáng" rows):
+     - keep it in a plain segment and expect `unreferenced` next to the old code;
+     - when the test is about a wrong clock for a real fact, cite that fact with the wrong words and expect `ref_mismatch`.
+   - **`find=`:**
+     - a time cite whose text adds a day ("9 giờ sáng mai") passes `find="9 giờ sáng"`;
+     - a price cite passes `find=<service name>`, because the label is "name, price".
+   - **Never convert messages seeded into history** (`_seed`, `test_summary_keeps_tool_call_pairs_together` and similar). History stores the joined text, exactly as the guard leaves it.
+   - **The old `check_reply` table rows** in `test_checks.py` move to `check_structured`, using the `_raw(facts, …)` helper from Task 3.
    - Ledger a `Ruling:` for any test whose asserted codes must change for another reason.
+   - On `bad_structure`, `rejected_reply` logs the raw model output. That is bot text, which is allowed.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -699,21 +732,28 @@ async def test_accepted_reply_is_stored_as_joined_text(test_db): ...
 async def test_two_bad_structures_end_on_the_template(test_db): ...
     # replies [AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")] -> the last message is the code fallback
     # (additional_kwargs salon_source == "code"); no exception escapes the graph
-async def test_announced_ids_are_written_only_on_acceptance(test_db): ...
-    # R0 approved in the ledger; the 1st reply cites R0 as booked plus cite(..., ref="t99") -> rejected,
-    # state["announced_turn_ids"] == [] while rewriting; an accepted 2nd reply citing R0 -> == [r0 turn id]
+async def test_rejected_replies_write_no_announced_ids(test_db): ...
+    # R0 approved in the ledger; two replies citing R0 as booked plus cite(..., ref="t99") -> both rejected,
+    # the turn ends on the template; final state["announced_turn_ids"] == []
+async def test_accepted_reply_writes_the_cited_r0_id(test_db): ...
+    # R0 approved in the ledger; one accepted reply citing R0 as booked -> final state == [r0 turn id]
 async def test_reply_format_is_strict_provider_strategy(): ...
     # isinstance(reply_format(), ProviderStrategy) and reply_format().schema_spec.strict is True
 # test_run.py
 async def test_short_phrased_decision_is_marked_announced(test_db, monkeypatch): ...
     # a typed approval turn; the reply cites the booked time as "9 giờ sáng mai"; ledger record(turn_id).announced
 async def test_r0_cited_in_a_short_phrase_marks_the_r0_turn(test_db, monkeypatch): ...
+async def test_two_bad_structures_end_the_turn_on_the_template(test_db, monkeypatch): ...
+    # orchestrator replies [AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")] -> the `complete` event carries the
+    # template text, no `error` event; ledger record ended_by == "fallback"   (Review Focus 1, run level)
+async def test_code_template_still_marks_announced_verbatim(test_db, monkeypatch): ...
+    # R0 approved; two bad replies -> template that contains R0's spoken -> ledger R0 record announced
 # test_state.py: the roundtrip test includes "announced_turn_ids": ["t-0"]
 ```
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `.venv/bin/python -m pytest -q tests/salon/orchestrator/test_middleware.py tests/salon/turn/test_run.py -k "bad_structure or joined_text or announced or reply_format"`
+Run: `.venv/bin/python -m pytest -q tests/salon/orchestrator/test_middleware.py tests/salon/turn/test_run.py -k "bad_structure or joined_text or announced or reply_format or template or announced_ids"`
 Expected: FAIL. `reply_format` is missing, and the reply is still stored as raw text.
 
 - [ ] **Step 3: Implement** the production changes listed under Files and Behaviour.
