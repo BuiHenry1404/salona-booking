@@ -1,7 +1,7 @@
 # Mức C — câu trả lời tham chiếu dữ kiện
 
 Ngày 11/11/2026. Chủ dự án chọn làm mức C sau khi rà các lớp guard. Phạm vi và cách làm
-chốt qua brainstorming và ba bản thử trên Azure trong cùng phiên.
+chốt qua brainstorming và bốn bản thử trên Azure trong cùng phiên.
 
 ## Vì sao
 
@@ -60,7 +60,7 @@ không dùng LLM giám khảo.
 |---|---|---|
 | Sai cú pháp / thiếu vai trò | 5/15 | 0/15 |
 | Quên đánh dấu giờ, dịch vụ, giá | 3/15 | 0/15 |
-| Id không có thật | có thể | không thể (id là enum trong schema) |
+| Id không có thật | có thể | không thể (id là enum trong schema của bản thử; spec chọn schema cố định, code kiểm id, xem mục 1) |
 | Lỗi nói sai nghĩa bị bắt được | 3/15 | 6/15 (đều là "em đã đặt…" trong khi đề xuất còn chờ) |
 | Qua hết các bước kiểm | 5/15 | 9/15 |
 
@@ -78,8 +78,11 @@ chị đồng ý không?"), nên tỉ lệ này có thể cao hơn thực tế.
 
 ### Bản thử (c): gắn đủ tool như Orchestrator thật (11/11, 16 lần gọi)
 Bản thử (b) gọi model không gắn tool. Bản thử (c) gắn **cả 4 tool thật** của Orchestrator và
-schema JSON strict trong **một** lần gọi, đúng cách `create_agent` 1.4.6 gắn
-`ProviderStrategy` (`bind_tools(tools, strict=True, response_format=json_schema)`). Có 4 tình
+schema JSON trong **một** lần gọi, đúng cách `create_agent` 1.4.6 gắn `ProviderStrategy`
+(`bind_tools(tools, strict=True, response_format=json_schema)`). **Lưu ý (review Fable 11/11):**
+bản thử tạo `ProviderStrategy` không truyền `strict=True`, mà `langchain_openai` mặc định
+`strict=False` (`_convert_to_openai_response_format`). Vậy tool là strict nhưng **JSON không
+strict**; kết quả dưới đây có được mà không có ràng buộc giải mã của schema. Có 4 tình
 huống (giờ kín, chọn giờ trong phiên chờ, hỏi giá, đồng ý đề xuất), mỗi tình huống 2 lần, mỗi
 lần 2 bước:
 - **Bước 1** (chưa có kết quả tool, model phải gọi tool): **8/8** gọi đúng tool với đúng tham
@@ -89,13 +92,24 @@ lần 2 bước:
   kiểm; không lần nào sai cú pháp. Hai lần trượt đều là model gọi thêm `decide_pending`. Lỗi
   nằm ở bản thử: nó ghi đề xuất vừa tạo trong lượt vào dòng "Pending proposal", còn code thật
   (`_pending_view`) giấu đề xuất đó. Nếu model vẫn gọi, luật `no_pending` trả lỗi về cho nó.
-- Azure nhận tool strict cùng `response_format` json_schema trong một lần gọi, không có lỗi
-  400.
+- Azure nhận tool strict cùng `response_format` json_schema (không strict) trong một lần gọi,
+  không có lỗi 400. Tool strict **và** JSON strict cùng lúc thì chưa kiểm.
 
 Kết luận: **không cần lần gọi riêng để định dạng câu cuối.** Một lần gọi vừa chọn tool vừa trả
 JSON chạy được. Câu thật của bước 2 đã gọn hơn (b), ví dụ *"sơn gel lúc 3 giờ chiều mai đã có
 khách đặt rồi ạ. Chị chọn giúp em 1 giờ chiều, 2 giờ chiều hoặc 4 giờ chiều nhé."* Vẫn còn tên
 dịch vụ viết hoa giữa câu (*"Dạ chị Lan, Nhuộm giá khoảng…"*), việc của mục 7.
+
+### Bản thử (d): strict cả tool lẫn JSON, schema cố định (11/11, 4 lần gọi)
+Chủ dự án duyệt sau review Fable. Bản thử dùng `ProviderStrategy(schema_dict, strict=True)` với
+**schema cố định** chủ dự án chọn (mục 1), và in cấu hình gửi đi trước khi gọi:
+`response_format` strict = True, 4 tool strict = True.
+- Azure nhận cả hai strict trong cùng một lần gọi, không lỗi.
+- 2/2 lần ở bước 1 gọi đúng tool (`service_task`; `decide_pending` với `approve`).
+- 2/2 lần ở bước 2 trả JSON hợp lệ, qua mọi bước kiểm, id đều có thật dù `ref` là chữ tự do.
+  Một trong hai là tình huống giữ chỗ với bối cảnh đúng như code thật (đề xuất vừa tạo không
+  hiện là "Pending proposal"). Model trả lời ngay, không gọi thêm `decide_pending`. Điều đó xác
+  nhận hai lần trượt của bản thử (c) là do bản thử dựng sai bối cảnh.
 
 ## Cách làm (đã chốt)
 
@@ -103,14 +117,27 @@ dịch vụ viết hoa giữa câu (*"Dạ chị Lan, Nhuộm giá khoảng…"*
 - Câu trả lời cuối của Orchestrator (lời gọi model không có tool call) trả theo schema
   strict, dùng structured output của Azure. Schema là một danh sách **đoạn** có thứ tự. Mỗi
   đoạn gồm `text`, `ref` (id dữ kiện hoặc null), `role` (vai trò hoặc null).
-- `ref` là **enum các id hợp lệ của chính lần gọi đó**. Dữ kiện tăng dần trong lượt (tool trả
-  thêm) nên enum dựng lại ở mỗi lần gọi model. `ModelRequest.response_format` trong LangChain
-  1.4.6 đổi được theo từng lần gọi, ví dụ trong `ContextMiddleware.awrap_model_call`, nơi đã
-  dựng khối bối cảnh và chọn tool.
-- Hình dạng schema của bản thử (b), đạt 15/15 về cú pháp:
-  `{"segments": [{"text": str, "ref": <enum id> | null, "role": <enum vai trò> | null}]}`,
-  mọi trường bắt buộc (nullable), `strict=True`. Script thử được giữ ở
-  `.superpowers/sdd/2026-11-11-level-c/spike/` (git-ignored) để tham khảo.
+- **Schema cố định, giống hệt nhau ở mọi lần gọi** (chủ dự án chọn 11/11, review Fable I2):
+  `ref` là chữ hoặc null, **không** phải enum id theo lần gọi; `role` là enum cố định gồm mọi
+  vai trò ở mục 3. Lý do: schema của structured output nằm ở đầu prompt (tài liệu prompt
+  caching của OpenAI và Azure), nên schema đổi theo lần gọi thì mất prompt cache của cả prompt.
+  Dự án đã giữ schema tool cố định vì đúng lý do này (`orchestrator/tools.py:9-12`).
+- Vì `ref` là chữ tự do, **code kiểm id**: id không có trong dữ kiện được phép nhắc của lượt
+  thì sinh mã guard mới (vd `unknown_ref`), viết lại 1 lần rồi câu mẫu như mọi mã khác. Lời
+  nhắc viết lại nêu id sai và danh sách id hợp lệ.
+- Không giới hạn enum vai trò theo từng lần gọi (đề xuất I4 của Fable), vì làm vậy cũng đổi
+  schema. Lỗi "em đã đặt" trên giờ đang giữ do `wrong_role` bắt và viết lại.
+- **Dùng `ProviderStrategy(schema, strict=True)` tường minh.** Không dùng `ToolStrategy`,
+  không truyền schema trần (factory tự chọn chiến lược qua `_supports_provider_strategy`, có
+  thể ra `ToolStrategy` với tên deployment Azure). Với `ToolStrategy`, câu cuối là một tool
+  call kèm ToolMessage giả: `final_reply` (`middleware/turns.py:66`) bỏ qua nó, `_final_answer`
+  báo `turn_ended_without_reply`, và guard xoá câu đó sẽ để ToolMessage treo (bẫy 13).
+  *(Quyết định của tôi, theo review Fable I1.)*
+- Hình dạng schema (bản thử d): một **dict** JSON schema
+  `{"segments": [{"text": str, "ref": str | null, "role": <enum vai trò> | null}]}`, mọi trường
+  bắt buộc (nullable), `additionalProperties: false`, `strict=True`. Script thử được giữ ở
+  `.superpowers/sdd/2026-11-11-level-c/spike/` (git-ignored) để tham khảo
+  (`spike_level_c_strict.py`).
 - **Cấu trúc hỏng không được đi đường lỗi của lượt.** JSON không parse được, `ref` với
   `role` lệch nhau (một bên null), hay model trả chữ thường thay vì JSON: tính là một mã
   guard (vd `bad_structure`), viết lại 1 lần rồi câu mẫu như mọi mã khác. Không để lỗi
@@ -118,6 +145,9 @@ dịch vụ viết hoa giữa câu (*"Dạ chị Lan, Nhuộm giá khoảng…"*
   tự parse thay vì để factory của `create_agent` parse. *(Quyết định của tôi, theo ý "xử lý
   như các mã khác".)*
 - Lần viết lại của guard dùng cùng schema.
+- **Thứ tự trong guard:** parse JSON → ghép chữ → `strip_tool_text` → các luật. Không chạy
+  `strip_tool_text` trên JSON thô: `_drop_json` (`guard/checks.py:360`) xoá mọi khối `{…}`,
+  câu thành rỗng. *(Quyết định của tôi, review Fable I3.)*
 - Câu khách đọc = các `text` ghép theo thứ tự. **Code tự chèn khoảng trắng** khi hai đoạn
   liền nhau đều là chữ / số ở chỗ nối, và chuẩn hoá khoảng trắng thừa.
 - Câu lưu trong state / checkpoint là chữ đã ghép (lượt sau, luật `repeat` và lịch sử gửi
@@ -131,8 +161,10 @@ dịch vụ viết hoa giữa câu (*"Dạ chị Lan, Nhuộm giá khoảng…"*
     dịch vụ;
   - từ khối bối cảnh: đề xuất đang chờ, lịch sắp tới, lựa chọn của phiên chờ, giờ mở / đóng
     cửa, dịch vụ đã biết trong cuộc trò chuyện.
+  - Dịch vụ của đề xuất đang chờ và của lịch sắp tới cũng có id `s*`. `PendingView` chỉ có
+    id dịch vụ, nên code tra tên từ id. *(Quyết định của tôi, review Fable.)*
 - Id hiện trong khối bối cảnh, cạnh từng dữ kiện (vd `- t3: time free Thứ Năm 12/11, 2 giờ
-  chiều`). Model không tự đặt id.
+  chiều`). Model chép id từ đó, không tự đặt; id lạ bị `unknown_ref` bắt (mục 1).
 - Cùng một mốc giờ có hai vai trò dữ kiện (vd giờ khách hỏi cũng là giờ kín) thì dùng một id;
   vai trò cho phép là hợp của các vai trò đó.
 - **Nhóm nhiều dịch vụ** (đề xuất chờ, đề xuất mới, phiên chờ, lịch sắp tới có từ 2 dịch vụ):
@@ -157,7 +189,7 @@ dịch vụ viết hoa giữa câu (*"Dạ chị Lan, Nhuộm giá khoảng…"*
 | `service`: tên dịch vụ | dịch vụ; nếu câu có `held`, dịch vụ phải thuộc đề xuất đó |
 | `price`: giá hoặc khoảng giá | dịch vụ, hoặc nhóm `g*` (một con số trong khoảng giá là hợp lệ, quyết định 13) |
 | `failed`: ghi lịch thất bại | quyết định `failed` / `not_approvable` của lượt, hoặc R0 thất bại |
-| `released`: lịch / đề xuất khách vừa bỏ | quyết định `rejected` của lượt |
+| `released`: lịch / đề xuất khách vừa bỏ | quyết định `rejected` hoặc `superseded` của lượt |
 | `busy`: tiệm bận tới mấy giờ | `TimeFact` `busy_until` của agent Thông tin tiệm |
 
 Nguyên tắc *(quyết định của tôi)*: **mọi giờ guard hiện nay cho nói đều phải có vai trò**,
@@ -186,6 +218,14 @@ customer, not booked"*.
 - Đoạn **giá**: mọi số tiền đọc được nằm trong khoảng giá của id.
 - Đoạn tham chiếu **chỉ chứa đúng mention** (giờ / tên dịch vụ / giá, kèm từ đi liền như
   "khoảng", "từ … đến"). Không chứa dấu kết câu hay câu hỏi.
+- Luật cụ thể cho đoạn **giờ**: bỏ giờ, phần ngày ("mai", "hôm nay", thứ, dd/mm, đọc bằng các
+  hàm quét sẵn có) và vài từ nối ngắn ("lúc", "vào", "ngày") đi, thì không còn chữ nào. Phần
+  ngày không bị so với dữ kiện (vẫn chỉ so giờ). Ví dụ đoạn *"hoặc 4 giờ chiều nhé."* bị chặn.
+  *(Quyết định của tôi, review Fable I5.)*
+- **Lỗ hổng đã biết, chấp nhận:** nếu model gắn đúng vai trò (`taken`) cho một giờ kín, nhưng
+  phần chữ thường lại mời giờ đó (*"em tìm được … chị đồng ý nhé?"*), thì vai trò không bắt
+  được, vì vai trò kiểm nhãn chứ không đọc nghĩa câu. Câu sai của lần chạy 2, lượt 2 bị chặn
+  khi model gắn nó là `offer`; test dùng đúng cách gắn đó.
 - Đoạn **chữ thường** không được có giờ, số tiền, hoặc tên dịch vụ nào của lượt (dịch vụ của
   lượt, dịch vụ đã biết trong cuộc trò chuyện).
 
@@ -200,17 +240,37 @@ customer, not booked"*.
 
 Câu mẫu code, viết lại tối đa 1 lần, `exit_behavior="error"` của trần: không đổi.
 
+Phải đổi kèm *(quyết định của tôi, review Fable C1 và các điểm nhỏ)*:
+- **Đánh dấu "đã báo"** (`turn/run.py::_mark_announced`, dòng 505) đang so nguyên văn `spoken`
+  trong câu đã gửi. Câu nói gọn ("9 giờ sáng mai") sẽ không bao giờ được đánh dấu, nên dòng
+  Unannounced (R0) hiện lại mỗi lượt và ép bot báo lại mãi. Đổi sang: guard trả về các id
+  quyết định / R0 đã được tham chiếu với vai trò `booked` / `moved` / `cancelled` / `failed`
+  trong câu đã nhận, và `_mark_announced` dùng danh sách đó. Câu mẫu code không có đoạn tham
+  chiếu nhưng luôn chứa nguyên `spoken`, nên giữ cách so nguyên văn cho câu mẫu.
+- Lời nhắc viết lại `_CODE_HINTS` (`middleware/reply_guard.py:52`): `unknown_time` /
+  `missing_fact` đang bảo "copied exactly as their spoken value", phải đổi theo luật tham
+  chiếu.
+- Prompt dòng "Never mention tools, agents, ids…" đổi thành "never write ids **in the text**"
+  (id nằm trong `ref`). `tests/salon/test_prompts.py` đang ghim câu chữ luật E, sửa theo.
+- `CONTEXT.md` ghi F2 "so nguyên văn … cố ý, đừng nới"; mức C nới luật này theo quyết định
+  của chủ dự án, nên cập nhật `CONTEXT.md` trong cùng thay đổi.
+
 ### 6. Chặn chữ nước ngoài (H) và lộ prompt / lọt tiếng Anh
 - **`foreign_script`:** câu có chữ cái không thuộc bảng chữ Latin thì chặn. Chữ tiếng Việt có
-  dấu thuộc Latin. Kiểm bằng tên Unicode của ký tự, không regex. Bắt được Armenia, Cyrillic,
-  CJK, Thái…
-- **`prompt_leak`:** câu trùng một đoạn dài (người làm chọn ngưỡng, khoảng 8 từ liền) với
-  system prompt của Orchestrator hay prompt agent con thì chặn.
-- **`english`:** câu có một dãy dài từ tiếng Anh liền nhau thì chặn. Định nghĩa từ tiếng Anh
-  là: toàn chữ ASCII, không phải số, đơn vị tiền, tên riêng hay tên dịch vụ đã biết. Người làm
-  chọn ngưỡng, khoảng 5 từ. Rủi ro chặn nhầm đã chấp nhận: câu tiếng Việt viết không dấu. Bot
-  luôn viết có dấu nên rủi ro thấp; ngưỡng phải được test bằng các câu thật của các lần chạy.
-- Ba luật kiểm trên chữ đã ghép, xử lý như các mã khác (viết lại 1 lần → câu mẫu).
+  dấu thuộc Latin. Chuẩn hoá NFC trước, chỉ xét ký tự `isalpha()` (dấu rời có tên "COMBINING
+  …", không phải "LATIN"), kiểm bằng tên Unicode của ký tự, không regex. Bắt được Armenia,
+  Cyrillic, CJK, Thái…
+- **`english`:** câu có một dãy dài từ tiếng Anh liền nhau thì chặn. Không định nghĩa "từ
+  tiếng Anh" là "toàn chữ ASCII": rất nhiều từ tiếng Việt đúng là ASCII (em, anh, cho, mai,
+  hay, con…), nên dễ chặn nhầm. Dùng một danh sách nhỏ từ chức năng tiếng Anh (the, is, you,
+  to, of, and, for, with, this, that…): dãy liền nhau phải chứa đủ số từ trong danh sách đó.
+  Người làm chọn ngưỡng; ngưỡng phải được test bằng các câu thật của các lần chạy.
+  *(Quyết định của tôi, review Fable.)*
+- **Lộ prompt** được `english` phủ: mọi prompt của dự án viết tiếng Anh (`test_prompts.py`),
+  nên câu chép lại prompt là một dãy tiếng Anh. Không làm mã `prompt_leak` riêng; thay vào đó
+  có test "chép một dòng prompt Orchestrator / agent con vào câu thì bị chặn". *(Quyết định của
+  tôi.)*
+- Các luật này kiểm trên chữ đã ghép, xử lý như các mã khác (viết lại 1 lần → câu mẫu).
 
 ### 7. Prompt Orchestrator
 - Thay luật "Copy every time and date exactly as the `spoken` value…" bằng luật đoạn / tham
@@ -229,6 +289,11 @@ Câu mẫu code, viết lại tối đa 1 lần, `exit_behavior="error"` của t
   - Kiểm điều kiện trước khi chạy vẫn giữ. Cần **hai** lịch khác nhau của ngày mai (lượt 2 và
     lượt 7 hỏi hai giờ kín khác nhau), không đủ thì dừng; không tự tạo lịch cho khách khác.
     *(Quyết định của tôi: chủ dự án muốn giữ DB cũ, chỉ thêm khách mới.)*
+  - Giờ kín chỉ lấy từ lịch của **khách khác**. Lịch khách mới vừa đặt ở lượt 5 là
+    `already_yours`, không phải `taken`. Giờ khách "gõ" viết như người thật gõ ("4 giờ chiều"),
+    không chép `spoken`. Phiên chờ vừa mở mà không có lựa chọn nào thì script dừng và báo,
+    không đoán giờ. Các giờ cố định hiện nay (`KEEP_DB_TURNS`, `check_keep_db_scenario`) bỏ.
+    *(Quyết định của tôi, review Fable I6.)*
 
 ## Phương án dự phòng
 
@@ -254,22 +319,24 @@ Ngưỡng chuyển do chủ dự án quyết khi xem transcript. Không làm tro
   `scripts/terminal_chat.py`.
 
 ## Lưu ý kỹ thuật cho người làm
-- `create_agent` lưu `structured_response` vào state dưới dạng object pydantic; serde của
-  checkpointer dự án có thể từ chối. Dùng schema dạng dict, hoặc không để nó nằm lại trong state.
+- `create_agent` lưu `structured_response` vào state; với model pydantic dựng động, serde của
+  checkpointer ghi cảnh báo "Blocked deserialization" mỗi lần đọc (Fable đã thử), và nó không
+  bao giờ bị xoá khi `create_agent` dựng không có `response_format` (factory dòng 1534). Dùng
+  **schema dạng dict**. Guard parse `reply.text`, không đọc `state["structured_response"]`.
 - `ProviderStrategy` ép `strict=True` cho cả schema của tool Orchestrator (factory 1.4.6,
   khoảng dòng 1452). **Đã kiểm** (bản thử c, cùng `convert_to_openai_tool(strict=True)`):
   schema 4 tool hiện có hợp strict. Tool thêm sau này cũng phải hợp: mọi trường bắt buộc,
   tuỳ chọn viết `X | None`, không giá trị mặc định.
 - Khi lời gọi không có tool call, factory parse JSON trong `_handle_model_output`; parse hỏng
-  thì nó ném `StructuredOutputValidationError`. Đó là chỗ phải bắt (hoặc tự parse) để thành
-  `bad_structure`, theo mục 1.
+  thì nó ném `StructuredOutputValidationError`, lỗi này mang `ai_message`. Bắt nó ở
+  `awrap_model_call` ngoài cùng (`ContextMiddleware`) và trả `ModelResponse(result=[exc.ai_message])`
+  để guard ra `bad_structure`, không phải tự parse thay factory.
 
 ## Để người làm quyết
-- Cách nối structured output vào `create_agent`: `response_format` (ProviderStrategy hay
-  ToolStrategy) hay đổi theo từng lần gọi trong middleware. Điều kiện bắt buộc: guard đọc
-  được các đoạn, lời gọi có tool call vẫn chạy như cũ, và thread không bao giờ chứa tool call
-  thiếu ToolMessage. Bản thử (c) đã chứng minh ProviderStrategy một lần gọi chạy được trên
-  Azure, nên không cần thêm lần gọi riêng để định dạng câu cuối.
+- Chỗ gắn `ProviderStrategy` (tham số `response_format` của `create_agent`, hay
+  `request.override` trong middleware). Điều kiện bắt buộc: guard đọc được các đoạn, lời gọi có
+  tool call vẫn chạy như cũ, và thread không bao giờ chứa tool call thiếu ToolMessage. Không
+  thêm lần gọi riêng để định dạng câu cuối.
 - Cách đánh số id cụ thể, và dữ kiện nào hiện ở đâu trong khối bối cảnh.
 - Luật so khớp tên dịch vụ, và danh sách "từ đi liền" cho đoạn giá.
 - Ngưỡng của `prompt_leak` và `english`.
@@ -277,8 +344,10 @@ Ngưỡng chuyển do chủ dự án quyết khi xem transcript. Không làm tro
 
 ## Tiêu chí xong
 - Test viết trước (TDD): mỗi vai trò đúng / sai; chữ khớp / không khớp; chữ thường có giờ /
-  giá / dịch vụ; ghép khoảng trắng; ba luật mục 6, kèm câu thật "Եթե" của lần chạy 4; câu sai
-  của lần chạy 2 lượt 2 và lần chạy 4 lượt 8 phải bị chặn. Toàn bộ pytest + vitest xanh.
+  giá / dịch vụ; ghép khoảng trắng; các luật mục 6, kèm câu thật "Եթե" của lần chạy 4; câu sai
+  của lần chạy 2 lượt 2 và lần chạy 4 lượt 8 phải bị chặn; quyết định được báo bằng câu nói
+  gọn vẫn được đánh dấu "đã báo"; câu mẫu vẫn được đánh dấu như cũ; JSON hỏng ra
+  `bad_structure`, không ra câu báo lỗi của lượt. Toàn bộ pytest + vitest xanh.
 - Chạy thật (hỏi chủ dự án trước): kịch bản A, và kịch bản B tự chọn giờ trên DB cũ. Đọc tay
   transcript theo các anti-goal ở trên.
 - Ghi lại số lượt rơi xuống câu mẫu và số lần viết lại vì `wrong_role`. Số liệu này dùng để
