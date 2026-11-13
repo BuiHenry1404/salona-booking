@@ -37,6 +37,7 @@ from app.agents.salon.memory import long_term
 from app.agents.salon.memory.long_term import MEMORY_NAMESPACE
 from app.agents.salon.orchestrator import agent as agent_module
 from app.agents.salon.orchestrator import middleware as middleware_pkg
+from app.agents.salon.orchestrator.middleware import reply_guard as reply_guard_module
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 from app.agents.salon.shared import context as context_module
 from app.agents.salon.shared.schemas import Moment, PendingOutcome
@@ -154,6 +155,12 @@ async def thread_messages(db, user, saver=None) -> list[BaseMessage]:
     saver = saver or checkpoint.get_checkpointer()
     found = await saver.aget_tuple({"configurable": {"thread_id": await latest_thread_id(db, user)}})
     return list(found.checkpoint["channel_values"]["messages"])
+
+
+async def thread_channel_values(db, user, saver=None) -> dict:
+    saver = saver or checkpoint.get_checkpointer()
+    found = await saver.aget_tuple({"configurable": {"thread_id": await latest_thread_id(db, user)}})
+    return dict(found.checkpoint["channel_values"])
 
 
 def assert_valid_thread(messages: list[BaseMessage]) -> None:
@@ -561,6 +568,33 @@ async def test_button_approve_then_model_error_still_announces_booking(test_db, 
     messages = await thread_messages(test_db, user)
     assert_valid_thread(messages)
     assert messages[-1].content == done["answer"]
+
+
+async def test_code_fallback_after_a_valid_reply_clears_structured_response(test_db, monkeypatch):
+    """Finding 5: the model's node commits `structured_response` to the
+    checkpoint BEFORE the guard's `aafter_model` hook runs (langchain
+    `agents/factory.py`). If that hook then raises (here: `check_structured`
+    itself blows up) instead of returning its usual `_STRUCTURED: None`
+    update, `_typed_turn`'s except clause falls back to `_write_code_reply` —
+    which must also clear `structured_response`, or a stale parsed reply
+    lingers in the checkpoint."""
+    await default_hours(test_db)
+    await block_15(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME])
+    subagents(monkeypatch, need_info_15())
+
+    def _boom(reply_text, facts):
+        raise RuntimeError("guard blew up after a valid reply")
+
+    monkeypatch.setattr(reply_guard_module, "check_structured", _boom)
+
+    events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
+
+    answer = completed(events)["answer"]
+    assert answer.startswith(TAKEN_REPLY.format(at=S15))
+    values = await thread_channel_values(test_db, user)
+    assert values.get("structured_response") is None
 
 
 async def test_superseded_continue_turn_leaves_the_booking_unannounced(test_db, monkeypatch):

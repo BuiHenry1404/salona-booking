@@ -104,6 +104,7 @@ TABLE = [  # (row id, segments as (text, ref, role) tuples, expected codes)
     ("wrong_clock", [("2 giờ chiều", "t2", "offer")], {"ref_mismatch"}),
     ("time_residue", [("hoặc 1 giờ chiều nhé.", "t2", "offer")], {"ref_mismatch"}),
     ("time_day_words", [("1 giờ chiều thứ Năm tuần sau", "t2", "offer")], set()),
+    ("time_month_word", [("1 giờ chiều ngày 12 tháng 11", "t2", "offer")], set()),
     ("time_24h", [("13h", "t2", "offer")], set()),
     ("price_k", [("150k", "s1", "price")], set()),
     ("price_nghin", [("khoảng 150 nghìn", "s1", "price")], set()),
@@ -154,3 +155,21 @@ def test_unknown_ref_problem_lists_valid_ids(catalog):
     report = check_segments(_segments([("4 giờ chiều", "t9", "offer")]), catalog)
     [problem] = report.problems
     assert "valid ids: t1, t2, t3, s1, s2, c1" in problem
+
+
+def test_plain_segment_does_not_leak_on_substring_of_service_name():
+    """Finding 1: "Uốn" phải khớp theo cụm từ, không phải chuỗi con — "muốn"
+    và "uống" chứa "uốn" nhưng không phải dịch vụ "Uốn"."""
+    catalog = FactCatalog(entries=[
+        CatalogEntry(id="s1", kind="service", roles=["service", "price"], label="Uốn, 300.000đ",
+                     names=["Uốn"], price=(300000, 300000), service_ids=["toc-uon"]),
+    ])
+    report = check_segments(_segments([
+        ("Dạ chị muốn đổi giờ không ạ?", None, None),
+    ]), catalog)
+    assert report.codes == set()
+
+    report = check_segments(_segments([
+        ("chị làm uốn nhé", None, None),
+    ]), catalog)
+    assert report.codes == {"unreferenced"}

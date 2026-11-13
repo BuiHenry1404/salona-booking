@@ -42,7 +42,7 @@ REPLY_SCHEMA = {
 TIME_WORDS = frozenset({
     "giờ", "h", "rưỡi", "kém", "phút", "sáng", "trưa", "chiều", "tối", "đêm", "mai", "hôm", "nay",
     "ngày", "kia", "mốt", "thứ", "hai", "ba", "tư", "năm", "sáu", "bảy", "chủ", "nhật", "cn", "tuần",
-    "này", "sau", "tới", "lúc", "vào",
+    "này", "sau", "tới", "lúc", "vào", "tháng",
 })
 
 _SENTENCE_PUNCT = (".", "?", "!")
@@ -140,13 +140,25 @@ def _clock_text_matches(entry: CatalogEntry, text: str) -> bool:
     return not any(punct in text for punct in _SENTENCE_PUNCT)
 
 
+def _contains_word_sequence(haystack: Sequence[str], needle: Sequence[str]) -> bool:
+    """True nếu `needle` là một dãy từ liên tiếp nằm trong `haystack` — khớp
+    tên dịch vụ theo cụm từ, không phải chuỗi con (bước Finding 1: "Uốn" không
+    được khớp bên trong "muốn"/"uống")."""
+    if not needle:
+        return False
+    n = len(needle)
+    for i in range(len(haystack) - n + 1):
+        if haystack[i:i + n] == list(needle):
+            return True
+    return False
+
+
 def _service_text_matches(entry: CatalogEntry, text: str, catalog: FactCatalog) -> bool:
-    text_words = set(words(normalize_for_match(text)))
-    own_words = set(words(normalize_for_match(entry.names[0])))
-    if not (text_words & own_words):
+    text_words = words(normalize_for_match(text))
+    own_words = words(normalize_for_match(entry.names[0]))
+    if not (set(text_words) & set(own_words)):
         return False
     own_names = {normalize_for_match(name) for name in entry.names}
-    normalized_text = normalize_for_match(text)
     for other in catalog.entries:
         if other.kind != "service" or other.id == entry.id:
             continue
@@ -154,7 +166,7 @@ def _service_text_matches(entry: CatalogEntry, text: str, catalog: FactCatalog) 
             normalized_name = normalize_for_match(name)
             if normalized_name in own_names:
                 continue
-            if normalized_name in normalized_text:
+            if _contains_word_sequence(text_words, words(normalized_name)):
                 return False
     return True
 
@@ -186,12 +198,12 @@ def _plain_segment_leaks(text: str, catalog: FactCatalog) -> bool:
         return True
     if scan_money(text):
         return True
-    normalized_text = normalize_for_match(text)
+    text_words = words(normalize_for_match(text))
     for entry in catalog.entries:
         if entry.kind != "service":
             continue
         for name in entry.names:
-            if normalize_for_match(name) in normalized_text:
+            if _contains_word_sequence(text_words, words(normalize_for_match(name))):
                 return True
     return False
 

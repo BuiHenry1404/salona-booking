@@ -346,7 +346,11 @@ async def _write_code_reply(turn: _Turn, messages: list[BaseMessage], opener: Hu
     else:
         updates.append(opener)
     updates.append(AIMessage(content=text, additional_kwargs=dict(CODE_SOURCE)))
-    await turn.agent.aupdate_state(turn.config, {"messages": updates}, as_node="model")
+    # Finding 5: xoá luôn `structured_response` — model node có thể đã ghi nó
+    # trước khi guard ném lỗi (ví dụ `check_structured` lỗi sau một JSON hợp
+    # lệ), và không nhánh nào khác dọn lại khoá này cho lượt rơi về câu mẫu.
+    await turn.agent.aupdate_state(
+        turn.config, {"messages": updates, "structured_response": None}, as_node="model")
 
 
 async def _fallback(turn: _Turn, opener: HumanMessage, *, question: str,

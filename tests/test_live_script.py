@@ -4,9 +4,10 @@ Never imports or calls `main` — that calls Azure and, without `--keep-db`,
 wipes the dev DB. Only the DB-picking helpers are exercised here, against
 the shared test DB (`test_db` fixture).
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.clock import TZ, now_utc, to_local
 from app.core.slots import slot_keys_for
@@ -19,6 +20,8 @@ from scripts.test_live_10_turns import (
     pick_session_option,
     pick_taken_starts,
 )
+from tests.conftest import TEST_DB_NAME, TEST_MONGO_URI
+
 
 def _tomorrow_at(hour: int, minute: int = 0) -> datetime:
     day = to_local(now_utc()).date() + timedelta(days=1)
@@ -57,6 +60,38 @@ async def test_pick_taken_starts_skips_the_customer_and_needs_two(test_db):
     })
     result = await pick_taken_starts(test_db, exclude_user_id=customer_id)
     assert result == (_tomorrow_at(11), _tomorrow_at(15))
+
+
+@pytest.mark.asyncio
+async def test_pick_taken_starts_treats_a_naive_start_at_as_utc(test_db):
+    """Finding 2: a client without `tz_aware=True` (like the one a stray caller
+    could build) hands back naive datetimes for `start_at`. `pick_taken_starts`
+    must treat them as UTC, not machine-local — otherwise `to_local` shifts a
+    02:00Z (09:00 VN) booking into the wrong hour on a +07 machine."""
+    customer_id = "customer-id"
+    other_id = "other-id"
+    naive_client = AsyncIOMotorClient(TEST_MONGO_URI)
+    try:
+        naive_db = naive_client[TEST_DB_NAME]
+
+        first_utc = _tomorrow_at(11).astimezone(timezone.utc).replace(tzinfo=None)
+        second_utc = _tomorrow_at(15).astimezone(timezone.utc).replace(tzinfo=None)
+        await naive_db["appointments"].insert_one({
+            "user_id": other_id, "start_at": first_utc, "status": "booked",
+            "slot_keys": slot_keys_for(_tomorrow_at(11), 60),
+        })
+        await naive_db["appointments"].insert_one({
+            "user_id": other_id, "start_at": second_utc, "status": "booked",
+            "slot_keys": slot_keys_for(_tomorrow_at(15), 60),
+        })
+
+        result = await pick_taken_starts(naive_db, exclude_user_id=customer_id)
+        assert result is not None
+        start, _ = result
+        assert start.tzinfo is not None
+        assert customer_clock_phrase(start) == "11 giờ sáng"
+    finally:
+        naive_client.close()
 
 
 @pytest.mark.asyncio

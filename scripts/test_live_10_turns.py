@@ -37,7 +37,7 @@ nghiệp vụ trong Mongo sau lượt (phiên chờ, đề xuất gần nhất, 
 import argparse
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -238,6 +238,13 @@ async def execute_turn(turn_idx: int, db, user: User, description: str,
 PICK_OPTION = "<pick an option of the open booking session>"  # sentinel for turns 4, 8
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Mongo trả `datetime` naive khi client không mở `tz_aware=True` — coi
+    naive là UTC (Mongo luôn lưu UTC), không để `to_local`/`astimezone` đoán
+    nhầm múi giờ máy chủ (bước Finding 2)."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def customer_clock_phrase(start: datetime) -> str:
     """Câu giờ khách sẽ gõ, suy từ giờ VN của `start` (ví dụ "4 giờ chiều")."""
     local = to_local(start)
@@ -261,7 +268,7 @@ async def pick_taken_starts(db, *, exclude_user_id: str) -> Optional[tuple[datet
     )
     distinct: List[datetime] = []
     async for doc in cursor:
-        start = doc["start_at"]
+        start = _as_utc(doc["start_at"])
         if start not in distinct:
             distinct.append(start)
         if len(distinct) == 2:
@@ -278,7 +285,7 @@ async def pick_session_option(db, *, user_id: str) -> Optional[datetime]:
     session = sessions.get("appointment")
     if session is None or not session.question.options:
         return None
-    return datetime.fromisoformat(session.question.options[0].iso)
+    return _as_utc(datetime.fromisoformat(session.question.options[0].iso))
 
 
 def keep_db_turns(first_taken: datetime, second_taken: datetime) -> list[tuple]:
@@ -317,18 +324,23 @@ async def create_new_customer(db) -> User:
 
 
 async def main(keep_db: bool = False) -> None:
-    client = AsyncIOMotorClient(str(settings.mongo_uri))
+    client = AsyncIOMotorClient(str(settings.mongo_uri), tz_aware=True)
     db = client[settings.mongo_db_name]
 
     if keep_db:
-        user = await create_new_customer(db)
-        starts = await pick_taken_starts(db, exclude_user_id=str(user.id))
+        # Finding 3: pick the taken times BEFORE creating the new customer —
+        # a customer that does not exist yet cannot own any appointment, so
+        # `exclude_user_id=""` excludes nothing and is safe. If the DB turns
+        # out not to have two taken times, we stop here without creating an
+        # orphan user.
+        starts = await pick_taken_starts(db, exclude_user_id="")
         if starts is None:
             print("\nDừng: DB chưa có đủ hai lịch đã đặt của khách khác vào "
                   "ngày mai, không gọi Azure.")
             client.close()
             return
         first_taken, second_taken = starts
+        user = await create_new_customer(db)
         turns = keep_db_turns(first_taken, second_taken)
     else:
         await clear_database(db)
