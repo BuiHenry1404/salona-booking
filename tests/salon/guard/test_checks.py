@@ -22,7 +22,11 @@ import pytest
 
 from app.agents.salon.guard.checks import check_reply, check_structured, check_text, strip_tool_text
 from app.agents.salon.guard.facts import ReplyFacts
+from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 from app.agents.salon.shared.schemas import DecisionFact, Moment, ProposalFact, ServiceFact, TimeFact
+from app.agents.salon.subagents.appointment.prompt import APPOINTMENT_PROMPT
+from app.agents.salon.subagents.service.prompt import SERVICE_PROMPT
+from app.agents.salon.subagents.shop_info.prompt import SHOP_INFO_PROMPT
 from app.core.config import settings
 from app.models.service import Service
 from tests.salon.guard import (
@@ -519,3 +523,57 @@ async def test_check_text_has_no_old_text_rules(test_db):
     await seed_catalog(test_db)
     facts = await facts_for(test_db)
     assert "unknown_time" not in check_text("Dạ còn 5 giờ chiều ạ.", facts)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: foreign_script / english
+# ---------------------------------------------------------------------------
+
+LIVE_REPLIES = [  # verbatim model replies of live runs 3 and 4 (.superpowers/sdd/2026-11-08-subagents-rebuild/live-{3,4}.log)
+    "Dạ em chào chị Lan ạ, rất vui được đón chị lần đầu qua tiệm. Chị cần em hỗ trợ gì cứ nhắn em nhé.",
+    "Dạ chị Lan ơi, lúc Thứ Năm 12/11, 3 giờ chiều đã có người đặt rồi ạ. Chị chọn giúp em 1 giờ chiều, 2 giờ chiều, hoặc 4 giờ chiều nhé.",
+    "Dạ chị Lan, tiệm mình mở từ 8 giờ sáng đến 7 giờ tối ạ.",
+    "Dạ chị Lan, nhuộm tóc giá từ 350.000đ đến 700.000đ ạ.",
+    "Dạ em chào chị Mai ạ. Chị muốn làm tóc hay làm móng, em giúp chị ngay nhé.",
+    "Dạ chị Mai, Chủ Nhật 15/11 tiệm mở cửa bình thường ạ. Nếu chị muốn, em xem giúp giờ phù hợp cho chị.",
+    "Dạ chị Mai, chị có 2 lịch: Thứ Năm 12/11, 11 giờ sáng và Thứ Năm 12/11, 5 giờ chiều ạ.",
+]
+ARMENIAN = ("Dạ chị Mai, sơn gel bên em giá từ 120.000đ đến 180.000đ ạ. Եթե chị muốn, "
+            "em đặt giúp chị giờ khác nhé.")
+
+
+async def test_foreign_script_blocks_the_live_run_4_reply(test_db):
+    facts = await facts_for(test_db)
+    assert "foreign_script" in check_text(ARMENIAN, facts)
+
+
+@pytest.mark.parametrize("reply", LIVE_REPLIES)
+async def test_live_replies_are_not_foreign_or_english(test_db, reply):
+    facts = await facts_for(test_db)
+    found = check_text(reply, facts)
+    assert "foreign_script" not in found
+    assert "english" not in found
+
+
+@pytest.mark.parametrize("reply", LIVE_REPLIES)
+async def test_nfd_vietnamese_is_not_foreign_or_english(test_db, reply):
+    import unicodedata as _ud
+
+    facts = await facts_for(test_db)
+    found = check_text(_ud.normalize("NFD", reply), facts)
+    assert "foreign_script" not in found
+    assert "english" not in found
+
+
+async def test_english_sentence_is_blocked(test_db):
+    facts = await facts_for(test_db)
+    assert "english" in check_text("Sorry, I will check the schedule for you.", facts)
+
+
+@pytest.mark.parametrize("prompt", [ORCHESTRATOR_PROMPT, APPOINTMENT_PROMPT, SERVICE_PROMPT,
+                                    SHOP_INFO_PROMPT])
+async def test_a_copied_prompt_line_is_blocked(test_db, prompt):
+    facts = await facts_for(test_db)
+    first_line = next(line for line in prompt.splitlines() if line.strip())
+    reply = f"Dạ chị Lan ơi, {first_line} ạ."
+    assert "english" in check_text(reply, facts)

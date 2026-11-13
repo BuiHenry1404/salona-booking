@@ -52,6 +52,65 @@ REPEAT_MIN_WORDS = 6
 REPEAT_LOOKBACK = 2
 
 # ---------------------------------------------------------------------------
+# foreign_script / english — spec §6: câu trả lời phải là tiếng Việt, không
+# lẫn chữ của chữ viết khác, và không phải một câu/đoạn tiếng Anh (vd lộ
+# nguyên văn một dòng prompt).
+# ---------------------------------------------------------------------------
+
+ENGLISH_FUNCTION_WORDS = frozenset({"the", "is", "are", "was", "be", "of", "and", "or", "for", "with",
+    "this", "that", "these", "you", "your", "we", "it", "in", "on", "at", "by", "from", "as", "if",
+    "not", "does", "please", "will", "should", "must", "never", "only", "when", "what", "which",
+    "there", "here"})
+ENGLISH_RUN_MIN_WORDS = 4
+ENGLISH_RUN_MIN_FUNCTION_WORDS = 2
+
+
+def _has_foreign_script(text: str) -> bool:
+    """Bất kỳ chữ cái nào KHÔNG thuộc chữ Latin (tên Unicode không bắt đầu
+    bằng "LATIN") sau khi chuẩn hoá NFC — chữ Việt có dấu luôn là một chữ
+    Latin duy nhất ở dạng NFC (vd "ầ" = LATIN SMALL LETTER A WITH CIRCUMFLEX
+    AND GRAVE), nên câu NFD (chữ cái + dấu rời) phải chuẩn hoá trước khi so."""
+    nfc = unicodedata.normalize("NFC", text)
+    return any(ch.isalpha() and not unicodedata.name(ch, "").startswith("LATIN") for ch in nfc)
+
+
+def _ascii_word_tokens(text: str) -> list[str]:
+    """Tách `text` (đã NFC) thành token theo ký tự KHÔNG phải chữ-số (không
+    regex); mỗi token giữ nguyên hoa/thường để kiểm `isascii()` / `isalpha()`."""
+    tokens: list[str] = []
+    current: list[str] = []
+    for ch in text:
+        if ch.isalnum():
+            current.append(ch)
+        elif current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _has_english_run(text: str) -> bool:
+    """Một dãy từ ASCII liên tiếp (≥ `ENGLISH_RUN_MIN_WORDS` từ, trong đó ≥
+    `ENGLISH_RUN_MIN_FUNCTION_WORDS` từ là từ nối tiếng Anh) — câu tiếng Việt
+    chen vài chữ tiếng Anh ngắn (tên dịch vụ, "ok") không đủ dài để bắt."""
+    nfc = unicodedata.normalize("NFC", text)
+    run_len = 0
+    run_function_words = 0
+    for token in _ascii_word_tokens(nfc):
+        if token.isascii() and token.isalpha():
+            run_len += 1
+            if token.lower() in ENGLISH_FUNCTION_WORDS:
+                run_function_words += 1
+            if run_len >= ENGLISH_RUN_MIN_WORDS and run_function_words >= ENGLISH_RUN_MIN_FUNCTION_WORDS:
+                return True
+        else:
+            run_len = 0
+            run_function_words = 0
+    return False
+
+
+# ---------------------------------------------------------------------------
 # claim — nhận vơ đã đặt / dời / huỷ, giữ chỗ không có thật
 # ---------------------------------------------------------------------------
 
@@ -343,6 +402,10 @@ def check_text(text: str, facts: ReplyFacts) -> set[str]:
         found.add("pending_undecided")
     if _has_wrong_pronoun(text, facts.address):
         found.add("pronoun")
+    if _has_foreign_script(text):
+        found.add("foreign_script")
+    if _has_english_run(text):
+        found.add("english")
     if _repeats(text, facts.previous_replies):
         found.add("repeat")
     return found
