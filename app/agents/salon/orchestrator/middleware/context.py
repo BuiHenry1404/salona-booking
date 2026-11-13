@@ -22,9 +22,12 @@ from typing import Any, Awaitable, Callable, Optional
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import BaseMessage, SystemMessage
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.agents.salon.guard.catalog import build_catalog
 from app.agents.salon.memory.long_term import read_memory, render_memory
 from app.agents.salon.orchestrator.middleware.turns import (
+    current_question,
     current_turn_start,
     final_reply,
     hint_codes,
@@ -33,7 +36,12 @@ from app.agents.salon.orchestrator.middleware.turns import (
     previous_segments,
     turn_openers,
 )
-from app.agents.salon.orchestrator.state import SalonContext, SalonState, read_facts
+from app.agents.salon.orchestrator.state import (
+    SalonContext,
+    SalonState,
+    read_facts,
+    read_pending_outcome,
+)
 from app.agents.salon.shared.context import UNTRUSTED_LABEL, SnapshotHolder, render_context
 from app.core.clock import now_utc
 
@@ -89,8 +97,9 @@ def offered_tools(tools: list, *, has_pending: bool, pending_decided: bool,
 
 
 class ContextMiddleware(AgentMiddleware[SalonState, SalonContext]):
-    def __init__(self, holder: SnapshotHolder, store: Any = None) -> None:
+    def __init__(self, db: AsyncIOMotorDatabase, holder: SnapshotHolder, store: Any = None) -> None:
         super().__init__()
+        self.db = db
         self.holder = holder
         # Store bộ nhớ dài hạn — Task 14 đọc `("memories", user_id)` vào khối bối cảnh.
         self.store = store
@@ -103,13 +112,20 @@ class ContextMiddleware(AgentMiddleware[SalonState, SalonContext]):
         messages = list(request.messages)
         snapshot = await self.holder.current()
         memory_text = None
+        context = request.runtime.context if request.runtime is not None else None
         if self.store is not None:
-            context = request.runtime.context if request.runtime is not None else None
             user_id = getattr(context, "user_id", None)
             if user_id:
                 memory_text = render_memory(await read_memory(self.store, user_id))
         block = render_context(snapshot, audience="orchestrator", turn_facts=read_facts(state),
                                memory_text=memory_text, now=now_utc())
+        turn_id = state.get("turn_id") or getattr(context, "turn_id", None) or ""
+        catalog = await build_catalog(
+            self.db, snapshot=snapshot, turn_facts=read_facts(state),
+            pending_outcome=read_pending_outcome(state), question=current_question(messages),
+            turn_id=turn_id,
+        )
+        block = f"{block}\n\n{catalog.render()}"
         tools = offered_tools(
             list(request.tools), has_pending=snapshot.pending is not None,
             pending_decided=bool(state.get("pending_decided")),

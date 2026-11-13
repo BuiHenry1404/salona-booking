@@ -351,6 +351,22 @@ async def test_context_block_is_second_and_not_persisted(test_db):
     assert state["messages"][0].content == "chào em"
 
 
+async def test_context_block_lists_reply_facts(test_db):
+    """Task 5: khối bối cảnh của Orchestrator gồm cả danh mục dữ kiện câu trả
+    lời (`FactCatalog.render()`), dựng từ cùng đầu vào guard dùng."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([AIMessage(GOOD)])
+
+    await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
+
+    context_block = model.calls[0][1].content
+    assert "Reply facts (cite by id):" in context_block
+    lines = context_block.splitlines()
+    assert any("[hours]: opens " in line for line in lines)
+    assert any("[hours]: closes " in line for line in lines)
+
+
 async def test_context_block_carries_only_this_customers_memory(test_db):
     """Review round 1 (item 3): `ContextMiddleware` đọc `("memories", uid)`
     đúng của khách đang nói chuyện, không lẫn mục của khách khác."""

@@ -64,7 +64,7 @@ def orchestrator_middleware(db: AsyncIOMotorDatabase, user: User, holder: Snapsh
             keep=("messages", settings.salon_summary_keep_messages),
             summary_prompt=SUMMARY_PROMPT,
         ),
-        ContextMiddleware(holder, store),
+        ContextMiddleware(db, holder, store),
         ToolRulesMiddleware(holder),
         ModelCallLimitMiddleware(run_limit=settings.salon_model_calls_per_turn,
                                  exit_behavior="error"),
