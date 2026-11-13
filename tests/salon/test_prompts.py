@@ -83,7 +83,14 @@ def test_appointment_prompt_never_reports_a_taken_time_as_ok():
     assert "turned out taken and no proposal was created, the result is never ok" in flat
 
 
+def test_orchestrator_prompt_describes_segments():
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert "Reply facts list" in flat and "its own segment" in flat
+    assert "Copy every time and date exactly" not in flat
+    assert "inside a segment's text" in flat
+
+
 def test_orchestrator_prompt_says_taken_times_are_not_offered():
     flat = _flat(ORCHESTRATOR_PROMPT)
-    assert "role taken is already booked by another customer" in flat
-    assert "When suggesting other times" in flat
+    assert "allows taken is already booked by another customer" in flat
+    assert "cite only Reply facts that allow offer" in flat
