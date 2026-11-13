@@ -32,6 +32,8 @@ GEL = Service(id="nail-gel", category="nail", name="Sơn gel", price_min=120000,
               price_max=180000, duration_minutes=45)
 GOI = Service(id="toc-goi-say", category="toc", name="Gội sấy", price_min=50000,
               price_max=80000, duration_minutes=30)
+CAT = Service(id="toc-cat-nu", category="toc", name="Cắt tóc nữ", price_min=100000,
+              price_max=150000, duration_minutes=45)
 
 
 def at(hour: int, minute: int = 0, *, spoken: Optional[str] = None) -> Moment:
@@ -80,7 +82,7 @@ def a_snapshot(*, address: str = "chị Lan", pending: Optional[PendingView] = N
 
 
 async def seed_catalog(db) -> None:
-    await ServiceCatalogService(db).upsert_many([GEL, GOI])
+    await ServiceCatalogService(db).upsert_many([GEL, GOI, CAT])
 
 
 async def facts_for(db, *, snapshot: Optional[TurnSnapshot] = None, turn_facts: Sequence = (),

@@ -40,7 +40,7 @@ from app.agents.salon.guard.clocks import (
     readings,
 )
 from app.agents.salon.guard.fallback import GENERIC_FALLBACK
-from app.agents.salon.guard.plan import build_plan
+from app.agents.salon.guard.plan import ReplyPlan, build_plan
 from app.agents.salon.shared.context import TurnSnapshot
 from app.agents.salon.shared.schemas import (
     DecisionFact,
@@ -52,6 +52,7 @@ from app.agents.salon.shared.schemas import (
     UnannouncedDecision,
 )
 from app.core.config import settings
+from app.services.service_catalog import ServiceCatalogService
 
 Claim = Literal["booked", "moved", "cancelled"]
 
@@ -64,6 +65,8 @@ __all__ = [
 FAILED_OUTCOMES = frozenset({"failed", "not_approvable"})
 # Đề xuất chờ vẫn còn chờ sau quyết định của lượt.
 _STILL_PENDING = frozenset({"kept", "clarify"})
+# Đề xuất bị bỏ trong lượt.
+_RELEASED_OUTCOMES = frozenset({"rejected", "superseded"})
 
 
 class RequiredRef(BaseModel):
@@ -94,7 +97,7 @@ class ReplyFacts(BaseModel):
     catalog: FactCatalog                  # dữ kiện đánh id + vai trò của lượt (level C)
     required: list[RequiredRef]           # dữ kiện câu trả lời cấu trúc phải trích dẫn
     clocks: set[ClockKey]                 # mọi mốc giờ có thật của lượt
-    held_clocks: set[ClockKey]            # giờ đang có đề xuất chờ thật
+    held_clocks: set[ClockKey]            # giờ đang có đề xuất chờ thật (+ lịch của đề xuất huỷ bị bỏ)
     # Giờ các lịch ĐANG CÓ của khách (`snapshot.upcoming`) mà KHÔNG xuất hiện ở
     # nguồn dữ kiện nào khác của lượt — "chị đã đặt lịch 3 giờ chiều mai rồi ạ"
     # kể lại một lịch có thật là đúng (Ruling R8). Guard không so ngày, nên một
@@ -109,6 +112,12 @@ class ReplyFacts(BaseModel):
     address: str
     previous_replies: list[str]
     fallback: str
+    # Kế hoạch câu của lượt (`guard/plan.py`) — `check_reply` đối chiếu câu của
+    # model với nó; `fallback` là chữ của nó.
+    plan: ReplyPlan
+    # Tên mọi dịch vụ của tiệm (danh mục) — `wrong_service` bắt câu nêu một dịch
+    # vụ của tiệm không thuộc dữ kiện của lượt.
+    shop_service_names: list[str]
     # Agent có phiên mà câu mẫu `fallback` hỏi câu hỏi của nó — phiên đó phải
     # GIỮ mở khi lượt kết thúc bằng câu mẫu (Ruling R12).
     asked_session: Optional[str] = None
@@ -213,6 +222,11 @@ async def build_reply_facts(
         held |= clocks_of_moment(pending.at)
     for proposal in proposals:
         held |= clocks_of_moment(proposal.at)
+    # Đề xuất HUỶ bị bỏ (khách không đồng ý / đề xuất khác thay): lịch đó vẫn
+    # còn — câu "em giữ nguyên lịch …" của kế hoạch (`REJECTED_CANCEL_REPLY`) đúng.
+    for decision in decisions:
+        if decision.kind == "cancel" and decision.outcome in _RELEASED_OUTCOMES:
+            held |= clocks_of_moment(decision.at)
 
     # Mọi nguồn giờ KHÁC lịch đang có: đề xuất chờ (bất kể quyết định), đề
     # xuất / quyết định / giờ của lượt (trừ TimeFact "appointment" — chính là
@@ -258,6 +272,7 @@ async def build_reply_facts(
         turn_id=turn_id, turn_kind=turn_kind, shop_phone=settings.shop_phone,
     )
     fallback = plan.text() or GENERIC_FALLBACK.format(address=address)
+    shop_service_names = [service.name for service in await ServiceCatalogService(db).list()]
 
     required = _required_refs(
         catalog=catalog, snapshot=snapshot, turn_facts=turn_facts, decisions=decisions,
@@ -279,5 +294,7 @@ async def build_reply_facts(
         address=address,
         previous_replies=list(previous_replies),
         fallback=fallback,
+        plan=plan,
+        shop_service_names=shop_service_names,
         asked_session=plan.asks_session,
     )

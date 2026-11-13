@@ -1,10 +1,15 @@
 """Phép kiểm câu trả lời cuối của Orchestrator (spec §7, docs/architech-agent.md
 luật 4-5) — code thuần, không gọi model, không regex.
 
-`check_structured` đọc câu trả lời JSON các đoạn trích dẫn (spec level C): parse →
-ghép chữ → `strip_tool_text` (xoá tên tool / khối JSON lọt vào câu) → các luật;
-trả mã vi phạm theo thứ tự cố định `CHECK_CODES`, mỗi mã tối đa một lần; rỗng =
-câu được gửi khách. `check_text` là phần luật đọc trên chữ đã ghép.
+`check_reply` (spec plan-guided reply §3) đọc CHỮ THƯỜNG của model: `strip_tool_text`
+rồi đối chiếu với kế hoạch câu của lượt (`facts.plan`: mọi giờ / giá phải có), dữ
+kiện của lượt (không giờ / giá / dịch vụ nào khác), luật báo giờ kín, cùng các
+luật đọc chữ của `check_text`; trả mã theo thứ tự `CHECK_CODES`.
+
+`check_structured` (level C, Task 3 sẽ xoá) đọc câu trả lời JSON các đoạn trích
+dẫn: parse → ghép chữ → `strip_tool_text` (xoá tên tool / khối JSON lọt vào câu)
+→ các luật; trả mã vi phạm theo thứ tự cố định `STRUCTURED_CODES`, mỗi mã tối đa
+một lần; rỗng = câu được gửi khách. `check_text` là phần luật đọc trên chữ đã ghép.
 
 Các tập từ ở đây là từ NGỮ PHÁP của câu bot (động từ "đặt / giữ / dời / huỷ",
 "đã / rồi", phủ định "chưa / không", đại từ xưng hô) — guard đọc câu BOT nói về
@@ -15,7 +20,7 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Optional
+from typing import Optional, Sequence
 
 from app.agents.salon.guard.catalog import ANNOUNCE_ROLES
 from app.agents.salon.guard.facts import (
@@ -25,9 +30,10 @@ from app.agents.salon.guard.facts import (
     clocks_in_text,
     is_known,
 )
-from app.agents.salon.guard.segments import check_segments, join_segments, parse_reply, taken_not_told
+from app.agents.salon.guard.plan import Clock, ReplyPlan
 from app.agents.salon.shared.text_scan import (
     digits_in,
+    scan_money,
     split_clauses,
     split_sentences,
     words,
@@ -35,13 +41,21 @@ from app.agents.salon.shared.text_scan import (
 from app.agents.salon.shared.tool_names import CONTROL_TOOLS, SUBAGENT_TOOLS
 from app.core.config import settings
 from app.core.text import normalize_for_match
+from app.core.vi_format import format_vi_hhmm
 
-# Mọi mã vi phạm có thể gặp — thứ tự cố định dùng để sắp `codes` của
-# `check_structured` (spec level C §3: mã cấu trúc trước, rồi các luật đọc chữ).
-# Giờ / giá không còn so trên chữ (`unknown_time` / `unknown_price` cũ): đoạn
-# trích dẫn phải khớp dữ kiện (`ref_mismatch`), chữ thường không được nhắc
-# (`unreferenced`).
-CHECK_CODES = (
+# Mọi mã vi phạm của `check_reply` — thứ tự cố định dùng để sắp `codes`.
+CHECK_CODES = ("plan_missing", "unknown_time", "unknown_price", "wrong_service", "taken_offered",
+               "claim", "missing_question", "missing_phone", "phone_not_allowed",
+               "pending_undecided", "empty", "pronoun", "foreign_script", "english", "repeat")
+# Nhóm "nghĩa" (spec §3): câu sai nghĩa thì khách nhận câu mẫu ngay, không viết lại.
+MEANING_CODES = frozenset({"plan_missing", "unknown_time", "unknown_price", "wrong_service",
+                           "taken_offered", "claim", "missing_question", "missing_phone",
+                           "phone_not_allowed"})
+
+# Mã của `check_structured` (level C — Task 3 xoá cùng hàm đó). Giờ / giá không
+# so trên chữ: đoạn trích dẫn phải khớp dữ kiện (`ref_mismatch`), chữ thường
+# không được nhắc (`unreferenced`).
+STRUCTURED_CODES = (
     "bad_structure", "unknown_ref", "wrong_role", "ref_mismatch", "unreferenced",
     "taken_not_told", "empty", "claim", "missing_fact", "missing_question",
     "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun",
@@ -396,8 +410,8 @@ def check_text(text: str, facts: ReplyFacts) -> set[str]:
 
 @dataclass(frozen=True)
 class GuardResult:
-    text: str                    # câu đã ráp + strip_tool_text; "" khi bad_structure
-    codes: list[str]             # theo thứ tự CHECK_CODES
+    text: str                    # câu sau strip_tool_text; "" khi bad_structure
+    codes: list[str]             # theo thứ tự CHECK_CODES (check_structured: STRUCTURED_CODES)
     problems: list[str]
     announce_turn_ids: list[str]
 
@@ -406,6 +420,15 @@ def check_structured(raw: str, facts: ReplyFacts) -> GuardResult:
     """Kiểm câu trả lời cấu trúc (JSON mảng đoạn, spec level C §2-§3): mỗi
     đoạn trích dẫn một dữ kiện của lượt (`facts.catalog`), và mọi dữ kiện
     BẮT BUỘC (`facts.required`) phải được trích dẫn đúng vai trò."""
+    # Import trong hàm: `segments.py` lấy `TAKEN_MARKERS` / `OFFER_WORDS` /
+    # `_contains_word_sequence` từ module này (Task 3 xoá cả hai).
+    from app.agents.salon.guard.segments import (
+        check_segments,
+        join_segments,
+        parse_reply,
+        taken_not_told,
+    )
+
     segments = parse_reply(raw)
     if segments is None:
         return GuardResult("", ["bad_structure"], ["the reply was not the JSON list of segments"], [])
@@ -429,7 +452,7 @@ def check_structured(raw: str, facts: ReplyFacts) -> GuardResult:
         found.add("missing_fact")
     if taken_problems:
         found.add("taken_not_told")
-    codes = [code for code in CHECK_CODES if code in found]
+    codes = [code for code in STRUCTURED_CODES if code in found]
     problems = [*report.problems, *taken_problems, *missing_problems]
 
     announce_turn_ids: list[str] = []
@@ -444,6 +467,174 @@ def check_structured(raw: str, facts: ReplyFacts) -> GuardResult:
                 announce_turn_ids.append(turn_id)
 
     return GuardResult(text=text, codes=codes, problems=problems, announce_turn_ids=announce_turn_ids)
+
+
+# ---------------------------------------------------------------------------
+# check_reply — câu trả lời chữ thường đối chiếu kế hoạch câu (plan-guided reply)
+# ---------------------------------------------------------------------------
+
+# Cụm từ (của câu BOT, không đoán ý khách — Global Constraints) báo một giờ đã
+# kín: live run 5, turn 7 nói "3 giờ chiều" là giờ kín nhưng câu không có cụm
+# nào trong đây, lại còn mời khách chọn giờ đó.
+TAKEN_MARKERS: tuple[tuple[str, ...], ...] = (
+    ("kín",), ("có", "khách"), ("có", "người"), ("được", "đặt"), ("hết", "chỗ"),
+    ("không", "còn", "trống"), ("không", "trống"), ("bận",),
+)
+# Cụm mời khách chọn giờ — không được xuất hiện trong MỆNH ĐỀ nêu giờ kín.
+OFFER_WORDS: tuple[tuple[str, ...], ...] = (("chọn",), ("lấy",), ("đồng", "ý"))
+# Động từ giữ chỗ / đặt / dời của câu bot: mệnh đề có chúng chỉ được nêu dịch vụ
+# của đề xuất hoặc quyết định (`wrong_service` (b)).
+_BOOKING_CLAUSE_VERBS = frozenset({"giữ", "đặt", "dời"})
+
+
+def _contains_word_sequence(haystack: Sequence[str], needle: Sequence[str]) -> bool:
+    """True nếu `needle` là một dãy từ liên tiếp nằm trong `haystack` — khớp
+    tên dịch vụ theo cụm từ, không phải chuỗi con ("Uốn" không được khớp bên
+    trong "muốn" / "uống")."""
+    return bool(_word_spans(haystack, needle))
+
+
+def _word_spans(haystack: Sequence[str], needle: Sequence[str]) -> list[tuple[int, int]]:
+    """Mọi vị trí `[start, end)` mà `needle` nằm liên tiếp trong `haystack`."""
+    n = len(needle)
+    if not n:
+        return []
+    return [(i, i + n) for i in range(len(haystack) - n + 1) if list(haystack[i:i + n]) == list(needle)]
+
+
+def _match_words(text: str) -> list[str]:
+    return words(normalize_for_match(text))
+
+
+def _says(text: str, clock: Clock) -> bool:
+    return any(clock in reading for reading in clocks_in_text(text))
+
+
+def _clock_phrase(clock: Clock) -> str:
+    return format_vi_hhmm(f"{clock[0]:02d}:{clock[1]:02d}")
+
+
+def _plan_missing(text: str, plan: ReplyPlan) -> list[str]:
+    """Câu mẫu của mỗi hành động mà câu trả lời còn thiếu một giờ (giờ:phút có
+    trong một cách đọc của giờ nào đó trong câu) hay một khoảng giá (không số
+    tiền nào trong câu nằm trong khoảng)."""
+    said = clocks_in_text(text)
+    amounts = scan_money(text)
+    missing: list[str] = []
+    for act in plan.acts:
+        lacks_clock = any(not any(clock in reading for reading in said) for clock in act.clocks)
+        lacks_price = any(not any(low <= amount <= high for amount in amounts)
+                          for low, high in act.prices)
+        if lacks_clock or lacks_price:
+            missing.append(f"the reply must still tell: {act.sentence}")
+    return missing
+
+
+def _unknown_times(text: str, facts: ReplyFacts) -> bool:
+    return any(not is_known(reading, facts.clocks) for reading in clocks_in_text(text))
+
+
+def _unknown_prices(text: str, facts: ReplyFacts) -> bool:
+    ranges = [entry.price for entry in facts.catalog.entries
+              if entry.kind in ("service", "group") and entry.price is not None]
+    return any(not any(low <= amount <= high for low, high in ranges) for amount in scan_money(text))
+
+
+def _foreign_names(text_words: list[str], names: Sequence[str], allowed: Sequence[str]) -> list[str]:
+    """Các tên trong `names` (không thuộc `allowed`) có mặt trong `text_words`
+    ở một chỗ KHÔNG nằm trong một tên của `allowed` ("cắt tóc" bên trong
+    "cắt tóc nữ" của lượt không phải dịch vụ khác)."""
+    allowed_words = {tuple(_match_words(name)) for name in allowed}
+    covered = [span for name in allowed_words for span in _word_spans(text_words, name)]
+    found: list[str] = []
+    for name in names:
+        name_words = tuple(_match_words(name))
+        if not name_words or name_words in allowed_words:
+            continue
+        if any(not any(start <= s and e <= end for start, end in covered)
+               for s, e in _word_spans(text_words, name_words)):
+            found.append(name)
+    return list(dict.fromkeys(found))
+
+
+def _wrong_services(text: str, facts: ReplyFacts) -> list[str]:
+    """(a) tên một dịch vụ của tiệm không thuộc dịch vụ (`service`) của lượt;
+    (b) mệnh đề có giữ / đặt / dời nêu một dịch vụ khác dịch vụ của hành động
+    đề xuất / đã làm của kế hoạch (khi kế hoạch có hành động đó)."""
+    turn_names = [name for entry in facts.catalog.entries if entry.kind == "service"
+                  for name in entry.names]
+    problems = [f"{name} is not a service of this turn"
+                for name in _foreign_names(_match_words(text), facts.shop_service_names, turn_names)]
+
+    acts = [act for act in facts.plan.acts if act.kind in ("proposal", "done")]
+    if acts:
+        allowed = [name for act in acts for name in act.service_names]
+        every_name = list(dict.fromkeys([*facts.shop_service_names, *turn_names]))
+        for sentence in split_sentences(text):
+            for clause in split_clauses(sentence, preserve_date_comma=False):
+                clause_words = _match_words(clause)
+                if not _BOOKING_CLAUSE_VERBS & set(clause_words):
+                    continue
+                for name in _foreign_names(clause_words, every_name, allowed):
+                    problem = f"{name} is not the service of the booking this reply tells about"
+                    if problem not in problems:
+                        problems.append(problem)
+    return problems
+
+
+def _taken_offered(text: str, plan: ReplyPlan) -> list[str]:
+    """Mỗi giờ kín (không đồng thời là giờ được mời — trùng giờ khác ngày, spec
+    quyết định 5): mọi câu nêu nó phải có cụm báo kín, và mệnh đề (dấu phẩy) nêu
+    nó không được có chữ mời."""
+    offered = plan.offered_clocks()
+    problems: list[str] = []
+    for clock in sorted(plan.taken_clocks() - offered):
+        broken = False
+        for sentence in split_sentences(text):
+            if not _says(sentence, clock):
+                continue
+            sentence_words = _match_words(sentence)
+            if not any(_contains_word_sequence(sentence_words, marker) for marker in TAKEN_MARKERS):
+                broken = True
+            for clause in split_clauses(sentence, preserve_date_comma=False):
+                clause_words = _match_words(clause)
+                if _says(clause, clock) and any(_contains_word_sequence(clause_words, offer)
+                                                for offer in OFFER_WORDS):
+                    broken = True
+        if broken:
+            problems.append(f"{_clock_phrase(clock)} is already booked: tell the customer so in "
+                            "its sentence and never invite them to choose it")
+    return problems
+
+
+def check_reply(text: str, facts: ReplyFacts) -> GuardResult:
+    """Kiểm câu trả lời chữ thường của model (spec plan-guided reply §3). Câu
+    được nhận (`codes` rỗng) mang `announce_turn_ids` của kế hoạch — guard đã
+    bảo đảm mọi giờ của kế hoạch có trong câu."""
+    text = strip_tool_text(text or "")
+    found = check_text(text, facts)
+    problems: list[str] = []
+
+    missing = _plan_missing(text, facts.plan)
+    if missing:
+        found.add("plan_missing")
+        problems += missing
+    if _unknown_times(text, facts):
+        found.add("unknown_time")
+    if _unknown_prices(text, facts):
+        found.add("unknown_price")
+    wrong = _wrong_services(text, facts)
+    if wrong:
+        found.add("wrong_service")
+        problems += wrong
+    taken = _taken_offered(text, facts.plan)
+    if taken:
+        found.add("taken_offered")
+        problems += taken
+
+    codes = [code for code in CHECK_CODES if code in found]
+    announce = facts.plan.announce_turn_ids() if not codes else []
+    return GuardResult(text=text, codes=codes, problems=problems, announce_turn_ids=announce)
 
 
 # ---------------------------------------------------------------------------

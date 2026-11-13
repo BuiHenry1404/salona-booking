@@ -21,6 +21,13 @@ from typing import Optional, Sequence
 from pydantic import BaseModel
 
 from app.agents.salon.guard.catalog import CatalogEntry, FactCatalog, SEGMENT_ROLES
+# Chuyển sang `checks.py` (plan-guided reply Task 2); giữ tên ở đây tới khi Task 3
+# xoá module này.
+from app.agents.salon.guard.checks import (  # noqa: F401
+    OFFER_WORDS,
+    TAKEN_MARKERS,
+    _contains_word_sequence,
+)
 from app.agents.salon.guard.clocks import clocks_in_text
 from app.agents.salon.shared.text_scan import scan_money, words
 from app.core.text import normalize_for_match
@@ -48,16 +55,6 @@ TIME_WORDS = frozenset({
 _SENTENCE_PUNCT = (".", "?", "!")
 # Dấu kết câu dùng cho `taken_not_told` — thêm "…" (brief liệt kê cả dấu này).
 _SENTENCE_END = (".", "?", "!", "…")
-
-# Cụm từ (của câu BOT, không đoán ý khách — Global Constraints) báo một giờ đã
-# kín: live run 5, turn 7 nói "3 giờ chiều" là `taken` nhưng câu không có cụm
-# nào trong đây, lại còn mời khách chọn giờ đó.
-TAKEN_MARKERS: tuple[tuple[str, ...], ...] = (
-    ("kín",), ("có", "khách"), ("có", "người"), ("được", "đặt"), ("hết", "chỗ"),
-    ("không", "còn", "trống"), ("không", "trống"), ("bận",),
-)
-# Cụm mời khách chọn giờ — không được xuất hiện trong MỆNH ĐỀ giữ đoạn `taken`.
-OFFER_WORDS: tuple[tuple[str, ...], ...] = (("chọn",), ("lấy",), ("đồng", "ý"))
 
 
 class Segment(BaseModel):
@@ -150,19 +147,6 @@ def _clock_text_matches(entry: CatalogEntry, text: str) -> bool:
             continue
         return False
     return not any(punct in text for punct in _SENTENCE_PUNCT)
-
-
-def _contains_word_sequence(haystack: Sequence[str], needle: Sequence[str]) -> bool:
-    """True nếu `needle` là một dãy từ liên tiếp nằm trong `haystack` — khớp
-    tên dịch vụ theo cụm từ, không phải chuỗi con (bước Finding 1: "Uốn" không
-    được khớp bên trong "muốn"/"uống")."""
-    if not needle:
-        return False
-    n = len(needle)
-    for i in range(len(haystack) - n + 1):
-        if haystack[i:i + n] == list(needle):
-            return True
-    return False
 
 
 def _service_text_matches(entry: CatalogEntry, text: str, catalog: FactCatalog) -> bool:

@@ -20,22 +20,44 @@ dựng một vài dòng (để các mã KHÁC trong bảng không bật theo):
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 
-from app.agents.salon.guard.checks import CHECK_CODES, check_structured, check_text, strip_tool_text
+from app.agents.salon.guard.checks import (
+    CHECK_CODES,
+    MEANING_CODES,
+    STRUCTURED_CODES,
+    check_reply,
+    check_structured,
+    check_text,
+    strip_tool_text,
+)
 from app.agents.salon.guard.facts import ReplyFacts
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
-from app.agents.salon.shared.schemas import DecisionFact, Moment, ProposalFact, ServiceFact, TimeFact
+from app.agents.salon.shared.schemas import (
+    DecisionFact,
+    Moment,
+    PendingOutcome,
+    ProposalFact,
+    ServiceFact,
+    TimeFact,
+    UnannouncedDecision,
+)
 from app.agents.salon.subagents.appointment.prompt import APPOINTMENT_PROMPT
 from app.agents.salon.subagents.service.prompt import SERVICE_PROMPT
 from app.agents.salon.subagents.shop_info.prompt import SHOP_INFO_PROMPT
+from app.core.clock import TZ
 from app.core.config import settings
 from app.models.service import Service
+from app.services.service_catalog import ServiceCatalogService
 from tests.salon.guard import (
+    CAT,
     GEL,
     GOI,
     PHONE,
+    TURN_ID,
+    a_session,
     a_snapshot,
     appointment_at,
     at,
@@ -44,6 +66,7 @@ from tests.salon.guard import (
     r0,
     seed_catalog,
 )
+from tests.salon.guard.test_plan import PORTED_ROWS
 
 M15 = at(15)          # spoken "3 giờ chiều"
 M16 = at(16)          # spoken "4 giờ chiều"
@@ -593,7 +616,7 @@ async def test_check_text_has_no_old_text_rules(test_db):
     await seed_catalog(test_db)
     facts = await facts_for(test_db)
     assert "unknown_time" not in check_text("Dạ còn 5 giờ chiều ạ.", facts)
-    assert not {"unknown_time", "unknown_price"} & set(CHECK_CODES)
+    assert not {"unknown_time", "unknown_price"} & set(STRUCTURED_CODES)
 
 
 # ---------------------------------------------------------------------------
@@ -648,3 +671,200 @@ async def test_a_copied_prompt_line_is_blocked(test_db, prompt):
     first_line = next(line for line in prompt.splitlines() if line.strip())
     reply = f"Dạ chị Lan ơi, {first_line} ạ."
     assert "english" in check_text(reply, facts)
+
+
+# ---------------------------------------------------------------------------
+# Plan-guided reply, Task 2: `check_reply` đọc CHỮ THƯỜNG của model và đối chiếu
+# với kế hoạch câu (`facts.plan`) cùng dữ kiện của lượt.
+# ---------------------------------------------------------------------------
+
+# Hôm nay của `a_snapshot` là 9/11; `at()` là 10/11, tức "mai".
+TODAY_15 = Moment(iso=datetime(2026, 11, 9, 15, 0, tzinfo=TZ).isoformat(),
+                  spoken="Thứ Hai 9/11, 3 giờ chiều")
+
+TAKEN15_OPTIONS = dict(
+    snapshot=dict(sessions={"appointment": a_session(field="time", opened_turn_id=TURN_ID,
+                                                     options=[at(13), at(14), at(17)])}),
+    turn_facts=[TimeFact(role="taken", moment=M15)])
+TAKEN15_OPTIONS_PLUS_GEL_PRICE = dict(
+    snapshot=TAKEN15_OPTIONS["snapshot"],
+    turn_facts=[*TAKEN15_OPTIONS["turn_facts"],
+                ServiceFact(service_id=GEL.id, name=GEL.name, price_min=GEL.price_min,
+                            price_max=GEL.price_max, duration_minutes=GEL.duration_minutes,
+                            identified=True)])
+PROPOSAL_CUT14 = dict(
+    snapshot=dict(address="chị Mai"),
+    turn_facts=[ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14),
+                             service_ids=[CAT.id])])
+TAKEN15_TODAY_OFFER15_TOMORROW = dict(
+    turn_facts=[TimeFact(role="taken", moment=TODAY_15), TimeFact(role="free", moment=M15)])
+SESSION_SERVICE_QUESTION = dict(
+    snapshot=dict(sessions={"appointment": a_session(field="service", opened_turn_id=TURN_ID)}))
+NO_FACTS: dict = dict()
+
+CASES = [  # (id, setup kwargs for facts_for, reply text, expected codes)
+    ("taken_offer_ok", TAKEN15_OPTIONS,
+     "Dạ chị Lan ơi, 3 giờ chiều mai bên em có khách mất rồi ạ. Chị lấy giúp em "
+     "1 giờ, 2 giờ hay 5 giờ chiều mai được không ạ?", []),
+    ("live5_b_turn7", TAKEN15_OPTIONS,
+     "Dạ chị chọn giúp em 3 giờ chiều mai nhé. Chị chọn giúp em 1 giờ chiều, "
+     "2 giờ chiều hoặc 5 giờ chiều ạ.", ["taken_offered"]),
+    ("missing_option", TAKEN15_OPTIONS,
+     "Dạ 3 giờ chiều mai có khách rồi ạ, chị lấy 1 giờ hay 2 giờ chiều nhé?", ["plan_missing"]),
+    ("invented_time", TAKEN15_OPTIONS,
+     "Dạ 3 giờ chiều mai có khách rồi ạ, chị lấy 1 giờ, 2 giờ hay 4 giờ chiều mai nhé?",
+     ["plan_missing", "unknown_time"]),
+    # Câu thật của lần chạy 4, lượt 8 (nguyên văn): sai dịch vụ, và cũng không
+    # báo giá của dịch vụ đề xuất mà kế hoạch có (xem báo cáo Task 2).
+    ("live4_turn8_wrong_service", PROPOSAL_CUT14,
+     "Dạ em đã giữ chỗ sơn gel lúc 2 giờ chiều mai cho chị Mai, chị đồng ý nhé?",
+     ["plan_missing", "wrong_service"]),
+    ("proposal_ok", PROPOSAL_CUT14,
+     "Dạ em giữ chỗ cắt tóc nữ 2 giờ chiều mai cho chị nha, giá khoảng 120 nghìn, "
+     "chị đồng ý không ạ?", []),
+    ("two_requests_ok", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
+     "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé? Sơn gel bên em giá khoảng 150 nghìn ạ.", []),
+    ("two_requests_missing_price", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
+     "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé?", ["plan_missing"]),
+    ("same_clock_other_day", TAKEN15_TODAY_OFFER15_TOMORROW, "Dạ chị chọn 3 giờ chiều mai nhé?", []),
+    ("question_only_plan", SESSION_SERVICE_QUESTION, "Dạ chị muốn làm gì để em xếp lịch ạ?", []),
+    ("greeting_no_plan", NO_FACTS, "Dạ em chào chị Lan ạ.", []),
+]
+
+
+async def _reply_facts(db, setup: dict) -> ReplyFacts:
+    await seed_catalog(db)
+    setup = dict(setup)
+    snapshot = a_snapshot(**setup.pop("snapshot", {}))
+    return await facts_for(db, snapshot=snapshot, **setup)
+
+
+@pytest.mark.parametrize("setup, reply, expected", [c[1:] for c in CASES], ids=[c[0] for c in CASES])
+async def test_check_reply_cases(test_db, setup, reply, expected):
+    facts = await _reply_facts(test_db, setup)
+    result = check_reply(reply, facts)
+    assert result.codes == expected
+    assert result.text == reply
+
+
+async def test_plan_missing_names_the_act_still_to_tell(test_db):
+    facts = await _reply_facts(test_db, TAKEN15_OPTIONS)
+    result = check_reply("Dạ 3 giờ chiều mai có khách rồi ạ, chị lấy 1 giờ hay 2 giờ chiều nhé?", facts)
+    offer = next(act for act in facts.plan.acts if act.kind == "offer")
+    assert result.problems == [f"the reply must still tell: {offer.sentence}"]
+
+
+async def test_wrong_service_when_a_shop_service_is_not_of_this_turn(test_db):
+    """(a): tên một dịch vụ của tiệm mà lượt không có, dù không đi với động từ
+    giữ / đặt / dời."""
+    facts = await _reply_facts(test_db, dict(turn_facts=[TimeFact(role="free", moment=M15)]))
+    result = check_reply("Dạ 3 giờ chiều mai còn trống, gội sấy bên em làm nhanh lắm ạ.", facts)
+    assert result.codes == ["wrong_service"]
+
+
+async def test_turn_service_name_inside_a_longer_name_is_not_another_service(test_db):
+    """"Cắt tóc nữ" của lượt không bị đọc thành một dịch vụ khác có tên ngắn
+    hơn nằm trong nó."""
+    await ServiceCatalogService(test_db).upsert_many([
+        Service(id="toc-cat", category="toc", name="Cắt tóc", price_min=80000, price_max=100000,
+                duration_minutes=30)])
+    facts = await _reply_facts(test_db, PROPOSAL_CUT14)
+    result = check_reply("Dạ em giữ chỗ cắt tóc nữ 2 giờ chiều mai cho chị Mai, giá khoảng "
+                         "120 nghìn, chị đồng ý không ạ?", facts)
+    assert result.codes == []
+
+
+async def test_unknown_price_outside_every_range(test_db):
+    facts = await _reply_facts(test_db, TAKEN15_OPTIONS_PLUS_GEL_PRICE)
+    result = check_reply(
+        "Dạ 3 giờ chiều mai có khách rồi ạ. Chị lấy 1 giờ, 2 giờ hay 5 giờ chiều mai nhé? "
+        "Sơn gel giá 150 nghìn, gói kèm thì 300 nghìn ạ.", facts)
+    assert result.codes == ["unknown_price"]
+
+
+async def test_check_reply_strips_tool_text_first(test_db):
+    facts = await _reply_facts(test_db, NO_FACTS)
+    result = check_reply("Dạ em chào chị Lan ạ. decide_pending", facts)
+    assert (result.text, result.codes) == ("Dạ em chào chị Lan ạ.", [])
+
+
+# Các lượt của tests/salon/guard/test_plan.py (ngoài PORTED_ROWS).
+_M15_FULL = at(15, spoken="Thứ Ba 10/11, 3 giờ chiều")
+_M16_FULL = at(16, spoken="Thứ Ba 10/11, 4 giờ chiều")
+_FAR_9 = Moment(iso=datetime(2026, 11, 12, 9, 0, tzinfo=TZ).isoformat(),
+                spoken="Thứ Năm 12/11, 9 giờ sáng")
+PLAN_SETUPS = [
+    dict(turn_facts=[TimeFact(role="free", moment=at(13)),
+                     ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14),
+                                  service_ids=[CAT.id])]),
+    dict(turn_facts=[ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14),
+                                  service_ids=[GEL.id, GOI.id])]),
+    dict(snapshot=dict(unannounced=r0(at(10), outcome="failed")),
+         turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=_M15_FULL)]),
+    dict(pending_outcome=PendingOutcome(outcome="approved", proposal_id="p-1", kind="book",
+                                        at=_M15_FULL, service_ids=[CAT.id]),
+         turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=_M15_FULL)]),
+    dict(pending_outcome=PendingOutcome(outcome="approved", proposal_id="p-1", kind="move",
+                                        at=_M15_FULL, service_ids=[CAT.id]),
+         turn_facts=[DecisionFact(outcome="approved", proposal_kind="move", at=_M15_FULL)]),
+    dict(snapshot=dict(unannounced=r0(_M15_FULL))),
+    dict(snapshot=dict(unannounced=UnannouncedDecision(turn_id=TURN_ID, outcome="approved",
+                                                       proposal_kind="book", at=_M15_FULL)),
+         turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=_M15_FULL)]),
+    dict(snapshot=dict(unannounced=UnannouncedDecision(turn_id=TURN_ID, outcome="failed",
+                                                       proposal_kind="book", at=_M15_FULL)),
+         turn_facts=[DecisionFact(outcome="failed", proposal_kind="book", at=_M15_FULL)]),
+    dict(snapshot=dict(pending=pending_at(_M15_FULL)),
+         turn_facts=[DecisionFact(outcome="clarify", proposal_kind="book", at=_M15_FULL)]),
+    dict(turn_facts=[TimeFact(role="free", moment=at(hour)) for hour in (9, 10, 11, 13, 14)]),
+    dict(pending_outcome=PendingOutcome(outcome="failed", proposal_id="p-1", kind="book",
+                                        at=_M15_FULL, nearest=[at(14), _M16_FULL])),
+    dict(turn_facts=[
+        ServiceFact(service_id=GEL.id, name=GEL.name, price_min=GEL.price_min,
+                    price_max=GEL.price_max, duration_minutes=GEL.duration_minutes, identified=True),
+        ServiceFact(service_id=GOI.id, name=GOI.name, price_min=GOI.price_min,
+                    price_max=GOI.price_max, duration_minutes=GOI.duration_minutes),
+        TimeFact(role="appointment", moment=at(15)), TimeFact(role="appointment", moment=at(17)),
+        TimeFact(role="shop_open", moment=at(8)), TimeFact(role="shop_close", moment=at(19)),
+        TimeFact(role="busy_until", moment=at(11, 30))]),
+    dict(turn_kind="button", turn_facts=[
+        DecisionFact(outcome="approved", proposal_kind="book", at=_M15_FULL),
+        ProposalFact(proposal_id="p-2", proposal_kind="book", at=_M16_FULL, service_ids=[])]),
+    dict(turn_facts=[DecisionFact(outcome="rejected", proposal_kind="book", at=_M15_FULL)]),
+    dict(turn_facts=[DecisionFact(outcome="rejected", proposal_kind="cancel", at=_M15_FULL)]),
+    dict(turn_facts=[TimeFact(role="taken", moment=_FAR_9)]),
+    dict(turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=_M15_FULL),
+                     ProposalFact(proposal_id="p-2", proposal_kind="book", at=_M16_FULL,
+                                  service_ids=[])]),
+    dict(turn_facts=[ProposalFact(proposal_id="p-2", proposal_kind="cancel", at=_M15_FULL,
+                                  service_ids=[])]),
+]
+ALL_SETUPS = [*(case[1] for case in CASES), *PLAN_SETUPS, *(row.values[0] for row in PORTED_ROWS)]
+
+
+@pytest.mark.parametrize("setup", ALL_SETUPS)
+async def test_every_plan_template_passes_the_checks(test_db, setup):
+    facts = await _reply_facts(test_db, setup)
+    text = facts.plan.text()
+    if not text:
+        return
+    result = check_reply(text, facts)
+    assert not set(result.codes) & MEANING_CODES, (text, result.codes, result.problems)
+
+
+async def test_accepted_reply_carries_the_plan_announce_ids(test_db):
+    facts = await _reply_facts(test_db, dict(snapshot=dict(unannounced=r0(M15))))
+    assert facts.plan.announce_turn_ids() == ["turn-0"]
+    accepted = check_reply("Dạ lịch 3 giờ chiều mai em đã đặt xong cho chị Lan rồi ạ.", facts)
+    assert (accepted.codes, accepted.announce_turn_ids) == ([], ["turn-0"])
+    rejected = check_reply("Dạ em chào chị Lan ạ.", facts)
+    assert (rejected.codes, rejected.announce_turn_ids) == (["plan_missing"], [])
+
+
+async def test_reply_facts_carry_the_plan_and_the_shop_service_names(test_db):
+    facts = await _reply_facts(test_db, TAKEN15_OPTIONS)
+    assert [act.kind for act in facts.plan.acts] == ["taken", "offer"]
+    assert facts.fallback == facts.plan.text()
+    assert set(facts.shop_service_names) == {GEL.name, GOI.name, CAT.name}
