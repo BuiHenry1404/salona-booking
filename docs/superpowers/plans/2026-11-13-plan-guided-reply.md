@@ -424,3 +424,32 @@ Expected: all pass, except the known pre-existing failure.
 - [ ] **Step 3: Commit** with message `docs: record the plan-guided reply guard`.
 
 **After the plan (not a task):** ask the owner, then run live scenarios A and B. Read the transcripts against the spec's anti-goals. Count the template replies and their codes. Add the new correct and wrong replies to `guard_cases.py`.
+
+---
+
+### Task 2b: `asks_price` on `service_task` (added 13/11, owner approved)
+
+Runs after Task 2, before Task 3. Spec section "Bổ sung: `asks_price`".
+
+**Files:**
+- Modify: `app/agents/salon/shared/schemas.py` (`ServiceFact.asked_price: bool = False`)
+- Modify: `app/agents/salon/orchestrator/tools.py` (`service_task` gains `asks_price`)
+- Modify: `app/agents/salon/guard/plan.py` (price acts for asked services)
+- Test: `tests/salon/orchestrator/test_tool_rules.py` or a tools test, `tests/salon/guard/test_plan.py`, `tests/salon/guard/test_checks.py`
+
+**Interfaces:**
+- `service_task(request, continue_session, asks_price: Annotated[bool, Field(description="true when the customer asks about a price in this message; false otherwise.")], runtime)`
+  - Required, no default (the tool schema stays fixed and strict-compatible).
+  - When `asks_price` is true, every `ServiceFact` in the Command's `turn_facts` update gets `asked_price=True`.
+- `build_plan`: price acts are built for every service with `asked_price=True`, whatever the booking acts. Without booking acts, the existing rule still prices the identified services. A service gets at most one price act.
+
+- [ ] **Step 1: Write the failing tests**
+  - `test_service_task_marks_asked_price_facts` (true → facts carry `asked_price=True`; false → False). Use the existing scripted-subagent harness for `service_task`.
+  - `test_service_task_schema_requires_asks_price`: `asks_price` is in `required` of the strict OpenAI tool schema.
+  - `test_asked_price_adds_a_price_act_on_a_booking_turn`: taken + options + an asked-price Sơn gel → kinds include `price`.
+  - CASES row `two_requests_asked_price_missing`: the same setup, with a reply that states every time but no price → `["plan_missing"]`.
+  - CASES row `two_requests_asked_price_ok`: states "sơn gel khoảng 150 nghìn" → `[]`.
+- [ ] **Step 2: Run them to see them fail** (`.venv/bin/python -m pytest -q tests/salon/guard tests/salon/orchestrator -k "asked_price or asks_price"`). Expected: FAIL.
+- [ ] **Step 3: Implement.** Update every scripted `service_task` call in the tests to pass `asks_price`.
+- [ ] **Step 4: Run** `tests/salon`, then the whole suite. Expected: all pass, except the known pre-existing failure.
+- [ ] **Step 5: Commit** with message `feat: let the orchestrator mark price questions on service_task`.

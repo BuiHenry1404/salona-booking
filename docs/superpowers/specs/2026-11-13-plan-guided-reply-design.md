@@ -242,3 +242,14 @@ guard **chặn nhầm** bao nhiêu và **để lọt** bao nhiêu, thay vì ch�
 - Sau mỗi lần chạy thật, câu mới được thêm vào bộ, nên bộ lớn dần.
 - *(Quyết định của tôi: ngưỡng chặn nhầm ban đầu là 0 trên bộ hiện có. Câu đúng nào bị chặn thì
   sửa luật, hoặc ghi rõ là chấp nhận.)*
+
+## Bổ sung: `asks_price` (chủ dự án duyệt 13/11)
+
+Ca khách vừa đặt lịch vừa hỏi giá: code không đoán ý khách (bẫy 21), nhưng **Orchestrator hiểu ý
+khách**. Vì vậy:
+- Tool `service_task` có thêm tham số bắt buộc `asks_price: bool`. Orchestrator đặt `true` khi khách
+  hỏi giá trong tin nhắn này. Schema vẫn cố định, nên prompt cache không đổi.
+- Các `ServiceFact` do lần gọi đó sinh ra mang `asked_price=True`.
+- Kế hoạch có hành động **báo giá** cho các dịch vụ `asked_price`, **kể cả ở lượt đặt lịch**. Lượt
+  hỏi thông tin (không có hành động đặt lịch) vẫn báo giá như cũ.
+- Model quên đánh dấu thì hệ thống quay về như trước (không bắt giá), không tệ hơn.
