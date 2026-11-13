@@ -577,20 +577,22 @@ async def test_second_rejection_keeps_the_session_its_fallback_asks_about(test_d
 
 
 async def test_second_rejection_closes_a_session_its_fallback_does_not_ask_about(test_db):
-    """Câu mẫu hỏi về đề xuất chờ, không hỏi câu của phiên vừa mở → phiên đó đóng."""
+    """Hai phiên cùng mở trong lượt: câu mẫu (câu kế hoạch) chỉ hỏi câu của một
+    phiên → phiên kia đóng (Ruling R12)."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    await _pending(test_db, user)
     await _open_session(test_db, user, agent="appointment", turn_id="this-turn")
+    await _open_session(test_db, user, agent="shop_info", turn_id="this-turn")
     model = recorder([plain(CLAIM_TEXT), plain(CLAIM_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), turn_id="this-turn")
 
     last = state["messages"][-1]
     assert last.additional_kwargs.get("salon_source") == "code"
-    assert "đồng ý không ạ?" in last.content
-    doc = await test_db["waiting_sessions"].find_one({"agent": "appointment"})
-    assert (doc["status"], doc["closed_reason"]) == ("closed", "fallback")
+    assert last.content == "Dạ chị Lan muốn mấy giờ ạ?"
+    docs = [doc async for doc in test_db["waiting_sessions"].find({})]
+    assert sorted((doc["status"], doc.get("closed_reason")) for doc in docs) == [
+        ("closed", "fallback"), ("waiting", None)]
 
 
 # ---------------------------------------------------------------------------

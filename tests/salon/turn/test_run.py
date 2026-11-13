@@ -27,6 +27,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents import checkpoint
 from app.agents.salon import TURN_ERROR_MESSAGE, AgentEvent, ButtonReply, run_turn
+from app.agents.salon.guard.catalog import short_label
 from app.agents.salon.guard.fallback import (
     BUTTON_STALE_REPLY,
     FIELD_QUESTION,
@@ -67,6 +68,9 @@ DAY = tomorrow_at(15).date().isoformat()
 # ở trên vẫn là câu nói đầy đủ (chữ model "nói" trong kịch bản test).
 S15_CLOCK = format_vi_hhmm("15:00")
 S16_CLOCK = format_vi_hhmm("16:00")
+# Câu mẫu code (câu kế hoạch, câu báo nút bấm) nêu giờ bằng nhãn ngắn.
+L15 = f"{S15_CLOCK} mai"
+L16 = f"{S16_CLOCK} mai"
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +490,7 @@ async def test_button_approve_replies_in_code_without_calling_the_model(test_db,
     events = await turn(test_db, user, ButtonReply(proposal_id=str(proposal.id), decision="yes"))
 
     done = completed(events)
-    assert done["answer"] == f"Dạ em đã đặt xong {S15} cho chị Lan ạ."
+    assert done["answer"] == f"Dạ em đã đặt xong {L15} cho chị Lan ạ."
     assert done["proposal"] is None
     assert model.calls == []
     assert await booked_starts(test_db, user) == [tomorrow_at(15)]
@@ -518,7 +522,7 @@ async def test_button_reject_replies_in_code(test_db, monkeypatch):
     events = await turn(test_db, user, ButtonReply(proposal_id=str(proposal.id), decision="no"))
 
     assert completed(events) == {
-        "answer": f"Dạ vâng, em bỏ lịch {S15} rồi ạ. Chị Lan muốn giờ khác thì nhắn em nhé.",
+        "answer": f"Dạ vâng, em bỏ lịch {L15} rồi ạ. Chị Lan muốn giờ khác thì nhắn em nhé.",
         "proposal": None,
     }
     assert model.calls == []
@@ -544,7 +548,7 @@ async def test_second_request_is_proposed_after_the_first_is_approved(test_db, m
     assert [item["iso"] for item in session.memory["next_requests"]] == [ISO16]
 
     second = completed(await turn(test_db, user, ButtonReply(first["proposal"]["id"], "yes")))
-    assert second["answer"] == f"Dạ em đã đặt xong {S15} cho chị Lan ạ. {OFFER_16_TEXT}"
+    assert second["answer"] == f"Dạ em đã đặt xong {L15} cho chị Lan ạ. {OFFER_16_TEXT}"
     assert second["proposal"] is not None and second["proposal"]["when_spoken"] == S16
     note = [m for m in model.calls[-2] if isinstance(m, HumanMessage)][-1]
     assert "continue with the next request in the waiting appointment session" in note.content
@@ -552,7 +556,7 @@ async def test_second_request_is_proposed_after_the_first_is_approved(test_db, m
     sub_calls_before = len(sub.calls)
 
     third = completed(await turn(test_db, user, ButtonReply(second["proposal"]["id"], "yes")))
-    assert third["answer"] == f"Dạ em đã đặt xong {S16} cho chị Lan ạ."
+    assert third["answer"] == f"Dạ em đã đặt xong {L16} cho chị Lan ạ."
     assert third["proposal"] is None
     assert (len(model.calls), len(sub.calls)) == (calls_before, sub_calls_before)
     assert await booked_starts(test_db, user) == [tomorrow_at(15), tomorrow_at(16)]
@@ -572,7 +576,7 @@ async def test_button_approve_then_model_error_still_announces_booking(test_db, 
     events = await turn(test_db, user, ButtonReply(first["proposal"]["id"], "yes"))
 
     done = completed(events)
-    assert done == {"answer": f"Dạ em đã đặt xong {S15} cho chị Lan ạ.", "proposal": None}
+    assert done == {"answer": f"Dạ em đã đặt xong {L15} cho chị Lan ạ.", "proposal": None}
     assert "appointment" in await active_sessions(test_db, user)
     assert await booked_starts(test_db, user) == [tomorrow_at(15)]
     messages = await thread_messages(test_db, user)
@@ -602,7 +606,7 @@ async def test_code_fallback_after_a_valid_reply_clears_structured_response(test
     events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
 
     answer = completed(events)["answer"]
-    assert answer.startswith(TAKEN_REPLY.format(at=S15))
+    assert answer.startswith(TAKEN_REPLY.format(at=L15))
     values = await thread_channel_values(test_db, user)
     assert values.get("structured_response") is None
 
@@ -655,12 +659,15 @@ async def test_limit_error_gives_a_code_reply_not_english(test_db, monkeypatch):
     events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
 
     answer = completed(events)["answer"]
-    # Câu mẫu báo giờ kín rồi hỏi câu của phiên vừa mở (field "time"), kèm giờ trống…
+    # Câu mẫu báo giờ kín rồi hỏi câu của phiên vừa mở (field "time"), kèm giờ
+    # trống, rồi giờ mở cửa agent Thông tin tiệm vừa trả…
     session = (await active_sessions(test_db, user))["appointment"]
-    assert answer.startswith(TAKEN_REPLY.format(at=S15))
-    assert answer.endswith("chị Lan chọn giờ nào ạ?")
+    assert answer.startswith(TAKEN_REPLY.format(at=L15))
+    assert "chị Lan chọn giờ nào ạ? " in answer
+    assert answer.endswith("Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ.")
     assert session.question.options
-    assert all(option.spoken in answer for option in session.question.options)
+    assert all(short_label(Moment(iso=option.iso, spoken=option.spoken), to_local(now_utc()).date())
+               in answer for option in session.question.options)
     messages = await thread_messages(test_db, user)
     assert_valid_thread(messages)
     assert messages[-1].content == answer
@@ -1259,5 +1266,5 @@ async def test_code_template_still_marks_announced_verbatim(test_db, monkeypatch
 
     answer = completed(await turn(test_db, user, "alo em"))["answer"]
 
-    assert S15 in answer
+    assert L15 in answer
     assert (await TurnLedger(test_db).record(r0_turn)).announced is True

@@ -39,6 +39,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.state import CompiledStateGraph
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.agents.salon.guard.catalog import short_label
 from app.agents.salon.guard.facts import ReplyFacts, build_reply_facts
 from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, button_reply, fallback_reply
 from app.agents.salon.memory.long_term import consolidate_memory
@@ -55,6 +56,7 @@ from app.agents.salon.orchestrator.state import (
 )
 from app.agents.salon.shared.context import SnapshotHolder
 from app.agents.salon.shared.schemas import (
+    Moment,
     PendingOutcome,
     ProposalFact,
     TurnFact,
@@ -458,7 +460,8 @@ async def _button_turn(turn: _Turn, button: ButtonReply, box: _Box) -> AsyncIter
         thread_id=turn.thread_id,
     ))
     turn.holder.mark_stale()
-    reply = button_reply(outcome, address=address, shop_phone=settings.shop_phone)
+    reply = button_reply(outcome, address=address, shop_phone=settings.shop_phone,
+                         today=snapshot.today)
     logger.info("button_decided", extra={**turn.ids, "outcome": outcome.outcome})
 
     if outcome.outcome == "approved" and await _has_next_request(turn.holder):
@@ -519,8 +522,17 @@ async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[Unannounced
     - Câu của model (`source == "llm"`): đúng các `turn_id` guard ghi khi nhận
       câu (`answer.announced` — quyết định / R0 được trích dẫn với vai trò
       booked / moved / cancelled / failed), dù câu nói giờ ngắn gọn.
-    - Câu mẫu code: không có đoạn trích dẫn nhưng luôn chứa nguyên `spoken` —
-      so nguyên văn giờ của quyết định của lượt và của R0."""
+    - Câu mẫu code: không có đoạn trích dẫn nhưng luôn nêu giờ của quyết định
+      bằng nhãn câu mẫu (`short_label`: "3 giờ chiều mai"; ngày khác là
+      nguyên `spoken`) — so nhãn đó với giờ của quyết định của lượt và của R0.
+      (Cầu tạm: Task 3 của plan-guided reply thay bằng `announce_turn_ids`
+      của kế hoạch.)"""
+    today = to_local(turn.asked_at).date()
+
+    def said_in(moment: Moment, said: str) -> bool:
+        return (normalize_for_match(short_label(moment, today)) in said
+                or normalize_for_match(moment.spoken) in said)
+
     try:
         if answer.source == "llm":
             for turn_id in answer.announced:
@@ -531,10 +543,10 @@ async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[Unannounced
         decision = record.decision if record is not None else None
         if (decision is not None and not record.announced
                 and decision.outcome in ("approved", "failed")
-                and normalize_for_match(decision.at.spoken) in said):
+                and said_in(decision.at, said)):
             await turn.ledger.mark_announced(turn.turn_id)
         if (r0 is not None and r0.turn_id != turn.turn_id
-                and normalize_for_match(r0.at.spoken) in said):
+                and said_in(r0.at, said)):
             await turn.ledger.mark_announced(r0.turn_id)
     except Exception as exc:
         logger.warning("mark_announced_failed", extra={**turn.ids, "error_type": type(exc).__name__})

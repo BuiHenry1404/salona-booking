@@ -39,7 +39,8 @@ from app.agents.salon.guard.clocks import (
     is_known,
     readings,
 )
-from app.agents.salon.guard.fallback import compose_fallback_asking
+from app.agents.salon.guard.fallback import GENERIC_FALLBACK
+from app.agents.salon.guard.plan import build_plan
 from app.agents.salon.shared.context import TurnSnapshot
 from app.agents.salon.shared.schemas import (
     DecisionFact,
@@ -166,14 +167,6 @@ def _required_refs(
 # ---------------------------------------------------------------------------
 
 
-def _opened_session(snapshot: TurnSnapshot, turn_id: str) -> Optional[tuple[str, str]]:
-    """(agent, field) của phiên mở / đổi trong lượt này, nếu có."""
-    for agent, session in snapshot.sessions.items():
-        if session.opened_turn_id == turn_id:
-            return agent, session.question.field
-    return None
-
-
 async def build_reply_facts(
     db: AsyncIOMotorDatabase, *, snapshot: TurnSnapshot, turn_facts: list[TurnFact], turn_id: str,
     turn_kind: Literal["typed", "button"], pending_outcome: Optional[PendingOutcome], question: str,
@@ -249,38 +242,23 @@ async def build_reply_facts(
         if claim:
             done[claim] |= clocks_of_moment(unannounced.at)
 
-    # Phát hiện kín thì phải báo khách (chủ dự án 11/11, mục F2) — câu mẫu
-    # code báo giờ kín đầu tiên; câu của model phải trích dẫn (`required`).
-    taken = [f.moment for f in turn_facts if isinstance(f, TimeFact) and f.role == "taken"]
     failed = next((d for d in decisions if d.outcome in FAILED_OUTCOMES), None)
     if turn_kind == "button":
         # Lượt nút bấm: `button_reply` đã báo (kèm số điện thoại nếu thất bại).
         failed = None
     r0_failed = unannounced is not None and unannounced.outcome == "failed"
 
-    # -- câu mẫu code -----------------------------------------------------------
-    if proposals:
-        held_proposal = (proposals[-1].proposal_kind, proposals[-1].at)
-    elif pending_held:
-        held_proposal = (pending.kind, pending.at)
-    else:
-        held_proposal = None
-    opened = _opened_session(snapshot, turn_id)
-    fallback, asks_session = compose_fallback_asking(
-        address=address, shop_phone=settings.shop_phone,
-        failed_at=failed.at if failed is not None else None,
-        approved=(approved[0].kind, approved[0].at) if approved and turn_kind == "typed" else None,
-        proposal=held_proposal, announce=unannounced,
-        opened_field=opened[1] if opened is not None else None,
-        taken_at=taken[0] if taken else None,
-        opened_options=[Moment(iso=o.iso, spoken=o.spoken)
-                        for o in snapshot.sessions[opened[0]].question.options] if opened else [],
-    )
-
     catalog = await build_catalog(
         db, snapshot=snapshot, turn_facts=turn_facts, pending_outcome=pending_outcome,
         question=question, turn_id=turn_id,
     )
+    # -- câu mẫu code: câu của kế hoạch (`guard/plan.py`) ------------------------
+    plan = build_plan(
+        catalog, snapshot=snapshot, turn_facts=turn_facts, pending_outcome=pending_outcome,
+        turn_id=turn_id, turn_kind=turn_kind, shop_phone=settings.shop_phone,
+    )
+    fallback = plan.text() or GENERIC_FALLBACK.format(address=address)
+
     required = _required_refs(
         catalog=catalog, snapshot=snapshot, turn_facts=turn_facts, decisions=decisions,
         turn_kind=turn_kind, proposals=proposals,
@@ -301,5 +279,5 @@ async def build_reply_facts(
         address=address,
         previous_replies=list(previous_replies),
         fallback=fallback,
-        asked_session=opened[0] if opened is not None and asks_session else None,
+        asked_session=plan.asks_session,
     )
