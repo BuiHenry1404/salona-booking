@@ -25,7 +25,7 @@ from app.agents.salon.guard.facts import (
     clocks_in_text,
     is_known,
 )
-from app.agents.salon.guard.segments import check_segments, join_segments, parse_reply
+from app.agents.salon.guard.segments import check_segments, join_segments, parse_reply, taken_not_told
 from app.agents.salon.shared.text_scan import (
     digits_in,
     split_clauses,
@@ -43,7 +43,7 @@ from app.core.text import normalize_for_match
 # (`unreferenced`).
 CHECK_CODES = (
     "bad_structure", "unknown_ref", "wrong_role", "ref_mismatch", "unreferenced",
-    "empty", "claim", "missing_fact", "missing_question",
+    "taken_not_told", "empty", "claim", "missing_fact", "missing_question",
     "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun",
     "foreign_script", "english", "repeat",
 )
@@ -414,16 +414,23 @@ def check_structured(raw: str, facts: ReplyFacts) -> GuardResult:
     report = check_segments(segments, facts.catalog)
 
     missing_problems = [
-        f"cite {item.ref} as {' or '.join(item.roles)} ({item.why})"
+        f"{item.ref}: {item.todo}"
         for item in facts.required
         if not any(ref == item.ref and role in item.roles for ref, role in report.cited)
+    ]
+    taken_problems = [
+        f"{ref} is cited as taken but the sentence does not tell the customer it is already "
+        "booked, or invites them to choose it"
+        for ref in taken_not_told(segments, facts.catalog)
     ]
 
     found = set(report.codes) | check_text(text, facts)
     if missing_problems:
         found.add("missing_fact")
+    if taken_problems:
+        found.add("taken_not_told")
     codes = [code for code in CHECK_CODES if code in found]
-    problems = [*report.problems, *missing_problems]
+    problems = [*report.problems, *taken_problems, *missing_problems]
 
     announce_turn_ids: list[str] = []
     for ref, role in report.cited:

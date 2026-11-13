@@ -540,6 +540,32 @@ async def test_missing_fact_when_the_proposal_is_not_cited(test_db):
     assert check_structured(raw, facts).codes == ["missing_fact"]
 
 
+async def test_check_structured_flags_taken_not_told(test_db):
+    """Live run 5: a taken time cited correctly as `taken`, but the sentence
+    does not tell the customer it is already booked and invites them to
+    choose it — `taken_not_told` must fire with a problem line naming the ref."""
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db, turn_facts=[TimeFact(role="taken", moment=M15)])
+    id15 = facts.catalog.id_of(M15)
+    raw = _raw(facts, "Dạ chị chọn giúp em ", (M15.spoken, M15, "taken"),
+               " nhé. Chị chọn giúp em 1 giờ chiều ạ.")
+    result = check_structured(raw, facts)
+    assert "taken_not_told" in result.codes
+    assert (f"{id15} is cited as taken but the sentence does not tell the customer it is "
+            "already booked, or invites them to choose it") in result.problems
+
+
+async def test_required_taken_todo_says_own_sentence(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db, turn_facts=[TimeFact(role="taken", moment=M15)])
+    id15 = facts.catalog.id_of(M15)
+    [item] = [r for r in facts.required if r.ref == id15]
+    assert item.todo.startswith("already booked by another customer")
+    raw = _raw(facts, "Dạ chào chị ạ.")
+    result = check_structured(raw, facts)
+    assert f"{id15}: {item.todo}" in result.problems
+
+
 async def test_announce_ids_come_from_cited_decisions(test_db):
     await seed_catalog(test_db)
     snapshot = a_snapshot(unannounced=r0(at(9)))

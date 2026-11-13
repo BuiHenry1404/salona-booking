@@ -68,10 +68,25 @@ _STILL_PENDING = frozenset({"kept", "clarify"})
 class RequiredRef(BaseModel):
     """Một dữ kiện câu trả lời cấu trúc (level C) PHẢI trích dẫn — `ref` là id
     trong `FactCatalog` của lượt, `roles` là các vai trò chấp nhận được,
-    `why` là lý do (tiếng Anh, cho lời nhắc viết lại)."""
+    `todo` là điều câu trả lời phải làm với nó (tiếng Anh, cho lời nhắc viết
+    lại — `_TODO_FOR_ROLE`, theo vai trò đầu tiên của `roles`)."""
     ref: str
     roles: list[str]
-    why: str
+    todo: str
+
+
+# Điều câu trả lời phải làm với một dữ kiện bắt buộc, theo vai trò của nó —
+# `taken` khác hẳn các vai còn lại (live run 5): không chỉ TRÍCH, mà câu phải
+# NÓI nó đã kín trong câu riêng và không bao giờ mời khách chọn (`taken_not_told`).
+_TODO_FOR_ROLE: dict[str, str] = {
+    "taken": "already booked by another customer: say so in its own sentence and never ask "
+             "the customer to choose it",
+    "held": "the time being held: state it and ask whether the customer agrees",
+    "booked": "booked in this turn: tell the customer",
+    "moved": "moved in this turn: tell the customer",
+    "cancelled": "cancelled in this turn: tell the customer",
+    "failed": "could not be written: tell the customer",
+}
 
 
 class ReplyFacts(BaseModel):
@@ -110,39 +125,39 @@ def _required_refs(
     """Dữ kiện phải được câu trả lời cấu trúc trích dẫn (spec level C), từ
     các nguồn: R0, đề xuất mới, giờ kín, quyết định của lượt gõ chữ. Bỏ qua mục
     không có id trong `catalog`; mỗi `ref` chỉ giữ MỤC ĐẦU TIÊN."""
-    items: list[tuple[Moment, list[str], str]] = []
+    items: list[tuple[Moment, list[str]]] = []
     unannounced = snapshot.unannounced
     if unannounced is not None:
         if unannounced.outcome == "approved":
             claim = CLAIM_FOR_KIND.get(unannounced.proposal_kind)
             if claim is not None:
-                items.append((unannounced.at, [claim], "the unannounced decision"))
+                items.append((unannounced.at, [claim]))
         elif unannounced.outcome == "failed":
-            items.append((unannounced.at, ["failed"], "the unannounced decision"))
+            items.append((unannounced.at, ["failed"]))
     for proposal in proposals:
-        items.append((proposal.at, ["held"], "the new proposal"))
+        items.append((proposal.at, ["held"]))
     for fact in turn_facts:
         if isinstance(fact, TimeFact) and fact.role == "taken":
-            items.append((fact.moment, ["taken"], "the taken time"))
+            items.append((fact.moment, ["taken"]))
     if turn_kind == "typed":
         for decision in decisions:
             if decision.outcome == "approved":
                 claim = CLAIM_FOR_KIND.get(decision.kind)
                 if claim is not None:
-                    items.append((decision.at, [claim], "the decision of this turn"))
+                    items.append((decision.at, [claim]))
             elif decision.outcome in FAILED_OUTCOMES:
-                items.append((decision.at, ["failed"], "the decision of this turn"))
+                items.append((decision.at, ["failed"]))
             elif decision.outcome == "clarify":
-                items.append((decision.at, ["held"], "the decision of this turn"))
+                items.append((decision.at, ["held"]))
 
     required: list[RequiredRef] = []
     seen: set[str] = set()
-    for moment, roles, why in items:
+    for moment, roles in items:
         ref = catalog.id_of(moment)
         if ref is None or ref in seen:
             continue
         seen.add(ref)
-        required.append(RequiredRef(ref=ref, roles=roles, why=why))
+        required.append(RequiredRef(ref=ref, roles=roles, todo=_TODO_FOR_ROLE[roles[0]]))
     return required
 
 

@@ -69,11 +69,13 @@ _CODE_HINTS = {
                     "day, a word of the service name, or an amount inside the price range.",
     "unreferenced": "Write every time, service name and price as its own segment with ref and "
                     "role.",
+    "taken_not_told": "Tell the customer in its own sentence that each taken time is already "
+                      "booked, and never invite them to choose it.",
     "empty": "Your reply was empty. Write the reply to the customer in plain words; never "
              "write a tool call as text.",
     "claim": "Do not say anything was booked, moved, cancelled or held unless this turn's "
              "facts show it.",
-    "missing_fact": "Cite each required fact listed below with an allowed role.",
+    "missing_fact": "Do what each line below says for the listed facts, citing each by its id.",
     "missing_question": "Ask the customer whether they agree to the new proposal.",
     "missing_phone": "Writing the appointment failed: give the shop phone number {phone}.",
     "phone_not_allowed": "Do not give the shop phone number; nothing failed to be written.",

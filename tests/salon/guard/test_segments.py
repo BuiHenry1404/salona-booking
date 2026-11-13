@@ -13,6 +13,7 @@ from app.agents.salon.guard.segments import (
     check_segments,
     join_segments,
     parse_reply,
+    taken_not_told,
 )
 
 
@@ -173,3 +174,33 @@ def test_plain_segment_does_not_leak_on_substring_of_service_name():
         ("chị làm uốn nhé", None, None),
     ]), catalog)
     assert report.codes == {"unreferenced"}
+
+
+# ---------------------------------------------------------------------------
+# taken_not_told — live run 5: a time cited as taken must be TOLD as taken in
+# its own sentence, and that sentence must never invite the customer to
+# choose it (`t1` is taken 15:00, `t2` is offer 13:00 in `catalog`).
+# ---------------------------------------------------------------------------
+
+TAKEN_TABLE = [  # (row id, segments as (text, ref, role) tuples, expected taken_not_told refs)
+    ("live5_b_turn7", [("Dạ chị chọn giúp em ", None, None), ("3 giờ chiều", "t1", "taken"),
+                       (" nhé. Chị chọn giúp em ", None, None), ("1 giờ chiều", "t2", "offer"),
+                       (" ạ.", None, None)], ["t1"]),
+    ("live5_a_turn2", [("Dạ chị Lan, giờ ", None, None), ("3 giờ chiều", "t1", "taken"),
+                       (" đã kín rồi ạ. Chị chọn giúp em ", None, None), ("1 giờ chiều", "t2", "offer"),
+                       (" nhé?", None, None)], []),
+    ("co_khach_dat", [("3 giờ chiều mai", "t1", "taken"), (" đã có khách đặt rồi chị ạ.", None, None)], []),
+    ("co_nguoi_dat", [("3 giờ chiều mai", "t1", "taken"), (" đã có người đặt rồi ạ.", None, None)], []),
+    ("taken_then_offer_same_sentence", [("3 giờ chiều", "t1", "taken"), (" đã kín, chị chọn ", None, None),
+                                        ("1 giờ chiều", "t2", "offer"), (" nhé?", None, None)], []),
+    ("not_booked_because_taken", [("Dạ em chưa đặt được lúc ", None, None), ("3 giờ chiều", "t1", "taken"),
+                                  (" vì đã có khách rồi ạ.", None, None)], []),
+    ("taken_no_marker", [("Dạ ", None, None), ("3 giờ chiều", "t1", "taken"), (" nha chị.", None, None)], ["t1"]),
+    ("taken_in_offer_clause", [("Chị lấy ", None, None), ("3 giờ chiều", "t1", "taken"),
+                               (" đi, giờ đó kín rồi ạ.", None, None)], ["t1"]),
+]
+
+
+@pytest.mark.parametrize("segments, expected", [r[1:] for r in TAKEN_TABLE], ids=[r[0] for r in TAKEN_TABLE])
+def test_taken_not_told_table(catalog, segments, expected):
+    assert taken_not_told(_segments(segments), catalog) == expected

@@ -46,6 +46,18 @@ TIME_WORDS = frozenset({
 })
 
 _SENTENCE_PUNCT = (".", "?", "!")
+# Dấu kết câu dùng cho `taken_not_told` — thêm "…" (brief liệt kê cả dấu này).
+_SENTENCE_END = (".", "?", "!", "…")
+
+# Cụm từ (của câu BOT, không đoán ý khách — Global Constraints) báo một giờ đã
+# kín: live run 5, turn 7 nói "3 giờ chiều" là `taken` nhưng câu không có cụm
+# nào trong đây, lại còn mời khách chọn giờ đó.
+TAKEN_MARKERS: tuple[tuple[str, ...], ...] = (
+    ("kín",), ("có", "khách"), ("có", "người"), ("được", "đặt"), ("hết", "chỗ"),
+    ("không", "còn", "trống"), ("không", "trống"), ("bận",),
+)
+# Cụm mời khách chọn giờ — không được xuất hiện trong MỆNH ĐỀ giữ đoạn `taken`.
+OFFER_WORDS: tuple[tuple[str, ...], ...] = (("chọn",), ("lấy",), ("đồng", "ý"))
 
 
 class Segment(BaseModel):
@@ -265,3 +277,90 @@ def check_segments(segments: Sequence[Segment], catalog: FactCatalog) -> Segment
         report.cited.append((ref, role))
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# taken_not_told — spec live run 5: một đoạn trích đúng vai `taken` vẫn phải
+# được CÂU nói là đã kín, và mệnh đề chứa nó không được mời khách chọn giờ đó.
+# ---------------------------------------------------------------------------
+
+
+def _plain_pieces(text: str) -> list[tuple[str, bool]]:
+    """Tách `text` của MỘT đoạn chữ thường tại mỗi dấu kết câu (`_SENTENCE_END`,
+    theo sau là khoảng trắng hoặc hết chuỗi) — một đoạn chữ thường có thể mang
+    nhiều câu (vd "... nhé. Chị chọn ..."); đoạn cuối cùng (`ends=False`) nếu
+    không kết thúc bằng dấu đó thì câu còn mở, nối tiếp qua các đoạn sau."""
+    pieces: list[tuple[str, bool]] = []
+    start = 0
+    n = len(text)
+    i = 0
+    while i < n:
+        if text[i] in _SENTENCE_END and (i + 1 == n or text[i + 1].isspace()):
+            pieces.append((text[start:i + 1], True))
+            start = i + 1
+        i += 1
+    if start < n:
+        pieces.append((text[start:], False))
+    return pieces
+
+
+_Token = tuple[str, Optional[str], Optional[str]]  # (text, ref, role)
+
+
+def _group_into_sentences(segments: Sequence[Segment]) -> list[list[_Token]]:
+    """Gom các đoạn thành câu (quy tắc 1 của brief): đoạn trích dữ kiện không
+    bao giờ tách câu; đoạn chữ thường có thể mang nhiều câu, tách tại mỗi dấu
+    kết câu của chính nó."""
+    sentences: list[list[_Token]] = []
+    current: list[_Token] = []
+    for segment in segments:
+        if segment.ref is None:
+            for piece, ends in _plain_pieces(segment.text):
+                current.append((piece, None, None))
+                if ends:
+                    sentences.append(current)
+                    current = []
+        else:
+            current.append((segment.text, segment.ref, segment.role))
+    if current:
+        sentences.append(current)
+    return sentences
+
+
+def _find_char(text: str, chars: str, *, from_end: bool = False) -> Optional[int]:
+    positions = [i for i, ch in enumerate(text) if ch in chars]
+    if not positions:
+        return None
+    return positions[-1] if from_end else positions[0]
+
+
+def _clause_around(sentence: list[_Token], index: int) -> str:
+    """Mệnh đề (quy tắc 2b): chữ từ dấu `,`/`;` gần nhất TRƯỚC đoạn `taken` tới
+    dấu `,`/`;` gần nhất SAU nó, trong câu."""
+    before = "".join(text for text, _, _ in sentence[:index])
+    after = "".join(text for text, _, _ in sentence[index + 1:])
+    cut_before = _find_char(before, ",;", from_end=True)
+    cut_after = _find_char(after, ",;")
+    before_clause = before[cut_before + 1:] if cut_before is not None else before
+    after_clause = after[:cut_after] if cut_after is not None else after
+    return before_clause + sentence[index][0] + after_clause
+
+
+def taken_not_told(segments: Sequence[Segment], catalog: FactCatalog) -> list[str]:
+    """Mọi ref được trích vai `taken` mà câu của nó (a) không có cụm báo kín
+    (`TAKEN_MARKERS`) hoặc (b) mệnh đề giữ nó lại mời khách chọn (`OFFER_WORDS`)
+    — live run 5, turn 7: "3 giờ chiều" gắn đúng vai `taken` nhưng câu mời
+    khách chọn chính giờ đó, không nói nó đã kín."""
+    broken: list[str] = []
+    for sentence in _group_into_sentences(segments):
+        sentence_text = "".join(text for text, _, _ in sentence)
+        sentence_words = words(normalize_for_match(sentence_text))
+        has_marker = any(_contains_word_sequence(sentence_words, marker) for marker in TAKEN_MARKERS)
+        for index, (_, ref, role) in enumerate(sentence):
+            if role != "taken" or ref is None or catalog.get(ref) is None:
+                continue
+            clause_words = words(normalize_for_match(_clause_around(sentence, index)))
+            has_offer = any(_contains_word_sequence(clause_words, offer) for offer in OFFER_WORDS)
+            if (not has_marker or has_offer) and ref not in broken:
+                broken.append(ref)
+    return broken
