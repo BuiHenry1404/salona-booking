@@ -513,9 +513,12 @@ class TestCompleteProposalContract:
                                            tomorrow_at, use_model)
 
         iso15, s15 = moment(tomorrow_at(15))["iso"], moment(tomorrow_at(15))["spoken"]
+        # Nhãn ngắn do code dựng cho mốc "mai" (`catalog.short_label`, live run 5
+        # fix) — khác `s15` (ngày đầy đủ), dùng riêng cho `when_spoken` dưới.
+        s15_short = "3 giờ chiều mai"
         # Câu trả lời cuối là JSON các đoạn trích dẫn (level C); khách nhận chữ đã ghép.
-        offer_text = f"Dạ vâng, em giữ chỗ {s15} cho chị Lan, chị Lan đồng ý không ạ?"
-        offer = reply("Dạ vâng, em giữ chỗ ", cite("held", s15),
+        offer_text = f"Dạ vâng, em giữ chỗ {s15_short} cho chị Lan, chị Lan đồng ý không ạ?"
+        offer = reply("Dạ vâng, em giữ chỗ ", cite("held", s15_short),
                       " cho chị Lan, chị Lan đồng ý không ạ?")
         hours_text = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
         hours = reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ",

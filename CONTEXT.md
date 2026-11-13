@@ -73,8 +73,20 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   `bad_structure`, `unknown_ref`, `wrong_role`, `ref_mismatch`, `unreferenced`, `foreign_script`,
   `english`; bỏ `unknown_time` và `unknown_price` (so trên chữ, đã lỗi thời); `missing_fact` giờ
   nghĩa là một dữ kiện BẮT BUỘC của lượt chưa được trích dẫn đúng id + vai trò, không còn so trên
-  chữ như trước. **Còn lại: chạy thật lượt A rồi lượt B (`--keep-db`) trên Azure, mỗi lần phải hỏi
-  chủ dự án trước.**
+  chữ như trước.
+  **Lần chạy thật 5 (13/11)**: lượt A đạt; lượt B **chưa đạt** (log
+  `.superpowers/sdd/2026-11-11-level-c/live-5-{A,B}.log`) — lượt 7 mời khách chọn đúng giờ đã kín
+  ("chị chọn giúp em … 3 giờ chiều nhé"), lượt 4 sau khi khách nói "8 giờ sáng" bot vẫn hỏi lại buổi
+  ("08:00 Chị cho em xin buổi nào ạ?"), cộng câu ngày đầy đủ cứng nhắc và câu thiếu động từ. 1 câu
+  mẫu CODE, 8 câu viết lại, 0 câu `wrong_role`.
+  **Đã sửa (13/11)** theo spec `docs/superpowers/specs/2026-11-11-level-c-grounded-reply-design.md`
+  mục "Bổ sung sau lần chạy thật 5 (13/11)" và plan
+  `docs/superpowers/plans/2026-11-13-level-c-live-5-fixes.md`: mã kiểm mới `taken_not_told` (một câu
+  trích giờ vai `taken` phải nói giờ đó đã kín, không được mời khách chọn chính giờ đó); gợi ý viết
+  lại `missing_fact` theo từng vai (`RequiredRef.todo`); nhãn ngắn do code dựng trong catalog ("…
+  hôm nay" / "… mai"); nhãn giờ khách nói kiểu đồng hồ khách dùng ("khách nói 8 giờ sáng"); luật
+  prompt giữ động từ ở đoạn chữ thường; `parse_time` dùng buổi khách đã gõ khi model bỏ sót.
+  **Còn lại: chạy lại lượt A và lượt B trên Azure, phải hỏi chủ dự án trước.**
 - **Làm tiếp sau khi mở phiên mới**:
   1. ~~Sửa (a), (b), (c)~~ và ~~A, C, D, E, F của lần 2~~ — xong 11/11.
   2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),

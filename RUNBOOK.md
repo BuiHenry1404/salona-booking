@@ -341,13 +341,15 @@ id + vai trò. `check_structured`
 (`app/agents/salon/guard/checks.py`) parse mảng đó (`parse_reply`), ráp lại
 thành một câu để log/hiển thị (`join_segments` + `strip_tool_text`), so từng
 đoạn có trích dẫn với dữ kiện lượt (`check_segments`) rồi chạy thêm các luật
-đọc trên chữ đã ráp (`check_text`). Mười sáu mã lỗi theo thứ tự cố định
+đọc trên chữ đã ráp (`check_text`). Mười bảy mã lỗi theo thứ tự cố định
 (`CHECK_CODES`): `bad_structure` (không parse được JSON, hoặc một đoạn có
 `ref`/`role` chỉ một trong hai), `unknown_ref` (trích một id không có trong
 `Reply facts`), `wrong_role` (đúng id nhưng sai vai trò, hay trích dịch vụ
 ngoài đề xuất đang giữ chỗ), `ref_mismatch` (chữ của đoạn không khớp dữ kiện
 đã trích — giờ/dịch vụ/giá khác), `unreferenced` (một đoạn chữ thường lại
-nêu giờ, tên dịch vụ hay giá mà không trích dẫn), `empty`, `claim` (nhận vơ
+nêu giờ, tên dịch vụ hay giá mà không trích dẫn), `taken_not_told` (một
+đoạn trích giờ vai `taken` mà câu không nói giờ đó đã kín, hay lại mời khách
+chọn chính giờ đó — live run 5, turn 7), `empty`, `claim` (nhận vơ
 đã đặt/dời/huỷ/giữ không có thật), `missing_fact` (một dữ kiện BẮT BUỘC của
 lượt — `facts.required` — chưa được trích dẫn đúng id + vai trò; không còn
 so trên chữ như `unknown_time`/`unknown_price` cũ, đã bỏ), `missing_question`,
