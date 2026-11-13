@@ -64,6 +64,10 @@ class ServiceFact(BaseModel):
     # agent Dịch vụ `ok`). False: chỉ được tra / liệt kê (ứng viên, bảng giá) —
     # guard vẫn cho báo giá của nó, nhưng nó không thành "dịch vụ đã biết".
     identified: bool = False
+    # True: Orchestrator đánh dấu khách hỏi giá dịch vụ này trong lượt này
+    # (`service_task(asks_price=True)`, spec "Bổ sung: asks_price"). Kế hoạch
+    # báo giá dịch vụ này DÙ lượt có hành động đặt lịch hay không.
+    asked_price: bool = False
 
 
 class AgentStatusFact(BaseModel):

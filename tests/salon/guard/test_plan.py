@@ -142,6 +142,38 @@ async def test_chosen_service_alone_gets_a_price_act(test_db):
     assert plan.prices() == [(120000, 180000)]
 
 
+# ---------------------------------------------------------------------------
+# Task 2b: `asks_price` on `service_task`
+# ---------------------------------------------------------------------------
+
+
+async def test_asked_price_adds_a_price_act_on_a_booking_turn(test_db):
+    """`service_task(asks_price=True)` marks the fact `asked_price=True`;
+    the plan then reports its price even though the turn already has a
+    booking act (here: a taken time + free options — spec "Bổ sung:
+    asks_price"). The service is NOT `identified` (not chosen), only asked."""
+    await seed_catalog(test_db)
+    session = a_session(field="time", opened_turn_id=TURN_ID, options=[at(13), at(14), at(17)])
+    gel_asked = ServiceFact(service_id="nail-gel", name="Sơn gel", price_min=120000,
+                            price_max=180000, duration_minutes=45, asked_price=True)
+    plan = await plan_for(test_db, snapshot=a_snapshot(sessions={"appointment": session}),
+                          turn_facts=[TimeFact(role="taken", moment=at(15)), gel_asked])
+    assert _kinds(plan) == ["taken", "offer", "price"]
+    assert plan.prices() == [(120000, 180000)]
+
+
+async def test_asked_price_does_not_duplicate_an_already_priced_service(test_db):
+    """At most one price act per service: `identified` already added one
+    (no booking act here), `asked_price` on the same service must not add
+    a second."""
+    await seed_catalog(test_db)
+    gel_asked_and_chosen = ServiceFact(service_id="nail-gel", name="Sơn gel", price_min=120000,
+                                       price_max=180000, duration_minutes=45,
+                                       identified=True, asked_price=True)
+    plan = await plan_for(test_db, turn_facts=[gel_asked_and_chosen])
+    assert _kinds(plan) == ["price"]
+
+
 async def test_failed_then_done_order_and_announce_ids(test_db):
     plan = await plan_for(
         test_db, snapshot=a_snapshot(unannounced=r0(at(10), outcome="failed")),

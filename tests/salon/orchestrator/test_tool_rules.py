@@ -219,7 +219,7 @@ _RULES = [
      {"upcoming_services": ["blk-45"],
       "state": {"turn_facts": [_service_fact().model_dump(mode="json")]}}, None),
     ("service_task_allowed", "service_task", {"request": "Price of dyeing",
-                                              "continue_session": False},
+                                              "continue_session": False, "asks_price": True},
      {"known": [_service_fact()]}, None),
 ]
 
@@ -431,3 +431,44 @@ async def test_appointment_task_is_allowed_after_decide(test_db, monkeypatch):
     assert state["pending_outcome"]["outcome"] == "rejected"
     assert state["turn_facts"][-1] == {"kind": "agent_status", "agent": "appointment",
                                        "status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Task 2b: `service_task` gains `asks_price`
+# ---------------------------------------------------------------------------
+
+
+async def test_service_task_schema_requires_asks_price(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    holder = SnapshotHolder(test_db, user, asked_at=now_utc(), thread_id=THREAD_ID,
+                            services=Ledger())
+    tools = {tool.name: tool for tool in make_orchestrator_tools(test_db, user, holder)}
+    schema = convert_to_openai_tool(tools["service_task"], strict=True)
+    params = schema["function"]["parameters"]
+    assert "asks_price" in params["required"]
+    assert params["properties"]["asks_price"]["type"] == "boolean"
+    assert "default" not in json.dumps(params["properties"]["asks_price"])
+
+
+@pytest.mark.parametrize("asks_price", [True, False])
+async def test_service_task_marks_asked_price_facts(test_db, monkeypatch, asks_price):
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("search_services", {"query": "nhuộm"}), result(status="ok"),
+    ]))
+    model = scripted([
+        tool_call("service_task", {"request": "Price of dyeing.", "continue_session": False,
+                                   "asks_price": asks_price}),
+        AIMessage(content="Dạ"),
+    ])
+
+    state, *_ = await _orchestrator_turn(test_db, user, model, question="nhuộm tóc giá bao nhiêu em")
+
+    [message] = _tool_messages(state)
+    assert message.status != "error"
+    service_facts = [fact for fact in state["turn_facts"] if fact["kind"] == "service"]
+    assert service_facts
+    assert all(fact["asked_price"] is asks_price for fact in service_facts)

@@ -330,12 +330,27 @@ def build_plan(
     # gel 3 giờ"), nên báo giá bắt buộc ở lượt đặt lịch sẽ ép câu nào cũng nêu giá
     # (ruling controller, Task 2). Lượt đặt lịch vẫn được nêu giá — `unknown_price`
     # kiểm số tiền.
+    priced_ids: set[str] = set()
     if not any(act.kind in _BOOKING_ACTS for act in acts):
         priced = [f.service_id for f in turn_facts if isinstance(f, ServiceFact) and f.identified]
         for service_id in dict.fromkeys(priced):
             act = services.price_act(service_id)
             if act is not None:
                 acts.append(act)
+                priced_ids.add(service_id)
+
+    # -- 8b. báo giá cho dịch vụ khách HỎI GIÁ (asks_price, Task 2b) ----------------
+    # Orchestrator hiểu ý khách khi gọi `service_task(asks_price=True)`; kế hoạch
+    # báo giá dịch vụ đó DÙ lượt có hành động đặt lịch hay không. Mỗi dịch vụ
+    # nhiều nhất một hành động báo giá.
+    asked = [f.service_id for f in turn_facts if isinstance(f, ServiceFact) and f.asked_price]
+    for service_id in dict.fromkeys(asked):
+        if service_id in priced_ids:
+            continue
+        act = services.price_act(service_id)
+        if act is not None:
+            acts.append(act)
+            priced_ids.add(service_id)
 
     # -- 9. kể lịch hẹn -------------------------------------------------------------
     appointments = _distinct(f.moment for f in turn_facts

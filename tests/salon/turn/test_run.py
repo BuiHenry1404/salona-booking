@@ -902,9 +902,9 @@ S10_CLOCK = format_vi_hhmm("10:00")
 OFFER_9_TEXT = f"Dạ vâng, em giữ chỗ {S9} cho chị Lan, chị Lan đồng ý không ạ?"
 OFFER_9 = reply("Dạ vâng, em giữ chỗ ", cite("held", S9, find=S9_CLOCK),
                 " cho chị Lan, chị Lan đồng ý không ạ?")
-DYE_PRICE = {"request": "Price of hair dyeing.", "continue_session": False}
-DYE = {"request": "Hair dyeing.", "continue_session": False}
-HAIR_LIST = {"request": "Hair price list.", "continue_session": False}
+DYE_PRICE = {"request": "Price of hair dyeing.", "continue_session": False, "asks_price": True}
+DYE = {"request": "Hair dyeing.", "continue_session": False, "asks_price": False}
+HAIR_LIST = {"request": "Hair price list.", "continue_session": False, "asks_price": False}
 CANCEL_10_TEXT = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
 CANCEL_10 = reply("Dạ em sẽ huỷ lịch ", cite("held", S10, find=S10_CLOCK),
                   " cho chị Lan, chị Lan đồng ý không ạ?")
@@ -1033,7 +1033,7 @@ async def test_price_question_is_answered_from_the_catalogue(test_db, monkeypatc
     good = "Dạ cắt tóc nữ từ 100 nghìn tới 150 nghìn ạ."
     model = orchestrator(monkeypatch, [
         tool_call("service_task", {"request": "Price of a women's haircut.",
-                                   "continue_session": False}),
+                                   "continue_session": False, "asks_price": True}),
         haircut_price(amount), haircut_price("từ 100 nghìn tới 150 nghìn"),
     ])
     subagents(monkeypatch, [tool_call("search_services", {"query": "cắt tóc nữ"}),
@@ -1076,7 +1076,8 @@ async def test_named_but_unclear_service_is_asked_not_proposed(test_db, monkeypa
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("service_task", {"request": "Nail service.", "continue_session": False}),
+        tool_call("service_task", {"request": "Nail service.", "continue_session": False,
+                                   "asks_price": False}),
         tool_call("appointment_task", book_9(None)),
         ASK_NAIL,
     ])
@@ -1175,7 +1176,8 @@ async def test_cancel_while_a_service_session_waits(test_db, monkeypatch):
     user = await a_user(test_db)
     appt = await gel_at_10(test_db, user)
     orchestrator(monkeypatch, [
-        tool_call("service_task", {"request": "Nail service.", "continue_session": False}),
+        tool_call("service_task", {"request": "Nail service.", "continue_session": False,
+                                   "asks_price": False}),
         ASK_NAIL,
         tool_call("appointment_task", task("Cancel the 10am appointment tomorrow.")),
         CANCEL_10,

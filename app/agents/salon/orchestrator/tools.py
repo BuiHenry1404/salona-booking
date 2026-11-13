@@ -114,15 +114,26 @@ def make_orchestrator_tools(
     async def service_task(
         request: Annotated[str, Field(description=_REQUEST_DESCRIPTION)],
         continue_session: Annotated[bool, Field(description=_CONTINUE_DESCRIPTION)],
+        asks_price: Annotated[bool, Field(
+            description="true when the customer asks about a price in this message; "
+                        "false otherwise.")],
         runtime: ToolRuntime[SalonContext, SalonState],
     ) -> Command:
         """Give a task to the Services agent: find the service the customer named, its
         price range and duration, or the price list. Its facts carry the service ids to
         pass to appointment_task."""
-        return await run_subagent(
+        command = await run_subagent(
             SERVICE, request=request, continue_session=continue_session, service_ids=[],
             runtime=runtime, db=db, user=user, holder=holder, middleware=_budget(),
         )
+        if asks_price:
+            # Code không đoán ý khách từ chữ (bẫy 21), nhưng Orchestrator hiểu ý
+            # khách — đánh dấu để kế hoạch báo giá dù lượt có đặt lịch hay không
+            # (spec "Bổ sung: asks_price").
+            for fact in command.update.get("turn_facts", []):
+                if fact.get("kind") == "service":
+                    fact["asked_price"] = True
+        return command
 
     @tool
     async def decide_pending(

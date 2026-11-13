@@ -70,6 +70,7 @@ async def test_search_returns_service_facts_with_catalogue_prices(test_db, monke
     assert _service_facts(command) == [{
         "kind": "service", "service_id": "toc-nhuom", "name": "Nhuộm",
         "price_min": 350000, "price_max": 700000, "duration_minutes": 120, "identified": True,
+        "asked_price": False,
     }]
     assert _status(command) == "ok"
     summary = json.loads(command.update["messages"][0].content)
@@ -104,6 +105,7 @@ async def test_extract_reads_prices_back_from_the_catalogue(test_db):
     assert [fact.model_dump() for fact in extracted.facts] == [{
         "kind": "service", "service_id": "toc-nhuom", "name": "Nhuộm",
         "price_min": 350000, "price_max": 700000, "duration_minutes": 120, "identified": False,
+        "asked_price": False,
     }]
     assert extracted.memory == {"candidates": ["toc-nhuom"], "service_ids": []}
 

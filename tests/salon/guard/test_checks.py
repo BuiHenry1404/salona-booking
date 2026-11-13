@@ -693,6 +693,15 @@ TAKEN15_OPTIONS_PLUS_GEL_PRICE = dict(
                 ServiceFact(service_id=GEL.id, name=GEL.name, price_min=GEL.price_min,
                             price_max=GEL.price_max, duration_minutes=GEL.duration_minutes,
                             identified=True)])
+# Task 2b: `service_task(asks_price=True)` — khách vừa đặt lịch (giờ kín +
+# mời giờ trống) vừa hỏi giá sơn gel trong cùng tin nhắn. Dịch vụ không
+# `identified` (không chốt), chỉ `asked_price`, nhưng kế hoạch vẫn bắt báo giá.
+TAKEN15_OPTIONS_PLUS_GEL_ASKED_PRICE = dict(
+    snapshot=TAKEN15_OPTIONS["snapshot"],
+    turn_facts=[*TAKEN15_OPTIONS["turn_facts"],
+                ServiceFact(service_id=GEL.id, name=GEL.name, price_min=GEL.price_min,
+                            price_max=GEL.price_max, duration_minutes=GEL.duration_minutes,
+                            asked_price=True)])
 PROPOSAL_CUT14 = dict(
     snapshot=dict(address="chị Mai"),
     turn_facts=[ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14),
@@ -735,6 +744,14 @@ CASES = [  # (id, setup kwargs for facts_for, reply text, expected codes)
     ("two_requests_wrong_price", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
      "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
      "mai nhé? Sơn gel giá 250 nghìn ạ.", ["unknown_price"]),
+    # Task 2b: hỏi giá trong cùng tin nhắn đặt lịch bắt kế hoạch phải báo giá,
+    # dù lượt có hành động đặt lịch (giờ kín / mời giờ trống).
+    ("two_requests_asked_price_missing", TAKEN15_OPTIONS_PLUS_GEL_ASKED_PRICE,
+     "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé?", ["plan_missing"]),
+    ("two_requests_asked_price_ok", TAKEN15_OPTIONS_PLUS_GEL_ASKED_PRICE,
+     "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé? Sơn gel khoảng 150 nghìn ạ.", []),
     # Review fix 1: hành động đã đặt không mang tên dịch vụ (R0) thì luật (b)
     # không áp — dịch vụ thật của lịch không bị chặn.
     ("r0_done_names_its_real_service", R0_GEL15,
