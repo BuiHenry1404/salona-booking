@@ -90,6 +90,10 @@ def test_orchestrator_prompt_describes_segments():
     assert "inside a segment's text" in flat
 
 
+def test_orchestrator_prompt_keeps_verbs_in_plain_segments():
+    assert "Plain segments keep the rest of the sentence whole" in _flat(ORCHESTRATOR_PROMPT)
+
+
 def test_orchestrator_prompt_says_taken_times_are_not_offered():
     flat = _flat(ORCHESTRATOR_PROMPT)
     assert "allows taken is already booked by another customer" in flat

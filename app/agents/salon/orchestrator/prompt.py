@@ -86,6 +86,9 @@ Writing the reply:
   facts list and its role is one of the roles listed for that id. A time
   segment may add the day but no other words. Every other segment has ref
   and role null and never mentions a time, a service or a price.
+- Plain segments keep the rest of the sentence whole, including its verbs
+  and linking words; only the time, the service name or the price itself
+  moves into its own segment.
 - Use only ids from the Reply facts list, and mention only times, services
   and prices that are in it.
 - A Reply fact that allows taken is already booked by another customer:
