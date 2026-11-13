@@ -35,6 +35,7 @@ from app.agents.salon.guard.checks import (
 )
 from app.agents.salon.guard.facts import ReplyFacts
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
+from app.agents.salon.shared.context import AppointmentView
 from app.agents.salon.shared.schemas import (
     DecisionFact,
     Moment,
@@ -701,6 +702,10 @@ TAKEN15_TODAY_OFFER15_TOMORROW = dict(
 SESSION_SERVICE_QUESTION = dict(
     snapshot=dict(sessions={"appointment": a_session(field="service", opened_turn_id=TURN_ID)}))
 NO_FACTS: dict = dict()
+# R0 đã duyệt lúc 15:00 (dòng R0 không mang dịch vụ) + lịch sơn gel 15:00 đang có.
+R0_GEL15 = dict(snapshot=dict(
+    unannounced=r0(M15),
+    upcoming=[AppointmentView(id="a-1", at=M15, service_names=[GEL.name], service_ids=[GEL.id])]))
 
 CASES = [  # (id, setup kwargs for facts_for, reply text, expected codes)
     ("taken_offer_ok", TAKEN15_OPTIONS,
@@ -730,6 +735,14 @@ CASES = [  # (id, setup kwargs for facts_for, reply text, expected codes)
     ("two_requests_wrong_price", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
      "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
      "mai nhé? Sơn gel giá 250 nghìn ạ.", ["unknown_price"]),
+    # Review fix 1: hành động đã đặt không mang tên dịch vụ (R0) thì luật (b)
+    # không áp — dịch vụ thật của lịch không bị chặn.
+    ("r0_done_names_its_real_service", R0_GEL15,
+     "Dạ lịch sơn gel 3 giờ chiều mai em đã đặt xong cho chị Lan rồi ạ.", []),
+    # Review fix 2: "có người lấy rồi" là người khác lấy, không phải mời khách.
+    ("taken_said_as_someone_took_it", TAKEN15_OPTIONS,
+     "Dạ 3 giờ chiều mai có người lấy rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé?", []),
     ("same_clock_other_day", TAKEN15_TODAY_OFFER15_TOMORROW, "Dạ chị chọn 3 giờ chiều mai nhé?", []),
     ("question_only_plan", SESSION_SERVICE_QUESTION, "Dạ chị muốn làm gì để em xếp lịch ạ?", []),
     ("greeting_no_plan", NO_FACTS, "Dạ em chào chị Lan ạ.", []),

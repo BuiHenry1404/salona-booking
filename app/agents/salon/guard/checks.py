@@ -482,6 +482,9 @@ TAKEN_MARKERS: tuple[tuple[str, ...], ...] = (
 )
 # Cụm mời khách chọn giờ — không được xuất hiện trong MỆNH ĐỀ nêu giờ kín.
 OFFER_WORDS: tuple[tuple[str, ...], ...] = (("chọn",), ("lấy",), ("đồng", "ý"))
+# "có người lấy rồi" / "khách chọn rồi": chữ mời đứng ngay sau người khác là
+# việc của người đó, không phải mời khách.
+_OTHER_PEOPLE = frozenset({"người", "khách"})
 # Động từ giữ chỗ / đặt / dời của câu bot: mệnh đề có chúng chỉ được nêu dịch vụ
 # của đề xuất hoặc quyết định (`wrong_service` (b)).
 _BOOKING_CLAUSE_VERBS = frozenset({"giữ", "đặt", "dời"})
@@ -500,6 +503,12 @@ def _word_spans(haystack: Sequence[str], needle: Sequence[str]) -> list[tuple[in
     if not n:
         return []
     return [(i, i + n) for i in range(len(haystack) - n + 1) if list(haystack[i:i + n]) == list(needle)]
+
+
+def _has_offer_word(clause_words: list[str]) -> bool:
+    """Mệnh đề có chữ mời (`OFFER_WORDS`) không đứng ngay sau "người" / "khách"."""
+    return any(start == 0 or clause_words[start - 1] not in _OTHER_PEOPLE
+               for offer in OFFER_WORDS for start, _ in _word_spans(clause_words, offer))
 
 
 def _match_words(text: str) -> list[str]:
@@ -566,7 +575,10 @@ def _wrong_services(text: str, facts: ReplyFacts) -> list[str]:
     problems = [f"{name} is not a service of this turn"
                 for name in _foreign_names(_match_words(text), facts.shop_service_names, turn_names)]
 
-    acts = [act for act in facts.plan.acts if act.kind in ("proposal", "done")]
+    # Chỉ so với hành động CÓ tên dịch vụ: hành động đã đặt của R0 (dòng R0 không
+    # mang dịch vụ) không cho biết dịch vụ thật, nên không chặn tên nào.
+    acts = [act for act in facts.plan.acts
+            if act.kind in ("proposal", "done") and act.service_names]
     if acts:
         allowed = [name for act in acts for name in act.service_names]
         every_name = list(dict.fromkeys([*facts.shop_service_names, *turn_names]))
@@ -598,8 +610,7 @@ def _taken_offered(text: str, plan: ReplyPlan) -> list[str]:
                 broken = True
             for clause in split_clauses(sentence, preserve_date_comma=False):
                 clause_words = _match_words(clause)
-                if _says(clause, clock) and any(_contains_word_sequence(clause_words, offer)
-                                                for offer in OFFER_WORDS):
+                if _says(clause, clock) and _has_offer_word(clause_words):
                     broken = True
         if broken:
             problems.append(f"{_clock_phrase(clock)} is already booked: tell the customer so in "
