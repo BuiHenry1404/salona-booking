@@ -7,10 +7,12 @@ tự động — chỉ `py_compile` trong CI/kiểm thử (xem `.superpowers/sdd
     PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py --keep-db   # giữ DB, kịch bản B
 
 Kịch bản B (`--keep-db`, chủ dự án 11/11): KHÔNG xoá gì, tạo một khách mới
-(Chị Mai, số điện thoại chưa có) và chạy 10 lượt trên lịch đang có của DB dev
-(sau kịch bản A: Cô Lan nhuộm 9:00–11:00, Chú Hùng 15:00–16:00, Cô Lan sơn gel
-16:00–16:45 ngày mai). Trước khi gọi Azure, script kiểm điều kiện của kịch bản
-(giờ phải kín thì kín, giờ phải trống thì trống) và dừng nếu sai.
+(Chị Mai, số điện thoại chưa có) và chạy 10 lượt trên lịch ĐANG CÓ của DB dev.
+Trước khi gọi Azure, script tự đọc hai lịch đã đặt sớm nhất của KHÁCH KHÁC vào
+ngày mai (`pick_taken_starts`) để hỏi đúng giờ đang bận, và dừng — không gọi
+Azure — nếu DB chưa có đủ hai lịch đó. Hai lượt "chốt giờ" (4 và 8) đọc lựa
+chọn đầu tiên của phiên chờ Đặt lịch đang mở (`pick_session_option`) và dừng
+nếu phiên không còn lựa chọn nào.
 
 Trình tự: xoá sạch dữ liệu hội thoại/lịch, seed lại user dev + danh mục dịch
 vụ (`scripts/seed_services.py`), tạo sẵn MỘT lịch chặn lúc 15:00 ngày mai
@@ -42,9 +44,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.agents.salon import ButtonReply, run_turn
 from app.agents.salon.turn.ledger import LEDGER_COLLECTION
-from app.core.clock import TZ, now_utc, to_local
+from app.core.clock import TZ, local_day_bounds, now_utc, to_local
 from app.core.config import settings
-from app.core.slots import slot_keys_for
+from app.core.vi_format import format_vi_hhmm
 from app.infrastructure.database import ensure_indexes
 from app.models.user import User
 from app.repositories.user import UserRepository
@@ -233,40 +235,71 @@ async def execute_turn(turn_idx: int, db, user: User, description: str,
 # Kịch bản B — giữ DB, khách mới
 # ---------------------------------------------------------------------------
 
-def _tomorrow_at(hour: int) -> datetime:
-    day = to_local(now_utc()).date() + timedelta(days=1)
-    return datetime.combine(day, datetime.min.time(), tzinfo=TZ).replace(hour=hour)
+PICK_OPTION = "<pick an option of the open booking session>"  # sentinel for turns 4, 8
 
 
-async def _is_taken(db, start: datetime, minutes: int) -> bool:
-    """Lịch đã ghi nào chiếm một mốc 15 phút của [start, start + minutes)."""
-    keys = slot_keys_for(start, minutes)
-    return await db["appointments"].find_one(
-        {"status": "booked", "slot_keys": {"$in": keys}}) is not None
+def customer_clock_phrase(start: datetime) -> str:
+    """Câu giờ khách sẽ gõ, suy từ giờ VN của `start` (ví dụ "4 giờ chiều")."""
+    local = to_local(start)
+    return format_vi_hhmm(f"{local.hour:02d}:{local.minute:02d}")
 
 
-async def check_keep_db_scenario(db) -> bool:
-    """Điều kiện của kịch bản B trên lịch đang có. Sai thì không chạy (bài học
-    live run 1: kịch bản lệch dữ liệu làm hỏng cả lượt sau)."""
-    catalog = ServiceCatalogService(db)
-    gel = await catalog.duration_for(["nail-son-gel"])
-    cut = await catalog.duration_for(["toc-cat-nu"])
-    checks = [
-        ("9:00 sơn gel phải KÍN (lượt 2)", _tomorrow_at(9), gel, True),
-        ("11:00 sơn gel phải TRỐNG (lượt 4)", _tomorrow_at(11), gel, False),
-        ("16:00 cắt tóc phải KÍN (lượt 7)", _tomorrow_at(16), cut, True),
-        ("17:00 cắt tóc phải TRỐNG (lượt 8)", _tomorrow_at(17), cut, False),
+async def pick_taken_starts(db, *, exclude_user_id: str) -> Optional[tuple[datetime, datetime]]:
+    """Hai mốc giờ sớm nhất, khác nhau, của lịch ĐÃ ĐẶT ngày mai của KHÁCH
+    KHÁC (loại `exclude_user_id` — khách mới của kịch bản B chưa có lịch nào,
+    nhưng loại cho chắc). `None` nếu chưa đủ hai mốc — script dừng trước khi
+    gọi Azure thay vì chạy lệch dữ liệu (bài học live run 1)."""
+    tomorrow_local = to_local(now_utc()).date() + timedelta(days=1)
+    start_utc, end_utc = local_day_bounds(tomorrow_local)
+    cursor = db["appointments"].find(
+        {
+            "status": "booked",
+            "user_id": {"$ne": exclude_user_id},
+            "start_at": {"$gte": start_utc, "$lt": end_utc},
+        },
+        sort=[("start_at", 1)],
+    )
+    distinct: List[datetime] = []
+    async for doc in cursor:
+        start = doc["start_at"]
+        if start not in distinct:
+            distinct.append(start)
+        if len(distinct) == 2:
+            break
+    if len(distinct) < 2:
+        return None
+    return distinct[0], distinct[1]
+
+
+async def pick_session_option(db, *, user_id: str) -> Optional[datetime]:
+    """Lựa chọn đầu tiên của phiên chờ Đặt lịch đang mở của khách; `None` nếu
+    không có phiên hoặc phiên không còn lựa chọn nào."""
+    sessions = await WaitingSessionService(db).active(user_id, now=now_utc())
+    session = sessions.get("appointment")
+    if session is None or not session.question.options:
+        return None
+    return datetime.fromisoformat(session.question.options[0].iso)
+
+
+def keep_db_turns(first_taken: datetime, second_taken: datetime) -> list[tuple]:
+    """10 lượt kịch bản B — giờ bận (lượt 2, 7) suy từ `first_taken` /
+    `second_taken` (hai lịch đã đặt sớm nhất của khách khác, đọc từ DB),
+    lượt 4 và 8 (`PICK_OPTION`) đọc lựa chọn của phiên chờ lúc chạy."""
+    return [
+        (1, "Chào hỏi, khách mới.", "Chào em, chị là khách mới, lần đầu nhắn tiệm"),
+        (2, f"Đặt sơn gel lúc {customer_clock_phrase(first_taken)} mai — giờ này đang bận.",
+         f"Em ơi mai chị muốn sơn gel lúc {customer_clock_phrase(first_taken)}"),
+        (3, "Hỏi giá sơn gel giữa chừng (phiên Đặt lịch vẫn phải còn chờ).",
+         "Mà sơn gel bên em bao nhiêu tiền vậy em?"),
+        (4, "Chốt giờ trống cho phiên đang chờ.", PICK_OPTION),
+        (5, "Bấm Đồng ý trên đề xuất (nút bấm, không gọi model).", None),
+        (6, "Hỏi tiệm có mở Chủ nhật không.", "Chủ nhật tiệm có mở cửa không em?"),
+        (7, f"Đặt thêm cắt tóc lúc {customer_clock_phrase(second_taken)} mai — giờ này đang bận.",
+         f"Chị muốn đặt thêm cắt tóc lúc {customer_clock_phrase(second_taken)} mai nữa"),
+        (8, "Chốt giờ trống cho phiên đang chờ.", PICK_OPTION),
+        (9, "Đồng ý bằng chữ (không bấm nút, qua Decision Gate).", "Ừ chị đồng ý"),
+        (10, "Xem lại lịch hẹn.", "Chị xem lại lịch hẹn của chị với"),
     ]
-    print("\n" + "=" * 60)
-    print("KIỂM ĐIỀU KIỆN KỊCH BẢN B (giữ DB)")
-    print("=" * 60)
-    ok = True
-    for label, start, minutes, want_taken in checks:
-        taken = await _is_taken(db, start, minutes)
-        good = taken == want_taken
-        ok = ok and good
-        print(f"  [{'OK ' if good else 'SAI'}] {label}: {'kín' if taken else 'trống'}")
-    return ok
 
 
 async def create_new_customer(db) -> User:
@@ -283,34 +316,20 @@ async def create_new_customer(db) -> User:
     return user
 
 
-KEEP_DB_TURNS: List[tuple] = [
-    (1, "Chào hỏi, khách mới.", "Chào em, chị là khách mới, lần đầu nhắn tiệm"),
-    (2, "Đặt sơn gel 9 giờ sáng mai — giờ này đang có khách nhuộm (9:00–11:00).",
-     "Em ơi mai chị muốn sơn gel lúc 9 giờ sáng"),
-    (3, "Hỏi giá sơn gel giữa chừng (phiên Đặt lịch vẫn phải còn chờ).",
-     "Mà sơn gel bên em bao nhiêu tiền vậy em?"),
-    (4, "Chốt giờ trống cho phiên đang chờ.", "11 giờ đi em"),
-    (5, "Bấm Đồng ý trên đề xuất (nút bấm, không gọi model).", None),
-    (6, "Hỏi tiệm có mở Chủ nhật không.", "Chủ nhật tiệm có mở cửa không em?"),
-    (7, "Đặt thêm cắt tóc 4 giờ chiều mai — giờ này đang có khách sơn gel (16:00–16:45).",
-     "Chị muốn đặt thêm cắt tóc lúc 4 giờ chiều mai nữa"),
-    (8, "Chốt giờ trống cho phiên đang chờ.", "Vậy 5 giờ chiều nha"),
-    (9, "Đồng ý bằng chữ (không bấm nút, qua Decision Gate).", "Ừ chị đồng ý"),
-    (10, "Xem lại lịch hẹn.", "Chị xem lại lịch hẹn của chị với"),
-]
-
-
 async def main(keep_db: bool = False) -> None:
     client = AsyncIOMotorClient(str(settings.mongo_uri))
     db = client[settings.mongo_db_name]
 
     if keep_db:
-        if not await check_keep_db_scenario(db):
-            print("\nDừng: lịch trong DB không khớp kịch bản B, không gọi Azure.")
+        user = await create_new_customer(db)
+        starts = await pick_taken_starts(db, exclude_user_id=str(user.id))
+        if starts is None:
+            print("\nDừng: DB chưa có đủ hai lịch đã đặt của khách khác vào "
+                  "ngày mai, không gọi Azure.")
             client.close()
             return
-        user = await create_new_customer(db)
-        turns = KEEP_DB_TURNS
+        first_taken, second_taken = starts
+        turns = keep_db_turns(first_taken, second_taken)
     else:
         await clear_database(db)
         await seed_services(db)
@@ -332,6 +351,12 @@ async def main(keep_db: bool = False) -> None:
                 print(f"\n  [BỎ QUA] lượt {turn_idx}: chưa có đề xuất đang chờ để bấm Đồng ý.")
                 continue
             question: "str | ButtonReply" = ButtonReply(proposal_id=proposal_id, decision="yes")
+        elif text == PICK_OPTION:
+            option = await pick_session_option(db, user_id=str(user.id))
+            if option is None:
+                print(f"\n  [DỪNG] lượt {turn_idx}: phiên chờ không có lựa chọn.")
+                break
+            question = f"{customer_clock_phrase(option)} đi em"
         else:
             question = text
         result = await execute_turn(turn_idx, db, user, description, question)
