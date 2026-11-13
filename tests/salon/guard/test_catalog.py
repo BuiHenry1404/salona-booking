@@ -3,9 +3,11 @@ cuối trích dẫn (spec level C §2-§3). Test ở đây dựng trực tiếp 
 `snapshot` / `pending_outcome`, không gọi `build_reply_facts` — hai cái đọc
 cùng nguồn nhưng kiểm hai thứ khác nhau.
 """
+from datetime import date, datetime
+
 import pytest
 
-from app.agents.salon.guard.catalog import CatalogEntry, FactCatalog
+from app.agents.salon.guard.catalog import CatalogEntry, FactCatalog, short_label
 from app.agents.salon.shared.schemas import (
     DecisionFact,
     Moment,
@@ -15,6 +17,7 @@ from app.agents.salon.shared.schemas import (
     TimeFact,
     UnannouncedDecision,
 )
+from app.core.clock import TZ
 from tests.salon.guard import (
     GEL,
     GOI,
@@ -30,6 +33,29 @@ from tests.salon.guard import (
 )
 from app.services.service_catalog import ServiceCatalogService
 
+_TODAY = date(2026, 11, 9)
+
+
+def test_label_is_short_for_tomorrow():
+    moment = Moment(iso=datetime(2026, 11, 10, 15, 0, tzinfo=TZ).isoformat(), spoken="should not be used")
+    assert short_label(moment, _TODAY) == "3 giờ chiều mai"
+
+
+def test_label_is_short_for_today():
+    moment = Moment(iso=datetime(2026, 11, 9, 15, 0, tzinfo=TZ).isoformat(), spoken="should not be used")
+    assert short_label(moment, _TODAY) == "3 giờ chiều hôm nay"
+
+
+def test_label_keeps_spoken_for_other_days():
+    moment = Moment(iso=datetime(2026, 11, 12, 9, 0, tzinfo=TZ).isoformat(),
+                    spoken="Thứ Năm 12/11, 9 giờ sáng")
+    assert short_label(moment, _TODAY) == "Thứ Năm 12/11, 9 giờ sáng"
+
+
+def test_label_keeps_spoken_for_unparsable_iso():
+    moment = Moment(iso="not-an-iso", spoken="Thứ Năm 12/11, 9 giờ sáng")
+    assert short_label(moment, _TODAY) == "Thứ Năm 12/11, 9 giờ sáng"
+
 
 def _times(cat: FactCatalog) -> list[CatalogEntry]:
     return [e for e in cat.entries if e.kind == "time" and e.instant and not e.instant.startswith("hours")]
@@ -43,7 +69,7 @@ async def test_same_instant_merges_roles(test_db):
     cat = await catalog_for(test_db, turn_facts=[TimeFact(role="asked", moment=at(15)),
                                                  TimeFact(role="taken", moment=at(15))])
     [t] = _times(cat)
-    assert (t.id, t.roles, t.label, t.clocks) == ("t1", ["asked", "taken"], "3 giờ chiều", [(15, 0)])
+    assert (t.id, t.roles, t.label, t.clocks) == ("t1", ["asked", "taken"], "3 giờ chiều mai", [(15, 0)])
 
 
 async def test_free_time_and_session_option_are_offer(test_db):
@@ -117,10 +143,21 @@ async def test_shop_hours_entries(test_db):
 async def test_customer_clock_has_both_readings(test_db):
     cat = await catalog_for(test_db, question="3 giờ nha em")
     [c] = [e for e in cat.entries if e.kind == "customer_clock"]
-    assert (c.id, c.clocks, c.label) == ("c1", [(3, 0), (15, 0)], "customer said 03:00 or 15:00")
+    assert (c.id, c.clocks, c.label) == ("c1", [(3, 0), (15, 0)],
+                                         "customer said 3 giờ sáng or 3 giờ chiều")
 
     none = await catalog_for(test_db, question="")
     assert [e for e in none.entries if e.kind == "customer_clock"] == []
+
+
+async def test_customer_clock_label_is_spoken_by_code(test_db):
+    single = await catalog_for(test_db, question="8 giờ sáng đi em")
+    [c] = [e for e in single.entries if e.kind == "customer_clock"]
+    assert c.label == "customer said 8 giờ sáng"
+
+    both = await catalog_for(test_db, question="3 giờ nha")
+    [c] = [e for e in both.entries if e.kind == "customer_clock"]
+    assert c.label == "customer said 3 giờ sáng or 3 giờ chiều"
 
 
 async def test_services_come_from_facts_then_catalog(test_db):

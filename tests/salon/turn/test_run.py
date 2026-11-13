@@ -46,6 +46,7 @@ from app.agents.salon.turn.events import TOOL_LABELS
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
+from app.core.vi_format import format_vi_hhmm
 from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
@@ -60,6 +61,12 @@ S16 = moment(tomorrow_at(16))["spoken"]
 ISO15 = moment(tomorrow_at(15))["iso"]
 ISO16 = moment(tomorrow_at(16))["iso"]
 DAY = tomorrow_at(15).date().isoformat()
+
+# Nhãn ngắn `catalog.py::short_label` dựng cho mốc "mai" (Task 2) — chỉ phần
+# giờ, dùng làm `find=` để `cite()` tra đúng dòng danh mục dù `S15`/`S16`/...
+# ở trên vẫn là câu nói đầy đủ (chữ model "nói" trong kịch bản test).
+S15_CLOCK = format_vi_hhmm("15:00")
+S16_CLOCK = format_vi_hhmm("16:00")
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +209,15 @@ SHOP = {"request": "Opening hours.", "continue_session": False}
 # `X` là kịch bản (`reply(...)` / `plain(...)`), `X_TEXT` là chữ đã ghép mà
 # khách nhận — các assert so với `X_TEXT`.
 ASK_OTHER_TIME_TEXT = f"Dạ {S15} không còn trống ạ. Chị Lan muốn giờ nào khác ạ?"
-ASK_OTHER_TIME = reply("Dạ ", cite("taken", S15), " không còn trống ạ. Chị Lan muốn giờ nào khác ạ?")
+ASK_OTHER_TIME = reply("Dạ ", cite("taken", S15, find=S15_CLOCK),
+                       " không còn trống ạ. Chị Lan muốn giờ nào khác ạ?")
 # Khác câu mẫu `PROPOSAL_REPLY` của code — để test phân biệt câu model với câu mẫu.
 OFFER_16_TEXT = f"Dạ vâng, em giữ chỗ {S16} cho chị Lan, chị Lan đồng ý không ạ?"
-OFFER_16 = reply("Dạ vâng, em giữ chỗ ", cite("held", S16), " cho chị Lan, chị Lan đồng ý không ạ?")
+OFFER_16 = reply("Dạ vâng, em giữ chỗ ", cite("held", S16, find=S16_CLOCK),
+                 " cho chị Lan, chị Lan đồng ý không ạ?")
 OFFER_15_TEXT = f"Dạ vâng, em giữ chỗ {S15} cho chị Lan, chị Lan đồng ý không ạ?"
-OFFER_15 = reply("Dạ vâng, em giữ chỗ ", cite("held", S15), " cho chị Lan, chị Lan đồng ý không ạ?")
+OFFER_15 = reply("Dạ vâng, em giữ chỗ ", cite("held", S15, find=S15_CLOCK),
+                 " cho chị Lan, chị Lan đồng ý không ạ?")
 HOURS_TEXT = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
 HOURS = reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ", cite("hours", "7 giờ tối"),
               " ạ.")
@@ -603,7 +613,7 @@ async def test_superseded_continue_turn_leaves_the_booking_unannounced(test_db, 
     await default_hours(test_db)
     user = await a_user(test_db)
     booked_text = f"Dạ em đã đặt xong {S15} cho chị Lan rồi ạ."
-    booked = reply("Dạ em đã đặt xong ", cite("booked", S15), " cho chị Lan rồi ạ.")
+    booked = reply("Dạ em đã đặt xong ", cite("booked", S15, find=S15_CLOCK), " cho chị Lan rồi ạ.")
     model = orchestrator(monkeypatch, [
         tool_call("appointment_task", BOOK_15), OFFER_15, Hang(), booked])
     subagents(monkeypatch, two_requests())
@@ -880,13 +890,17 @@ async def test_consolidation_finishes_even_if_its_turn_is_superseded(
 S9 = moment(tomorrow_at(9))["spoken"]
 ISO9 = moment(tomorrow_at(9))["iso"]
 S10 = moment(tomorrow_at(10))["spoken"]
+S9_CLOCK = format_vi_hhmm("09:00")
+S10_CLOCK = format_vi_hhmm("10:00")
 OFFER_9_TEXT = f"Dạ vâng, em giữ chỗ {S9} cho chị Lan, chị Lan đồng ý không ạ?"
-OFFER_9 = reply("Dạ vâng, em giữ chỗ ", cite("held", S9), " cho chị Lan, chị Lan đồng ý không ạ?")
+OFFER_9 = reply("Dạ vâng, em giữ chỗ ", cite("held", S9, find=S9_CLOCK),
+                " cho chị Lan, chị Lan đồng ý không ạ?")
 DYE_PRICE = {"request": "Price of hair dyeing.", "continue_session": False}
 DYE = {"request": "Hair dyeing.", "continue_session": False}
 HAIR_LIST = {"request": "Hair price list.", "continue_session": False}
 CANCEL_10_TEXT = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
-CANCEL_10 = reply("Dạ em sẽ huỷ lịch ", cite("held", S10), " cho chị Lan, chị Lan đồng ý không ạ?")
+CANCEL_10 = reply("Dạ em sẽ huỷ lịch ", cite("held", S10, find=S10_CLOCK),
+                  " cho chị Lan, chị Lan đồng ý không ạ?")
 ASK_NAIL_TEXT = "Dạ chị Lan muốn sơn thường hay sơn gel ạ?"
 ASK_NAIL = reply("Dạ chị Lan muốn ", cite("service", "sơn thường"), " hay ", cite("service", "sơn gel"),
                  " ạ?")
@@ -959,7 +973,7 @@ async def test_two_subagents_and_a_rewrite_fit_in_one_turn(test_db, monkeypatch)
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     # Thiếu câu hỏi đồng ý → `missing_question`, viết lại một lần.
-    no_question = reply("Dạ em giữ chỗ ", cite("held", S9), " cho chị Lan ạ.")
+    no_question = reply("Dạ em giữ chỗ ", cite("held", S9, find=S9_CLOCK), " cho chị Lan ạ.")
     orchestrator(monkeypatch, [
         tool_call("service_task", DYE), tool_call("appointment_task", book_9(["toc-nhuom"])),
         no_question, OFFER_9,
@@ -1110,7 +1124,7 @@ async def test_list_and_cancel_after_a_price_list_are_allowed(test_db, monkeypat
     user = await a_user(test_db)
     appt = await gel_at_10(test_db, user)
     listed_text = f"Dạ chị Lan có lịch {S10} ạ."
-    listed = reply("Dạ chị Lan có lịch ", cite("appointment", S10), " ạ.")
+    listed = reply("Dạ chị Lan có lịch ", cite("appointment", S10, find=S10_CLOCK), " ạ.")
     orchestrator(monkeypatch, [
         tool_call("service_task", HAIR_LIST), LISTED,
         tool_call("appointment_task", task("List the customer's appointments.")), listed,

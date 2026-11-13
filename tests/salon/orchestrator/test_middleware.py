@@ -46,6 +46,7 @@ from app.agents.salon.shared.context import UNTRUSTED_LABEL, SnapshotHolder
 from app.agents.salon.shared.schemas import Moment, PendingOutcome
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import now_utc
+from app.core.vi_format import format_vi_hhmm
 from app.core.config import settings
 from app.models.waiting_session import SessionQuestion, WaitingSession
 from app.services.proposal import ProposalService
@@ -418,7 +419,8 @@ async def test_context_after_approve_shows_the_new_appointment(test_db):
     proposal = await _pending(test_db, user)
     spoken = moment(tomorrow_at(15))["spoken"]
     model = recorder([tool_call("decide_pending", _DECIDE),
-                      reply("Dạ em đã đặt xong lịch ", cite("booked", spoken), " cho chị Lan ạ.")])
+                      reply("Dạ em đã đặt xong lịch ", cite("booked", spoken, find=format_vi_hhmm("15:00")),
+                            " cho chị Lan ạ.")])
 
     await _turn(test_db, user, model, "đồng ý", saver=InMemorySaver())
 
@@ -529,7 +531,8 @@ async def test_typed_yes_cannot_be_ignored(test_db):
     model = recorder([
         plain(GOOD_TEXT),                              # bỏ lơ đề xuất → pending_undecided
         tool_call("decide_pending", _DECIDE),
-        reply("Dạ em đã đặt xong lịch ", cite("booked", spoken), " cho chị Lan ạ."),
+        reply("Dạ em đã đặt xong lịch ", cite("booked", spoken, find=format_vi_hhmm("15:00")),
+              " cho chị Lan ạ."),
     ])
 
     state = await _turn(test_db, user, model, "đồng ý", saver=InMemorySaver())

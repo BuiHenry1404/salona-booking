@@ -7,7 +7,7 @@ cùng danh mục cho guard.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Literal, Optional, get_args
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -24,6 +24,7 @@ from app.agents.salon.shared.schemas import (
     TimeFact,
     TurnFact,
 )
+from app.core.clock import to_local
 from app.core.errors import UnknownServiceError
 from app.core.vi_format import format_vi_hhmm
 from app.models.service import Service
@@ -81,6 +82,26 @@ async def services_by_id(catalog: ServiceCatalogService, ids: list[str]) -> dict
             if service is not None:
                 found[service_id] = service
         return found
+
+
+def short_label(moment: Moment, today: date) -> str:
+    """Nhãn giờ ngắn cho các mốc do CODE dựng (không phải lời khách): hôm nay /
+    mai đổi thành "{giờ} hôm nay" / "{giờ} mai" thay vì nhắc lại cả ngày tháng
+    đầy đủ ("Thứ Bảy 14/11, 3 giờ chiều") — model copy nguyên vào câu trả lời
+    nghe cứng (live run 5). Ngày khác, hoặc iso không đọc được, giữ
+    `moment.spoken` như cũ.
+    """
+    try:
+        dt = datetime.fromisoformat(moment.iso)
+    except ValueError:
+        return moment.spoken
+    local = to_local(dt)
+    hhmm = format_vi_hhmm(f"{local.hour:02d}:{local.minute:02d}")
+    if local.date() == today:
+        return f"{hhmm} hôm nay"
+    if local.date() == today + timedelta(days=1):
+        return f"{hhmm} mai"
+    return moment.spoken
 
 
 def format_price(low: int, high: int) -> str:
@@ -151,8 +172,8 @@ class FactCatalog(BaseModel):
 class _TimeRecord:
     __slots__ = ("label", "roles", "clocks", "service_ids", "announce_turn_ids")
 
-    def __init__(self, moment: Moment) -> None:
-        self.label = moment.spoken
+    def __init__(self, moment: Moment, today: date) -> None:
+        self.label = short_label(moment, today)
         self.roles: list[str] = []
         self.clocks: list[tuple[int, int]] = sorted({key[:2] for key in clocks_of_moment(moment)})
         self.service_ids: list[str] = []
@@ -178,7 +199,7 @@ async def build_catalog(
         if instant is None:
             return
         if instant not in records:
-            records[instant] = _TimeRecord(moment)
+            records[instant] = _TimeRecord(moment, snapshot.today)
             order.append(instant)
         record = records[instant]
         if role not in record.roles:
@@ -253,7 +274,8 @@ async def build_catalog(
             continue
         seen_readings.append(reading)
         clocks = sorted(reading)
-        label = "customer said " + " or ".join(f"{hour:02d}:{minute:02d}" for hour, minute in clocks)
+        label = "customer said " + " or ".join(
+            format_vi_hhmm(f"{hour:02d}:{minute:02d}") for hour, minute in clocks)
         entries.append(CatalogEntry(
             id=f"c{len(seen_readings)}", kind="customer_clock", roles=["asked"], label=label,
             clocks=clocks,
