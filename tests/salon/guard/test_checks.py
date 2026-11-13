@@ -16,11 +16,15 @@ cách dựng một vài dòng (để các mã KHÁC trong bảng không bật th
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from app.agents.salon.guard.checks import check_reply, strip_tool_text
+from app.agents.salon.guard.checks import check_reply, check_structured, check_text, strip_tool_text
+from app.agents.salon.guard.facts import ReplyFacts
 from app.agents.salon.shared.schemas import DecisionFact, Moment, ProposalFact, ServiceFact, TimeFact
 from app.core.config import settings
+from app.models.service import Service
 from tests.salon.guard import (
     GEL,
     GOI,
@@ -58,6 +62,31 @@ def _proposal(moment=M15, *, kind="book", service_ids=()) -> ProposalFact:
 def _service_fact(service=GEL) -> ServiceFact:
     return ServiceFact(service_id=service.id, name=service.name, price_min=service.price_min,
                        price_max=service.price_max, duration_minutes=service.duration_minutes)
+
+
+def _raw(facts: ReplyFacts, *parts) -> str:
+    """Dựng JSON thô của câu trả lời cấu trúc (Task 3 brief, bước 1) — mỗi
+    phần là chữ thường (`str`), hoặc `(text, target, role)` với `target` là
+    một `Moment` / `Service` (tra `facts.catalog` ra id) hay một `str` dùng
+    thẳng làm `ref`; `target=None` là đoạn không trích (`ref`/`role` đều
+    `None`)."""
+    segments = []
+    for part in parts:
+        if isinstance(part, str):
+            segments.append({"text": part, "ref": None, "role": None})
+            continue
+        text, target, role = part
+        if target is None:
+            ref = None
+        elif isinstance(target, Moment):
+            ref = facts.catalog.id_of(target)
+        elif isinstance(target, Service):
+            entry = next(e for e in facts.catalog.entries if e.service_ids == [target.id])
+            ref = entry.id
+        else:
+            ref = target
+        segments.append({"text": text, "ref": ref, "role": role})
+    return json.dumps({"segments": segments})
 
 
 ROWS = [
@@ -403,3 +432,90 @@ async def test_empty_reply_is_a_violation(test_db, text):
     facts = await facts_for(test_db)
     assert check_reply(text, facts)[0] == "empty"
     assert strip_tool_text('decide_pending({"label": "approve"})') == ""
+
+
+# ---------------------------------------------------------------------------
+# Task 3: facts.required + check_structured (level C)
+# ---------------------------------------------------------------------------
+
+
+async def test_required_refs_cover_proposal_taken_r0_and_decision(test_db):
+    await seed_catalog(test_db)
+    snapshot = a_snapshot(unannounced=r0(at(9)))
+    turn_facts = [
+        _proposal(M16),
+        TimeFact(role="taken", moment=at(15)),
+        DecisionFact(outcome="failed", proposal_kind="book", at=at(10)),
+    ]
+    facts = await facts_for(test_db, snapshot=snapshot, turn_facts=turn_facts)
+    id9, id16, id15, id10 = (facts.catalog.id_of(m) for m in (at(9), M16, at(15), at(10)))
+    assert [(r.ref, r.roles) for r in facts.required] == [
+        (id9, ["booked"]), (id16, ["held"]), (id15, ["taken"]), (id10, ["failed"]),
+    ]
+
+
+async def test_button_turn_does_not_require_the_decision(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(
+        test_db, turn_kind="button", pending_decided=True,
+        turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=M15)],
+    )
+    assert facts.required == []
+
+
+async def test_check_structured_bad_json(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db)
+    result = check_structured("Dạ có ạ.", facts)
+    assert (result.text, result.codes) == ("", ["bad_structure"])
+
+
+async def test_empty_segment_list_is_empty(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db)
+    assert check_structured('{"segments": []}', facts).codes == ["empty"]
+    assert check_structured(_raw(facts, ("  ", None, None)), facts).codes == ["empty"]
+
+
+async def test_short_phrase_satisfies_a_required_ref(test_db):
+    await seed_catalog(test_db)
+    moment = Moment(iso=M16.iso, spoken="Thứ Năm 12/11, 4 giờ chiều")
+    facts = await facts_for(test_db, turn_facts=[_proposal(moment)])
+    raw = _raw(facts, ("4 giờ chiều mai", moment, "held"), "Chị đồng ý không ạ?")
+    assert check_structured(raw, facts).codes == []
+
+
+async def test_missing_fact_when_the_proposal_is_not_cited(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db, turn_facts=[_proposal()])
+    raw = _raw(facts, ("Dạ chị đợi em chút nhé?", None, None))
+    assert check_structured(raw, facts).codes == ["missing_fact"]
+
+
+async def test_announce_ids_come_from_cited_decisions(test_db):
+    await seed_catalog(test_db)
+    snapshot = a_snapshot(unannounced=r0(at(9)))
+    facts = await facts_for(test_db, snapshot=snapshot, turn_facts=[TimeFact(role="free", moment=at(11))])
+    id9 = facts.catalog.id_of(at(9))
+    id11 = facts.catalog.id_of(at(11))
+
+    raw_booked = _raw(facts, ("9 giờ sáng", id9, "booked"), "Dạ chị nhé.")
+    assert check_structured(raw_booked, facts).announce_turn_ids == ["turn-0"]
+
+    raw_offer = _raw(facts, ("11 giờ sáng", id11, "offer"), "Dạ chị nhé.")
+    assert check_structured(raw_offer, facts).announce_turn_ids == []
+
+
+async def test_check_structured_orders_codes(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db, turn_facts=[TimeFact(role="free", moment=M15)])
+    id15 = facts.catalog.id_of(M15)
+    raw = _raw(facts, ("3 giờ chiều mai", id15, "held"), "Dạ em đang giữ chỗ cho chị ạ.")
+    result = check_structured(raw, facts)
+    assert result.codes == ["wrong_role", "claim"]
+
+
+async def test_check_text_has_no_old_text_rules(test_db):
+    await seed_catalog(test_db)
+    facts = await facts_for(test_db)
+    assert "unknown_time" not in check_text("Dạ còn 5 giờ chiều ạ.", facts)

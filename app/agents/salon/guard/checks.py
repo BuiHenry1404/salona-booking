@@ -12,9 +12,11 @@ việc của chính nó, không đoán ý định của khách (CONTEXT.md bẫy
 from __future__ import annotations
 
 import unicodedata
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
 
+from app.agents.salon.guard.catalog import ANNOUNCE_ROLES
 from app.agents.salon.guard.facts import (
     ClockKey,
     Reading,
@@ -22,6 +24,7 @@ from app.agents.salon.guard.facts import (
     clocks_in_text,
     is_known,
 )
+from app.agents.salon.guard.segments import check_segments, join_segments, parse_reply
 from app.agents.salon.shared.text_scan import (
     digits_in,
     scan_money,
@@ -33,9 +36,15 @@ from app.agents.salon.shared.tool_names import CONTROL_TOOLS, SUBAGENT_TOOLS
 from app.core.config import settings
 from app.core.text import normalize_for_match
 
+# Mọi mã vi phạm có thể gặp — thứ tự cố định dùng để sắp `codes` ở cả
+# `check_reply` (dạng câu trần) và `check_structured` (dạng đoạn trích dẫn,
+# spec level C). Task 7 bỏ `unknown_time` / `unknown_price` khỏi `check_reply`
+# khi pipeline chuyển hẳn sang câu cấu trúc.
 CHECK_CODES = (
+    "bad_structure", "unknown_ref", "wrong_role", "ref_mismatch", "unreferenced",
     "empty", "claim", "unknown_time", "unknown_price", "missing_fact", "missing_question",
-    "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun", "repeat",
+    "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun",
+    "foreign_script", "english", "repeat",
 )
 
 REPEAT_RATIO = 0.85
@@ -311,8 +320,10 @@ def _mentions_phone(text: str) -> bool:
     return bool(phone) and phone in "".join(digits_in(text))
 
 
-def check_reply(text: str, facts: ReplyFacts) -> list[str]:
-    """Mã vi phạm của `text` so với dữ kiện của lượt, theo thứ tự `CHECK_CODES`."""
+def check_text(text: str, facts: ReplyFacts) -> set[str]:
+    """Mã vi phạm đọc trên CHỮ của câu trả lời (không cần dữ kiện trích dẫn
+    cấu trúc) — dùng chung cho `check_reply` (câu trần) và `check_structured`
+    (câu cấu trúc, spec level C) trên câu đã ráp."""
     text = text or ""
     found: set[str] = set()
     # Câu rỗng — vd model viết tool call thành chữ, `strip_tool_text` xoá sạch
@@ -321,13 +332,6 @@ def check_reply(text: str, facts: ReplyFacts) -> list[str]:
         found.add("empty")
     if _has_false_claim(text, facts):
         found.add("claim")
-    if not all(is_known(clock, facts.clocks) for clock in clocks_in_text(text)):
-        found.add("unknown_time")
-    if _has_unknown_price(text, facts):
-        found.add("unknown_price")
-    normalized = normalize_for_match(text)
-    if any(normalize_for_match(phrase) not in normalized for phrase in facts.must_mention):
-        found.add("missing_fact")
     if facts.question_required and "?" not in text:
         found.add("missing_question")
     said_phone = _mentions_phone(text)
@@ -341,7 +345,74 @@ def check_reply(text: str, facts: ReplyFacts) -> list[str]:
         found.add("pronoun")
     if _repeats(text, facts.previous_replies):
         found.add("repeat")
+    return found
+
+
+def check_reply(text: str, facts: ReplyFacts) -> list[str]:
+    """Mã vi phạm của `text` so với dữ kiện của lượt, theo thứ tự `CHECK_CODES`.
+    `check_text` cộng ba luật so CHỮ cũ (`unknown_time` / `unknown_price` /
+    `missing_fact` so nguyên văn) — pipeline câu trần, chưa đổi sang level C
+    (Task 7 bỏ ba luật này khi câu trả lời đã luôn là cấu trúc)."""
+    text = text or ""
+    found = check_text(text, facts)
+    if not all(is_known(clock, facts.clocks) for clock in clocks_in_text(text)):
+        found.add("unknown_time")
+    if _has_unknown_price(text, facts):
+        found.add("unknown_price")
+    normalized = normalize_for_match(text)
+    if any(normalize_for_match(phrase) not in normalized for phrase in facts.must_mention):
+        found.add("missing_fact")
     return [code for code in CHECK_CODES if code in found]
+
+
+# ---------------------------------------------------------------------------
+# check_structured — câu trả lời cấu trúc (level C, chưa gọi ở guard thật)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GuardResult:
+    text: str                    # câu đã ráp + strip_tool_text; "" khi bad_structure
+    codes: list[str]             # theo thứ tự CHECK_CODES
+    problems: list[str]
+    announce_turn_ids: list[str]
+
+
+def check_structured(raw: str, facts: ReplyFacts) -> GuardResult:
+    """Kiểm câu trả lời cấu trúc (JSON mảng đoạn, spec level C §2-§3): mỗi
+    đoạn trích dẫn một dữ kiện của lượt (`facts.catalog`), và mọi dữ kiện
+    BẮT BUỘC (`facts.required`) phải được trích dẫn đúng vai trò."""
+    segments = parse_reply(raw)
+    if segments is None:
+        return GuardResult("", ["bad_structure"], ["the reply was not the JSON list of segments"], [])
+
+    text = strip_tool_text(join_segments(segments))
+    report = check_segments(segments, facts.catalog)
+
+    missing_problems = [
+        f"cite {item.ref} as {' or '.join(item.roles)} ({item.why})"
+        for item in facts.required
+        if not any(ref == item.ref and role in item.roles for ref, role in report.cited)
+    ]
+
+    found = set(report.codes) | check_text(text, facts)
+    if missing_problems:
+        found.add("missing_fact")
+    codes = [code for code in CHECK_CODES if code in found]
+    problems = [*report.problems, *missing_problems]
+
+    announce_turn_ids: list[str] = []
+    for ref, role in report.cited:
+        if role not in ANNOUNCE_ROLES:
+            continue
+        entry = facts.catalog.get(ref)
+        if entry is None:
+            continue
+        for turn_id in entry.announce_turn_ids:
+            if turn_id not in announce_turn_ids:
+                announce_turn_ids.append(turn_id)
+
+    return GuardResult(text=text, codes=codes, problems=problems, announce_turn_ids=announce_turn_ids)
 
 
 # ---------------------------------------------------------------------------

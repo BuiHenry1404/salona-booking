@@ -54,7 +54,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   xuất, log `subagent_status_corrected`; C luật "plain text" + `strip_tool_text` xoá `**`/`__`;
   D định nghĩa lại "ok" trong prompt agent Đặt lịch; E prompt Orchestrator: dữ kiện `taken` không
   bao giờ được mời; F giờ kín phải được báo khách — ghi chú code (F1), guard thêm giờ kín vào
-  `must_mention` (F2, so nguyên văn như giờ đề xuất — cố ý, đừng nới), câu mẫu `TAKEN_REPLY` báo
+  `must_mention` (F2; từ mức C phải tham chiếu id với vai trò taken, không còn so nguyên văn — spec 2026-11-11-level-c), câu mẫu `TAKEN_REPLY` báo
   trước (F3). B (luật `missing_option`) bỏ. Chủ dự án 11/11: **phương án 1** — giờ hỏi kín không đề
   xuất luôn là `need_info`, kể cả khi khách chỉ hỏi; **phát hiện kín thì luôn báo khách**.
   **Lần 3 chạy 11/11, ĐẠT** (log `live-3.log`, sổ dòng "live run 3"): lượt 2 báo 3 giờ đã có người

@@ -21,7 +21,14 @@ from typing import Literal, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
-from app.agents.salon.guard.catalog import CLAIM_FOR_KIND, services_by_id, turn_decisions
+from app.agents.salon.guard.catalog import (
+    CLAIM_FOR_KIND,
+    Decision,
+    FactCatalog,
+    build_catalog,
+    services_by_id,
+    turn_decisions,
+)
 from app.agents.salon.guard.clocks import (
     ClockKey,
     Reading,
@@ -52,7 +59,7 @@ Claim = Literal["booked", "moved", "cancelled"]
 
 __all__ = [
     "ClockKey", "Reading", "clock_of_24h", "readings", "clocks_in_text", "is_known",
-    "ReplyFacts", "build_reply_facts",
+    "ReplyFacts", "RequiredRef", "build_reply_facts",
 ]
 
 # Quyết định mà câu trả lời phải nêu giờ: kết quả duyệt (xong / thất bại /
@@ -65,7 +72,18 @@ FAILED_OUTCOMES = frozenset({"failed", "not_approvable"})
 _STILL_PENDING = frozenset({"kept", "clarify"})
 
 
+class RequiredRef(BaseModel):
+    """Một dữ kiện câu trả lời cấu trúc (level C) PHẢI trích dẫn — `ref` là id
+    trong `FactCatalog` của lượt, `roles` là các vai trò chấp nhận được,
+    `why` là lý do (tiếng Anh, cho lời nhắc viết lại)."""
+    ref: str
+    roles: list[str]
+    why: str
+
+
 class ReplyFacts(BaseModel):
+    catalog: FactCatalog                  # dữ kiện đánh id + vai trò của lượt (level C)
+    required: list[RequiredRef]           # dữ kiện câu trả lời cấu trúc phải trích dẫn
     clocks: set[ClockKey]                 # mọi mốc giờ có thật của lượt
     held_clocks: set[ClockKey]            # giờ đang có đề xuất chờ thật
     # Giờ các lịch ĐANG CÓ của khách (`snapshot.upcoming`) mà KHÔNG xuất hiện ở
@@ -106,6 +124,54 @@ async def _price_ranges(db: AsyncIOMotorDatabase, groups: list[list[str]]) -> li
         if len(unique) > 1 and all(sid in services for sid in unique):
             ranges.append(await catalog.price_range(unique))
     return list(dict.fromkeys(ranges))
+
+
+# ---------------------------------------------------------------------------
+# required — dữ kiện câu trả lời cấu trúc (level C) phải trích dẫn
+# ---------------------------------------------------------------------------
+
+
+def _required_refs(
+    *, catalog: FactCatalog, snapshot: TurnSnapshot, turn_facts: list[TurnFact],
+    decisions: list[Decision], turn_kind: str, proposals: list[ProposalFact],
+) -> list[RequiredRef]:
+    """Dữ kiện phải được câu trả lời cấu trúc trích dẫn (spec level C), từ
+    đúng các nguồn `must_mention` dùng — xem bảng task-3-brief.md. Bỏ qua mục
+    không có id trong `catalog`; mỗi `ref` chỉ giữ MỤC ĐẦU TIÊN."""
+    items: list[tuple[Moment, list[str], str]] = []
+    unannounced = snapshot.unannounced
+    if unannounced is not None:
+        if unannounced.outcome == "approved":
+            claim = CLAIM_FOR_KIND.get(unannounced.proposal_kind)
+            if claim is not None:
+                items.append((unannounced.at, [claim], "the unannounced decision"))
+        elif unannounced.outcome == "failed":
+            items.append((unannounced.at, ["failed"], "the unannounced decision"))
+    for proposal in proposals:
+        items.append((proposal.at, ["held"], "the new proposal"))
+    for fact in turn_facts:
+        if isinstance(fact, TimeFact) and fact.role == "taken":
+            items.append((fact.moment, ["taken"], "the taken time"))
+    if turn_kind == "typed":
+        for decision in decisions:
+            if decision.outcome == "approved":
+                claim = CLAIM_FOR_KIND.get(decision.kind)
+                if claim is not None:
+                    items.append((decision.at, [claim], "the decision of this turn"))
+            elif decision.outcome in FAILED_OUTCOMES:
+                items.append((decision.at, ["failed"], "the decision of this turn"))
+            elif decision.outcome == "clarify":
+                items.append((decision.at, ["held"], "the decision of this turn"))
+
+    required: list[RequiredRef] = []
+    seen: set[str] = set()
+    for moment, roles, why in items:
+        ref = catalog.id_of(moment)
+        if ref is None or ref in seen:
+            continue
+        seen.add(ref)
+        required.append(RequiredRef(ref=ref, roles=roles, why=why))
+    return required
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +311,18 @@ async def build_reply_facts(
                         for o in snapshot.sessions[opened[0]].question.options] if opened else [],
     )
 
+    catalog = await build_catalog(
+        db, snapshot=snapshot, turn_facts=turn_facts, pending_outcome=pending_outcome,
+        question=question, turn_id=turn_id,
+    )
+    required = _required_refs(
+        catalog=catalog, snapshot=snapshot, turn_facts=turn_facts, decisions=decisions,
+        turn_kind=turn_kind, proposals=proposals,
+    )
+
     return ReplyFacts(
+        catalog=catalog,
+        required=required,
         clocks=clocks,
         held_clocks=held,
         existing_only_clocks=existing_only,
