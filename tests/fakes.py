@@ -12,12 +12,15 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional, Union
 from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+
+from app.agents.salon.guard.catalog import CATALOG_HEADER
+from app.core.text import normalize_for_match
 
 
 @dataclass
@@ -89,6 +92,8 @@ class ScriptedChatModel(BaseChatModel):
         if isinstance(reply, Hang):
             time.sleep(reply.seconds)
             reply = reply.then if reply.then is not None else AIMessage(content="")
+        if callable(reply) and not isinstance(reply, AIMessage):
+            reply = reply(messages)
         return self._settle(reply)
 
     async def _anext(self, messages):
@@ -96,6 +101,8 @@ class ScriptedChatModel(BaseChatModel):
         if isinstance(reply, Hang):
             await asyncio.sleep(reply.seconds)
             reply = reply.then if reply.then is not None else AIMessage(content="")
+        if callable(reply) and not isinstance(reply, AIMessage):
+            reply = reply(messages)
         return self._settle(reply)
 
     def _generate(self, messages, stop=None, run_manager=None, **kw):
@@ -134,3 +141,87 @@ def tool_calls(*pairs: tuple) -> AIMessage:
         for name, args in pairs
     ]
     return AIMessage(content="", tool_calls=calls)
+
+
+@dataclass(frozen=True)
+class Cite:
+    """Một đoạn trích dẫn trong `reply(...)`: `role` + `text` tra trong khối
+    danh mục (`FactCatalog.render()`) để tìm id. `find` tìm theo chữ khác
+    `text` (vd `text` là câu đầy đủ, `find` là mẩu ngắn có trong label).
+    `ref` cho sẵn thì bỏ qua tra cứu — dùng để test id không tồn tại."""
+    role: str
+    text: str
+    find: Optional[str] = None
+    ref: Optional[str] = None
+
+
+def cite(role: str, text: str, *, find: Optional[str] = None, ref: Optional[str] = None) -> Cite:
+    return Cite(role=role, text=text, find=find, ref=ref)
+
+
+def _catalog_lines(messages: list) -> List[str]:
+    """Các dòng `- {id} [{roles}]: {label}` sau `CATALOG_HEADER`, gộp từ mọi
+    SystemMessage của lô (chỉ khối bối cảnh của Orchestrator mang khối này)."""
+    lines: List[str] = []
+    for message in messages:
+        if not isinstance(message, SystemMessage):
+            continue
+        content = message.content
+        if CATALOG_HEADER not in content:
+            continue
+        after_header = content.split(CATALOG_HEADER, 1)[1]
+        lines.extend(line.strip() for line in after_header.splitlines() if line.strip())
+    return lines
+
+
+def _parse_catalog_line(line: str) -> Optional[tuple]:
+    """`- {id} [{role1, role2}]: {label}` -> (id, [roles], label), hoặc
+    `None` nếu dòng không đúng hình dạng đó."""
+    if not line.startswith("- "):
+        return None
+    rest = line[2:]
+    if " [" not in rest or "]: " not in rest:
+        return None
+    entry_id, remainder = rest.split(" [", 1)
+    roles_part, label = remainder.split("]: ", 1)
+    roles = [role.strip() for role in roles_part.split(",")]
+    return entry_id.strip(), roles, label
+
+
+def _resolve_ref(cited: Cite, messages: list) -> str:
+    if cited.ref is not None:
+        return cited.ref
+    needle = normalize_for_match(cited.find or cited.text)
+    wanted_role = normalize_for_match(cited.role)
+    for line in _catalog_lines(messages):
+        parsed = _parse_catalog_line(line)
+        if parsed is None:
+            continue
+        entry_id, roles, label = parsed
+        if wanted_role not in {normalize_for_match(role) for role in roles}:
+            continue
+        if needle in normalize_for_match(label):
+            return entry_id
+    raise AssertionError(f"no reply fact for {cited.role} {cited.find or cited.text!r}")
+
+
+def reply(*parts: Union[str, Cite]) -> Callable[[list], AIMessage]:
+    """Kịch bản một câu trả lời cuối Level C (`REPLY_SCHEMA`): mỗi `part` là
+    chữ thường (một đoạn `ref`/`role` null) hoặc `Cite` (tra id trong khối
+    danh mục của lô message). Trả một callable — `ScriptedChatModel` gọi nó
+    với lô message để biết nội dung lúc đó mới có khối danh mục."""
+    def build(messages: list) -> AIMessage:
+        segments = []
+        for part in parts:
+            if isinstance(part, Cite):
+                segments.append({"text": part.text, "ref": _resolve_ref(part, messages), "role": part.role})
+            else:
+                segments.append({"text": part, "ref": None, "role": None})
+        return AIMessage(content=json.dumps({"segments": segments}, ensure_ascii=False))
+    return build
+
+
+def plain(text: str) -> AIMessage:
+    """Một AIMessage với đúng một đoạn chữ thường — không cần khối bối cảnh."""
+    return AIMessage(content=json.dumps({"segments": [{"text": text, "ref": None, "role": None}]},
+                                        ensure_ascii=False))
