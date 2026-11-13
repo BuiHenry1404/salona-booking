@@ -26,7 +26,6 @@ from app.agents.salon.guard.catalog import (
     Decision,
     FactCatalog,
     build_catalog,
-    services_by_id,
     turn_decisions,
 )
 from app.agents.salon.guard.clocks import (
@@ -47,13 +46,11 @@ from app.agents.salon.shared.schemas import (
     Moment,
     PendingOutcome,
     ProposalFact,
-    ServiceFact,
     TimeFact,
     TurnFact,
     UnannouncedDecision,
 )
 from app.core.config import settings
-from app.services.service_catalog import ServiceCatalogService
 
 Claim = Literal["booked", "moved", "cancelled"]
 
@@ -62,10 +59,6 @@ __all__ = [
     "ReplyFacts", "RequiredRef", "build_reply_facts",
 ]
 
-# Quyết định mà câu trả lời phải nêu giờ: kết quả duyệt (xong / thất bại /
-# không duyệt được) và hỏi lại khi khách trả lời chưa rõ. `kept` / `rejected` /
-# `superseded` không bắt nêu — khách nói chuyện khác hoặc đã bỏ giờ đó.
-_MUST_SAY_OUTCOMES = frozenset({"approved", "failed", "not_approvable", "clarify"})
 # Nhánh "ghi thất bại" — lượt DUY NHẤT phải (và được) có số điện thoại tiệm.
 FAILED_OUTCOMES = frozenset({"failed", "not_approvable"})
 # Đề xuất chờ vẫn còn chờ sau quyết định của lượt.
@@ -93,8 +86,6 @@ class ReplyFacts(BaseModel):
     # không được lịch đang có bảo chứng (Ruling R9). Chỉ cho động từ đặt / giữ.
     existing_only_clocks: set[ClockKey]
     done_claims: dict[Claim, set[ClockKey]]   # giờ của việc ĐÃ ghi thật, theo loại
-    price_ranges: list[tuple[int, int]]   # từng dịch vụ + tổng của nhóm trong cùng lịch
-    must_mention: list[str]
     question_required: bool
     needs_phone: bool
     pending_undecided: bool               # có đề xuất chờ, lượt gõ chữ, chưa decide_pending
@@ -108,25 +99,6 @@ class ReplyFacts(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Giá — đọc lại từ danh mục, không tin số trong ServiceFact / chữ model
-# ---------------------------------------------------------------------------
-
-
-async def _price_ranges(db: AsyncIOMotorDatabase, groups: list[list[str]]) -> list[tuple[int, int]]:
-    """Dải giá từng dịch vụ được nhắc trong lượt + dải TỔNG của mỗi nhóm nhiều
-    dịch vụ trong cùng một lịch (đề xuất chờ, đề xuất mới, phiên chờ)."""
-    catalog = ServiceCatalogService(db)
-    ids = list(dict.fromkeys(sid for group in groups for sid in group))
-    services = await services_by_id(catalog, ids)
-    ranges = [(services[sid].price_min, services[sid].price_max) for sid in ids if sid in services]
-    for group in groups:
-        unique = list(dict.fromkeys(group))
-        if len(unique) > 1 and all(sid in services for sid in unique):
-            ranges.append(await catalog.price_range(unique))
-    return list(dict.fromkeys(ranges))
-
-
-# ---------------------------------------------------------------------------
 # required — dữ kiện câu trả lời cấu trúc (level C) phải trích dẫn
 # ---------------------------------------------------------------------------
 
@@ -136,7 +108,7 @@ def _required_refs(
     decisions: list[Decision], turn_kind: str, proposals: list[ProposalFact],
 ) -> list[RequiredRef]:
     """Dữ kiện phải được câu trả lời cấu trúc trích dẫn (spec level C), từ
-    đúng các nguồn `must_mention` dùng — xem bảng task-3-brief.md. Bỏ qua mục
+    các nguồn: R0, đề xuất mới, giờ kín, quyết định của lượt gõ chữ. Bỏ qua mục
     không có id trong `catalog`; mỗi `ref` chỉ giữ MỤC ĐẦU TIÊN."""
     items: list[tuple[Moment, list[str], str]] = []
     unannounced = snapshot.unannounced
@@ -262,30 +234,9 @@ async def build_reply_facts(
         if claim:
             done[claim] |= clocks_of_moment(unannounced.at)
 
-    # -- giá ------------------------------------------------------------------
-    groups = [[f.service_id] for f in turn_facts if isinstance(f, ServiceFact)]
-    if pending is not None:
-        groups.append(list(pending.service_ids))
-    groups += [list(p.service_ids) for p in proposals]
-    for session in snapshot.sessions.values():
-        ids = session.memory.get("service_ids")
-        if isinstance(ids, list):
-            groups.append([sid for sid in ids if isinstance(sid, str)])
-    price_ranges = await _price_ranges(db, groups)
-
-    # -- điều bắt buộc --------------------------------------------------------
-    must_mention: list[str] = []
-    if unannounced is not None:
-        must_mention.append(unannounced.at.spoken)
-    must_mention += [p.at.spoken for p in proposals]
-    # Phát hiện kín thì phải báo khách (chủ dự án 11/11, mục F2): mọi giờ bị
-    # báo kín trong lượt phải có trong câu trả lời, kể cả lượt có đề xuất.
+    # Phát hiện kín thì phải báo khách (chủ dự án 11/11, mục F2) — câu mẫu
+    # code báo giờ kín đầu tiên; câu của model phải trích dẫn (`required`).
     taken = [f.moment for f in turn_facts if isinstance(f, TimeFact) and f.role == "taken"]
-    must_mention += [moment.spoken for moment in taken]
-    if turn_kind == "typed":
-        # Lượt nút bấm: code đã báo quyết định (`button_reply`) — không bắt
-        # Orchestrator nhắc lại.
-        must_mention += [d.at.spoken for d in decisions if d.outcome in _MUST_SAY_OUTCOMES]
     failed = next((d for d in decisions if d.outcome in FAILED_OUTCOMES), None)
     if turn_kind == "button":
         # Lượt nút bấm: `button_reply` đã báo (kèm số điện thoại nếu thất bại).
@@ -327,8 +278,6 @@ async def build_reply_facts(
         held_clocks=held,
         existing_only_clocks=existing_only,
         done_claims=done,
-        price_ranges=price_ranges,
-        must_mention=list(dict.fromkeys(s for s in must_mention if s)),
         question_required=bool(proposals),
         # R0 thất bại cũng là ghi thất bại chưa báo — câu báo nó phải có số.
         needs_phone=failed is not None or r0_failed,

@@ -2,11 +2,14 @@
 docs/architech-agent.md luật 4-5).
 
 `ReplyGuardMiddleware.aafter_model` chỉ xét AIMessage KHÔNG có tool call —
-đó chính là câu trả lời (cách `create_agent` kết thúc). Dữ kiện đối chiếu do
-code dựng (`build_reply_facts`), không tin chữ model.
+đó chính là câu trả lời (cách `create_agent` kết thúc). Câu trả lời là JSON các
+đoạn trích dẫn (spec level C, `reply_format()`); `check_structured` parse →
+ghép chữ → `strip_tool_text` → các luật. Dữ kiện đối chiếu do code dựng
+(`build_reply_facts`), không tin chữ model.
 
-- Đạt → câu đã lọc tên tool / JSON (`strip_tool_text`) thay câu gốc; lời nhắc
-  của lần viết lại (nếu có) bị xoá.
+- Đạt → chữ đã ghép thay JSON gốc (state / lịch sử / lượt sau chỉ thấy chữ
+  thường) và ghi `announced_turn_ids` (quyết định / R0 được trích dẫn là đã
+  báo); lời nhắc của lần viết lại (nếu có) bị xoá.
 - Sai lần đầu → **xoá câu bị loại khỏi state** (model không được thấy lại câu
   sai của chính nó — bẫy 17), thêm lời nhắc tiếng Anh (mã + điều cần nói) và
   `jump_to: "model"`. Lần gọi đó quay lại `before_model` đầu tiên: vẫn qua nén
@@ -25,7 +28,7 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.runtime import Runtime
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.salon.guard.checks import check_reply, strip_tool_text
+from app.agents.salon.guard.checks import check_structured
 from app.agents.salon.guard.facts import ReplyFacts, build_reply_facts
 from app.agents.salon.guard.fallback import fallback_reply
 from app.agents.salon.orchestrator.middleware.turns import (
@@ -51,14 +54,19 @@ logger = get_logger(__name__)
 
 _CODE_HINTS = {
     "bad_tool_call": "Your last message had a tool call with invalid arguments.",
+    "bad_structure": "Your reply was not the JSON list of segments. Answer only with segments; "
+                     "ref and role are both null or both set.",
+    "unknown_ref": "Use only ids from the Reply facts list.",
+    "wrong_role": "Give each cited fact one of the roles listed for its id in Reply facts.",
+    "ref_mismatch": "A cited segment says only its fact: the same clock time with an optional "
+                    "day, a word of the service name, or an amount inside the price range.",
+    "unreferenced": "Write every time, service name and price as its own segment with ref and "
+                    "role.",
     "empty": "Your reply was empty. Write the reply to the customer in plain words; never "
              "write a tool call as text.",
     "claim": "Do not say anything was booked, moved, cancelled or held unless this turn's "
              "facts show it.",
-    "unknown_time": "Mention only times that appear in the context block, this turn's facts or "
-                    "the customer's message, copied exactly as their spoken value.",
-    "unknown_price": "Mention only prices inside the price ranges from the service facts.",
-    "missing_fact": "Mention each of these exactly as written: {must}.",
+    "missing_fact": "Cite each required fact listed below with an allowed role.",
     "missing_question": "Ask the customer whether they agree to the new proposal.",
     "missing_phone": "Writing the appointment failed: give the shop phone number {phone}.",
     "phone_not_allowed": "Do not give the shop phone number; nothing failed to be written.",
@@ -67,19 +75,24 @@ _CODE_HINTS = {
                          "something else), then reply.",
     "pronoun": 'Refer to yourself as "em" and address the customer exactly as the Address '
                "line says.",
+    "foreign_script": "Write only Vietnamese letters.",
+    "english": "Write the whole reply in Vietnamese.",
     "repeat": "Do not reuse a sentence from your earlier replies.",
 }
 
 
-def guard_hint(codes: list[str], facts: ReplyFacts) -> str:
-    """Lời nhắc tiếng Anh cho lần viết lại: mã + điều cần sửa. Không chép lại
-    câu bị loại."""
+def guard_hint(codes: list[str], facts: ReplyFacts, problems: list[str]) -> str:
+    """Lời nhắc tiếng Anh cho lần viết lại: mã + điều cần sửa, rồi chi tiết
+    từng lỗi (`problems` của `check_structured` — id, vai trò, dữ kiện bắt
+    buộc). Không chép lại câu bị loại."""
     lines = ["Your last reply was not sent to the customer. Write a new reply using only "
              "facts you already have; do not look anything up again. Problems:"]
     for code in codes:
-        hint = _CODE_HINTS.get(code, "Fix this problem.").format(
-            must="; ".join(facts.must_mention), phone=settings.shop_phone or "")
+        hint = _CODE_HINTS.get(code, "Fix this problem.").format(phone=settings.shop_phone or "")
         lines.append(f"- {code}: {hint}")
+    if problems:
+        lines.append("Details:")
+        lines += [f"- {problem}" for problem in problems]
     return "\n".join(lines)
 
 
@@ -112,32 +125,36 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
             return None
 
         context = runtime.context
-        text = strip_tool_text(reply.text)
         facts = await self._facts(state, context)
-        codes = check_reply(text, facts)
+        result = check_structured(reply.text, facts)
+        codes = list(result.codes)
         if reply.invalid_tool_calls:
             # Tool call hỏng: `create_agent` coi là câu cuối (không có tool call
             # hợp lệ) — không bao giờ gửi khách, và xoá khỏi state cùng lúc.
-            codes = ["bad_tool_call", *codes]
+            # Nội dung của nó thường không phải JSON: `bad_tool_call` đã nói lý do.
+            codes = ["bad_tool_call", *[c for c in result.codes if c != "bad_structure"]]
         hints = [RemoveMessage(id=m.id) for m in messages if is_guard_hint(m)]
         log_extra = {"user_id": context.user_id, "turn_id": context.turn_id,
                      "thread_id": context.thread_id, "codes": codes}
 
         if not codes:
-            updates: list[Any] = list(hints)
-            if text != reply.text:
-                updates.append(reply.model_copy(update={"content": text}))
-            return {"messages": updates} if updates else None
+            # Lưu CHỮ đã ghép, không lưu JSON: lịch sử, luật `repeat` và lượt
+            # sau đọc chữ thường (spec level C §1).
+            return {
+                "messages": [*hints, reply.model_copy(update={"content": result.text})],
+                "announced_turn_ids": list(result.announce_turn_ids),
+            }
 
         # Câu của BOT bị loại (không phải câu khách) — thiếu nó thì không biết
-        # guard chặn vì số / giờ nào (live run 1, 11/11).
-        log_extra["rejected_reply"] = text
+        # guard chặn vì số / giờ nào (live run 1, 11/11). `bad_structure`: chữ
+        # thô model trả (vẫn là chữ của bot).
+        log_extra["rejected_reply"] = result.text or reply.text
         if state.get("guard_rewrites", 0) == 0:
             logger.info("guard_rejected", extra=log_extra)
             return {
                 "messages": [
                     RemoveMessage(id=reply.id),
-                    HumanMessage(content=guard_hint(codes, facts),
+                    HumanMessage(content=guard_hint(codes, facts, result.problems),
                                  additional_kwargs={GUARD_HINT_MARK: codes}),
                 ],
                 "guard_rewrites": 1,

@@ -1,9 +1,10 @@
 """Phép kiểm câu trả lời cuối của Orchestrator (spec §7, docs/architech-agent.md
 luật 4-5) — code thuần, không gọi model, không regex.
 
-`check_reply` trả mã vi phạm theo thứ tự cố định `CHECK_CODES`, mỗi mã tối đa
-một lần; rỗng = câu được gửi khách. `strip_tool_text` xoá tên tool / khối JSON
-lọt vào câu TRƯỚC khi kiểm.
+`check_structured` đọc câu trả lời JSON các đoạn trích dẫn (spec level C): parse →
+ghép chữ → `strip_tool_text` (xoá tên tool / khối JSON lọt vào câu) → các luật;
+trả mã vi phạm theo thứ tự cố định `CHECK_CODES`, mỗi mã tối đa một lần; rỗng =
+câu được gửi khách. `check_text` là phần luật đọc trên chữ đã ghép.
 
 Các tập từ ở đây là từ NGỮ PHÁP của câu bot (động từ "đặt / giữ / dời / huỷ",
 "đã / rồi", phủ định "chưa / không", đại từ xưng hô) — guard đọc câu BOT nói về
@@ -27,7 +28,6 @@ from app.agents.salon.guard.facts import (
 from app.agents.salon.guard.segments import check_segments, join_segments, parse_reply
 from app.agents.salon.shared.text_scan import (
     digits_in,
-    scan_money,
     split_clauses,
     split_sentences,
     words,
@@ -36,13 +36,14 @@ from app.agents.salon.shared.tool_names import CONTROL_TOOLS, SUBAGENT_TOOLS
 from app.core.config import settings
 from app.core.text import normalize_for_match
 
-# Mọi mã vi phạm có thể gặp — thứ tự cố định dùng để sắp `codes` ở cả
-# `check_reply` (dạng câu trần) và `check_structured` (dạng đoạn trích dẫn,
-# spec level C). Task 7 bỏ `unknown_time` / `unknown_price` khỏi `check_reply`
-# khi pipeline chuyển hẳn sang câu cấu trúc.
+# Mọi mã vi phạm có thể gặp — thứ tự cố định dùng để sắp `codes` của
+# `check_structured` (spec level C §3: mã cấu trúc trước, rồi các luật đọc chữ).
+# Giờ / giá không còn so trên chữ (`unknown_time` / `unknown_price` cũ): đoạn
+# trích dẫn phải khớp dữ kiện (`ref_mismatch`), chữ thường không được nhắc
+# (`unreferenced`).
 CHECK_CODES = (
     "bad_structure", "unknown_ref", "wrong_role", "ref_mismatch", "unreferenced",
-    "empty", "claim", "unknown_time", "unknown_price", "missing_fact", "missing_question",
+    "empty", "claim", "missing_fact", "missing_question",
     "missing_phone", "phone_not_allowed", "pending_undecided", "pronoun",
     "foreign_script", "english", "repeat",
 )
@@ -249,28 +250,6 @@ def _has_false_claim(text: str, facts: ReplyFacts) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# unknown_price
-# ---------------------------------------------------------------------------
-
-# Hai số tiền nối bằng các từ này là hai giá riêng ("gel 150 nghìn và gội 60
-# nghìn"), không phải một khoảng.
-_PRICE_BREAKS = ("và", "với", "còn")
-
-
-def _has_unknown_price(text: str, facts: ReplyFacts) -> bool:
-    """Mọi số tiền trong một mệnh đề phải cùng nằm trong MỘT dải giá — một
-    khoảng ("từ 120 tới 180 nghìn") thì cả hai đầu trong cùng một dải."""
-    for sentence in split_sentences(text):
-        for clause in split_clauses(sentence, break_words=_PRICE_BREAKS):
-            amounts = scan_money(clause)
-            if amounts and not any(
-                all(low <= amount <= high for amount in amounts) for low, high in facts.price_ranges
-            ):
-                return True
-    return False
-
-
-# ---------------------------------------------------------------------------
 # pronoun — CONTEXT.md mục Xưng hô
 # ---------------------------------------------------------------------------
 
@@ -366,7 +345,7 @@ def _repeats(text: str, previous_replies: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# check_reply
+# check_text
 # ---------------------------------------------------------------------------
 
 
@@ -381,8 +360,7 @@ def _mentions_phone(text: str) -> bool:
 
 def check_text(text: str, facts: ReplyFacts) -> set[str]:
     """Mã vi phạm đọc trên CHỮ của câu trả lời (không cần dữ kiện trích dẫn
-    cấu trúc) — dùng chung cho `check_reply` (câu trần) và `check_structured`
-    (câu cấu trúc, spec level C) trên câu đã ráp."""
+    cấu trúc) — `check_structured` chạy trên câu đã ráp (spec level C)."""
     text = text or ""
     found: set[str] = set()
     # Câu rỗng — vd model viết tool call thành chữ, `strip_tool_text` xoá sạch
@@ -411,25 +389,8 @@ def check_text(text: str, facts: ReplyFacts) -> set[str]:
     return found
 
 
-def check_reply(text: str, facts: ReplyFacts) -> list[str]:
-    """Mã vi phạm của `text` so với dữ kiện của lượt, theo thứ tự `CHECK_CODES`.
-    `check_text` cộng ba luật so CHỮ cũ (`unknown_time` / `unknown_price` /
-    `missing_fact` so nguyên văn) — pipeline câu trần, chưa đổi sang level C
-    (Task 7 bỏ ba luật này khi câu trả lời đã luôn là cấu trúc)."""
-    text = text or ""
-    found = check_text(text, facts)
-    if not all(is_known(clock, facts.clocks) for clock in clocks_in_text(text)):
-        found.add("unknown_time")
-    if _has_unknown_price(text, facts):
-        found.add("unknown_price")
-    normalized = normalize_for_match(text)
-    if any(normalize_for_match(phrase) not in normalized for phrase in facts.must_mention):
-        found.add("missing_fact")
-    return [code for code in CHECK_CODES if code in found]
-
-
 # ---------------------------------------------------------------------------
-# check_structured — câu trả lời cấu trúc (level C, chưa gọi ở guard thật)
+# check_structured — câu trả lời cấu trúc (level C)
 # ---------------------------------------------------------------------------
 
 

@@ -20,6 +20,7 @@ import structlog.testing
 from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
+from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -34,6 +35,7 @@ from app.agents.salon.memory.long_term import MEMORY_NAMESPACE
 from app.agents.salon.memory.prompts import SUMMARY_PROMPT
 from app.agents.salon.shared.context import MEMORY_LABEL
 from app.agents.salon.orchestrator import middleware as middleware_pkg
+from app.agents.salon.orchestrator.agent import reply_format
 from app.agents.salon.orchestrator.middleware import orchestrator_middleware
 from app.agents.salon.orchestrator.middleware.budget import LlmBudgetExceeded
 from app.agents.salon.orchestrator.middleware.reply_guard import GUARD_HINT_MARK
@@ -49,7 +51,7 @@ from app.models.waiting_session import SessionQuestion, WaitingSession
 from app.services.proposal import ProposalService
 from app.services.rate_limit import RateLimitService
 from app.services.waiting_session import WaitingSessionService
-from tests.fakes import ScriptedChatModel, scripted, tool_call
+from tests.fakes import ScriptedChatModel, cite, plain, reply, scripted, tool_call
 from tests.salon.subagents import (
     NoLedger, a_user, default_hours, moment, result, tomorrow_at, use_model,
 )
@@ -140,17 +142,21 @@ def _agent(db, user, holder, model, saver, store=None):
         system_prompt=ORCHESTRATOR_PROMPT,
         middleware=orchestrator_middleware(db, user, holder, store),
         state_schema=SalonState, context_schema=SalonContext, checkpointer=saver,
+        response_format=reply_format(),
     )
 
 
 async def _turn(db, user, model, text, *, saver, turn_id: Optional[str] = None,
-                preset: Optional[PendingOutcome] = None, button: bool = False, store=None):
+                preset: Optional[PendingOutcome] = None, button: bool = False, store=None,
+                ledger: bool = False):
+    """`ledger=True`: bối cảnh đọc sổ lượt thật (R0 / Unannounced) thay vì `NoLedger`."""
     # +5 giây: đề xuất tạo lúc dựng test phải là của lượt TRƯỚC (`approve` kiểm).
     asked_at = now_utc() + timedelta(seconds=5)
     turn_id = turn_id or uuid.uuid4().hex
     await TurnLedger(db).start(turn_id=turn_id, user_id=str(user.id), thread_id=THREAD_ID,
                                asked_at=asked_at, kind="button" if button else "typed")
-    holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=THREAD_ID, services=NoLedger())
+    holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=THREAD_ID,
+                            services=TurnLedger(db) if ledger else NoLedger())
     agent = _agent(db, user, holder, model, saver, store=store)
     if button:
         message = HumanMessage(text, additional_kwargs={"salon_button": True})
@@ -191,8 +197,11 @@ def _sent_history(call: list[BaseMessage]) -> list[BaseMessage]:
     return [m for m in call if not isinstance(m, SystemMessage)]
 
 
-GOOD = "Dạ vâng ạ."
-CLAIM = "Dạ em đã đặt xong lịch 3 giờ chiều mai cho chị Lan rồi ạ."
+# Câu trả lời cuối là JSON các đoạn (level C): `plain(GOOD_TEXT)` / `plain(CLAIM_TEXT)`;
+# state và log giữ chữ đã ghép, nên các assert so với `*_TEXT`.
+GOOD_TEXT = "Dạ vâng ạ."
+# "3 giờ chiều mai" không có dữ kiện nào trong lượt: đoạn chữ thường → thêm `unreferenced`.
+CLAIM_TEXT = "Dạ em đã đặt xong lịch 3 giờ chiều mai cho chị Lan rồi ạ."
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +216,7 @@ async def test_turn_start_repairs_a_dangling_tool_call(test_db):
     dangling = tool_call("shop_info_task", _SHOP)
     dangling.id = "dangling"
     await _seed(test_db, user, saver, {"messages": [HumanMessage("tiệm mở mấy giờ"), dangling]})
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "còn mở không em", saver=saver)
 
@@ -217,7 +226,7 @@ async def test_turn_start_repairs_a_dangling_tool_call(test_db):
     assert dangling.id not in [m.id for m in state["messages"]]
     assert not any(isinstance(m, AIMessage) and m.tool_calls for m in state["messages"])
     assert "tiệm mở mấy giờ" in _texts(state["messages"], HumanMessage)
-    assert state["messages"][-1].content == GOOD
+    assert state["messages"][-1].content == GOOD_TEXT
 
 
 async def test_dangling_tool_call_after_a_fallback_is_still_repaired(test_db):
@@ -229,7 +238,7 @@ async def test_dangling_tool_call_after_a_fallback_is_still_repaired(test_db):
     fallback = AIMessage("Dạ anh chị nói lại giúp em được không ạ?",
                          additional_kwargs={"salon_source": "code"})
     await _seed(test_db, user, saver, {"messages": [HumanMessage("hỏi chút"), dangling, fallback]})
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "tiệm mở mấy giờ", saver=saver)
 
@@ -252,7 +261,7 @@ async def test_turn_start_resets_per_turn_keys(test_db):
                             "at": moment(tomorrow_at(15))},
     })
 
-    state = await _turn(test_db, user, recorder([AIMessage(GOOD)]), "chào em",
+    state = await _turn(test_db, user, recorder([plain(GOOD_TEXT)]), "chào em",
                         saver=saver, turn_id="new-turn")
 
     assert state["turn_facts"] == []
@@ -277,7 +286,7 @@ async def test_button_preset_survives_the_reset(test_db):
     saver = InMemorySaver()
     preset = _preset()
 
-    state = await _turn(test_db, user, recorder([AIMessage(GOOD)]),
+    state = await _turn(test_db, user, recorder([plain(GOOD_TEXT)]),
                         "The customer pressed Agree.", saver=saver, preset=preset, button=True)
 
     assert state["pending_decided"] is True
@@ -295,7 +304,7 @@ async def test_button_preset_puts_the_decision_in_turn_facts(test_db):
     })
     preset = _preset()
 
-    state = await _turn(test_db, user, recorder([AIMessage(GOOD)]),
+    state = await _turn(test_db, user, recorder([plain(GOOD_TEXT)]),
                         "The customer pressed Agree.", saver=saver, preset=preset, button=True)
 
     assert state["turn_facts"] == [{
@@ -315,8 +324,9 @@ async def test_button_message_opens_the_turn_but_is_not_customer_text(test_db):
         AIMessage("Dạ tiệm mở 8 giờ sáng ạ."),
     ]})
     button_text = "The customer pressed Agree. Next request: 5 giờ chiều."
-    # "5 giờ chiều" chỉ có trong message nút — không phải lời khách, guard phải loại.
-    model = recorder([AIMessage("Dạ em xếp tiếp 5 giờ chiều nhé."), AIMessage(GOOD)])
+    # "5 giờ chiều" chỉ có trong message nút — không phải lời khách, không có dữ
+    # kiện nào để trích: đoạn chữ thường bị guard loại (`unreferenced`).
+    model = recorder([plain("Dạ em xếp tiếp 5 giờ chiều nhé."), plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, button_text, saver=saver, preset=_preset(), button=True)
 
@@ -325,7 +335,7 @@ async def test_button_message_opens_the_turn_but_is_not_customer_text(test_db):
     assert first[0].content == f"{UNTRUSTED_LABEL}\ntiệm mở mấy giờ"
     assert first[2].content == button_text
     [hint] = _hints(model.calls[1])
-    assert "unknown_time" in hint.additional_kwargs[GUARD_HINT_MARK]
+    assert "unreferenced" in hint.additional_kwargs[GUARD_HINT_MARK]
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +347,7 @@ async def test_context_block_is_second_and_not_persisted(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
     saver = InMemorySaver()
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=saver)
 
@@ -356,7 +366,7 @@ async def test_context_block_lists_reply_facts(test_db):
     lời (`FactCatalog.render()`), dựng từ cùng đầu vào guard dùng."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
 
@@ -378,7 +388,7 @@ async def test_context_block_carries_only_this_customers_memory(test_db):
                      {"data": ["thích làm nail buổi chiều"], "updated_at": "2026-01-01T00:00:00+00:00"})
     await store.aput((MEMORY_NAMESPACE, str(other.id)), "preferences",
                      {"data": ["thích cắt tóc ngắn"], "updated_at": "2026-01-01T00:00:00+00:00"})
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), store=store)
 
@@ -394,7 +404,7 @@ async def test_tools_offered_follow_pending_state(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
     await _pending(test_db, user)
-    model = recorder([tool_call("decide_pending", {**_DECIDE, "label": "reject"}), AIMessage(GOOD)])
+    model = recorder([tool_call("decide_pending", {**_DECIDE, "label": "reject"}), plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, "thôi em", saver=InMemorySaver())
 
@@ -408,7 +418,7 @@ async def test_context_after_approve_shows_the_new_appointment(test_db):
     proposal = await _pending(test_db, user)
     spoken = moment(tomorrow_at(15))["spoken"]
     model = recorder([tool_call("decide_pending", _DECIDE),
-                      AIMessage(f"Dạ em đã đặt xong lịch {spoken} cho chị Lan ạ.")])
+                      reply("Dạ em đã đặt xong lịch ", cite("booked", spoken), " cho chị Lan ạ.")])
 
     await _turn(test_db, user, model, "đồng ý", saver=InMemorySaver())
 
@@ -424,9 +434,9 @@ async def test_previous_turns_send_only_customer_and_final_reply(test_db):
     user = await a_user(test_db)
     saver = InMemorySaver()
     # Lượt 1: một tool call (bị luật từ chối — không có đề xuất chờ) rồi câu cuối.
-    await _turn(test_db, user, recorder([tool_call("decide_pending", _DECIDE), AIMessage("Dạ có ạ.")]),
+    await _turn(test_db, user, recorder([tool_call("decide_pending", _DECIDE), plain("Dạ có ạ.")]),
                 "câu một", saver=saver)
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, "câu hai", saver=saver)
 
@@ -449,16 +459,16 @@ async def test_previous_turns_send_only_customer_and_final_reply(test_db):
 async def test_rejected_reply_is_removed_and_rewritten_once(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = recorder([AIMessage(CLAIM), AIMessage(GOOD)])
+    model = recorder([plain(CLAIM_TEXT), plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
 
     rewrite = model.calls[1]
-    assert CLAIM not in _texts(rewrite)
+    assert CLAIM_TEXT not in _texts(rewrite)
     [hint] = _hints(rewrite)
-    assert "claim" in hint.additional_kwargs[GUARD_HINT_MARK]
+    assert hint.additional_kwargs[GUARD_HINT_MARK] == ["unreferenced", "claim"]
     assert len(model.calls) == 2
-    assert CLAIM not in _texts(state["messages"])
+    assert CLAIM_TEXT not in _texts(state["messages"])
     assert state["guard_rewrites"] == 1
 
 
@@ -470,11 +480,11 @@ async def test_guard_logs_the_rejected_bot_reply(test_db):
     second = "Dạ em đặt rồi 3 giờ chiều mai cho chị Lan ạ."
 
     with structlog.testing.capture_logs() as logs:
-        await _turn(test_db, user, recorder([AIMessage(CLAIM), AIMessage(second)]), "chào em",
+        await _turn(test_db, user, recorder([plain(CLAIM_TEXT), plain(second)]), "chào em",
                     saver=InMemorySaver())
 
     by_event = {log["event"]: log for log in logs}
-    assert by_event["guard_rejected"]["extra"]["rejected_reply"] == CLAIM
+    assert by_event["guard_rejected"]["extra"]["rejected_reply"] == CLAIM_TEXT
     assert by_event["guard_violation"]["extra"]["rejected_reply"] == second
 
 
@@ -482,18 +492,18 @@ async def test_guard_hint_is_removed_after_the_rewrite(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
 
-    state = await _turn(test_db, user, recorder([AIMessage(CLAIM), AIMessage(GOOD)]), "chào em",
+    state = await _turn(test_db, user, recorder([plain(CLAIM_TEXT), plain(GOOD_TEXT)]), "chào em",
                         saver=InMemorySaver())
 
     assert _hints(state["messages"]) == []
     assert [type(m).__name__ for m in state["messages"]] == ["HumanMessage", "AIMessage"]
-    assert state["messages"][-1].content == GOOD
+    assert state["messages"][-1].content == GOOD_TEXT
 
 
 async def test_rewrite_turn_offers_no_tools(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
-    claim_model = recorder([AIMessage(CLAIM), AIMessage(GOOD)])
+    claim_model = recorder([plain(CLAIM_TEXT), plain(GOOD_TEXT)])
 
     await _turn(test_db, user, claim_model, "chào em", saver=InMemorySaver())
 
@@ -503,7 +513,7 @@ async def test_rewrite_turn_offers_no_tools(test_db):
     # Mã `pending_undecided`: lần viết lại chỉ được gọi `decide_pending`.
     other = await a_user(test_db, phone="0987654321", name="Chú Ba")
     await _pending(test_db, other)
-    pending_model = recorder([AIMessage(GOOD), AIMessage(GOOD), AIMessage(GOOD)])
+    pending_model = recorder([plain(GOOD_TEXT), plain(GOOD_TEXT), plain(GOOD_TEXT)])
 
     await _turn(test_db, other, pending_model, "để em xem", saver=InMemorySaver())
 
@@ -517,9 +527,9 @@ async def test_typed_yes_cannot_be_ignored(test_db):
     await _pending(test_db, user)
     spoken = moment(tomorrow_at(15))["spoken"]
     model = recorder([
-        AIMessage(GOOD),                              # bỏ lơ đề xuất → pending_undecided
+        plain(GOOD_TEXT),                              # bỏ lơ đề xuất → pending_undecided
         tool_call("decide_pending", _DECIDE),
-        AIMessage(f"Dạ em đã đặt xong lịch {spoken} cho chị Lan ạ."),
+        reply("Dạ em đã đặt xong lịch ", cite("booked", spoken), " cho chị Lan ạ."),
     ])
 
     state = await _turn(test_db, user, model, "đồng ý", saver=InMemorySaver())
@@ -548,14 +558,14 @@ async def test_second_rejection_keeps_the_session_its_fallback_asks_about(test_d
     user = await a_user(test_db)
     await _open_session(test_db, user, agent="appointment", turn_id="this-turn")
     await _open_session(test_db, user, agent="shop_info", turn_id="earlier-turn")
-    model = recorder([AIMessage(CLAIM), AIMessage(CLAIM)])
+    model = recorder([plain(CLAIM_TEXT), plain(CLAIM_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), turn_id="this-turn")
 
     last = state["messages"][-1]
     assert last.additional_kwargs.get("salon_source") == "code"
     assert last.content == "Dạ chị Lan muốn mấy giờ ạ?"
-    assert CLAIM not in _texts(state["messages"])
+    assert CLAIM_TEXT not in _texts(state["messages"])
     assert _hints(state["messages"]) == []
     statuses = {doc["agent"]: doc["status"] async for doc in test_db["waiting_sessions"].find({})}
     assert statuses == {"appointment": "waiting", "shop_info": "waiting"}
@@ -567,7 +577,7 @@ async def test_second_rejection_closes_a_session_its_fallback_does_not_ask_about
     user = await a_user(test_db)
     await _pending(test_db, user)
     await _open_session(test_db, user, agent="appointment", turn_id="this-turn")
-    model = recorder([AIMessage(CLAIM), AIMessage(CLAIM)])
+    model = recorder([plain(CLAIM_TEXT), plain(CLAIM_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver(), turn_id="this-turn")
 
@@ -589,7 +599,7 @@ async def test_model_call_limit_raises_instead_of_english_message(test_db, monke
     monkeypatch.setattr(settings, "salon_model_calls_per_turn", 2)
     saver = InMemorySaver()
     model = recorder([tool_call("decide_pending", _DECIDE), tool_call("decide_pending", _DECIDE),
-                      AIMessage(GOOD)])
+                      plain(GOOD_TEXT)])
 
     with pytest.raises(ModelCallLimitExceededError):
         await _turn(test_db, user, model, "chào em", saver=saver)
@@ -622,7 +632,7 @@ async def test_every_model_call_counts_toward_the_budget(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
     use_model(monkeypatch, scripted([result(status="ok")]))
-    model = recorder([tool_call("shop_info_task", _SHOP), AIMessage(GOOD)])
+    model = recorder([tool_call("shop_info_task", _SHOP), plain(GOOD_TEXT)])
 
     await _turn(test_db, user, model, "tiệm mở mấy giờ", saver=InMemorySaver())
 
@@ -635,7 +645,7 @@ async def test_budget_exceeded_raises_before_calling_the_model(test_db, monkeypa
     user = await a_user(test_db)
     monkeypatch.setattr(settings, "orch_llm_calls_per_user_per_hour", 1)
     await RateLimitService(test_db).hit(f"llm:user:{user.id}", 3600)
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     with pytest.raises(LlmBudgetExceeded):
         await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
@@ -658,7 +668,7 @@ async def test_summary_never_removes_the_current_customer_message(test_db, monke
         old += [HumanMessage(f"câu cũ {i}"), AIMessage(f"Dạ trả lời {i} ạ.")]
     await _seed(test_db, user, saver, {"messages": old})
     # Lượt dài: nhiều vòng tool trước câu cuối; nén chạy trước MỖI lần gọi model.
-    model = recorder([tool_call("decide_pending", _DECIDE) for _ in range(4)] + [AIMessage(GOOD)])
+    model = recorder([tool_call("decide_pending", _DECIDE) for _ in range(4)] + [plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "câu khách của lượt", saver=saver)
 
@@ -698,13 +708,13 @@ async def test_summary_keeps_tool_call_pairs_together(summary_model):
 async def test_blank_or_tool_call_as_text_reply_is_rewritten(test_db, bad):
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = recorder([AIMessage(bad), AIMessage(GOOD)])
+    model = recorder([plain(bad), plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
 
     [hint] = _hints(model.calls[1])
     assert hint.additional_kwargs[GUARD_HINT_MARK][0] == "empty"
-    assert state["messages"][-1].content == GOOD
+    assert state["messages"][-1].content == GOOD_TEXT
     assert bad not in _texts(state["messages"], AIMessage)
 
 
@@ -719,7 +729,7 @@ async def test_invalid_tool_call_in_the_thread_is_repaired(test_db):
     saver = InMemorySaver()
     broken = AIMessage("Dạ có ạ.", invalid_tool_calls=[_invalid_call()], id="broken")
     await _seed(test_db, user, saver, {"messages": [HumanMessage("tiệm mở mấy giờ"), broken]})
-    model = recorder([AIMessage(GOOD)])
+    model = recorder([plain(GOOD_TEXT)])
 
     state = await _turn(test_db, user, model, "còn mở không em", saver=saver)
 
@@ -732,7 +742,8 @@ async def test_invalid_tool_call_in_the_thread_is_repaired(test_db):
 async def test_invalid_tool_call_is_not_delivered_as_the_answer(test_db):
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = recorder([AIMessage(GOOD, invalid_tool_calls=[_invalid_call()]), AIMessage("Dạ có ạ.")])
+    model = recorder([AIMessage(plain(GOOD_TEXT).content, invalid_tool_calls=[_invalid_call()]),
+                      plain("Dạ có ạ.")])
 
     state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
 
@@ -749,7 +760,7 @@ async def _long_thread_turn(db, user, size: int, monkeypatch) -> None:
     for i in range(size // 2):
         old += [HumanMessage(f"câu cũ {i}"), AIMessage(f"Dạ trả lời {i} ạ.")]
     await _seed(db, user, saver, {"messages": old})
-    model = recorder([tool_call("decide_pending", _DECIDE) for _ in range(2)] + [AIMessage(GOOD)])
+    model = recorder([tool_call("decide_pending", _DECIDE) for _ in range(2)] + [plain(GOOD_TEXT)])
     await _turn(db, user, model, "câu khách của lượt", saver=saver)
     assert len(model.calls) == 3
 
@@ -769,3 +780,98 @@ async def test_summary_waits_for_enough_new_messages(test_db, monkeypatch, summa
     # Đủ: nén đúng MỘT lần trong cả lượt (sau đó còn keep + vài message).
     await _long_thread_turn(test_db, user, keep + SUMMARY_MIN_NEW_MESSAGES + 10, monkeypatch)
     assert len(summary_model.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Level C: câu trả lời cuối là JSON các đoạn trích dẫn (Task 7)
+# ---------------------------------------------------------------------------
+
+R0_TURN = "r0-turn"
+
+
+async def _seed_r0(db, user, *, hour: int = 15) -> None:
+    """Quyết định đã duyệt của một lượt trước, chưa báo khách (R0)."""
+    ledger = TurnLedger(db)
+    await ledger.start(turn_id=R0_TURN, user_id=str(user.id), thread_id=THREAD_ID,
+                       asked_at=now_utc(), kind="typed")
+    await ledger.set_decision(R0_TURN, PendingOutcome(
+        outcome="approved", proposal_id="p-r0", kind="book", at=Moment(**moment(tomorrow_at(hour)))))
+
+
+def test_reply_format_is_strict_provider_strategy():
+    fmt = reply_format()
+    assert isinstance(fmt, ProviderStrategy)
+    assert fmt.schema_spec.strict is True
+
+
+async def test_plain_text_reply_is_bad_structure_and_rewritten(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([AIMessage("Dạ có ạ."), plain("Dạ có ạ.")])
+
+    state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
+
+    [hint] = _hints(model.calls[1])
+    assert hint.additional_kwargs[GUARD_HINT_MARK] == ["bad_structure"]
+    assert state["messages"][-1].content == "Dạ có ạ."
+
+
+async def test_accepted_reply_is_stored_as_joined_text(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ",
+                            cite("hours", "7 giờ tối"), " ạ.")])
+
+    state = await _turn(test_db, user, model, "tiệm mở mấy giờ", saver=InMemorySaver())
+
+    assert state["messages"][-1].content == "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+
+
+async def test_two_bad_structures_end_on_the_template(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = recorder([AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")])
+
+    state = await _turn(test_db, user, model, "chào em", saver=InMemorySaver())
+
+    last = state["messages"][-1]
+    assert last.additional_kwargs.get("salon_source") == "code"
+    assert len(model.calls) == 2
+
+
+async def test_rejected_replies_write_no_announced_ids(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    await _seed_r0(test_db, user)
+    saver = InMemorySaver()
+    # Giá trị của lượt trước: `TurnStartMiddleware` phải đặt lại, câu bị loại không ghi.
+    await _seed(test_db, user, saver, {
+        "messages": [HumanMessage("lượt trước"), AIMessage("Dạ có ạ.")],
+        "announced_turn_ids": ["old-turn"],
+    })
+    bad = reply("Dạ em đã đặt xong ", cite("booked", "3 giờ chiều mai", find="3 giờ chiều"),
+                " cho chị Lan rồi ạ. Còn ", cite("offer", "4 giờ chiều", ref="t99"), " cũng trống ạ.")
+
+    model = recorder([bad, bad])
+
+    state = await _turn(test_db, user, model, "alo em", saver=saver, ledger=True)
+
+    [hint] = _hints(model.calls[1])
+    assert hint.additional_kwargs[GUARD_HINT_MARK] == ["unknown_ref"]
+    assert "t99 is not in Reply facts" in hint.content
+    assert state["messages"][-1].additional_kwargs.get("salon_source") == "code"
+    assert state["announced_turn_ids"] == []
+
+
+async def test_accepted_reply_writes_the_cited_r0_id(test_db):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    await _seed_r0(test_db, user)
+    good = reply("Dạ em đã đặt xong ", cite("booked", "3 giờ chiều mai", find="3 giờ chiều"),
+                 " cho chị Lan rồi ạ.")
+
+    state = await _turn(test_db, user, recorder([good]), "alo em", saver=InMemorySaver(),
+                        ledger=True)
+
+    assert state["messages"][-1].content == "Dạ em đã đặt xong 3 giờ chiều mai cho chị Lan rồi ạ."
+    assert state["announced_turn_ids"] == [R0_TURN]

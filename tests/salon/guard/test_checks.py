@@ -2,15 +2,18 @@
 4-5): câu trả lời cuối của Orchestrator được đối chiếu bằng code với dữ kiện
 của lượt (`ReplyFacts`), trả mã vi phạm theo thứ tự cố định.
 
-Bảng `test_check_reply_table` lấy nguyên các câu của task brief. Ghi chú về
-cách dựng một vài dòng (để các mã KHÁC trong bảng không bật theo):
+Bảng `test_check_text_table` (luật đọc trên chữ, `check_text`) và
+`test_check_structured_table` (giờ / giá / dữ kiện bắt buộc, `check_structured`
+với câu JSON các đoạn trích dẫn — level C) lấy nguyên các câu của task brief
+Task 12; câu đã ghép của mỗi dòng cấu trúc bằng đúng câu cũ. Ghi chú về cách
+dựng một vài dòng (để các mã KHÁC trong bảng không bật theo):
 
 - `claim_before_approve`: "ProposalFact 15:00" của brief dựng thành đề xuất
   ĐANG CHỜ từ lượt trước (khách chưa duyệt) đã `decide_pending(none)` — một
   `ProposalFact` mới trong lượt thì bắt buộc có câu hỏi (`missing_question`),
   mà câu của brief không có dấu "?".
 - `hold_without_any`: giờ 15:00 có thật nhờ một `TimeFact` "free" (agent vừa
-  thấy giờ trống) — không thì câu còn bị `unknown_time`.
+  thấy giờ trống).
 - Các dòng có đề xuất chờ ở lượt gõ chữ đều đã `decide_pending` (trừ
   `pending_ignored`) — không thì mọi dòng đó bị `pending_undecided`.
 """
@@ -20,7 +23,7 @@ import json
 
 import pytest
 
-from app.agents.salon.guard.checks import check_reply, check_structured, check_text, strip_tool_text
+from app.agents.salon.guard.checks import CHECK_CODES, check_structured, check_text, strip_tool_text
 from app.agents.salon.guard.facts import ReplyFacts
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 from app.agents.salon.shared.schemas import DecisionFact, Moment, ProposalFact, ServiceFact, TimeFact
@@ -93,7 +96,9 @@ def _raw(facts: ReplyFacts, *parts) -> str:
     return json.dumps({"segments": segments})
 
 
-ROWS = [
+# Luật đọc trên CHỮ (`check_text`): claim, pronoun, phone, question, repeat,
+# pending — không phụ thuộc đoạn trích dẫn.
+TEXT_ROWS = [
     pytest.param(
         dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
         "Dạ em đặt xong 3 giờ chiều mai cho chị rồi ạ.", ["claim"], id="claim_before_approve"),
@@ -111,47 +116,6 @@ ROWS = [
         dict(turn_facts=[TimeFact(role="free", moment=M15)]),
         "Dạ em đang giữ 3 giờ chiều mai cho chị ạ.", ["claim"], id="hold_without_any"),
     pytest.param(
-        dict(question="mai 3 giờ"),
-        "Dạ chị Lan, 3 giờ sáng hay 3 giờ chiều ạ?", [], id="echo_customer_clock"),
-    pytest.param(
-        dict(turn_facts=[_proposal()]),
-        "Em giữ chỗ 4 giờ chiều mai cho chị nhé, chị đồng ý không ạ?",
-        ["claim", "unknown_time", "missing_fact"], id="invented_time"),
-    pytest.param(
-        dict(turn_facts=[_service_fact()]),
-        "Dạ sơn gel khoảng 150 nghìn ạ.", [], id="price_inside_range"),
-    pytest.param(
-        dict(turn_facts=[_service_fact()]),
-        "Dạ sơn gel 200k ạ.", ["unknown_price"], id="price_outside_range"),
-    pytest.param(
-        dict(turn_facts=[_service_fact()]),
-        "Dạ từ 120 tới 180 nghìn ạ.", [], id="price_range_inside"),
-    # Live run 1 (11/11): dấu "." ngăn hàng nghìn từng bị coi là hết mệnh đề.
-    pytest.param(
-        dict(turn_facts=[_service_fact()]),
-        "Dạ sơn gel giá từ 120.000đ đến 180.000đ ạ.", [], id="price_thousands_separator"),
-    pytest.param(
-        dict(turn_facts=[_service_fact()]),
-        "Dạ sơn gel giá 200.000đ ạ.", ["unknown_price"], id="price_thousands_outside"),
-    # F2 (owner 11/11): a taken time found this turn must be mentioned.
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
-                         TimeFact(role="free", moment=M16)]),
-        "Dạ chị chọn 4 giờ chiều được không ạ?", ["missing_fact"], id="taken_time_not_mentioned"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
-                         TimeFact(role="free", moment=M16)]),
-        "Dạ 3 giờ chiều đã có khách rồi ạ, chị chọn 4 giờ chiều được không ạ?", [],
-        id="taken_time_mentioned"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="taken", moment=M15), _proposal(M16)]),
-        "Dạ em giữ chỗ 4 giờ chiều cho chị, chị đồng ý không ạ?", ["missing_fact"],
-        id="taken_with_proposal_needs_mention"),
-    pytest.param(
-        dict(snapshot=dict(pending=pending_at(M15, service_ids=[GEL.id, GOI.id])),
-             turn_facts=[_kept()], pending_decided=True),
-        "Tổng khoảng 200 nghìn ạ.", [], id="price_group_total"),
-    pytest.param(
         dict(turn_facts=[_proposal()]),
         "Em giữ chỗ Thứ Hai 9/11, 3 giờ chiều cho chị nhé.", ["missing_question"],
         id="proposal_no_question"),
@@ -163,9 +127,6 @@ ROWS = [
         dict(turn_facts=[_proposal()]),
         f"Dạ em giữ chỗ 3 giờ chiều mai cho chị, chị đồng ý không ạ? Cần gì chị gọi số {PHONE} nhé.",
         ["phone_not_allowed"], id="phone_when_fine"),
-    pytest.param(
-        dict(snapshot=dict(unannounced=r0(M15))),
-        "Dạ chào chị ạ.", ["missing_fact"], id="r0_missing"),
     pytest.param(
         dict(snapshot=dict(pending=pending_at(M15)), pending_decided=False),
         "Dạ em cảm ơn chị ạ.", ["pending_undecided"], id="pending_ignored"),
@@ -189,18 +150,6 @@ ROWS = [
                          _proposal(M16)]),
         "Em giữ chỗ 4 giờ chiều cho con gái chị, chị đồng ý không ạ?", [],
         id="button_turn_next_proposal"),
-    # Bài học Task 8: `scan_times` trả buổi CÓ DẤU ("tối"), dữ kiện đi qua
-    # `scan_spoken_clocks` — hai phía phải chuẩn hoá cùng một dạng, không thì
-    # "9 giờ tối" lọt qua khi chỉ có 9 giờ sáng (hoặc mọi giờ đều bị loại).
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=at(9))]),
-        "Dạ 9 giờ tối còn trống ạ.", ["unknown_time"], id="evening_vs_morning_clock"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=at(21))]),
-        "Dạ 9 giờ tối còn trống ạ.", [], id="evening_clock_known"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=M15)]),
-        "Dạ 15h còn trống ạ.", [], id="machine_clock_matches_spoken"),
     pytest.param(
         dict(snapshot=dict(upcoming=[appointment_at(M16)]),
              turn_facts=[DecisionFact(outcome="approved", proposal_kind="move", at=M16)],
@@ -264,16 +213,6 @@ ROWS = [
     pytest.param(
         dict(snapshot=dict(pending=pending_at(M15)), turn_facts=[_kept()], pending_decided=True),
         "Dạ em đã lên lịch 3 giờ chiều cho chị rồi ạ.", ["claim"], id="len_lich_is_a_claim"),
-    # Giờ so theo giá trị trong ngày, không theo nhãn buổi.
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=at(18))]),
-        "Dạ 6 giờ chiều còn trống ạ.", [], id="six_pm_said_as_chieu"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=at(11))]),
-        "Dạ 11 giờ trưa còn trống ạ.", [], id="eleven_am_said_as_trua"),
-    pytest.param(
-        dict(turn_facts=[TimeFact(role="free", moment=M15)]),
-        "Dạ 3 giờ sáng còn trống ạ.", ["unknown_time"], id="morning_is_not_afternoon"),
     # --- fix round 2 -------------------------------------------------------
     # Lịch đang có chỉ bảo chứng khi mệnh đề NÊU giờ, và giờ đó không đồng
     # thời là giờ của một đề xuất chờ / đề xuất mới.
@@ -327,25 +266,129 @@ ROWS = [
 ]
 
 
-@pytest.mark.parametrize("setup, reply, expected", ROWS)
-async def test_check_reply_table(test_db, setup, reply, expected):
+def _codes(found: set[str]) -> list[str]:
+    return [code for code in CHECK_CODES if code in found]
+
+
+@pytest.mark.parametrize("setup, reply, expected", TEXT_ROWS)
+async def test_check_text_table(test_db, setup, reply, expected):
     await seed_catalog(test_db)
     setup = dict(setup)
     snapshot = a_snapshot(**setup.pop("snapshot", {}))
     facts = await facts_for(test_db, snapshot=snapshot, **setup)
-    assert check_reply(reply, facts) == expected
+    assert _codes(check_text(reply, facts)) == expected
 
 
-async def test_must_mention_is_verbatim(test_db):
-    """`spoken` thật ("Thứ Ba 10/11, 3 giờ chiều") phải có NGUYÊN VĂN trong câu —
-    chỉ nói "3 giờ chiều mai" là thiếu (model được dặn trích nguyên văn)."""
+G1 = "g1"   # id nhóm đầu tiên của danh mục (đề xuất chờ nhiều dịch vụ)
+
+# Giờ / giá / dữ kiện bắt buộc (`check_structured`): mỗi giờ, tên dịch vụ, giá
+# là một đoạn trích dẫn. Trước level C các dòng này so trên chữ (`unknown_time`
+# / `unknown_price` / `missing_fact` nguyên văn); giờ:
+# - giờ / giá không có dữ kiện nào → đoạn chữ thường, mã `unreferenced`;
+# - giờ / giá sai so với dữ kiện có thật → trích dữ kiện đó, mã `ref_mismatch`;
+# - dữ kiện bắt buộc không được trích → `missing_fact`.
+STRUCTURED_ROWS = [
+    pytest.param(
+        dict(question="mai 3 giờ"),
+        ("Dạ chị Lan, ", ("3 giờ sáng", "c1", "asked"), " hay ", ("3 giờ chiều", "c1", "asked"),
+         " ạ?"), [], id="echo_customer_clock"),
+    pytest.param(
+        dict(turn_facts=[_proposal()]),
+        ("Em giữ chỗ 4 giờ chiều mai cho chị nhé, chị đồng ý không ạ?",),
+        ["unreferenced", "claim", "missing_fact"], id="invented_time"),
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        ("Dạ ", ("sơn gel", GEL, "service"), " ", ("khoảng 150 nghìn", GEL, "price"), " ạ."), [],
+        id="price_inside_range"),
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        ("Dạ ", ("sơn gel", GEL, "service"), " ", ("200k", GEL, "price"), " ạ."), ["ref_mismatch"],
+        id="price_outside_range"),
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        ("Dạ ", ("từ 120 tới 180 nghìn", GEL, "price"), " ạ."), [], id="price_range_inside"),
+    # Live run 1 (11/11): dấu "." ngăn hàng nghìn từng bị coi là hết mệnh đề.
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        ("Dạ ", ("sơn gel", GEL, "service"), " giá ", ("từ 120.000đ đến 180.000đ", GEL, "price"),
+         " ạ."), [], id="price_thousands_separator"),
+    pytest.param(
+        dict(turn_facts=[_service_fact()]),
+        ("Dạ ", ("sơn gel", GEL, "service"), " giá ", ("200.000đ", GEL, "price"), " ạ."),
+        ["ref_mismatch"], id="price_thousands_outside"),
+    # F2 (owner 11/11): a taken time found this turn must be cited.
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
+                         TimeFact(role="free", moment=M16)]),
+        ("Dạ chị chọn ", ("4 giờ chiều", M16, "offer"), " được không ạ?"), ["missing_fact"],
+        id="taken_time_not_mentioned"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="asked", moment=M15), TimeFact(role="taken", moment=M15),
+                         TimeFact(role="free", moment=M16)]),
+        ("Dạ ", ("3 giờ chiều", M15, "taken"), " đã có khách rồi ạ, chị chọn ",
+         ("4 giờ chiều", M16, "offer"), " được không ạ?"), [], id="taken_time_mentioned"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="taken", moment=M15), _proposal(M16)]),
+        ("Dạ em giữ chỗ ", ("4 giờ chiều", M16, "held"), " cho chị, chị đồng ý không ạ?"),
+        ["missing_fact"], id="taken_with_proposal_needs_mention"),
+    pytest.param(
+        dict(snapshot=dict(pending=pending_at(M15, service_ids=[GEL.id, GOI.id])),
+             turn_facts=[_kept()], pending_decided=True),
+        ("Tổng ", ("khoảng 200 nghìn", G1, "price"), " ạ."), [], id="price_group_total"),
+    pytest.param(
+        dict(snapshot=dict(unannounced=r0(M15))),
+        ("Dạ chào chị ạ.",), ["missing_fact"], id="r0_missing"),
+    # Bài học Task 8: `scan_times` trả buổi CÓ DẤU ("tối"), dữ kiện đi qua
+    # `scan_spoken_clocks` — hai phía phải chuẩn hoá cùng một dạng, không thì
+    # "9 giờ tối" lọt qua khi chỉ có 9 giờ sáng (hoặc mọi giờ đều bị loại).
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(9))]),
+        ("Dạ ", ("9 giờ tối", at(9), "offer"), " còn trống ạ."), ["ref_mismatch"],
+        id="evening_vs_morning_clock"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(21))]),
+        ("Dạ ", ("9 giờ tối", at(21), "offer"), " còn trống ạ."), [], id="evening_clock_known"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=M15)]),
+        ("Dạ ", ("15h", M15, "offer"), " còn trống ạ."), [], id="machine_clock_matches_spoken"),
+    # Giờ so theo giá trị trong ngày, không theo nhãn buổi.
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(18))]),
+        ("Dạ ", ("6 giờ chiều", at(18), "offer"), " còn trống ạ."), [], id="six_pm_said_as_chieu"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=at(11))]),
+        ("Dạ ", ("11 giờ trưa", at(11), "offer"), " còn trống ạ."), [],
+        id="eleven_am_said_as_trua"),
+    pytest.param(
+        dict(turn_facts=[TimeFact(role="free", moment=M15)]),
+        ("Dạ ", ("3 giờ sáng", M15, "offer"), " còn trống ạ."), ["ref_mismatch"],
+        id="morning_is_not_afternoon"),
+]
+
+
+@pytest.mark.parametrize("setup, parts, expected", STRUCTURED_ROWS)
+async def test_check_structured_table(test_db, setup, parts, expected):
+    await seed_catalog(test_db)
+    setup = dict(setup)
+    snapshot = a_snapshot(**setup.pop("snapshot", {}))
+    facts = await facts_for(test_db, snapshot=snapshot, **setup)
+    result = check_structured(_raw(facts, *parts), facts)
+    assert result.codes == expected
+    assert result.text == "".join(p if isinstance(p, str) else p[0] for p in parts)
+
+
+async def test_required_fact_is_cited_not_copied_verbatim(test_db):
+    """Trước level C `spoken` thật ("Thứ Ba 10/11, 3 giờ chiều") phải có NGUYÊN
+    VĂN trong câu. Giờ phải TRÍCH DẪN: chép nguyên văn vào chữ thường không
+    đủ (`unreferenced` + `missing_fact`), nói gọn "3 giờ chiều mai" kèm id thì đủ."""
     full = at(15, spoken="Thứ Ba 10/11, 3 giờ chiều")
     proposal = ProposalFact(proposal_id="p-1", proposal_kind="book", at=full, service_ids=[])
     facts = await facts_for(test_db, turn_facts=[proposal])
-    assert check_reply("Em giữ chỗ 3 giờ chiều mai cho chị, chị đồng ý không ạ?", facts) == [
-        "missing_fact"]
-    assert check_reply("Em giữ chỗ Thứ Ba 10/11, 3 giờ chiều cho chị, chị đồng ý không ạ?",
-                       facts) == []
+    copied = _raw(facts, "Em giữ chỗ Thứ Ba 10/11, 3 giờ chiều cho chị, chị đồng ý không ạ?")
+    assert check_structured(copied, facts).codes == ["unreferenced", "missing_fact"]
+    cited = _raw(facts, "Em giữ chỗ ", ("3 giờ chiều mai", full, "held"),
+                 " cho chị, chị đồng ý không ạ?")
+    assert check_structured(cited, facts).codes == []
 
 
 async def test_pending_undecided_only_on_typed_turns(test_db):
@@ -362,7 +405,7 @@ async def test_button_turn_does_not_require_decision_spoken(test_db):
         test_db, turn_kind="button", pending_decided=True,
         turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=M15)],
     )
-    assert facts.must_mention == []
+    assert facts.required == []
     assert facts.done_claims["booked"]
 
 
@@ -374,7 +417,7 @@ async def test_pending_outcome_is_the_fallback_source_of_the_decision(test_db):
     outcome = PendingOutcome(outcome="approved", proposal_id="p-1", kind="book", at=M15)
     facts = await facts_for(test_db, pending_outcome=outcome, pending_decided=True)
     assert facts.done_claims["booked"]
-    assert "3 giờ chiều" in facts.must_mention
+    assert [(r.ref, r.roles) for r in facts.required] == [(facts.catalog.id_of(M15), ["booked"])]
 
 
 def test_strip_tool_text_removes_names_and_json():
@@ -434,7 +477,8 @@ async def test_empty_reply_is_a_violation(test_db, text):
     """Câu rỗng (vd model viết tool call thành chữ, `strip_tool_text` xoá sạch)
     không bao giờ được gửi khách — mã `empty` đứng đầu."""
     facts = await facts_for(test_db)
-    assert check_reply(text, facts)[0] == "empty"
+    assert "empty" in check_text(text, facts)
+    assert check_structured(_raw(facts, text), facts).codes[0] == "empty"
     assert strip_tool_text('decide_pending({"label": "approve"})') == ""
 
 
@@ -523,6 +567,7 @@ async def test_check_text_has_no_old_text_rules(test_db):
     await seed_catalog(test_db)
     facts = await facts_for(test_db)
     assert "unknown_time" not in check_text("Dạ còn 5 giờ chiều ạ.", facts)
+    assert not {"unknown_time", "unknown_price"} & set(CHECK_CODES)
 
 
 # ---------------------------------------------------------------------------

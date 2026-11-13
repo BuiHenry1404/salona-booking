@@ -39,15 +39,17 @@ from app.agents.salon.orchestrator import agent as agent_module
 from app.agents.salon.orchestrator import middleware as middleware_pkg
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
 from app.agents.salon.shared import context as context_module
+from app.agents.salon.shared.schemas import Moment, PendingOutcome
 from app.agents.salon.turn import run as run_module
 from app.agents.salon.turn.events import TOOL_LABELS
+from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import TZ, now_utc, to_local
 from app.core.config import settings
 from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
 from app.services.waiting_session import WaitingSessionService
-from tests.fakes import Hang, ScriptedChatModel, scripted, tool_call, tool_calls
+from tests.fakes import Hang, ScriptedChatModel, cite, plain, reply, scripted, tool_call, tool_calls
 from tests.salon.subagents import (
     a_user, default_hours, moment, result, seed_mock_catalogue, tomorrow_at, use_model,
 )
@@ -189,11 +191,19 @@ BOOK_15 = {"request": "Book tomorrow at 3pm.", "continue_session": False, "servi
 PICK_16 = {"request": "The customer picks 4pm.", "continue_session": True, "service_ids": None}
 SHOP = {"request": "Opening hours.", "continue_session": False}
 
-ASK_OTHER_TIME = f"Dạ {S15} không còn trống ạ. Chị Lan muốn giờ nào khác ạ?"
+# Câu trả lời cuối của Orchestrator là JSON các đoạn trích dẫn (level C):
+# `X` là kịch bản (`reply(...)` / `plain(...)`), `X_TEXT` là chữ đã ghép mà
+# khách nhận — các assert so với `X_TEXT`.
+ASK_OTHER_TIME_TEXT = f"Dạ {S15} không còn trống ạ. Chị Lan muốn giờ nào khác ạ?"
+ASK_OTHER_TIME = reply("Dạ ", cite("taken", S15), " không còn trống ạ. Chị Lan muốn giờ nào khác ạ?")
 # Khác câu mẫu `PROPOSAL_REPLY` của code — để test phân biệt câu model với câu mẫu.
-OFFER_16 = f"Dạ vâng, em giữ chỗ {S16} cho chị Lan, chị Lan đồng ý không ạ?"
-OFFER_15 = f"Dạ vâng, em giữ chỗ {S15} cho chị Lan, chị Lan đồng ý không ạ?"
-HOURS = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+OFFER_16_TEXT = f"Dạ vâng, em giữ chỗ {S16} cho chị Lan, chị Lan đồng ý không ạ?"
+OFFER_16 = reply("Dạ vâng, em giữ chỗ ", cite("held", S16), " cho chị Lan, chị Lan đồng ý không ạ?")
+OFFER_15_TEXT = f"Dạ vâng, em giữ chỗ {S15} cho chị Lan, chị Lan đồng ý không ạ?"
+OFFER_15 = reply("Dạ vâng, em giữ chỗ ", cite("held", S15), " cho chị Lan, chị Lan đồng ý không ạ?")
+HOURS_TEXT = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+HOURS = reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ", cite("hours", "7 giờ tối"),
+              " ạ.")
 
 
 def need_info_15() -> list[AIMessage]:
@@ -237,7 +247,7 @@ def two_requests() -> list[AIMessage]:
 async def test_typed_turn_emits_started_tools_and_complete_without_tokens(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = orchestrator(monkeypatch, [tool_call("shop_info_task", SHOP), AIMessage(HOURS)])
+    model = orchestrator(monkeypatch, [tool_call("shop_info_task", SHOP), HOURS])
     subagents(monkeypatch, shop_hours())
 
     events = await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em")
@@ -255,22 +265,23 @@ async def test_typed_turn_emits_started_tools_and_complete_without_tokens(test_d
     started = [event.data["name"] for event in events if event.type == "tool_started"]
     assert "shop_info_task" in started and "get_shop_hours" in started
     assert "SubagentResult" not in started
-    assert completed(events) == {"answer": HOURS, "proposal": None}
+    assert completed(events) == {"answer": HOURS_TEXT, "proposal": None}
     [row] = await ledger_rows(test_db, user)
     assert (row["kind"], row["ended_by"], row["answer_source"]) == ("typed", "answer", "llm")
     log = await test_db["conversations"].find_one({"user_id": str(user.id)})
     assert [(m["role"], m["content"], m["source"]) for m in log["messages"]] == [
-        ("user", "tiệm mở cửa mấy giờ vậy em", "llm"), ("assistant", HOURS, "llm")]
+        ("user", "tiệm mở cửa mấy giờ vậy em", "llm"), ("assistant", HOURS_TEXT, "llm")]
 
 
 async def test_markdown_never_reaches_the_customer(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
-    orchestrator(monkeypatch, [tool_call("shop_info_task", SHOP),
-                               AIMessage("Dạ tiệm mở cửa từ **8 giờ sáng tới 7 giờ tối** ạ.")])
+    orchestrator(monkeypatch, [tool_call("shop_info_task", SHOP), reply(
+        "Dạ tiệm mở cửa từ **", cite("hours", "8 giờ sáng"), " tới ", cite("hours", "7 giờ tối"),
+        "** ạ.")])
     subagents(monkeypatch, shop_hours())
 
-    assert completed(await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em"))["answer"] == HOURS
+    assert completed(await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em"))["answer"] == HOURS_TEXT
 
 
 async def test_customer_text_is_one_line_and_capped_at_1000_chars(test_db, monkeypatch):
@@ -278,7 +289,7 @@ async def test_customer_text_is_one_line_and_capped_at_1000_chars(test_db, monke
     và tối đa `CUSTOMER_TEXT_MAX_CHARS` ký tự — cả câu model đọc lẫn nhật ký."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = orchestrator(monkeypatch, [AIMessage(HOURS)])
+    model = orchestrator(monkeypatch, [HOURS])
     raw = "tiệm mở\nmấy giờ\r\n\tvậy em  " + "à" * 2000
     expected = " ".join(raw.split())[:run_module.CUSTOMER_TEXT_MAX_CHARS]
     assert run_module.CUSTOMER_TEXT_MAX_CHARS == 1000 and len(expected) == 1000
@@ -295,7 +306,7 @@ async def test_typed_turn_seeds_self_address_once(test_db, monkeypatch):
     """Ruling R13: khách tự xưng "chị" trong câu gõ → ghi `self_address` một lần."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    orchestrator(monkeypatch, [AIMessage(HOURS), AIMessage("Dạ tiệm mở cả tuần ạ.")])
+    orchestrator(monkeypatch, [HOURS, plain("Dạ tiệm mở cả tuần ạ.")])
 
     completed(await turn(test_db, user, "chị muốn hỏi tiệm mở cửa mấy giờ"))
     assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "chị"
@@ -319,7 +330,7 @@ async def test_inner_tool_events_carry_vietnamese_labels(test_db, monkeypatch):
     await default_hours(test_db)
     await block_15(test_db)
     user = await a_user(test_db)
-    orchestrator(monkeypatch, [tool_call("appointment_task", BOOK_15), AIMessage(ASK_OTHER_TIME)])
+    orchestrator(monkeypatch, [tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME])
     subagents(monkeypatch, need_info_15())
 
     events = await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
@@ -333,7 +344,7 @@ async def test_inner_tool_events_carry_vietnamese_labels(test_db, monkeypatch):
         assert data["label"] and "_" not in data["label"]
         assert data["name"] not in data["label"]
     assert "decide_pending" not in TOOL_LABELS
-    assert completed(events)["answer"] == ASK_OTHER_TIME
+    assert completed(events)["answer"] == ASK_OTHER_TIME_TEXT
 
 
 async def test_session_continues_on_the_next_turn(test_db, monkeypatch):
@@ -341,9 +352,9 @@ async def test_session_continues_on_the_next_turn(test_db, monkeypatch):
     await block_15(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(ASK_OTHER_TIME),
-        tool_call("shop_info_task", SHOP), AIMessage(HOURS),
-        tool_call("appointment_task", PICK_16), AIMessage(OFFER_16),
+        tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME,
+        tool_call("shop_info_task", SHOP), HOURS,
+        tool_call("appointment_task", PICK_16), OFFER_16,
     ])
     sub = subagents(monkeypatch, need_info_15() + shop_hours() + propose_16_from_session())
 
@@ -352,12 +363,12 @@ async def test_session_continues_on_the_next_turn(test_db, monkeypatch):
     assert "appointment" in await active_sessions(test_db, user)
 
     second = await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em")
-    assert completed(second)["answer"] == HOURS
+    assert completed(second)["answer"] == HOURS_TEXT
     assert "appointment" in await active_sessions(test_db, user)
 
     third = await turn(test_db, user, "4 giờ đi")
     done = completed(third)
-    assert done["answer"] == OFFER_16
+    assert done["answer"] == OFFER_16_TEXT
     assert done["proposal"] is not None and done["proposal"]["when_spoken"] == S16
     call = next(c for c in sub.calls if any(
         isinstance(m, HumanMessage) and "4 giờ đi" in m.content for m in c))
@@ -375,8 +386,8 @@ async def test_session_expires_after_ten_minutes(test_db, monkeypatch):
     await block_15(test_db)
     user = await a_user(test_db)
     model = orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(ASK_OTHER_TIME),
-        tool_call("appointment_task", PICK_16), AIMessage("Dạ chị Lan muốn đặt ngày nào ạ?"),
+        tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME,
+        tool_call("appointment_task", PICK_16), plain("Dạ chị Lan muốn đặt ngày nào ạ?"),
     ])
     subagents(monkeypatch, need_info_15())
     await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
@@ -399,8 +410,8 @@ async def test_waiting_session_survives_a_restart(test_db, monkeypatch):
     await block_15(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(ASK_OTHER_TIME),
-        tool_call("appointment_task", PICK_16), AIMessage(OFFER_16),
+        tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME,
+        tool_call("appointment_task", PICK_16), OFFER_16,
     ])
     subagents(monkeypatch, need_info_15() + propose_16_from_session())
     await turn(test_db, user, "đặt cho chị 3 giờ chiều mai")
@@ -409,7 +420,7 @@ async def test_waiting_session_survives_a_restart(test_db, monkeypatch):
     events = await turn(test_db, user, "4 giờ đi")
 
     done = completed(events)
-    assert done["answer"] == OFFER_16
+    assert done["answer"] == OFFER_16_TEXT
     assert done["proposal"]["when_spoken"] == S16
     assert (await ledger_rows(test_db, user))[-1]["answer_source"] == "llm"
 
@@ -475,7 +486,7 @@ async def test_button_approve_replies_in_code_without_calling_the_model(test_db,
         ("user", "Đồng ý"), ("assistant", done["answer"])]
 
     # Lượt gõ chữ sau vẫn chạy trên thread đó.
-    model.replies[:] = [AIMessage("Dạ không có gì ạ, hẹn gặp chị Lan.")]
+    model.replies[:] = [plain("Dạ không có gì ạ, hẹn gặp chị Lan.")]
     after = await turn(test_db, user, "cảm ơn em")
     assert completed(after)["answer"] == "Dạ không có gì ạ, hẹn gặp chị Lan."
     assert_valid_thread(await thread_messages(test_db, user))
@@ -504,19 +515,19 @@ async def test_second_request_is_proposed_after_the_first_is_approved(test_db, m
     await default_hours(test_db)
     user = await a_user(test_db)
     model = orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(OFFER_15),
-        tool_call("appointment_task", PICK_16), AIMessage(OFFER_16),
+        tool_call("appointment_task", BOOK_15), OFFER_15,
+        tool_call("appointment_task", PICK_16), OFFER_16,
     ])
     sub = subagents(monkeypatch, two_requests() + [
         tool_call("propose_appointment", {"start_at": ISO16}), result(status="ok")])
 
     first = completed(await turn(test_db, user, "đặt cho chị 3 giờ, với cho con gái 4 giờ"))
-    assert first["answer"] == OFFER_15
+    assert first["answer"] == OFFER_15_TEXT
     session = (await active_sessions(test_db, user))["appointment"]
     assert [item["iso"] for item in session.memory["next_requests"]] == [ISO16]
 
     second = completed(await turn(test_db, user, ButtonReply(first["proposal"]["id"], "yes")))
-    assert second["answer"] == f"Dạ em đã đặt xong {S15} cho chị Lan ạ. {OFFER_16}"
+    assert second["answer"] == f"Dạ em đã đặt xong {S15} cho chị Lan ạ. {OFFER_16_TEXT}"
     assert second["proposal"] is not None and second["proposal"]["when_spoken"] == S16
     note = [m for m in model.calls[-2] if isinstance(m, HumanMessage)][-1]
     assert "continue with the next request in the waiting appointment session" in note.content
@@ -535,7 +546,7 @@ async def test_button_approve_then_model_error_still_announces_booking(test_db, 
     await default_hours(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(OFFER_15),
+        tool_call("appointment_task", BOOK_15), OFFER_15,
         RuntimeError("azure is down"),
     ])
     subagents(monkeypatch, two_requests())
@@ -557,9 +568,10 @@ async def test_superseded_continue_turn_leaves_the_booking_unannounced(test_db, 
     chạy → câu "đã đặt xong" chưa tới khách → lượt gõ chữ sau phải báo (R0)."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    booked = f"Dạ em đã đặt xong {S15} cho chị Lan rồi ạ."
+    booked_text = f"Dạ em đã đặt xong {S15} cho chị Lan rồi ạ."
+    booked = reply("Dạ em đã đặt xong ", cite("booked", S15), " cho chị Lan rồi ạ.")
     model = orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage(OFFER_15), Hang(), AIMessage(booked)])
+        tool_call("appointment_task", BOOK_15), OFFER_15, Hang(), booked])
     subagents(monkeypatch, two_requests())
     first = completed(await turn(test_db, user, "đặt cho chị 3 giờ, với cho con gái 4 giờ"))
 
@@ -573,7 +585,7 @@ async def test_superseded_continue_turn_leaves_the_booking_unannounced(test_db, 
     assert "complete" not in [event.type for event in pressed]
     block = model.calls[-1][1].content
     assert f"Unannounced: approved book at {S15}" in block
-    assert completed(after)["answer"] == booked
+    assert completed(after)["answer"] == booked_text
     rows = await ledger_rows(test_db, user)
     assert rows[1]["decision"]["outcome"] == "approved"
     assert rows[1]["announced"] is True          # báo ở lượt 3 (R0), không phải lượt 2
@@ -592,7 +604,7 @@ async def test_limit_error_gives_a_code_reply_not_english(test_db, monkeypatch):
     orchestrator(monkeypatch, [
         tool_call("appointment_task", BOOK_15),
         tool_call("shop_info_task", SHOP),
-        AIMessage("never reached"),
+        plain("never reached"),
     ])
     subagents(monkeypatch, need_info_15() + shop_hours())
 
@@ -621,7 +633,7 @@ async def test_limit_without_facts_still_gives_a_code_reply(test_db, monkeypatch
     user = await a_user(test_db)
     monkeypatch.setattr(settings, "salon_model_calls_per_turn", 1)
     # Tool lạ: không tool nào chạy được, không có dữ kiện nào.
-    orchestrator(monkeypatch, [tool_call("no_such_tool", {}), AIMessage("never reached")])
+    orchestrator(monkeypatch, [tool_call("no_such_tool", {}), plain("never reached")])
 
     events = await turn(test_db, user, "alo")
 
@@ -635,7 +647,7 @@ async def test_model_call_limit_not_graph_recursion_ends_a_long_turn(test_db, mo
     await default_hours(test_db)
     user = await a_user(test_db)
     calls = settings.salon_model_calls_per_turn
-    orchestrator(monkeypatch, [tool_call("no_such_tool", {})] * calls + [AIMessage("never reached")])
+    orchestrator(monkeypatch, [tool_call("no_such_tool", {})] * calls + [plain("never reached")])
 
     events = await turn(test_db, user, "alo")
 
@@ -648,7 +660,7 @@ async def test_budget_exhausted_before_any_call_gives_the_turn_error_message(tes
     await default_hours(test_db)
     user = await a_user(test_db)
     monkeypatch.setattr(settings, "orch_llm_calls_per_user_per_hour", 0)
-    model = orchestrator(monkeypatch, [AIMessage("never reached")])
+    model = orchestrator(monkeypatch, [plain("never reached")])
 
     events = await turn(test_db, user, "alo")
 
@@ -663,7 +675,7 @@ async def test_orchestrator_timeout_gives_the_turn_error_message(test_db, monkey
     await default_hours(test_db)
     user = await a_user(test_db)
     monkeypatch.setattr(settings, "orch_orchestrate_timeout_seconds", 0.3)
-    orchestrator(monkeypatch, [Hang(), AIMessage("Dạ em đây ạ.")])
+    orchestrator(monkeypatch, [Hang(), plain("Dạ em đây ạ.")])
 
     events = await turn(test_db, user, "alo")
 
@@ -688,7 +700,7 @@ async def test_cancelled_turn_leaves_a_thread_the_next_turn_can_use(test_db, mon
     await default_hours(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), AIMessage("Dạ em đây ạ, chị Lan cần gì ạ?")])
+        tool_call("appointment_task", BOOK_15), plain("Dạ em đây ạ, chị Lan cần gì ạ?")])
     sub = subagents(monkeypatch, [Hang()])
 
     events: list = []
@@ -707,7 +719,7 @@ async def test_cancelled_turn_leaves_a_thread_the_next_turn_can_use(test_db, mon
 async def test_new_turn_supersedes_the_running_one(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
-    model = orchestrator(monkeypatch, [Hang(), AIMessage("Dạ em đây ạ.")])
+    model = orchestrator(monkeypatch, [Hang(), plain("Dạ em đây ạ.")])
 
     first: list = []
     task = _consume(test_db, user, "alo", first)
@@ -731,7 +743,7 @@ async def test_superseded_turn_closes_the_session_it_opened(test_db, monkeypatch
     await block_15(test_db)
     user = await a_user(test_db)
     model = orchestrator(monkeypatch, [
-        tool_call("appointment_task", BOOK_15), Hang(), AIMessage("Dạ vâng ạ.")])
+        tool_call("appointment_task", BOOK_15), Hang(), plain("Dạ vâng ạ.")])
     subagents(monkeypatch, need_info_15())
 
     first: list = []
@@ -762,8 +774,8 @@ async def test_first_turn_of_a_new_conversation_consolidates_memory(
     await default_hours(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        AIMessage("Dạ em chào chị Lan ạ."), AIMessage("Dạ em vẫn ở đây ạ."),
-        AIMessage("Dạ chào buổi sáng chị Lan."), AIMessage("Dạ em nghe đây ạ."),
+        plain("Dạ em chào chị Lan ạ."), plain("Dạ em vẫn ở đây ạ."),
+        plain("Dạ chào buổi sáng chị Lan."), plain("Dạ em nghe đây ạ."),
     ])
     no_azure.replies[:] = [
         {"preferences": ["Thích sơn gel màu nhạt"], "notes": [], "last_visit": None},
@@ -798,7 +810,7 @@ async def test_consolidation_finishes_even_if_its_turn_is_superseded(
         test_db, monkeypatch, no_azure, memory_store):
     await default_hours(test_db)
     user = await a_user(test_db)
-    orchestrator(monkeypatch, [AIMessage("Dạ em chào chị Lan ạ."), AIMessage("Dạ em nghe đây ạ.")])
+    orchestrator(monkeypatch, [plain("Dạ em chào chị Lan ạ."), plain("Dạ em nghe đây ạ.")])
     no_azure.replies[:] = [
         Hang(0.5, then={"preferences": ["Thích sơn gel màu nhạt"], "notes": [], "last_visit": None})]
     start = to_local(now_utc()).date() - timedelta(days=3)
@@ -834,11 +846,23 @@ async def test_consolidation_finishes_even_if_its_turn_is_superseded(
 S9 = moment(tomorrow_at(9))["spoken"]
 ISO9 = moment(tomorrow_at(9))["iso"]
 S10 = moment(tomorrow_at(10))["spoken"]
-OFFER_9 = f"Dạ vâng, em giữ chỗ {S9} cho chị Lan, chị Lan đồng ý không ạ?"
+OFFER_9_TEXT = f"Dạ vâng, em giữ chỗ {S9} cho chị Lan, chị Lan đồng ý không ạ?"
+OFFER_9 = reply("Dạ vâng, em giữ chỗ ", cite("held", S9), " cho chị Lan, chị Lan đồng ý không ạ?")
 DYE_PRICE = {"request": "Price of hair dyeing.", "continue_session": False}
 DYE = {"request": "Hair dyeing.", "continue_session": False}
 HAIR_LIST = {"request": "Hair price list.", "continue_session": False}
-LISTED = "Dạ tiệm có gội sấy, cắt tóc, nhuộm, uốn và hấp dầu ạ."
+CANCEL_10_TEXT = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
+CANCEL_10 = reply("Dạ em sẽ huỷ lịch ", cite("held", S10), " cho chị Lan, chị Lan đồng ý không ạ?")
+ASK_NAIL_TEXT = "Dạ chị Lan muốn sơn thường hay sơn gel ạ?"
+ASK_NAIL = reply("Dạ chị Lan muốn ", cite("service", "sơn thường"), " hay ", cite("service", "sơn gel"),
+                 " ạ?")
+LISTED_TEXT = "Dạ tiệm có gội sấy, cắt tóc, nhuộm, uốn và hấp dầu ạ."
+LISTED = reply("Dạ tiệm có ", cite("service", "gội sấy"), ", ", cite("service", "cắt tóc"), ", ",
+               cite("service", "nhuộm"), ", ", cite("service", "uốn"), " và ",
+               cite("service", "hấp dầu"), " ạ.")
+DYE_PRICE_TEXT = "Dạ nhuộm tóc khoảng 350 nghìn tới 700 nghìn ạ."
+DYE_PRICE_REPLY = reply("Dạ ", cite("service", "nhuộm tóc", find="nhuộm"), " ",
+                        cite("price", "khoảng 350 nghìn tới 700 nghìn", find="nhuộm"), " ạ.")
 
 
 def dye_found() -> list[AIMessage]:
@@ -900,16 +924,17 @@ async def test_two_subagents_and_a_rewrite_fit_in_one_turn(test_db, monkeypatch)
     await default_hours(test_db)
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
-    no_question = f"Dạ em giữ chỗ {S9} cho chị Lan ạ."
+    # Thiếu câu hỏi đồng ý → `missing_question`, viết lại một lần.
+    no_question = reply("Dạ em giữ chỗ ", cite("held", S9), " cho chị Lan ạ.")
     orchestrator(monkeypatch, [
         tool_call("service_task", DYE), tool_call("appointment_task", book_9(["toc-nhuom"])),
-        AIMessage(no_question), AIMessage(OFFER_9),
+        no_question, OFFER_9,
     ])
     subagents(monkeypatch, dye_found() + propose_9())
 
     done = completed(await turn(test_db, user, "chị muốn đặt nhuộm tóc sáng mai lúc 9 giờ"))
 
-    assert done["answer"] == OFFER_9
+    assert done["answer"] == OFFER_9_TEXT
     [row] = await ledger_rows(test_db, user)
     assert (row["ended_by"], row["answer_source"]) == ("answer", "llm")
 
@@ -918,20 +943,19 @@ async def test_service_known_earlier_is_reusable(test_db, monkeypatch):
     await default_hours(test_db)
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
-    price = "Dạ nhuộm tóc khoảng 350 nghìn tới 700 nghìn ạ."
     orchestrator(monkeypatch, [
-        tool_call("service_task", DYE_PRICE), AIMessage(price),
+        tool_call("service_task", DYE_PRICE), DYE_PRICE_REPLY,
         # Lượt 2: quên mang dịch vụ đã chốt → agent Đặt lịch `failed` service_required,
         # Orchestrator gọi lại kèm id.
         tool_call("appointment_task", book_9(None)),
-        tool_call("appointment_task", book_9(["toc-nhuom"])), AIMessage(OFFER_9),
+        tool_call("appointment_task", book_9(["toc-nhuom"])), OFFER_9,
     ])
     sub = subagents(monkeypatch, dye_found() + propose_9_refused("service_required") + propose_9())
 
-    assert completed(await turn(test_db, user, "nhuộm tóc giá bao nhiêu em"))["answer"] == price
+    assert completed(await turn(test_db, user, "nhuộm tóc giá bao nhiêu em"))["answer"] == DYE_PRICE_TEXT
     done = completed(await turn(test_db, user, "đặt cho chị 9 giờ sáng mai"))
 
-    assert done["answer"] == OFFER_9
+    assert done["answer"] == OFFER_9_TEXT
     assert done["proposal"]["when_spoken"] == S9
     refused, made = sub_results(sub, "propose_appointment")
     assert refused["error"] == "service_required" and "proposal_id" in made
@@ -939,26 +963,30 @@ async def test_service_known_earlier_is_reusable(test_db, monkeypatch):
     assert (proposal.service_ids, proposal.duration_minutes) == (["toc-nhuom"], 120)
 
 
-@pytest.mark.parametrize("reply, rewritten", [
-    ("Dạ cắt tóc nữ khoảng 150 nghìn ạ.", False),
-    ("Dạ cắt tóc nữ 200k ạ.", True),
-])
-async def test_price_question_is_answered_from_the_catalogue(test_db, monkeypatch, reply, rewritten):
+def haircut_price(amount: str):
+    return reply("Dạ ", cite("service", "cắt tóc nữ"), " ",
+                 cite("price", amount, find="cắt tóc nữ"), " ạ.")
+
+
+# 200k nằm ngoài khoảng giá → `ref_mismatch` (trước level C: `unknown_price`).
+@pytest.mark.parametrize("amount, rewritten", [("khoảng 150 nghìn", False), ("200k", True)])
+async def test_price_question_is_answered_from_the_catalogue(test_db, monkeypatch, amount, rewritten):
     await default_hours(test_db)
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
+    said = f"Dạ cắt tóc nữ {amount} ạ."
     good = "Dạ cắt tóc nữ từ 100 nghìn tới 150 nghìn ạ."
     model = orchestrator(monkeypatch, [
         tool_call("service_task", {"request": "Price of a women's haircut.",
                                    "continue_session": False}),
-        AIMessage(reply), AIMessage(good),
+        haircut_price(amount), haircut_price("từ 100 nghìn tới 150 nghìn"),
     ])
     subagents(monkeypatch, [tool_call("search_services", {"query": "cắt tóc nữ"}),
                             result(status="ok")])
 
     done = completed(await turn(test_db, user, "cắt tóc nữ giá bao nhiêu em"))
 
-    assert done["answer"] == (good if rewritten else reply)
+    assert done["answer"] == (good if rewritten else said)
     assert len(model.calls) == (3 if rewritten else 2)
     [row] = await ledger_rows(test_db, user)
     assert row["answer_source"] == "llm"
@@ -971,14 +999,14 @@ async def test_dye_booking_proposes_a_two_hour_slot(test_db, monkeypatch):
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
         tool_call("service_task", DYE),
-        tool_call("appointment_task", book_9(["toc-nhuom"])), AIMessage(OFFER_9),
+        tool_call("appointment_task", book_9(["toc-nhuom"])), OFFER_9,
     ])
     subagents(monkeypatch, dye_found() + propose_9())
 
     events = await turn(test_db, user, "nhuộm tóc cho chị 9 giờ sáng mai")
 
     done = completed(events)
-    assert done["answer"] == OFFER_9
+    assert done["answer"] == OFFER_9_TEXT
     assert done["proposal"]["when_spoken"] == S9
     proposal = await ProposalService(test_db).latest(user)
     assert (proposal.service_ids, proposal.duration_minutes) == (["toc-nhuom"], 120)
@@ -992,11 +1020,10 @@ async def test_named_but_unclear_service_is_asked_not_proposed(test_db, monkeypa
     await default_hours(test_db)
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
-    ask = "Dạ chị Lan muốn sơn thường hay sơn gel ạ?"
     orchestrator(monkeypatch, [
         tool_call("service_task", {"request": "Nail service.", "continue_session": False}),
         tool_call("appointment_task", book_9(None)),
-        AIMessage(ask),
+        ASK_NAIL,
     ])
     sub = subagents(monkeypatch, [
         tool_call("search_services", {"query": "sơn móng"}),
@@ -1007,7 +1034,7 @@ async def test_named_but_unclear_service_is_asked_not_proposed(test_db, monkeypa
 
     done = completed(await turn(test_db, user, "làm móng cho chị 9 giờ sáng mai"))
 
-    assert done == {"answer": ask, "proposal": None}
+    assert done == {"answer": ASK_NAIL_TEXT, "proposal": None}
     assert [r["error"] for r in sub_results(sub, "propose_appointment")] == ["service_unclear"]
     assert await ProposalService(test_db).latest(user) is None
     session = (await active_sessions(test_db, user))["service"]
@@ -1020,18 +1047,17 @@ async def test_move_after_a_price_question_keeps_its_length(test_db, monkeypatch
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     appt = await gel_at_10(test_db, user)
-    price = "Dạ nhuộm tóc khoảng 350 nghìn tới 700 nghìn ạ."
     model = orchestrator(monkeypatch, [
-        tool_call("service_task", DYE_PRICE), AIMessage(price),
+        tool_call("service_task", DYE_PRICE), DYE_PRICE_REPLY,
         tool_call("appointment_task", task("Move the 10am appointment to 9am tomorrow.")),
-        AIMessage(OFFER_9),
+        OFFER_9,
     ])
     subagents(monkeypatch, dye_found() + propose_9(replaces_appointment_id=str(appt.id)))
 
     completed(await turn(test_db, user, "nhuộm tóc giá bao nhiêu em"))
     done = completed(await turn(test_db, user, "dời lịch mai sang 9 giờ sáng giúp chị"))
 
-    assert done["answer"] == OFFER_9
+    assert done["answer"] == OFFER_9_TEXT
     # Bối cảnh đưa id dịch vụ của lịch (dời THÊM dịch vụ thì truyền đủ id cũ + mới).
     assert f"- {appt.id}: {S10} " in model.calls[2][1].content
     assert "services=[nail-son-gel]" in model.calls[2][1].content
@@ -1049,24 +1075,24 @@ async def test_list_and_cancel_after_a_price_list_are_allowed(test_db, monkeypat
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     appt = await gel_at_10(test_db, user)
-    listed = f"Dạ chị Lan có lịch {S10} ạ."
-    cancel = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
+    listed_text = f"Dạ chị Lan có lịch {S10} ạ."
+    listed = reply("Dạ chị Lan có lịch ", cite("appointment", S10), " ạ.")
     orchestrator(monkeypatch, [
-        tool_call("service_task", HAIR_LIST), AIMessage(LISTED),
-        tool_call("appointment_task", task("List the customer's appointments.")), AIMessage(listed),
+        tool_call("service_task", HAIR_LIST), LISTED,
+        tool_call("appointment_task", task("List the customer's appointments.")), listed,
         tool_call("appointment_task", task("Cancel the 10am appointment tomorrow.")),
-        AIMessage(cancel),
+        CANCEL_10,
     ])
     subagents(monkeypatch, hair_list() + [
         tool_call("list_my_appointments", {}), result(status="ok"),
         tool_call("propose_cancel", {"appointment_id": str(appt.id)}), result(status="ok"),
     ])
 
-    assert completed(await turn(test_db, user, "bảng giá làm tóc"))["answer"] == LISTED
-    assert completed(await turn(test_db, user, "lịch của chị khi nào em"))["answer"] == listed
+    assert completed(await turn(test_db, user, "bảng giá làm tóc"))["answer"] == LISTED_TEXT
+    assert completed(await turn(test_db, user, "lịch của chị khi nào em"))["answer"] == listed_text
     done = completed(await turn(test_db, user, "huỷ lịch đó giúp chị"))
 
-    assert done["answer"] == cancel
+    assert done["answer"] == CANCEL_10_TEXT
     assert done["proposal"]["kind"] == "cancel"
 
 
@@ -1075,15 +1101,15 @@ async def test_booking_after_a_price_list_uses_the_default_length(test_db, monke
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
-        tool_call("service_task", HAIR_LIST), AIMessage(LISTED),
-        tool_call("appointment_task", book_9(None)), AIMessage(OFFER_9),
+        tool_call("service_task", HAIR_LIST), LISTED,
+        tool_call("appointment_task", book_9(None)), OFFER_9,
     ])
     subagents(monkeypatch, hair_list() + propose_9())
 
     completed(await turn(test_db, user, "bảng giá làm tóc"))
     done = completed(await turn(test_db, user, "đặt cho chị 9 giờ sáng mai"))
 
-    assert done["answer"] == OFFER_9
+    assert done["answer"] == OFFER_9_TEXT
     proposal = await ProposalService(test_db).latest(user)
     assert (proposal.duration_minutes, proposal.service_ids) == (settings.booking_slot_minutes, [])
 
@@ -1093,13 +1119,11 @@ async def test_cancel_while_a_service_session_waits(test_db, monkeypatch):
     await seed_mock_catalogue(test_db)
     user = await a_user(test_db)
     appt = await gel_at_10(test_db, user)
-    ask = "Dạ chị Lan muốn sơn thường hay sơn gel ạ?"
-    cancel = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
     orchestrator(monkeypatch, [
         tool_call("service_task", {"request": "Nail service.", "continue_session": False}),
-        AIMessage(ask),
+        ASK_NAIL,
         tool_call("appointment_task", task("Cancel the 10am appointment tomorrow.")),
-        AIMessage(cancel),
+        CANCEL_10,
     ])
     subagents(monkeypatch, [
         tool_call("search_services", {"query": "sơn móng"}),
@@ -1111,5 +1135,81 @@ async def test_cancel_while_a_service_session_waits(test_db, monkeypatch):
     assert "service" in await active_sessions(test_db, user)
     done = completed(await turn(test_db, user, "thôi huỷ lịch 10 giờ mai giúp chị"))
 
-    assert done["answer"] == cancel
+    assert done["answer"] == CANCEL_10_TEXT
     assert done["proposal"]["kind"] == "cancel"
+
+
+# ---------------------------------------------------------------------------
+# Level C: đánh dấu "đã báo" theo đoạn trích dẫn (Task 7)
+# ---------------------------------------------------------------------------
+
+APPROVE = {"label": "approve", "aside": None, "reason": "The customer agrees."}
+
+
+async def seed_r0(db, user, hour: int = 15) -> str:
+    """Quyết định đã duyệt của một lượt trước, chưa báo khách (R0)."""
+    ledger = TurnLedger(db)
+    turn_id = "r0-turn"
+    await ledger.start(turn_id=turn_id, user_id=str(user.id), thread_id="old-thread",
+                       asked_at=now_utc() - timedelta(minutes=1), kind="typed")
+    await ledger.set_decision(turn_id, PendingOutcome(
+        outcome="approved", proposal_id="p-r0", kind="book", at=Moment(**moment(tomorrow_at(hour)))))
+    return turn_id
+
+
+async def test_short_phrased_decision_is_marked_announced(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    await a_proposal(test_db, user, hour=9)
+    orchestrator(monkeypatch, [
+        tool_call("decide_pending", APPROVE),
+        reply("Dạ em đã đặt xong ", cite("booked", "9 giờ sáng mai", find="9 giờ sáng"),
+              " cho chị Lan rồi ạ."),
+    ])
+
+    done = completed(await turn(test_db, user, "đồng ý em"))
+
+    assert done["answer"] == "Dạ em đã đặt xong 9 giờ sáng mai cho chị Lan rồi ạ."
+    [row] = await ledger_rows(test_db, user)
+    assert row["decision"]["outcome"] == "approved"
+    assert (await TurnLedger(test_db).record(row["turn_id"])).announced is True
+
+
+async def test_r0_cited_in_a_short_phrase_marks_the_r0_turn(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    r0_turn = await seed_r0(test_db, user)
+    orchestrator(monkeypatch, [
+        reply("Dạ em đã đặt xong ", cite("booked", "3 giờ chiều mai", find="3 giờ chiều"),
+              " cho chị Lan rồi ạ."),
+    ])
+
+    done = completed(await turn(test_db, user, "alo em"))
+
+    assert done["answer"] == "Dạ em đã đặt xong 3 giờ chiều mai cho chị Lan rồi ạ."
+    assert (await TurnLedger(test_db).record(r0_turn)).announced is True
+
+
+async def test_two_bad_structures_end_the_turn_on_the_template(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")])
+
+    events = await turn(test_db, user, "alo em")
+
+    assert "error" not in [event.type for event in events]
+    assert completed(events)["answer"] == GENERIC_FALLBACK.format(address="chị Lan")
+    [row] = await ledger_rows(test_db, user)
+    assert (row["ended_by"], row["answer_source"]) == ("fallback", "code")
+
+
+async def test_code_template_still_marks_announced_verbatim(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    r0_turn = await seed_r0(test_db, user)
+    orchestrator(monkeypatch, [AIMessage("Dạ có ạ."), AIMessage("Dạ vâng.")])
+
+    answer = completed(await turn(test_db, user, "alo em"))["answer"]
+
+    assert S15 in answer
+    assert (await TurnLedger(test_db).record(r0_turn)).announced is True

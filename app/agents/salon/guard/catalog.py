@@ -2,7 +2,8 @@
 dẫn thay vì tự nhắc lại giờ/giá (spec level C §2-§3). `build_catalog` dựng
 `FactCatalog` từ đúng các nguồn `guard/facts.py::build_reply_facts` đã đọc
 (`TurnSnapshot`, `turn_facts`, `pending_outcome`, câu khách, danh mục dịch vụ);
-chưa ai gọi `build_catalog` ngoài test — `facts.py` vẫn là guard thật.
+`ContextMiddleware` hiện danh mục trong khối bối cảnh, `build_reply_facts` dựng
+cùng danh mục cho guard.
 """
 from __future__ import annotations
 

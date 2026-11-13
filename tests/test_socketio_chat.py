@@ -508,25 +508,30 @@ class TestCompleteProposalContract:
         from app.agents.salon.orchestrator import middleware as middleware_pkg
         from app.core.clock import now_utc, to_local
         from app.services.proposal import ProposalService
-        from tests.fakes import scripted, tool_call
+        from tests.fakes import cite, reply, scripted, tool_call
         from tests.salon.subagents import (a_user, default_hours, moment, result,
                                            tomorrow_at, use_model)
 
         iso15, s15 = moment(tomorrow_at(15))["iso"], moment(tomorrow_at(15))["spoken"]
-        offer = f"Dạ vâng, em giữ chỗ {s15} cho chị Lan, chị Lan đồng ý không ạ?"
-        hours = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+        # Câu trả lời cuối là JSON các đoạn trích dẫn (level C); khách nhận chữ đã ghép.
+        offer_text = f"Dạ vâng, em giữ chỗ {s15} cho chị Lan, chị Lan đồng ý không ạ?"
+        offer = reply("Dạ vâng, em giữ chỗ ", cite("held", s15),
+                      " cho chị Lan, chị Lan đồng ý không ạ?")
+        hours_text = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+        hours = reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ",
+                      cite("hours", "7 giờ tối"), " ạ.")
         orchestrator = scripted([
             # Lượt 1: giao agent Đặt lịch → đề xuất 15:00.
             tool_call("appointment_task", {"request": "Book tomorrow at 3pm.",
                                            "continue_session": False, "service_ids": None}),
-            AIMessage(offer),
+            offer,
             # Lượt 2: hỏi giờ mở cửa — lượt gõ chữ khi có đề xuất chờ phải
             # `decide_pending` trước (nhãn `none`: nói chuyện khác), đề xuất
             # vẫn chờ, nút vẫn hiện.
             tool_call("decide_pending", {"label": "none", "aside": None,
                                          "reason": "The customer asks about opening hours."}),
             tool_call("shop_info_task", {"request": "Opening hours.", "continue_session": False}),
-            AIMessage(hours),
+            hours,
         ], tags=("orchestrate",))
         subagent = scripted([
             tool_call("parse_time", {"day_offset": 1, "hour": 3, "part_of_day": "chieu"}),
@@ -555,7 +560,7 @@ class TestCompleteProposalContract:
         assert pending is not None and pending.status == "pending"
         assert to_local(pending.start_at) == tomorrow_at(15)
         first = last_complete()
-        assert first["answer"] == offer
+        assert first["answer"] == offer_text
         proposal = first["proposal"]
         assert set(proposal) == {"id", "kind", "expires_at", "when_spoken"}
         assert proposal["id"] == str(pending.id)
@@ -565,7 +570,7 @@ class TestCompleteProposalContract:
 
         # Lượt 2: hỏi chuyện khác → đề xuất vẫn chờ, nút vẫn hiện.
         await service.handle_message(sid="s1", user=user, message="tiệm mở cửa mấy giờ vậy em")
-        assert last_complete() == {"answer": hours, "proposal": proposal}
+        assert last_complete() == {"answer": hours_text, "proposal": proposal}
 
         # Lượt 3: bấm nút → đề xuất đã duyệt/từ chối, nút biến mất.
         await service.handle_button(sid="s1", user=user,

@@ -4,9 +4,9 @@
 
 Mọi mốc giờ nằm ở ngày cố định 10/11/2026 — guard không so ngày, chỉ so giờ,
 nên không cần ngày tương đối. `spoken` mặc định là cụm giờ ngắn
-("3 giờ chiều", do `format_vi_hhmm` dựng) để các câu trong bảng của task brief
-chứa nguyên văn nó (`missing_fact` so nguyên văn — xem
-`test_must_mention_is_verbatim`).
+("3 giờ chiều", do `format_vi_hhmm` dựng). Dữ kiện bắt buộc được kiểm bằng
+TRÍCH DẪN id + vai trò (level C), không so nguyên văn `spoken` — xem
+`test_required_fact_is_cited_not_copied_verbatim`.
 """
 from __future__ import annotations
 

@@ -62,12 +62,15 @@ def test_state_roundtrips_through_the_project_checkpointer_serde():
     state = {
         "turn_facts": [fact.model_dump(mode="json")],
         "pending_outcome": outcome.model_dump(mode="json"),
+        "announced_turn_ids": ["t-0"],
     }
     serde = make_serde()
     loaded = serde.loads_typed(serde.dumps_typed(state))
 
     assert read_facts(loaded) == [fact]
     assert read_pending_outcome(loaded) == outcome
+    assert loaded["announced_turn_ids"] == ["t-0"]
+    assert "announced_turn_ids" in SalonState.__annotations__
 
 
 def test_reset_sentinel_is_checkpoint_serializable():

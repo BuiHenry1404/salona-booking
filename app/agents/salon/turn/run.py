@@ -114,6 +114,9 @@ class _Answer:
     source: Literal["llm", "code"]
     ended_by: EndedBy
     facts: list[TurnFact] = field(default_factory=list)
+    # `turn_id` trong sổ lượt mà câu của MODEL đã báo (guard ghi
+    # `announced_turn_ids` khi nhận câu); câu mẫu code để rỗng (spec level C §5).
+    announced: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -297,8 +300,11 @@ async def _final_answer(turn: _Turn, opener: HumanMessage) -> _Answer:
     if not isinstance(reply, AIMessage) or has_calls(reply) or not reply.text.strip():
         raise RuntimeError("turn_ended_without_reply")
     code = reply.additional_kwargs.get("salon_source") == "code"
-    facts = read_facts(state) if _same_turn(state, turn.turn_id) else []
-    return _Answer(reply.text, "code" if code else "llm", "fallback" if code else "answer", facts)
+    same = _same_turn(state, turn.turn_id)
+    facts = read_facts(state) if same else []
+    announced = list(state.get("announced_turn_ids", [])) if same and not code else []
+    return _Answer(reply.text, "code" if code else "llm", "fallback" if code else "answer", facts,
+                   announced)
 
 
 def _log_failure(turn: _Turn, exc: Exception) -> None:
@@ -411,7 +417,8 @@ async def _continue_next(turn: _Turn, button: ButtonReply, outcome: PendingOutco
         async for event in _orchestrate(turn, opener, turn.context(question="", preset=outcome)):
             yield event
         answer = await _final_answer(turn, opener)
-        box.answer = _Answer(f"{reply} {answer.text}", answer.source, "button", answer.facts)
+        box.answer = _Answer(f"{reply} {answer.text}", answer.source, "button", answer.facts,
+                             answer.announced)
         return
     except Exception as exc:
         _log_failure(turn, exc)
@@ -502,11 +509,20 @@ async def _seed_self_address(turn: _Turn, text: str) -> None:
                        extra={**turn.ids, "error_type": type(exc).__name__})
 
 
-async def _mark_announced(turn: _Turn, text: str, r0: Optional[UnannouncedDecision]) -> None:
-    """Đánh dấu ĐÃ BÁO khi câu khách vừa nhận có nêu giờ của quyết định: quyết
-    định của chính lượt này, và quyết định chưa báo từ lượt trước (R0)."""
-    said = normalize_for_match(text)
+async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[UnannouncedDecision]) -> None:
+    """Đánh dấu ĐÃ BÁO các quyết định câu khách vừa nhận đã nêu.
+
+    - Câu của model (`source == "llm"`): đúng các `turn_id` guard ghi khi nhận
+      câu (`answer.announced` — quyết định / R0 được trích dẫn với vai trò
+      booked / moved / cancelled / failed), dù câu nói giờ ngắn gọn.
+    - Câu mẫu code: không có đoạn trích dẫn nhưng luôn chứa nguyên `spoken` —
+      so nguyên văn giờ của quyết định của lượt và của R0."""
     try:
+        if answer.source == "llm":
+            for turn_id in answer.announced:
+                await turn.ledger.mark_announced(turn_id)
+            return
+        said = normalize_for_match(answer.text)
         record = await turn.ledger.record(turn.turn_id)
         decision = record.decision if record is not None else None
         if (decision is not None and not record.announced
@@ -669,7 +685,7 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         logger.info("turn_finished", extra={**turn.ids, "ended_by": answer.ended_by,
                                             "answer_source": answer.source})
         yield AgentEvent("complete", {"answer": answer.text, "proposal": proposal})
-        await _shielded(_mark_announced(turn, answer.text, r0))
+        await _shielded(_mark_announced(turn, answer, r0))
     except Exception as exc:
         logger.error("agent_turn_failed", extra={**progress.ids(), "error_type": type(exc).__name__},
                      exc_info=True)

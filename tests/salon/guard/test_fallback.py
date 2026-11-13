@@ -112,7 +112,7 @@ FALLBACK_ROWS = [
         dict(snapshot=dict(unannounced=r0(M15, outcome="failed"))),
         f"Chị Lan ơi, Thứ Ba 10/11, 3 giờ chiều em chưa ghi được, chị Lan gọi giúp em số {PHONE} nhé ạ.",
         id="r0_failed"),
-    # Thất bại của lượt VÀ R0 thất bại: nói cả hai (giờ R0 nằm trong must_mention).
+    # Thất bại của lượt VÀ R0 thất bại: nói cả hai (giờ R0 là dữ kiện bắt buộc).
     pytest.param(
         dict(snapshot=dict(unannounced=r0(at(10, spoken="Thứ Ba 10/11, 10 giờ sáng"),
                                           outcome="failed")),

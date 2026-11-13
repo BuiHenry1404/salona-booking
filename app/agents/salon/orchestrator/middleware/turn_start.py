@@ -84,6 +84,7 @@ class TurnStartMiddleware(AgentMiddleware[SalonState, SalonContext]):
             "proposals_created": RESET,
             "decide_calls": 0,
             "guard_rewrites": 0,
+            "announced_turn_ids": [],
             "turn_id": context.turn_id,
             "turn_kind": "button" if preset is not None else "typed",
             "pending_decided": preset is not None,

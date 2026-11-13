@@ -7,7 +7,8 @@ hiển thị; `check_segments` so từng đoạn có trích dẫn với `FactCat
 `SegmentReport` nêu lỗi bằng tiếng Anh (cho gợi ý viết lại ở prompt, tiếng Anh
 theo Global Constraints).
 
-Chưa ai gọi các hàm này ngoài test — guard thật vẫn chạy pipeline cũ.
+`ReplyGuardMiddleware` dùng chúng qua `checks.check_structured`; Orchestrator
+gắn `REPLY_SCHEMA` qua `orchestrator/agent.py::reply_format`.
 
 Không regex (gói `salon` không `import re`, `tests/test_regex_budget.py`).
 """
