@@ -222,3 +222,23 @@ Các điểm dưới đây tôi tự quyết, dựa trên những gì chủ dự
 7. **Đánh dấu "đã báo" cho câu mẫu** dùng `announce_turn_ids` của kế hoạch, không tìm `spoken` trong
    chữ nữa, vì câu mẫu giờ dùng nhãn ngắn. Câu của model đã qua guard cũng dùng các id này.
    *(quyết định của tôi)*
+
+## Bộ đo độ chính xác của guard (chủ dự án duyệt 13/11)
+
+Theo cách các nghiên cứu NLG hội thoại đo Slot Error Rate: dựng một bộ câu thật có nhãn để đo
+guard **chặn nhầm** bao nhiêu và **để lọt** bao nhiêu, thay vì chỉ biết guard sai khi chạy thật.
+
+- **Dữ liệu:** các câu bot thật trong log các lần chạy 2–5 (`.superpowers/sdd/2026-11-08-subagents-rebuild/live-{2,3,4}.log`,
+  `.superpowers/sdd/2026-11-11-level-c/live-5-{A,B}.log`), cộng các câu sai đã biết:
+  - lần chạy 2, lượt 2: mời giờ kín;
+  - lần chạy 4, lượt 8: sai dịch vụ;
+  - lần chạy 5 B, lượt 7: mời giờ kín;
+  - câu có chữ Armenia.
+- Mỗi mẫu gồm: câu, dữ kiện và kế hoạch của lượt (dựng lại bằng tay ở dạng tối thiểu), và nhãn
+  **đúng** hoặc **sai** kèm mã lỗi mong đợi. Lưu thành file dữ liệu trong `tests/` (chỉ chữ của bot,
+  không có chữ khách thật).
+- Một test chạy guard trên cả bộ, in số **chặn nhầm** (câu đúng bị chặn) và **lọt** (câu sai qua).
+  Test hỏng khi có câu sai lọt, hoặc khi số chặn nhầm vượt ngưỡng ghi trong file.
+- Sau mỗi lần chạy thật, câu mới được thêm vào bộ, nên bộ lớn dần.
+- *(Quyết định của tôi: ngưỡng chặn nhầm ban đầu là 0 trên bộ hiện có. Câu đúng nào bị chặn thì
+  sửa luật, hoặc ghi rõ là chấp nhận.)*
