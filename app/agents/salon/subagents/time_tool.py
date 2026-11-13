@@ -11,13 +11,34 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
+from app.agents.salon.shared.text_scan import scan_times
 from app.agents.salon.shared.timeparse import parse_vi_time
 from app.core.clock import now_utc, to_local
+from app.core.text import strip_diacritics
 from app.core.vi_format import format_vi_datetime
+
+_ALLOWED_PERIODS = frozenset({"sang", "trua", "chieu", "toi"})
+
+
+def period_from_customer(question: str, hour: int) -> Optional[str]:
+    """Part of day the customer typed for `hour` in `question`, when exactly
+    one distinct period is said for that hour — else `None` (missing, or
+    conflicting, so `parse_vi_time` keeps asking instead of guessing)."""
+    periods = {
+        bare for h, period, _minute in scan_times(question)
+        if h == hour and period is not None
+        for bare in [strip_diacritics(period)]
+        if bare in _ALLOWED_PERIODS
+    }
+    if len(periods) == 1:
+        return next(iter(periods))
+    return None
+
 
 # `ParsedTime.missing` (chữ tiếng Việt, dữ liệu của timeparse) → mã tiếng Anh
 # cùng tên với `QuestionField` để agent con điền `question_field` không cần dịch.
@@ -66,6 +87,7 @@ async def parse_time(
     hour: Optional[int] = None,
     minute: Optional[int] = None,
     part_of_day: Optional[Literal["sang", "trua", "chieu", "toi"]] = None,
+    runtime: ToolRuntime[Any] = None,
 ) -> str:
     """Turn what the customer said about a time into an exact moment. Call it
     for EVERY time the customer mentions; never compute a date or an ISO
@@ -81,6 +103,9 @@ async def parse_time(
     `spoken` when you describe the time. Or {"missing": [...]} with codes
     "day", "week", "time", "part_of_day", "time_passed", "too_far" (and `day`
     when the date is known): that piece must be asked from the customer."""
+    if part_of_day is None and hour is not None and 1 <= hour <= 12 and runtime is not None:
+        question = getattr(runtime.context, "question", "") or ""
+        part_of_day = period_from_customer(question, hour)
     now = now_utc()
     resolved_day, ambiguous_week = resolve_day(
         to_local(now).date(), day=day, weekday=weekday, day_offset=day_offset,
