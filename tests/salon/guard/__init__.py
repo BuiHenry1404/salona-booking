@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
+from app.agents.salon.guard.catalog import FactCatalog, build_catalog
 from app.agents.salon.guard.facts import ReplyFacts, build_reply_facts
 from app.agents.salon.shared.context import AppointmentView, CustomerView, TurnSnapshot
 from app.agents.salon.shared.schemas import Moment, PendingOutcome, PendingView, UnannouncedDecision
@@ -90,4 +91,13 @@ async def facts_for(db, *, snapshot: Optional[TurnSnapshot] = None, turn_facts: 
         db, snapshot=snapshot or a_snapshot(), turn_facts=list(turn_facts), turn_id=TURN_ID,
         turn_kind=turn_kind, pending_outcome=pending_outcome, question=question,
         previous_replies=list(previous), pending_decided=pending_decided,
+    )
+
+
+async def catalog_for(db, *, snapshot: Optional[TurnSnapshot] = None, turn_facts: Sequence = (),
+                      pending_outcome: Optional[PendingOutcome] = None,
+                      question: str = "") -> FactCatalog:
+    return await build_catalog(
+        db, snapshot=snapshot or a_snapshot(), turn_facts=list(turn_facts),
+        pending_outcome=pending_outcome, question=question, turn_id=TURN_ID,
     )

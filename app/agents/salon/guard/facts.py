@@ -16,12 +16,23 @@ Không regex (gói `salon` không `import re`).
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Iterable, Literal, Optional
+from typing import Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
+from app.agents.salon.guard.catalog import CLAIM_FOR_KIND, services_by_id, turn_decisions
+from app.agents.salon.guard.clocks import (
+    ClockKey,
+    Reading,
+    clock_of_24h,
+    clocks_in_text,
+    clocks_of_hhmm,
+    clocks_of_moment,
+    customer_clocks,
+    is_known,
+    readings,
+)
 from app.agents.salon.guard.fallback import compose_fallback_asking
 from app.agents.salon.shared.context import TurnSnapshot
 from app.agents.salon.shared.schemas import (
@@ -34,31 +45,15 @@ from app.agents.salon.shared.schemas import (
     TurnFact,
     UnannouncedDecision,
 )
-from app.agents.salon.shared.text_scan import scan_spoken_clocks, scan_times
-from app.core.clock import to_local
 from app.core.config import settings
-from app.core.errors import UnknownServiceError
-from app.core.text import strip_diacritics
-from app.core.vi_format import format_vi_hhmm
-from app.models.service import Service
 from app.services.service_catalog import ServiceCatalogService
 
-ClockKey = tuple[int, int, Optional[str]]
-Reading = frozenset[tuple[int, int]]
 Claim = Literal["booked", "moved", "cancelled"]
 
-CLAIM_FOR_KIND: dict[str, Claim] = {"book": "booked", "move": "moved", "cancel": "cancelled"}
-
-# Giờ đọc 1..12 + buổi -> giờ trong ngày, theo cách người Việt nói (cả cách
-# chồng lấn: "6 giờ chiều" = "6 giờ tối" = 18:00, "1 giờ trưa" = "1 giờ chiều").
-# Một cặp không có ở đây ("3 giờ tối") không mang giờ nào -> không khớp dữ kiện.
-_PERIOD_HOURS: dict[str, dict[int, int]] = {
-    "sang": {h: h for h in range(1, 12)},
-    "trua": {11: 11, 12: 12, 1: 13, 2: 14},
-    "chieu": {12: 12, **{h: h + 12 for h in range(1, 8)}},
-    "toi": {12: 0, **{h: h + 12 for h in range(5, 12)}},
-    "dem": {12: 0, **{h: h for h in range(1, 5)}, **{h: h + 12 for h in range(9, 12)}},
-}
+__all__ = [
+    "ClockKey", "Reading", "clock_of_24h", "readings", "clocks_in_text", "is_known",
+    "ReplyFacts", "build_reply_facts",
+]
 
 # Quyết định mà câu trả lời phải nêu giờ: kết quả duyệt (xong / thất bại /
 # không duyệt được) và hỏi lại khi khách trả lời chưa rõ. `kept` / `rejected` /
@@ -95,98 +90,8 @@ class ReplyFacts(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# ClockKey — một dạng giờ cho mọi phía
-# ---------------------------------------------------------------------------
-
-
-def _bare(period: Optional[str]) -> Optional[str]:
-    return strip_diacritics(period) if period else None
-
-
-def clock_of_24h(hour: int, minute: int) -> ClockKey:
-    """15:00 -> (15, 0, "chieu"); 00:30 -> (0, 30, "dem"). Nhãn buổi lấy từ
-    `format_vi_hhmm` — cùng một nguồn với cách bot đọc giờ cho khách."""
-    ((_, _, period),) = scan_spoken_clocks(format_vi_hhmm(f"{hour:02d}:{minute:02d}"))
-    return hour, minute, _bare(period)
-
-
-def readings(hour: int, period: Optional[str], minute: Optional[int]) -> Reading:
-    """Mọi giờ trong ngày mà một cách nói `(hour, period, minute)` có thể mang.
-    Giờ 24h ("15h", "15:00", "15 giờ chiều") là chính nó; 1..12 chưa kèm buổi
-    là hai cách đọc; kèm buổi thì tra `_PERIOD_HOURS`."""
-    minute = minute or 0
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        return frozenset()
-    if hour == 0 or hour > 12:
-        return frozenset({(hour, minute)})
-    bare = _bare(period)
-    if bare is None:
-        return frozenset({(hour % 12, minute), (hour % 12 + 12, minute)})
-    hour24 = _PERIOD_HOURS.get(bare, {}).get(hour)
-    return frozenset() if hour24 is None else frozenset({(hour24, minute)})
-
-
-def clocks_in_text(text: str) -> list[Reading]:
-    """Mọi giờ trong một câu (câu bot hay câu khách), mỗi giờ là tập cách đọc."""
-    return [readings(hour, period, minute) for hour, period, minute in scan_times(text or "")]
-
-
-def is_known(said: Reading, known: Iterable[ClockKey]) -> bool:
-    return any(key[:2] in said for key in known)
-
-
-def _clocks_of_spoken(spoken: Optional[str]) -> set[ClockKey]:
-    clocks: set[ClockKey] = set()
-    for hour, minute, period in scan_spoken_clocks(spoken or ""):
-        clocks |= {clock_of_24h(h, m) for h, m in readings(hour, period, minute)}
-    return clocks
-
-
-def _clocks_of_moment(moment: Optional[Moment]) -> set[ClockKey]:
-    if moment is None:
-        return set()
-    clocks = _clocks_of_spoken(moment.spoken)
-    try:
-        local = to_local(datetime.fromisoformat(moment.iso))
-        clocks.add(clock_of_24h(local.hour, local.minute))
-    except (TypeError, ValueError):
-        pass
-    return clocks
-
-
-def _clocks_of_hhmm(hhmm: str) -> set[ClockKey]:
-    try:
-        hour, minute = (int(part) for part in hhmm.split(":"))
-        return {clock_of_24h(hour, minute)}
-    except ValueError:
-        return set()
-
-
-def _customer_clocks(question: str) -> set[ClockKey]:
-    """Giờ khách vừa nói — bot được nhắc lại. Chưa nói buổi thì cả hai cách
-    đọc đều tính (khớp cả khi bot hỏi lại "sáng hay chiều")."""
-    return {clock_of_24h(h, m) for said in clocks_in_text(question) for h, m in said}
-
-
-# ---------------------------------------------------------------------------
 # Giá — đọc lại từ danh mục, không tin số trong ServiceFact / chữ model
 # ---------------------------------------------------------------------------
-
-
-async def _services_by_id(catalog: ServiceCatalogService, ids: list[str]) -> dict[str, Service]:
-    """Fail-soft như `shared/context.py::_service_names`: id không còn trong
-    danh mục thì bỏ qua (không có dải giá nào cho nó), không làm hỏng lượt."""
-    if not ids:
-        return {}
-    try:
-        return {service.id: service for service in await catalog.get_many(ids)}
-    except UnknownServiceError:
-        found = {}
-        for service_id in ids:
-            service = await catalog.get(service_id)
-            if service is not None:
-                found[service_id] = service
-        return found
 
 
 async def _price_ranges(db: AsyncIOMotorDatabase, groups: list[list[str]]) -> list[tuple[int, int]]:
@@ -194,7 +99,7 @@ async def _price_ranges(db: AsyncIOMotorDatabase, groups: list[list[str]]) -> li
     dịch vụ trong cùng một lịch (đề xuất chờ, đề xuất mới, phiên chờ)."""
     catalog = ServiceCatalogService(db)
     ids = list(dict.fromkeys(sid for group in groups for sid in group))
-    services = await _services_by_id(catalog, ids)
+    services = await services_by_id(catalog, ids)
     ranges = [(services[sid].price_min, services[sid].price_max) for sid in ids if sid in services]
     for group in groups:
         unique = list(dict.fromkeys(group))
@@ -206,23 +111,6 @@ async def _price_ranges(db: AsyncIOMotorDatabase, groups: list[list[str]]) -> li
 # ---------------------------------------------------------------------------
 # build_reply_facts
 # ---------------------------------------------------------------------------
-
-
-class _Decision(BaseModel):
-    outcome: str
-    kind: str
-    at: Moment
-
-
-def _decisions(turn_facts: list[TurnFact], pending_outcome: Optional[PendingOutcome]) -> list[_Decision]:
-    """Quyết định của lượt từ `DecisionFact`; `pending_outcome` chỉ là dự phòng
-    khi `turn_facts` không có cái nào (lượt rơi về câu mẫu sau lỗi)."""
-    found = [_Decision(outcome=f.outcome, kind=f.proposal_kind, at=f.at)
-             for f in turn_facts if isinstance(f, DecisionFact)]
-    if not found and pending_outcome is not None:
-        found = [_Decision(outcome=pending_outcome.outcome, kind=pending_outcome.kind,
-                           at=pending_outcome.at)]
-    return found
 
 
 def _opened_session(snapshot: TurnSnapshot, turn_id: str) -> Optional[tuple[str, str]]:
@@ -244,7 +132,7 @@ async def build_reply_facts(
     `decide_pending` bị từ chối / bị veto vẫn để lại ToolMessage nhưng cờ vẫn
     `False`, nên `pending_undecided` phải đọc cờ này, không đọc lịch sử tool.
     """
-    decisions = _decisions(turn_facts, pending_outcome)
+    decisions = turn_decisions(turn_facts, pending_outcome)
     proposals = [f for f in turn_facts if isinstance(f, ProposalFact)]
     pending = snapshot.pending
     unannounced = snapshot.unannounced
@@ -267,18 +155,18 @@ async def build_reply_facts(
     for session in snapshot.sessions.values():
         moments += [Moment(iso=option.iso, spoken=option.spoken) for option in session.question.options]
     for moment in moments:
-        clocks |= _clocks_of_moment(moment)
-    clocks |= _clocks_of_hhmm(snapshot.shop_hours.open_time)
-    clocks |= _clocks_of_hhmm(snapshot.shop_hours.close_time)
-    clocks |= _customer_clocks(question)
+        clocks |= clocks_of_moment(moment)
+    clocks |= clocks_of_hhmm(snapshot.shop_hours.open_time)
+    clocks |= clocks_of_hhmm(snapshot.shop_hours.close_time)
+    clocks |= customer_clocks(question)
 
     # -- giờ đang giữ thật / giờ đã ghi thật ----------------------------------
     pending_held = pending is not None and all(d.outcome in _STILL_PENDING for d in decisions)
     held: set[ClockKey] = set()
     if pending_held:
-        held |= _clocks_of_moment(pending.at)
+        held |= clocks_of_moment(pending.at)
     for proposal in proposals:
-        held |= _clocks_of_moment(proposal.at)
+        held |= clocks_of_moment(proposal.at)
 
     # Mọi nguồn giờ KHÁC lịch đang có: đề xuất chờ (bất kể quyết định), đề
     # xuất / quyết định / giờ của lượt (trừ TimeFact "appointment" — chính là
@@ -294,19 +182,19 @@ async def build_reply_facts(
         other += [pending_outcome.at, *pending_outcome.nearest]
     for session in snapshot.sessions.values():
         other += [Moment(iso=option.iso, spoken=option.spoken) for option in session.question.options]
-    other_times = {key[:2] for moment in other for key in _clocks_of_moment(moment)}
+    other_times = {key[:2] for moment in other for key in clocks_of_moment(moment)}
     existing_only: set[ClockKey] = set()
     for appt in snapshot.upcoming:
-        existing_only |= {key for key in _clocks_of_moment(appt.at) if key[:2] not in other_times}
+        existing_only |= {key for key in clocks_of_moment(appt.at) if key[:2] not in other_times}
 
     done: dict[Claim, set[ClockKey]] = {"booked": set(), "moved": set(), "cancelled": set()}
     approved = [d for d in decisions if d.outcome == "approved" and d.kind in CLAIM_FOR_KIND]
     for decision in approved:
-        done[CLAIM_FOR_KIND[decision.kind]] |= _clocks_of_moment(decision.at)
+        done[CLAIM_FOR_KIND[decision.kind]] |= clocks_of_moment(decision.at)
     if unannounced is not None and unannounced.outcome == "approved":
         claim = CLAIM_FOR_KIND.get(unannounced.proposal_kind)
         if claim:
-            done[claim] |= _clocks_of_moment(unannounced.at)
+            done[claim] |= clocks_of_moment(unannounced.at)
 
     # -- giá ------------------------------------------------------------------
     groups = [[f.service_id] for f in turn_facts if isinstance(f, ServiceFact)]
