@@ -94,15 +94,13 @@ async def test_new_proposal_names_its_service_and_suppresses_offers(test_db):
         TimeFact(role="free", moment=at(13)),
         ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14), service_ids=["toc-cat-nu"]),
     ])
-    assert _kinds(plan) == ["proposal", "price"]
-    proposal, price = plan.acts
+    assert _kinds(plan) == ["proposal"]
+    [proposal] = plan.acts
     assert proposal.sentence == (
         "Dạ em giữ chỗ cắt tóc nữ lúc 2 giờ chiều mai cho chị Lan, chị Lan đồng ý không ạ?")
     assert proposal.service_names == ["Cắt tóc nữ"]
     assert proposal.clocks == [(14, 0)]
-    assert price.sentence == "Dạ cắt tóc nữ giá 100.000đ-150.000đ ạ."
-    assert price.prices == [(100000, 150000)]
-    assert plan.prices() == [(100000, 150000)]
+    assert plan.prices() == []
     assert plan.offered_clocks() == {(14, 0)}
     assert plan.asks_session is None
 
@@ -116,7 +114,32 @@ async def test_proposal_with_two_services_joins_their_names(test_db):
     assert plan.acts[0].sentence == (
         "Dạ em giữ chỗ sơn gel và gội sấy lúc 2 giờ chiều mai cho chị Lan, "
         "chị Lan đồng ý không ạ?")
-    assert _kinds(plan) == ["proposal", "price", "price"]
+    assert _kinds(plan) == ["proposal"]
+
+
+_GEL_CHOSEN = ServiceFact(service_id="nail-gel", name="Sơn gel", price_min=120000, price_max=180000,
+                          duration_minutes=45, identified=True)
+
+
+async def test_booking_turn_has_no_price_act_even_for_a_chosen_service(test_db):
+    """Agent Dịch vụ đánh `identified` cho dịch vụ khách nêu khi đặt lịch ("đặt
+    sơn gel 3 giờ") — lượt có hành động đặt lịch không bắt báo giá (ruling
+    controller, Task 2); giá nêu ra vẫn bị `unknown_price` kiểm."""
+    await seed_catalog(test_db)
+    plan = await plan_for(test_db, turn_facts=[
+        _GEL_CHOSEN,
+        ProposalFact(proposal_id="p-2", proposal_kind="book", at=at(14), service_ids=["nail-gel"]),
+    ])
+    assert _kinds(plan) == ["proposal"]
+    assert plan.prices() == []
+
+
+async def test_chosen_service_alone_gets_a_price_act(test_db):
+    await seed_catalog(test_db)
+    plan = await plan_for(test_db, turn_facts=[_GEL_CHOSEN])
+    assert _kinds(plan) == ["price"]
+    assert plan.text() == "Dạ sơn gel giá 120.000đ-180.000đ ạ."
+    assert plan.prices() == [(120000, 180000)]
 
 
 async def test_failed_then_done_order_and_announce_ids(test_db):

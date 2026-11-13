@@ -13,7 +13,8 @@ model. Lượt không có hành động nào (chào hỏi, cảm ơn) thì kế 
 Thứ tự hành động: ghi thất bại -> đã đặt / dời / huỷ -> đã bỏ -> giờ kín ->
 đề xuất -> mời giờ trống -> hỏi câu của phiên vừa mở -> báo giá -> kể lịch hẹn
 -> giờ mở cửa / tiệm bận. Có đề xuất thì không mời giờ trống; mời các lựa chọn
-của phiên vừa mở thì không hỏi lại câu của phiên đó.
+của phiên vừa mở thì không hỏi lại câu của phiên đó; có hành động đặt lịch thì
+không báo giá.
 
 Không regex (gói `salon` không `import re`).
 """
@@ -69,6 +70,8 @@ PLAN_HEADER = "Reply plan (tell the customer all of this, in your own words):"
 # Quyết định "ghi thất bại" — câu DUY NHẤT có số điện thoại tiệm.
 _FAILED_OUTCOMES = frozenset({"failed", "not_approvable"})
 _RELEASED_OUTCOMES = frozenset({"rejected", "superseded"})
+# Hành động của việc đặt lịch — có một trong số này thì kế hoạch không báo giá.
+_BOOKING_ACTS = frozenset({"failed", "done", "released", "taken", "proposal", "offer", "ask_field"})
 # Mời tối đa ngần này giờ `free` của lượt (ruling: trần của kế hoạch; các giờ
 # trống khác model vẫn được nói — `unknown_time` cho phép).
 _FREE_OFFER_CAP = 3
@@ -289,7 +292,6 @@ def build_plan(
         # Chỉ `clarify` hỏi lại đề xuất chờ; `kept` (khách nói chuyện khác) thì
         # không bắt nhắc lại (spec quyết định 4).
         proposal = (pending.kind, pending.at, list(pending.service_ids))
-    proposal_ids: list[str] = []
     if proposal is not None:
         kind, at, proposal_ids = proposal
         names = services.names(proposal_ids)
@@ -323,12 +325,17 @@ def build_plan(
                             sentence=FIELD_QUESTION[opened[1].question.field].format(address=address)))
         asks_session = opened[0]
 
-    # -- 8. báo giá ---------------------------------------------------------------
-    priced = [f.service_id for f in turn_facts if isinstance(f, ServiceFact) and f.identified]
-    for service_id in dict.fromkeys([*priced, *proposal_ids]):
-        act = services.price_act(service_id)
-        if act is not None:
-            acts.append(act)
+    # -- 8. báo giá (chỉ lượt không có hành động đặt lịch) -------------------------
+    # Agent Dịch vụ đánh `identified` cho dịch vụ khách nêu khi đặt lịch ("đặt sơn
+    # gel 3 giờ"), nên báo giá bắt buộc ở lượt đặt lịch sẽ ép câu nào cũng nêu giá
+    # (ruling controller, Task 2). Lượt đặt lịch vẫn được nêu giá — `unknown_price`
+    # kiểm số tiền.
+    if not any(act.kind in _BOOKING_ACTS for act in acts):
+        priced = [f.service_id for f in turn_facts if isinstance(f, ServiceFact) and f.identified]
+        for service_id in dict.fromkeys(priced):
+            act = services.price_act(service_id)
+            if act is not None:
+                acts.append(act)
 
     # -- 9. kể lịch hẹn -------------------------------------------------------------
     appointments = _distinct(f.moment for f in turn_facts

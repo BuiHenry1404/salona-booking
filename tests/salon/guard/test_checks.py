@@ -714,20 +714,22 @@ CASES = [  # (id, setup kwargs for facts_for, reply text, expected codes)
     ("invented_time", TAKEN15_OPTIONS,
      "Dạ 3 giờ chiều mai có khách rồi ạ, chị lấy 1 giờ, 2 giờ hay 4 giờ chiều mai nhé?",
      ["plan_missing", "unknown_time"]),
-    # Câu thật của lần chạy 4, lượt 8 (nguyên văn): sai dịch vụ, và cũng không
-    # báo giá của dịch vụ đề xuất mà kế hoạch có (xem báo cáo Task 2).
     ("live4_turn8_wrong_service", PROPOSAL_CUT14,
      "Dạ em đã giữ chỗ sơn gel lúc 2 giờ chiều mai cho chị Mai, chị đồng ý nhé?",
-     ["plan_missing", "wrong_service"]),
+     ["wrong_service"]),
     ("proposal_ok", PROPOSAL_CUT14,
-     "Dạ em giữ chỗ cắt tóc nữ 2 giờ chiều mai cho chị nha, giá khoảng 120 nghìn, "
-     "chị đồng ý không ạ?", []),
+     "Dạ em giữ chỗ cắt tóc nữ 2 giờ chiều mai cho chị nha, chị đồng ý không ạ?", []),
     ("two_requests_ok", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
      "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
      "mai nhé? Sơn gel bên em giá khoảng 150 nghìn ạ.", []),
-    ("two_requests_missing_price", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
+    # Lượt đặt lịch: giá không bắt buộc (kế hoạch không có hành động báo giá),
+    # nhưng giá nêu ra vẫn phải nằm trong khoảng.
+    ("two_requests_price_optional", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
      "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
-     "mai nhé?", ["plan_missing"]),
+     "mai nhé?", []),
+    ("two_requests_wrong_price", TAKEN15_OPTIONS_PLUS_GEL_PRICE,
+     "Dạ 3 giờ chiều mai bên em có khách rồi ạ. Chị lấy giúp em 1 giờ, 2 giờ hay 5 giờ chiều "
+     "mai nhé? Sơn gel giá 250 nghìn ạ.", ["unknown_price"]),
     ("same_clock_other_day", TAKEN15_TODAY_OFFER15_TOMORROW, "Dạ chị chọn 3 giờ chiều mai nhé?", []),
     ("question_only_plan", SESSION_SERVICE_QUESTION, "Dạ chị muốn làm gì để em xếp lịch ạ?", []),
     ("greeting_no_plan", NO_FACTS, "Dạ em chào chị Lan ạ.", []),
