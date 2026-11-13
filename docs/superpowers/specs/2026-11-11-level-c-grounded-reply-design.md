@@ -380,3 +380,43 @@ Ngưỡng chuyển do chủ dự án quyết khi xem transcript. Không làm tro
   vụ viết hoa giữa câu): bản thử (d) vẫn còn, nên phải soi kỹ.
 - Ghi lại số lượt rơi xuống câu mẫu và số lần viết lại vì `wrong_role`. Số liệu này dùng để
   quyết có cần phương án dự phòng không.
+
+## Bổ sung sau lần chạy thật 5 (13/11)
+
+Lần chạy 5: kịch bản A đạt nghiệp vụ, kịch bản B **không đạt**. Log: `.superpowers/sdd/2026-11-11-level-c/live-5-{A,B}.log`.
+
+- **B lượt 7 (nghiêm trọng):** bot gửi *"Dạ chị chọn giúp em Thứ Bảy 14/11, 3 giờ chiều nhé. …"*, trong khi
+  3 giờ chiều đã kín. Câu đầu thiếu giờ kín (`missing_fact`). Lời nhắc viết lại chỉ bảo
+  "cite t… as taken", nên model chèn giờ kín vào câu mời. Guard cho qua vì đoạn đó gắn đúng nhãn
+  `taken`. Đây đúng là "lỗ hổng đã biết, chấp nhận" ở mục 4, và nó xảy ra thật.
+- **B lượt 4:** agent Đặt lịch hỏi lại buổi dù khách gõ "8 giờ sáng" (checkpoint: `part_of_day`,
+  *"since the time parser needs it"*, nghĩa là model không điền `part_of_day` cho `parse_time`).
+  Câu viết lại chép nhãn `c*` thành *"08:00 Chị cho em xin buổi nào ạ?"*.
+- **Câu cứng / câu cụt:** model chép nguyên nhãn "Thứ Bảy 14/11, …"; đoạn chữ thường bỏ động từ
+  (*"tiệm mình 7 giờ tối ạ"*, *"sơn gel 120.000đ-180.000đ ạ"*).
+- Số liệu: 1 lượt rơi xuống câu mẫu, 8 lần viết lại, 0 lần vì `wrong_role`.
+
+Chủ dự án 13/11: **giữ cách gọi model hiện tại** (một lần gọi, model tự viết đoạn). Sửa như sau:
+
+1. **Luật code mới `taken_not_told`** (bịt lỗ hổng mục 4 ở mức từ ngữ pháp của câu bot). Câu nào chứa
+   đoạn gắn `taken` thì:
+   - phải có chữ báo kín (vd "kín", "có khách", "có người", "được đặt", "hết chỗ", "không còn trống",
+     "không trống", "bận");
+   - mệnh đề chứa đoạn đó (giữa hai dấu phẩy) không được có chữ mời ("chọn", "lấy", "đồng ý").
+
+   Vi phạm thì viết lại 1 lần rồi câu mẫu như mọi mã khác. Rủi ro chặn nhầm (model báo kín bằng
+   cách nói lạ) là chấp nhận được; danh sách chữ được test bằng mọi câu báo kín của các lần chạy 2–5.
+2. **Lời nhắc `missing_fact` theo vai trò:** nói việc phải làm, không chỉ "cite as role". Với `taken`:
+   báo khách giờ đó đã có người bằng một câu riêng, không mời giờ đó. Với `held`: nêu giờ và hỏi
+   khách đồng ý. Với `booked`/`moved`/`cancelled`/`failed`: báo kết quả.
+3. **Nhãn giờ trong danh mục do code rút gọn:** giờ hôm nay ghi "… hôm nay", ngày mai ghi "… mai",
+   ngày khác giữ `spoken`. Guard vẫn chỉ so giờ:phút; câu mẫu vẫn dùng `spoken`.
+4. **Nhãn `c*`** là giờ code đọc lại ("customer said 8 giờ sáng", hoặc "3 giờ sáng or 3 giờ chiều"),
+   không dùng dạng "08:00".
+5. **Prompt:** đoạn chữ thường giữ nguyên phần còn lại của câu, kể cả động từ và chữ nối; chỉ giờ,
+   tên dịch vụ, giá tách thành đoạn riêng.
+6. **`parse_time`:** khi model không điền `part_of_day` cho giờ 1–12, code lấy buổi khách đã gõ cho
+   đúng giờ đó trong câu khách của lượt (`scan_times`), nếu chỉ có một buổi. Áp dụng cho cả agent
+   Đặt lịch và Thông tin tiệm.
+
+Sau khi sửa: chạy thật lại A và B (hỏi chủ dự án trước).
