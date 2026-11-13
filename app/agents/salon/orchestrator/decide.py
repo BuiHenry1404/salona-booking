@@ -184,6 +184,7 @@ def _outcome(outcome: str, pending: PendingView, *, appointment_id: Optional[str
         error=error,
         reason=reason,
         nearest=nearest or [],
+        service_ids=list(pending.service_ids),
     )
 
 

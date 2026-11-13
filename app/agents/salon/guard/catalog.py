@@ -289,6 +289,10 @@ async def build_catalog(
     service_ids += [fact.service_id for fact in snapshot.known_services]
     if snapshot.pending is not None:
         service_ids += list(snapshot.pending.service_ids)
+    # Đề xuất vừa quyết định: sau khi duyệt nó hết `pending` (snapshot không
+    # còn), dịch vụ của nó chỉ còn ở đây — câu "đã đặt" của kế hoạch nêu tên.
+    if pending_outcome is not None:
+        service_ids += list(pending_outcome.service_ids)
     for proposal in proposals:
         service_ids += list(proposal.service_ids)
     for appointment in snapshot.upcoming:

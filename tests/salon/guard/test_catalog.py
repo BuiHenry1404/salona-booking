@@ -241,3 +241,16 @@ async def test_announce_ids_stay_unique(test_db):
     [t] = _times(cat)
     assert t.announce_turn_ids == [TURN_ID]
     assert cat.id_of(Moment(iso=at(9).iso, spoken="khác")) == "t1"
+
+
+async def test_services_of_the_decided_outcome_are_catalogued(test_db):
+    """Sau khi duyệt, `snapshot.pending` đã là None — dịch vụ của đề xuất vừa
+    quyết định chỉ còn ở `pending_outcome.service_ids`."""
+    await seed_catalog(test_db)
+    cat = await catalog_for(
+        test_db, turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=at(15))],
+        pending_outcome=PendingOutcome(outcome="approved", proposal_id="p1", kind="book",
+                                       at=at(15), service_ids=[GEL.id]),
+    )
+    [entry] = [e for e in cat.entries if e.kind == "service"]
+    assert entry.names == [GEL.name] and entry.price == (GEL.price_min, GEL.price_max)

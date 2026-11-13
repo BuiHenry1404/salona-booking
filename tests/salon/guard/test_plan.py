@@ -24,6 +24,7 @@ from app.agents.salon.shared.schemas import (
     ProposalFact,
     ServiceFact,
     TimeFact,
+    UnannouncedDecision,
 )
 from app.core.clock import TZ
 from app.core.config import settings
@@ -129,14 +130,57 @@ async def test_failed_then_done_order_and_announce_ids(test_db):
         "Dạ em đã đặt xong 3 giờ chiều mai cho chị Lan ạ.")
 
 
-async def test_done_names_the_service_of_the_pending_it_approved(test_db):
+async def test_done_names_the_services_of_the_outcome_it_approved(test_db):
+    """Lúc chạy, sau khi duyệt `snapshot.pending` đã là None (đề xuất hết
+    `pending`) — dịch vụ của câu "đã đặt" lấy từ `pending_outcome.service_ids`."""
     await ServiceCatalogService(test_db).upsert_many([CAT])
+    outcome = PendingOutcome(outcome="approved", proposal_id="p-1", kind="book", at=M15,
+                             service_ids=["toc-cat-nu"])
     plan = await plan_for(
-        test_db, snapshot=a_snapshot(pending=pending_at(M15, service_ids=["toc-cat-nu"])),
+        test_db, pending_outcome=outcome,
         turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=M15)])
     assert _kinds(plan) == ["done"]
     assert plan.acts[0].sentence == "Dạ em đã đặt xong cắt tóc nữ lúc 3 giờ chiều mai cho chị Lan ạ."
     assert plan.acts[0].service_names == ["Cắt tóc nữ"]
+
+
+async def test_done_move_with_services_names_them_before_the_new_time(test_db):
+    await ServiceCatalogService(test_db).upsert_many([CAT])
+    outcome = PendingOutcome(outcome="approved", proposal_id="p-1", kind="move", at=M15,
+                             service_ids=["toc-cat-nu"])
+    plan = await plan_for(
+        test_db, pending_outcome=outcome,
+        turn_facts=[DecisionFact(outcome="approved", proposal_kind="move", at=M15)])
+    assert plan.text() == "Dạ em đã dời lịch cắt tóc nữ sang 3 giờ chiều mai cho chị Lan ạ."
+
+
+async def test_r0_done_names_no_services(test_db):
+    await ServiceCatalogService(test_db).upsert_many([CAT])
+    plan = await plan_for(test_db, snapshot=a_snapshot(unannounced=r0(M15)))
+    assert plan.acts[0].service_names == []
+    assert plan.text() == "Dạ em đã đặt xong 3 giờ chiều mai cho chị Lan ạ."
+
+
+async def test_r0_of_this_very_turn_is_not_told_twice_when_approved(test_db):
+    """`decide_pending` ghi dòng ledger của CHÍNH lượt này (chưa báo) và làm
+    snapshot cũ — snapshot đọc lại thấy `unannounced.turn_id == turn_id`."""
+    own = UnannouncedDecision(turn_id=TURN_ID, outcome="approved", proposal_kind="book", at=M15)
+    plan = await plan_for(
+        test_db, snapshot=a_snapshot(unannounced=own),
+        turn_facts=[DecisionFact(outcome="approved", proposal_kind="book", at=M15)])
+    assert _kinds(plan) == ["done"]
+    assert plan.announce_turn_ids() == [TURN_ID]
+
+
+async def test_r0_of_this_very_turn_is_not_told_twice_when_failed(test_db):
+    own = UnannouncedDecision(turn_id=TURN_ID, outcome="failed", proposal_kind="book", at=M15)
+    plan = await plan_for(
+        test_db, snapshot=a_snapshot(unannounced=own),
+        turn_facts=[DecisionFact(outcome="failed", proposal_kind="book", at=M15)])
+    assert _kinds(plan) == ["failed"]
+    assert plan.text() == (
+        f"Chị Lan ơi, 3 giờ chiều mai em chưa ghi được, chị Lan gọi giúp em số {PHONE} nhé ạ.")
+    assert plan.announce_turn_ids() == [TURN_ID]
 
 
 async def test_kept_pending_is_not_re_asked(test_db):

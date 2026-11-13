@@ -97,6 +97,9 @@ class PendingOutcome(BaseModel):
     error: Optional[str] = None
     reason: Optional[str] = None
     nearest: list[Moment] = []
+    # Dịch vụ của đề xuất được quyết định — sau khi duyệt, đề xuất hết
+    # `pending` nên snapshot không còn nó; câu "đã đặt" đọc dịch vụ từ đây.
+    service_ids: list[str] = []
 
 
 class UnannouncedDecision(BaseModel):

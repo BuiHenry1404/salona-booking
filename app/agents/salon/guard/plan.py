@@ -224,10 +224,17 @@ def build_plan(
         return short_label(moment, today)
 
     def decision_services(kind: str, at: Moment) -> list[str]:
-        """Dịch vụ của đề xuất chờ mà quyết định này nói tới (cùng loại, cùng giờ)."""
-        if pending is not None and pending.kind == kind and _key(pending.at) == _key(at):
-            return services.names(pending.service_ids)
+        """Dịch vụ của đề xuất mà quyết định này nói tới, từ `pending_outcome`
+        (cùng loại, cùng giờ) — sau khi duyệt, `snapshot.pending` đã là None."""
+        if (pending_outcome is not None and pending_outcome.kind == kind
+                and _key(pending_outcome.at) == _key(at)):
+            return services.names(pending_outcome.service_ids)
         return []
+
+    # R0 của CHÍNH lượt này: `decide_pending` ghi dòng ledger của lượt (chưa
+    # báo) và làm snapshot cũ, nên snapshot đọc lại thấy quyết định của lượt
+    # là "chưa báo" — câu của lượt đã báo nó, không báo lần hai.
+    r0 = unannounced if unannounced is not None and unannounced.turn_id != turn_id else None
 
     # -- 1. ghi thất bại --------------------------------------------------------
     failed = next((d for d in decisions if d.outcome in _FAILED_OUTCOMES), None)
@@ -236,12 +243,12 @@ def build_plan(
             kind="failed", sentence=_failed(label(failed.at), address=address, shop_phone=shop_phone),
             clocks=_clocks([failed.at]),
             announce_turn_ids=[turn_id] if failed.outcome == "failed" else []))
-    if unannounced is not None and unannounced.outcome == "failed":
-        r0_at = label(unannounced.at)
+    if r0 is not None and r0.outcome == "failed":
+        r0_at = label(r0.at)
         sentence = (ALSO_FAILED_REPLY.format(at=r0_at) if failed is not None
                     else _failed(r0_at, address=address, shop_phone=shop_phone))
-        acts.append(PlanAct(kind="failed", sentence=sentence, clocks=_clocks([unannounced.at]),
-                            announce_turn_ids=[unannounced.turn_id]))
+        acts.append(PlanAct(kind="failed", sentence=sentence, clocks=_clocks([r0.at]),
+                            announce_turn_ids=[r0.turn_id]))
 
     # -- 2. đã đặt / dời / huỷ ---------------------------------------------------
     approved = next((d for d in decisions
@@ -252,12 +259,11 @@ def build_plan(
             kind="done", sentence=_done(approved.kind, label(approved.at), address=address,
                                         service_names=names),
             clocks=_clocks([approved.at]), service_names=names, announce_turn_ids=[turn_id]))
-    if (unannounced is not None and unannounced.outcome == "approved"
-            and unannounced.proposal_kind in CLAIM_FOR_KIND):
+    if r0 is not None and r0.outcome == "approved" and r0.proposal_kind in CLAIM_FOR_KIND:
+        # `UnannouncedDecision` không mang dịch vụ — câu R0 không nêu tên dịch vụ.
         acts.append(PlanAct(
-            kind="done", sentence=_done(unannounced.proposal_kind, label(unannounced.at),
-                                        address=address),
-            clocks=_clocks([unannounced.at]), announce_turn_ids=[unannounced.turn_id]))
+            kind="done", sentence=_done(r0.proposal_kind, label(r0.at), address=address),
+            clocks=_clocks([r0.at]), announce_turn_ids=[r0.turn_id]))
 
     # -- 3. đã bỏ ---------------------------------------------------------------
     released = next((d for d in decisions if d.outcome in _RELEASED_OUTCOMES), None)

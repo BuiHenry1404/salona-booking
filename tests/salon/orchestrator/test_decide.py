@@ -157,6 +157,24 @@ async def test_approve_books_and_records_in_one_transaction(test_db):
     assert record.decision is not None and record.decision.outcome == "approved"
 
 
+async def test_outcome_carries_the_service_ids_of_the_decided_proposal(test_db):
+    """Sau khi duyệt, đề xuất hết `pending` (snapshot không còn nó) — câu "đã
+    đặt" của kế hoạch đọc dịch vụ từ `PendingOutcome.service_ids`."""
+    user = await a_user(test_db)
+    proposal = await ProposalService(test_db).create(user, "book", tomorrow_at(15), "làm tóc")
+    pending = _pending_view(proposal).model_copy(update={"service_ids": ["nail-gel"]})
+    ledger, turn_id, asked_at = await _turn(test_db)
+
+    outcome = await apply_decision(
+        test_db, user, pending=pending, label="reject", turn_id=turn_id,
+        asked_at=later(asked_at), ledger=ledger,
+    )
+
+    assert outcome.outcome == "rejected"
+    assert outcome.service_ids == ["nail-gel"]
+    assert (await ledger.record(turn_id)).decision.service_ids == ["nail-gel"]
+
+
 async def test_approve_on_taken_slot_is_failed_with_nearest(test_db):
     taker = await a_user(test_db, "0938111222", "Cô Hoa")
     from app.services.appointment import AppointmentService

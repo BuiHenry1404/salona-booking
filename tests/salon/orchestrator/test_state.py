@@ -57,7 +57,8 @@ def test_state_roundtrips_through_the_project_checkpointer_serde():
     without opening a `MongoClient` — this must stay DB-free."""
     moment = Moment(iso="2026-11-09T09:00:00+07:00", spoken="9 giờ sáng mai")
     fact = TimeFact(role="asked", moment=moment)
-    outcome = PendingOutcome(outcome="approved", proposal_id="p1", kind="book", at=moment)
+    outcome = PendingOutcome(outcome="approved", proposal_id="p1", kind="book", at=moment,
+                             service_ids=["nail-gel"])
 
     state = {
         "turn_facts": [fact.model_dump(mode="json")],

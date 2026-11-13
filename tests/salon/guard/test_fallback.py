@@ -15,6 +15,7 @@ from app.agents.salon.guard.fallback import (
     FAILED_NEAREST_REPLY,
     GENERIC_FALLBACK,
     NEAREST_OFFER,
+    _done,
     button_reply,
 )
 from app.agents.salon.shared.schemas import Moment, PendingOutcome
@@ -84,6 +85,22 @@ def test_button_reply_keeps_the_spoken_label_for_other_days():
     outcome = PendingOutcome(outcome="approved", proposal_id="p-1", kind="book", at=far)
     assert button_reply(outcome, address=ADDRESS, shop_phone=PHONE, today=TODAY) == (
         "Dạ em đã đặt xong Thứ Năm 12/11, 9 giờ sáng cho chị Lan ạ.")
+
+
+def test_done_move_names_services_before_the_new_time():
+    assert _done("move", "3 giờ chiều mai", address=ADDRESS, service_names=["Cắt tóc nữ"]) == (
+        "Dạ em đã dời lịch cắt tóc nữ sang 3 giờ chiều mai cho chị Lan ạ.")
+
+
+def test_done_move_without_services_keeps_the_old_wording():
+    assert _done("move", "3 giờ chiều mai", address=ADDRESS) == (
+        "Dạ em đã dời lịch sang 3 giờ chiều mai cho chị Lan ạ.")
+
+
+def test_done_book_with_services_names_them_at_the_time():
+    assert _done("book", "3 giờ chiều mai", address=ADDRESS,
+                 service_names=["Cắt tóc nữ", "Gội sấy"]) == (
+        "Dạ em đã đặt xong cắt tóc nữ và gội sấy lúc 3 giờ chiều mai cho chị Lan ạ.")
 
 
 def test_failed_nearest_reply_is_its_lead_then_the_offer():

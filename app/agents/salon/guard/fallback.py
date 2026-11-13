@@ -7,7 +7,8 @@ nút bấm là API bằng code, không gọi model, docs/architech-agent.md lu�
 Đây là câu tiếng Việt CỐ ĐỊNH trong code, không phải prompt (CONTEXT.md bẫy
 17-19 nói về prompt). `{at}` là nhãn giờ ngắn `short_label(moment, today)`
 ("3 giờ chiều mai"; ngày khác hôm nay / mai giữ `Moment.spoken`). `{what}` là
-"{dịch vụ} lúc {at}" khi đề xuất / quyết định có tên dịch vụ, không thì `{at}`.
+"{dịch vụ} lúc {at}" khi đề xuất / quyết định có tên dịch vụ, không thì `{at}`
+(dời lịch có dịch vụ dùng `DONE_MOVE_SERVICES_REPLY`).
 Số điện thoại tiệm chỉ có trong nhánh ghi thất bại; `.env` chưa có số thì
 không bịa số.
 
@@ -48,6 +49,9 @@ DONE_REPLY = {
     "move": "Dạ em đã dời lịch sang {what} cho {address} ạ.",
     "cancel": "Dạ em đã huỷ lịch {what} cho {address} ạ.",
 }
+# Dời lịch có tên dịch vụ: "dời lịch {dịch vụ} sang {giờ}" — `{what}` ("… lúc
+# {giờ}") sau "sang" sẽ thành "dời lịch sang cắt tóc nữ lúc …" (sai nghĩa).
+DONE_MOVE_SERVICES_REPLY = "Dạ em đã dời lịch {services} sang {at} cho {address} ạ."
 PROPOSAL_REPLY = "Dạ em giữ chỗ {what} cho {address}, {address} đồng ý không ạ?"
 # Giờ khách hỏi bị kín trong lượt (mục F3): câu mẫu báo trước rồi mới hỏi.
 TAKEN_REPLY = "Dạ {at} đã có khách rồi ạ."
@@ -107,6 +111,9 @@ def _what(at: str, service_names: Sequence[str]) -> str:
 
 
 def _done(kind: str, at: str, *, address: str, service_names: Sequence[str] = ()) -> str:
+    if kind == "move" and service_names:
+        return DONE_MOVE_SERVICES_REPLY.format(services=_services(service_names), at=at,
+                                               address=address)
     template = DONE_REPLY.get(kind, DONE_REPLY["book"])
     return template.format(what=_what(at, service_names), address=address)
 
