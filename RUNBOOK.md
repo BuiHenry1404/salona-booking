@@ -332,13 +332,30 @@ docker compose exec -T mongo mongosh salon_booking --quiet --eval \
 Câu trả lời cuối của Orchestrator (AIMessage không tool call) đi qua
 `ReplyGuardMiddleware.aafter_model` (`app/agents/salon/orchestrator/middleware/
 reply_guard.py`) ĐÚNG MỘT LẦN trước khi tới khách — luật kiểm thuần code,
-không LLM giám khảo, ở `app/agents/salon/guard/checks.py::check_reply`
-(docs/architech-agent.md luật 4–5). Mười một mã lỗi theo thứ tự cố định
-(`CHECK_CODES`): `empty`, `claim` (nhận vơ đã đặt/dời/huỷ/giữ không có thật),
-`unknown_time`, `unknown_price`, `missing_fact`, `missing_question`,
+không LLM giám khảo (docs/architech-agent.md luật 4–5). Từ mức C, câu trả lời
+không còn là một đoạn chữ tự do mà là JSON mảng các đoạn trích dẫn
+(`REPLY_SCHEMA`, `app/agents/salon/guard/segments.py`): mỗi đoạn hoặc là chữ
+thường, hoặc trích một dữ kiện của lượt (`Reply facts`, các id `t1`/`s1`/`g1`/
+`c1`… do `build_catalog` đánh số — `app/agents/salon/guard/catalog.py`) bằng
+id + vai trò. `check_structured`
+(`app/agents/salon/guard/checks.py`) parse mảng đó (`parse_reply`), ráp lại
+thành một câu để log/hiển thị (`join_segments` + `strip_tool_text`), so từng
+đoạn có trích dẫn với dữ kiện lượt (`check_segments`) rồi chạy thêm các luật
+đọc trên chữ đã ráp (`check_text`). Mười sáu mã lỗi theo thứ tự cố định
+(`CHECK_CODES`): `bad_structure` (không parse được JSON, hoặc một đoạn có
+`ref`/`role` chỉ một trong hai), `unknown_ref` (trích một id không có trong
+`Reply facts`), `wrong_role` (đúng id nhưng sai vai trò, hay trích dịch vụ
+ngoài đề xuất đang giữ chỗ), `ref_mismatch` (chữ của đoạn không khớp dữ kiện
+đã trích — giờ/dịch vụ/giá khác), `unreferenced` (một đoạn chữ thường lại
+nêu giờ, tên dịch vụ hay giá mà không trích dẫn), `empty`, `claim` (nhận vơ
+đã đặt/dời/huỷ/giữ không có thật), `missing_fact` (một dữ kiện BẮT BUỘC của
+lượt — `facts.required` — chưa được trích dẫn đúng id + vai trò; không còn
+so trên chữ như `unknown_time`/`unknown_price` cũ, đã bỏ), `missing_question`,
 `missing_phone`, `phone_not_allowed`, `pending_undecided` (đề xuất đang chờ
-chưa được quyết lượt này), `pronoun` (mục Xưng hô), `repeat` (giống câu đáp
-gần đây — `REPEAT_RATIO`/`REPEAT_MIN_WORDS`/`REPEAT_LOOKBACK` ở `checks.py`).
+chưa được quyết lượt này), `pronoun` (mục Xưng hô), `foreign_script` (lẫn
+chữ không phải Latin), `english` (một đoạn/câu tiếng Anh lộ ra, vd nguyên văn
+một dòng prompt), `repeat` (giống câu đáp gần đây —
+`REPEAT_RATIO`/`REPEAT_MIN_WORDS`/`REPEAT_LOOKBACK` ở `checks.py`).
 Log qua `structlog`, không ném lỗi ra khách:
 
 - `guard_rejected{codes}` — câu đầu tiên phạm một hay nhiều mã. Câu bị XOÁ

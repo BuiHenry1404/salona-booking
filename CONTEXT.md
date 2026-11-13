@@ -65,6 +65,16 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   tiếng Anh và lưu câu bị guard loại vào `salon_turns`. Cần spec riêng + một lần thử nhỏ trên Azure.
   Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
   (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
+- **Mức C (câu trả lời trích dẫn dữ kiện) đã cài xong, chờ chạy thật**: spec
+  `docs/superpowers/specs/2026-11-11-level-c-grounded-reply-design.md`, plan
+  `docs/superpowers/plans/2026-11-11-level-c-grounded-reply.md`. Câu trả lời cuối giờ là một mảng
+  JSON các đoạn, mỗi đoạn hoặc là chữ thường hoặc trích một dữ kiện của lượt (`Reply facts`) bằng
+  id + vai trò, thay vì tự viết lại giờ/giá rồi so trên chữ. Mã lỗi của guard đổi theo: thêm
+  `bad_structure`, `unknown_ref`, `wrong_role`, `ref_mismatch`, `unreferenced`, `foreign_script`,
+  `english`; bỏ `unknown_time` và `unknown_price` (so trên chữ, đã lỗi thời); `missing_fact` giờ
+  nghĩa là một dữ kiện BẮT BUỘC của lượt chưa được trích dẫn đúng id + vai trò, không còn so trên
+  chữ như trước. **Còn lại: chạy thật lượt A rồi lượt B (`--keep-db`) trên Azure, mỗi lần phải hỏi
+  chủ dự án trước.**
 - **Làm tiếp sau khi mở phiên mới**:
   1. ~~Sửa (a), (b), (c)~~ và ~~A, C, D, E, F của lần 2~~ — xong 11/11.
   2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),
