@@ -566,6 +566,8 @@ async def test_second_rejection_keeps_the_session_its_fallback_asks_about(test_d
     assert last.additional_kwargs.get("salon_source") == "code"
     assert last.content == "Dạ chị Lan muốn mấy giờ ạ?"
     assert CLAIM_TEXT not in _texts(state["messages"])
+    # Câu bị loại (JSON hợp lệ) không ở lại state dưới dạng các đoạn đã parse.
+    assert state.get("structured_response") is None
     assert _hints(state["messages"]) == []
     statuses = {doc["agent"]: doc["status"] async for doc in test_db["waiting_sessions"].find({})}
     assert statuses == {"appointment": "waiting", "shop_info": "waiting"}
@@ -825,6 +827,8 @@ async def test_accepted_reply_is_stored_as_joined_text(test_db):
     state = await _turn(test_db, user, model, "tiệm mở mấy giờ", saver=InMemorySaver())
 
     assert state["messages"][-1].content == "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
+    # Các đoạn thô không ở lại state (checkpoint) — chỉ chữ đã ghép.
+    assert state.get("structured_response") is None
 
 
 async def test_two_bad_structures_end_on_the_template(test_db):
@@ -837,6 +841,7 @@ async def test_two_bad_structures_end_on_the_template(test_db):
     last = state["messages"][-1]
     assert last.additional_kwargs.get("salon_source") == "code"
     assert len(model.calls) == 2
+    assert state.get("structured_response") is None
 
 
 async def test_rejected_replies_write_no_announced_ids(test_db):

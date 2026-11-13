@@ -52,6 +52,13 @@ __all__ = ["GUARD_HINT_MARK", "ReplyGuardMiddleware", "guard_hint"]
 
 logger = get_logger(__name__)
 
+# Khoá `create_agent` (ProviderStrategy) ghi các đoạn đã parse của MỌI câu
+# JSON. Guard đã đọc `reply.text` nên xoá nó ở cả ba nhánh: state / checkpoint
+# chỉ giữ chữ đã ghép, và câu bị loại không bao giờ được lưu (chỉ log). Định
+# tuyến đọc `jump_to` trước, câu không tool call vẫn kết thúc lượt — xoá khoá
+# này không đổi luồng.
+_STRUCTURED = "structured_response"
+
 _CODE_HINTS = {
     "bad_tool_call": "Your last message had a tool call with invalid arguments.",
     "bad_structure": "Your reply was not the JSON list of segments. Answer only with segments; "
@@ -143,6 +150,7 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
             return {
                 "messages": [*hints, reply.model_copy(update={"content": result.text})],
                 "announced_turn_ids": list(result.announce_turn_ids),
+                _STRUCTURED: None,
             }
 
         # Câu của BOT bị loại (không phải câu khách) — thiếu nó thì không biết
@@ -158,6 +166,7 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
                                  additional_kwargs={GUARD_HINT_MARK: codes}),
                 ],
                 "guard_rewrites": 1,
+                _STRUCTURED: None,
                 "jump_to": "model",
             }
 
@@ -171,5 +180,6 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
                 RemoveMessage(id=reply.id), *hints,
                 AIMessage(content=fallback_reply(facts), additional_kwargs={"salon_source": "code"}),
             ],
+            _STRUCTURED: None,
             "jump_to": "end",
         }
