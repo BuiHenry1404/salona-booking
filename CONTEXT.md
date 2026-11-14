@@ -6,7 +6,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 
 | Cần gì | Đọc file |
 |---|---|
-| Đang làm gì, làm tiếp gì | Mục **Trạng thái** ngay dưới + spec [`docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`](docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md) |
+| Đang làm gì, làm tiếp gì | Mục **Trạng thái** ngay dưới + spec [`docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md`](docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md) + sổ `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md` |
 | Kiến trúc đích của tầng agent | [`docs/architech-agent.md`](docs/architech-agent.md) — thắng spec / plan khi lệch; `AGENTS.md` đã xoá (09/11) |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
@@ -23,83 +23,120 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 | Chủ tiệm | Cùng web, giao diện admin — bận/rảnh, xem lịch, quản khách, đặt hộ |
 | Chủ tiệm | Bot Telegram — báo lịch mới, tra lịch, đổi bận/rảnh bằng 4 nút |
 
-## Trạng thái — 11/11/2026
+## Trạng thái — 14/11/2026
 
-- Nhánh **`feat/llm-orchestrator`**, chưa push, chưa merge. Quy ước: nhánh việc → `henry/develop` →
+### Nhánh và quy ước
+- Nhánh **`feat/llm-orchestrator`**: chưa push, chưa merge. Luồng: nhánh việc → `henry/develop` →
   `main`, không commit thẳng `main`. Commit message tiếng Anh, ngắn.
-- **Đã đập đi xây lại xong: Task 1–18 của plan + một đợt xoá code thừa theo chủ dự án.** Mọi task
-  qua review (spec + chất lượng) từng task. Chat thật chạy qua gói mới `app/agents/salon/`. Gói cũ
-  `app/agents/booking/` đã xoá hẳn (xem lịch sử bằng `git show c98413b:app/agents/booking/...`).
-  Dữ liệu Mongo của gói cũ đã dọn trên DB dev (`scripts/drop_legacy_agent_data.py --yes`, 10/11).
-  Test: 893 pytest + 279 vitest xanh (1 test bỏ qua sau 15h là chủ ý).
-- **Tài liệu nguồn**: kiến trúc đích `docs/architech-agent.md` (thắng khi lệch), spec
-  `docs/superpowers/specs/2026-11-08-subagents-rebuild-design.md`, plan
-  `docs/superpowers/plans/2026-11-08-subagents-rebuild.md`. **Sổ thực thi**
-  `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md` (git-ignored): từng task, commit, các
-  dòng `Ruling:` (chỗ đã XÂY khác plan, R1–R16) và `minor (deferred)` (việc nhỏ để review cuối xét).
-- **Đang dở — Task 19 (chạy thật trên Azure, 2 lần)**: lần 1 chạy 11/11, **chưa đạt**; log ở
-  `.superpowers/sdd/2026-11-08-subagents-rebuild/live-1.log`, chấm điểm trong sổ (dòng "live run 1").
-  Ba lỗi của lần 1 **đã sửa (11/11)**: (a) `GraphRecursionError` — `astream_events` lấy mặc định 25
-  bước của langchain-core; `run_turn` giờ đặt `recursion_limit = số node × (salon_model_calls_per_turn
-  + 1)` (`orchestrator/agent.py::recursion_limit`), trước đó trần 10 lần gọi model không bao giờ chạm
-  tới; (b) guard chặn nhầm "350.000đ" — `split_clauses` cắt ở dấu `.` ngăn hàng nghìn nên đọc ra 0đ
-  (câu bị loại lấy lại từ checkpoint Mongo); log `guard_rejected` / `guard_violation` giờ có
-  `rejected_reply` (câu của bot); (c) lịch chặn của script bỏ dịch vụ → dài 60', 16:00 trống.
-  Chủ dự án 11/11: **giữ** thời lượng theo dịch vụ trong DB.
-  **Lần 2 chạy 11/11, chưa đạt** (log `live-2.log`, sổ dòng "live run 2"): ba sửa trên chạy đúng,
-  nhưng lượt 2 agent Đặt lịch báo `ok` dù 3 giờ kín (không đề xuất, không phiên chờ) và bot mời khách
-  giờ kín; 8/10 câu có Markdown `**`. **Đã sửa (11/11)** theo spec/plan
-  `docs/superpowers/{specs,plans}/2026-11-11-live-run-2-fixes*` (sổ `.superpowers/sdd/2026-11-11-live-run-2-fixes/`):
-  A `SubagentSpec.reconcile` — code hạ `ok` → `need_info` (`time`) khi giờ hỏi kín và không có đề
-  xuất, log `subagent_status_corrected`; C luật "plain text" + `strip_tool_text` xoá `**`/`__`;
-  D định nghĩa lại "ok" trong prompt agent Đặt lịch; E prompt Orchestrator: dữ kiện `taken` không
-  bao giờ được mời; F giờ kín phải được báo khách — ghi chú code (F1), guard thêm giờ kín vào
-  `must_mention` (F2; từ mức C phải tham chiếu id với vai trò taken, không còn so nguyên văn — spec 2026-11-11-level-c), câu mẫu `TAKEN_REPLY` báo
-  trước (F3). B (luật `missing_option`) bỏ. Chủ dự án 11/11: **phương án 1** — giờ hỏi kín không đề
-  xuất luôn là `need_info`, kể cả khi khách chỉ hỏi; **phát hiện kín thì luôn báo khách**.
-  **Lần 3 chạy 11/11, ĐẠT** (log `live-3.log`, sổ dòng "live run 3"): lượt 2 báo 3 giờ đã có người
-  và đưa 1/2/4 giờ, mở phiên chờ; không Markdown, không tiếng Anh, DB khớp. **Cần thêm 1 lần đạt.**
-  Ghi chú chất lượng: bot nói "em đã tạo đề xuất … để em chốt lịch" (chữ hệ thống, không phạm luật).
-  **Bước thiết kế kế tiếp (chủ dự án 11/11): mức C** — câu trả lời tham chiếu dữ kiện
-  (`{kín:t1}`, `{mời:t3}`), code kiểm vai trò giờ bằng cấu trúc; gộp thêm kiểm lộ prompt / lọt
-  tiếng Anh và lưu câu bị guard loại vào `salon_turns`. Cần spec riêng + một lần thử nhỏ trên Azure.
-  Chạy lại phải hỏi chủ dự án. Script `scripts/test_live_10_turns.py` **xoá sạch DB dev**
-  (lịch, đề xuất, user, dịch vụ, hội thoại, checkpoint, memory, phiên chờ) rồi seed lại và chạy 10 lượt.
-- **Mức C (câu trả lời trích dẫn dữ kiện) đã cài xong, chờ chạy thật**: spec
-  `docs/superpowers/specs/2026-11-11-level-c-grounded-reply-design.md`, plan
-  `docs/superpowers/plans/2026-11-11-level-c-grounded-reply.md`. Câu trả lời cuối giờ là một mảng
-  JSON các đoạn, mỗi đoạn hoặc là chữ thường hoặc trích một dữ kiện của lượt (`Reply facts`) bằng
-  id + vai trò, thay vì tự viết lại giờ/giá rồi so trên chữ. Mã lỗi của guard đổi theo: thêm
-  `bad_structure`, `unknown_ref`, `wrong_role`, `ref_mismatch`, `unreferenced`, `foreign_script`,
-  `english`; bỏ `unknown_time` và `unknown_price` (so trên chữ, đã lỗi thời); `missing_fact` giờ
-  nghĩa là một dữ kiện BẮT BUỘC của lượt chưa được trích dẫn đúng id + vai trò, không còn so trên
-  chữ như trước.
-  **Lần chạy thật 5 (13/11)**: lượt A đạt; lượt B **chưa đạt** (log
-  `.superpowers/sdd/2026-11-11-level-c/live-5-{A,B}.log`) — lượt 7 mời khách chọn đúng giờ đã kín
-  ("chị chọn giúp em … 3 giờ chiều nhé"), lượt 4 sau khi khách nói "8 giờ sáng" bot vẫn hỏi lại buổi
-  ("08:00 Chị cho em xin buổi nào ạ?"), cộng câu ngày đầy đủ cứng nhắc và câu thiếu động từ. 1 câu
-  mẫu CODE, 8 câu viết lại, 0 câu `wrong_role`.
-  **Đã sửa (13/11)** theo spec `docs/superpowers/specs/2026-11-11-level-c-grounded-reply-design.md`
-  mục "Bổ sung sau lần chạy thật 5 (13/11)" và plan
-  `docs/superpowers/plans/2026-11-13-level-c-live-5-fixes.md`: mã kiểm mới `taken_not_told` (một câu
-  trích giờ vai `taken` phải nói giờ đó đã kín, không được mời khách chọn chính giờ đó); gợi ý viết
-  lại `missing_fact` theo từng vai (`RequiredRef.todo`); nhãn ngắn do code dựng trong catalog ("…
-  hôm nay" / "… mai"); nhãn giờ khách nói kiểu đồng hồ khách dùng ("khách nói 8 giờ sáng"); luật
-  prompt giữ động từ ở đoạn chữ thường; `parse_time` dùng buổi khách đã gõ khi model bỏ sót.
-  **Còn lại: chạy lại lượt A và lượt B trên Azure, phải hỏi chủ dự án trước.**
-- **Làm tiếp sau khi mở phiên mới**:
-  1. ~~Sửa (a), (b), (c)~~ và ~~A, C, D, E, F của lần 2~~ — xong 11/11.
-  2. **Hỏi chủ dự án** rồi mới chạy lại (`PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py`),
-     cần 2 lần đạt.
-  3. Review cả nhánh bằng model mạnh nhất (`superpowers:requesting-code-review`, gói diff
-     `git merge-base main HEAD..HEAD`, kèm danh sách `Ruling:` và `minor (deferred)` trong sổ); sửa
-     Critical/Important trong một lượt.
-  4. `superpowers:finishing-a-development-branch` → **một** PR `feat/llm-orchestrator` → `henry/develop`.
-- **File chưa commit của chủ dự án, đừng add**: `docs/superpowers/review.md`, `image.png`,
+- **Working tree dùng chung với một phiên khác.** Phiên làm trang demo từng chuyển working tree sang
+  `feat/demo-autoplay`, làm 3 commit plan lọt vào nhánh đó (đã cherry-pick về; nhánh
+  `feat/demo-autoplay` vẫn còn bản sao, chủ dự án quyết xoá hay giữ).
+  - Luôn kiểm `git branch --show-current` trước khi commit.
+  - Không `stash` / `checkout` / `reset`.
+- **File của chủ dự án, đừng add:** `docs/superpowers/review.md`, `image.png`,
   `scripts/terminal_chat.py` (script này import gói đã xoá nên đang hỏng).
-- **Để sau đợt rebuild này**: đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
+- **Test hỏng có sẵn, chưa ai tìm nguyên nhân:**
+  `tests/salon/subagents/test_shop_info.py::test_parse_then_is_open_at_answers_a_relative_question`
+  (`KeyError: 'iso'`). Nó hỏng từ trước các đợt việc dưới đây; có thể phụ thuộc ngày chạy.
+- Chạy pytest **từng lệnh một** (DB test dùng chung): `.venv/bin/python -m pytest -q`. Trước khi
+  commit phải chạy **toàn bộ** backend, không chỉ `tests/salon`, vì từng có test ngoài `tests/salon`
+  bị hỏng mà không ai thấy.
+
+### Lịch sử ngắn (đã xong)
+- Rebuild tầng agent (plan `2026-11-08-subagents-rebuild`): 4 agent, gói `app/agents/salon/`; gói cũ
+  đã xoá.
+  - Sổ: `.superpowers/sdd/2026-11-08-subagents-rebuild/progress.md`.
+  - Log chạy thật 1–4: `.superpowers/sdd/2026-11-08-subagents-rebuild/live-{1..4}.log`.
+- **Chạy thật 1, 2:** không đạt. Đã sửa: `recursion_limit`; split số tiền; reconcile `ok` →
+  `need_info` khi giờ kín; Markdown; giờ kín phải báo khách. Chủ dự án chốt: **phát hiện kín thì luôn
+  báo khách**; giờ hỏi kín mà không có đề xuất thì luôn là `need_info`.
+- **Chạy thật 3: ĐẠT**, với guard "chữ thường + so nguyên văn" cũ.
+- **Mức C** (spec/plan `2026-11-11-level-c-grounded-reply*`): câu trả lời là JSON gồm các đoạn, mỗi
+  giờ / dịch vụ / giá trích id + vai trò.
+  - **Chạy thật 5** (log `.superpowers/sdd/2026-11-11-level-c/live-5-{A,B}.log`): A đạt, **B không
+    đạt**. Lượt 7 mời khách chọn đúng giờ đã kín: lời nhắc viết lại đẩy model chèn giờ kín vào câu
+    mời, và guard chỉ kiểm nhãn model tự khai. Ngoài ra có câu cứng, câu cụt, và chữ "08:00" chép
+    từ nhãn.
+  - Đợt sửa sau lần 5 (plan `2026-11-13-level-c-live-5-fixes.md`) đã làm xong. Nhưng chủ dự án kết
+    luận **lỗi sinh ra từ chính lớp guard mức C**, nên quyết **xây lại guard**.
+  - Script và log các bản thử Azure: `.superpowers/sdd/2026-11-11-level-c/spike/`.
+
+### ĐANG LÀM — xây lại guard: "câu trả lời theo kế hoạch của code"
+- **Spec:** `docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md`, gồm các mục "Quyết
+  định sau builder check", "Bộ đo độ chính xác của guard", "Bổ sung: `asks_price`".
+- **Plan:** `docs/superpowers/plans/2026-11-13-plan-guided-reply.md`.
+- **Sổ thực thi** (git-ignored, đọc trước tiên):
+  `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md`. Sổ ghi từng task, commit, các dòng
+  `Ruling:` và `minor (deferred)`.
+- Cách chạy: **subagent-driven** (`superpowers:subagent-driven-development`). Mỗi task có agent làm
+  và agent review; dùng lại các file trong thư mục sổ: `implementer-rules.md`,
+  `reviewer-instructions.md`, `rereview-instructions.md`, `global-constraints.md`.
+- **Ý tưởng:**
+  1. Sau khi tool chạy, code lập **kế hoạch câu** (`guard/plan.py`: các hành động kèm câu mẫu tiếng
+     Việt, nhãn giờ ngắn).
+  2. Model **viết lại bằng chữ thường**: một lần gọi, không JSON.
+  3. Guard kiểm bằng code (`check_reply`): đủ giờ, giá của kế hoạch; không giờ, giá lạ; không nhầm
+     dịch vụ; không mời giờ kín; không nhận vơ…
+  4. **Sai nghĩa** thì gửi câu mẫu ngay. **Sai câu chữ** thì viết lại 1 lần. `pending_undecided` luôn
+     được viết lại 1 lần (kèm tool `decide_pending`).
+- **Tiến độ:**
+  - **Task 1:** xong, qua review (commit `216e6f9..7fe0e1e`). Gồm `plan.py`, câu mẫu ở `fallback.py`
+    dùng nhãn ngắn và tên dịch vụ, `PendingOutcome.service_ids`.
+  - **Task 2:** xong, qua review (commit `7fe0e1e..0002ac5`). Gồm `check_reply`, `MEANING_CODES`,
+    các mã `plan_missing` / `unknown_time` / `unknown_price` / `wrong_service` / `taken_offered`.
+  - **Task 2b (`asks_price` trên `service_task`):** commit `bfbd2a8`. Sau đó có một sửa
+    **chưa commit** (lúc viết file này agent đang chạy test để commit): `asked_price` chỉ gắn cho
+    dịch vụ `identified`, và `HAIR_LIST` đặt lại `asks_price: true`, trong `orchestrator/tools.py`,
+    `tests/salon/orchestrator/test_tool_rules.py`, `tests/salon/turn/test_run.py`. Phiên sau:
+    1. kiểm `git status` / `git log`;
+    2. nếu chưa commit thì chạy toàn bộ pytest rồi commit;
+    3. sau đó **review Task 2b**.
+  - **Còn lại:**
+    - Task 3: nối vào Orchestrator, **gỡ mức C** (`segments.py`, `check_structured`, JSON
+      `response_format`, công cụ test `reply` / `cite`), đánh dấu "đã báo" theo kế hoạch.
+    - Task 4: prompt.
+    - Task 5: bộ đo chặn nhầm / lọt từ câu thật.
+    - Task 6: tài liệu và chạy toàn bộ test.
+    - Rồi review cả nhánh bằng model mạnh nhất (gửi kèm danh sách `Ruling:` / `minor (deferred)`
+      trong sổ).
+  - Code mức C **vẫn còn** cho tới Task 3 (middleware còn dùng `check_structured`).
+- **Quyết định chủ dự án trong đợt này** (đừng mở lại):
+  - xây lại guard theo cách A (giữ `catalog.py` làm nguồn dữ kiện, bỏ JSON và nhãn tự khai);
+  - "cách 2": model viết lại câu mẫu, không gửi nguyên câu mẫu;
+  - mọi lượt có giờ / giá đều có kế hoạch;
+  - `asks_price` do Orchestrator đánh dấu (code không đoán ý khách, bẫy 21);
+  - có bộ đo độ chính xác guard;
+  - không LLM giám khảo chặn trực tiếp (nếu muốn thì dùng offline);
+  - chỉ so giờ:phút, không so ngày;
+  - guard viết lại bị ẩn tool (Azure nhận `tools: []` kèm JSON strict, đã thử).
+- **Ruling đáng nhớ** (chi tiết trong sổ):
+  - giá chỉ bắt buộc ở lượt không có việc đặt lịch, hoặc dịch vụ có `asked_price`;
+  - R0 trùng quyết định của lượt thì không báo hai lần;
+  - chỉ `clarify` mới hỏi lại đề xuất chờ;
+  - giờ trống tự tìm được mời tối đa 3;
+  - `_mark_announced` tạm khớp cả nhãn ngắn lẫn `spoken`, đợi Task 3 đổi sang id của kế hoạch;
+  - "có người lấy rồi" không tính là lời mời.
+
+### Làm tiếp sau khi mở phiên mới
+1. Đọc sổ `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md` và `git log --oneline -10`.
+   Hoàn tất commit Task 2b nếu còn dở, review Task 2b, rồi chạy Task 3 → 6 theo
+   `superpowers:subagent-driven-development`.
+2. Review cuối cả đợt (model mạnh nhất), sửa Critical / Important trong một đợt.
+3. **Hỏi chủ dự án** rồi chạy thật kịch bản A và B:
+   - `PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py` (**xoá sạch DB dev**);
+   - `PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py --keep-db` (giữ DB, khách mới, tự
+     chọn giờ kín từ lịch khách khác).
+
+   Cần 2 lần đạt. Đọc transcript theo anti-goals; thêm câu mới vào bộ đo.
+4. `superpowers:finishing-a-development-branch` → **một** PR `feat/llm-orchestrator` → `henry/develop`.
+
+### Để sau
+- Đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
   2a26e28:docs/superpowers/specs/2026-11-08-multi-booking-holds-design.md`, phải viết lại cho kiến
   trúc mới.
+- Ý tưởng chưa duyệt:
+  - chế độ guard "chỉ ghi log" để đo model tự đúng bao nhiêu;
+  - LLM đọc transcript offline để đánh dấu câu nghi sai.
 
 ### Đã xây khác plan (controller quyết khi chạy plan, chi tiết trong sổ)
 
