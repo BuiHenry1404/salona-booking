@@ -80,3 +80,18 @@ def test_scan_day_offsets_and_weekdays():
 )
 def test_scan_money_table(text, amounts):
     assert scan_money(text) == amounts
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("1 triệu 2 đến 1 triệu 5", [1_200_000, 1_500_000]),
+        ("1 triệu 200 nghìn", [1_200_000]),
+        ("1,2 triệu", [1_200_000]),
+        ("2 triệu", [2_000_000]),
+        ("120 đến 150 nghìn", [120_000, 150_000]),
+        ("120k đến 150k", [120_000, 150_000]),
+    ],
+)
+def test_scan_money_reads_million_forms(text, expected):
+    assert scan_money(text) == expected

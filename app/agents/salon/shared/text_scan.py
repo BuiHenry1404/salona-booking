@@ -365,42 +365,69 @@ def scan_weekdays(text: str) -> List[int]:
     return out
 
 
-def _tokenize_money(text: str) -> List[Tuple[str, object]]:
-    """Tách `text` thành số (gộp dấu `.`/`,` ngăn hàng nghìn), chữ (thường) và dấu `-`."""
-    out: List[Tuple[str, object]] = []
+def _tokenize_money(text: str) -> List[Tuple[str, object, object]]:
+    """Tách `text` thành số (gộp dấu `.`/`,` ngăn hàng nghìn), chữ (thường) và dấu `-`.
+
+    Một số dạng `("num", value, frac)`: `value` là các nhóm chữ số gộp lại
+    (như trước). `frac` là `None`, trừ khi dấu phân cách cuối cùng là `,` và
+    nhóm chữ số sau nó không đủ 3 chữ số — khi đó `,` là dấu thập phân
+    (`"1,2"` → phần nguyên 1, phần thập phân "2"), không phải dấu ngăn hàng
+    nghìn, và `frac` giữ `(phần_nguyên, chuỗi_phần_thập_phân)`.
+    """
+    out: List[Tuple[str, object, object]] = []
     s = text or ""
     n = len(s)
     i = 0
     while i < n:
         ch = s[i]
         if ch.isdigit():
-            digits: List[str] = []
+            groups: List[str] = []
+            seps: List[str] = []
+            cur: List[str] = []
             j = i
             while j < n:
                 c = s[j]
                 if c.isdigit():
-                    digits.append(c)
+                    cur.append(c)
                     j += 1
                 elif c in ".," and j + 1 < n and s[j + 1].isdigit():
+                    groups.append("".join(cur))
+                    seps.append(c)
+                    cur = []
                     j += 1
                 else:
                     break
-            out.append(("num", int("".join(digits))))
+            groups.append("".join(cur))
+            value = int("".join(groups))
+            frac = None
+            if seps and seps[-1] == "," and len(groups[-1]) != 3:
+                whole = int("".join(groups[:-1])) if len(groups) > 1 else 0
+                frac = (whole, groups[-1])
+            out.append(("num", value, frac))
             i = j
             continue
         if ch.isalpha():
             j = i
             while j < n and s[j].isalpha():
                 j += 1
-            out.append(("word", s[i:j].lower()))
+            out.append(("word", s[i:j].lower(), None))
             i = j
             continue
         if ch == "-":
-            out.append(("dash", None))
+            out.append(("dash", None, None))
             i += 1
             continue
         i += 1
     return out
+
+
+def _decimal_value(token: Tuple[str, object, object]) -> float:
+    """Giá trị số thực của một token `num`: dùng `frac` nếu `,` là dấu thập phân."""
+    _, value, frac = token
+    if frac is None:
+        return float(value)
+    whole, frac_digits = frac
+    return whole + int(frac_digits) / (10 ** len(frac_digits))
 
 
 def scan_money(text: str) -> List[int]:
@@ -417,18 +444,30 @@ def scan_money(text: str) -> List[int]:
     out: List[int] = []
     i = 0
     while i < n:
-        kind, value = tokens[i]
+        kind = tokens[i][0]
         if kind != "num":
             i += 1
             continue
         j = i + 1
 
-        # "X triệu/tr Y" (Y là chữ số đơn vị trăm nghìn) → 1 200 000 kiểu "1tr2"
+        # "X triệu/tr Y" — Y là phần sau: nếu có đơn vị nghìn/ngàn/k đứng
+        # ngay sau Y thì Y là số đó theo đơn vị đó ("1 triệu 200 nghìn" =
+        # 1 200 000); nếu không và Y chỉ một chữ số thì Y là chữ số hàng
+        # trăm nghìn kiểu nói tắt ("1 triệu 2"/"1tr2" = 1 200 000).
         if (j < n and tokens[j][0] == "word" and tokens[j][1] in ("triệu", "tr")
                 and j + 1 < n and tokens[j + 1][0] == "num"):
             second = tokens[j + 1][1]
-            out.append(value * 1_000_000 + second * 100_000)
-            i = j + 2
+            k = j + 2
+            if k < n and tokens[k][0] == "word" and tokens[k][1] in ("nghìn", "ngàn", "k"):
+                out.append(int(round(_decimal_value(tokens[i]) * 1_000_000 + second * 1_000)))
+                i = k + 1
+                continue
+            if second < 10:
+                out.append(int(round(_decimal_value(tokens[i]) * 1_000_000 + second * 100_000)))
+                i = j + 2
+                continue
+            out.append(int(round(_decimal_value(tokens[i]) * 1_000_000)))
+            i = j + 1
             continue
 
         # Khoảng "X tới/đến/- Y đơn_vị" → số X lấy đơn vị của Y
@@ -436,12 +475,11 @@ def scan_money(text: str) -> List[int]:
             tokens[j][0] == "dash" or (tokens[j][0] == "word" and tokens[j][1] in _RANGE_WORDS)
         )
         if is_range_connector and j + 1 < n and tokens[j + 1][0] == "num":
-            second = tokens[j + 1][1]
             k = j + 2
             if k < n and tokens[k][0] == "word" and tokens[k][1] in _MONEY_UNITS:
                 mult = _MONEY_UNITS[tokens[k][1]]
-                out.append(value * mult)
-                out.append(second * mult)
+                out.append(int(round(_decimal_value(tokens[i]) * mult)))
+                out.append(int(round(_decimal_value(tokens[j + 1]) * mult)))
                 i = k + 1
                 continue
             i += 1
@@ -449,7 +487,8 @@ def scan_money(text: str) -> List[int]:
 
         # Số đứng ngay trước đơn vị tiền
         if j < n and tokens[j][0] == "word" and tokens[j][1] in _MONEY_UNITS:
-            out.append(value * _MONEY_UNITS[tokens[j][1]])
+            mult = _MONEY_UNITS[tokens[j][1]]
+            out.append(int(round(_decimal_value(tokens[i]) * mult)))
             i = j + 1
             continue
 
