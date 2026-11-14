@@ -5,6 +5,9 @@ Hôm nay của snapshot là 09/11/2026; mọi `at(...)` mặc định nằm ở 
 ("mai", trừ khi truyền `day=`), nên `short_label` ra "3 giờ chiều mai".
 `spoken` mặc định là cụm giờ ngắn do `format_vi_hhmm` dựng ("3 giờ chiều").
 
+`turn_results(...)` dựng `TurnResults` không cần DB (danh mục là `CATALOG`)
+— cho các ca phải có sẵn lúc import (`plan_cases.PLAN_CASES`).
+
 Mặc định là một lượt gõ chữ bình thường; mọi helper nhận tham số khoá để các
 task sau đổi từng phần.
 
@@ -16,7 +19,11 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional, Sequence
 
-from app.agents.salon.guard.results import TurnResults, build_turn_results
+from app.agents.salon.guard.results import (
+    TurnResults,
+    build_turn_results,
+    turn_results_from,
+)
 from app.agents.salon.shared.context import AppointmentView, CustomerView, TurnSnapshot
 from app.agents.salon.shared.schemas import (
     DecisionFact,
@@ -40,13 +47,14 @@ TODAY = date(2026, 11, 9)
 DAY = date(2026, 11, 10)
 
 GEL = Service(id="nail-gel", category="nail", name="Sơn gel", price_min=120000,
-              price_max=180000, duration_minutes=45)
+              price_max=150000, duration_minutes=45)
 GOI = Service(id="toc-goi-say", category="toc", name="Gội sấy", price_min=50000,
               price_max=80000, duration_minutes=30)
 CAT = Service(id="toc-cat-nu", category="toc", name="Cắt tóc nữ", price_min=100000,
               price_max=150000, duration_minutes=45)
 UON = Service(id="toc-uon", category="toc", name="Uốn tóc", price_min=1200000,
               price_max=1500000, duration_minutes=120)
+CATALOG = (GEL, GOI, CAT, UON)
 
 
 # -- moments ------------------------------------------------------------------
@@ -140,7 +148,7 @@ def a_snapshot(*, address: str = "chị Lan", pending: Optional[PendingView] = N
 # -- catalogue + results ------------------------------------------------------
 
 
-async def seed_catalog(db, services: Sequence[Service] = (GEL, GOI, CAT, UON)) -> None:
+async def seed_catalog(db, services: Sequence[Service] = CATALOG) -> None:
     await ServiceCatalogService(db).upsert_many(list(services))
 
 
@@ -153,4 +161,19 @@ async def results_for(db, *, snapshot: Optional[TurnSnapshot] = None, turn_facts
         db, snapshot=snapshot or a_snapshot(), turn_facts=list(turn_facts),
         pending_outcome=pending_outcome, turn_id=turn_id, turn_kind=turn_kind, question=question,
         previous_replies=list(previous), pending_decided=pending_decided,
+    )
+
+
+def turn_results(*, snapshot: Optional[TurnSnapshot] = None, turn_facts: Sequence = (),
+                 turn_kind: Literal["typed", "button"] = "typed",
+                 pending_outcome: Optional[PendingOutcome] = None, question: str = "",
+                 previous: Sequence[str] = (), pending_decided: bool = False,
+                 turn_id: str = TURN_ID, shop_phone: Optional[str] = None) -> TurnResults:
+    """Như `results_for` nhưng không đọc DB: danh mục là `CATALOG`."""
+    return turn_results_from(
+        snapshot=snapshot or a_snapshot(), turn_facts=list(turn_facts),
+        pending_outcome=pending_outcome, turn_id=turn_id, turn_kind=turn_kind, question=question,
+        previous_replies=list(previous), pending_decided=pending_decided,
+        catalog_services={service.id: service for service in CATALOG},
+        shop_service_names=[service.name for service in CATALOG], shop_phone=shop_phone,
     )

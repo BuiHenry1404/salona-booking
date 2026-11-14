@@ -1,12 +1,14 @@
 """`guard/results.py`: the turn's facts in one model (guard rebuild, Task 4)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from app.agents.salon.guard.clocks import is_known
 from app.agents.salon.guard.results import short_label, spoken_price
 from app.agents.salon.shared.text_scan import scan_money
+from app.core.clock import TZ
 from app.core.config import settings
+from app.models.shop import ShopStatusView
 from tests.salon.guard.builders import (
     CAT,
     GEL,
@@ -84,6 +86,14 @@ async def test_valid_clocks_include_context_and_customer_times(test_db):
                          (17, 0), (15, 0)]:
         assert _knows(results, hour, minute), (hour, minute)
     assert not _knows(results, 12, 15)
+
+
+async def test_valid_clocks_include_busy_until(test_db):
+    until = datetime(TODAY.year, TODAY.month, TODAY.day, 16, 30, tzinfo=TZ)
+    busy = a_snapshot(shop_status=ShopStatusView(is_busy=True, busy_until=until, minutes_left=30))
+    assert _knows(await results_for(test_db, snapshot=busy), 16, 30)
+    idle = a_snapshot(shop_status=ShopStatusView(is_busy=False, busy_until=until))
+    assert not _knows(await results_for(test_db, snapshot=idle), 16, 30)
 
 
 async def test_pending_undecided(test_db):

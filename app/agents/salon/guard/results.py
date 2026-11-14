@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from app.agents.salon.guard.clocks import (
     ClockKey,
+    clock_of_24h,
     clocks_of_hhmm,
     clocks_of_moment,
     customer_clocks,
@@ -161,7 +162,7 @@ class TurnResults(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _instant_of(moment: Moment) -> Optional[str]:
+def instant_of(moment: Moment) -> Optional[str]:
     """UTC ISO của một mốc — khoá so hai mốc cùng thời điểm. Mốc không đọc được
     / không có múi giờ thì bỏ (không đoán múi giờ)."""
     try:
@@ -193,11 +194,11 @@ def _turn_service_ids(snapshot: TurnSnapshot, turn_facts: list[TurnFact],
         ids += snapshot.pending.service_ids
     if pending_outcome is not None:
         ids += pending_outcome.service_ids
-    listed = {_instant_of(fact.moment) for fact in turn_facts
+    listed = {instant_of(fact.moment) for fact in turn_facts
               if isinstance(fact, TimeFact) and fact.role == "appointment"}
     listed.discard(None)
     for appointment in snapshot.upcoming:
-        if _instant_of(appointment.at) in listed:
+        if instant_of(appointment.at) in listed:
             ids += appointment.service_ids
     return _dedupe(ids)
 
@@ -247,7 +248,7 @@ def _valid_clocks(snapshot: TurnSnapshot, turn_facts: list[TurnFact],
     """Mọi giờ có thật của lượt: đề xuất chờ, lịch sắp tới, R0, giờ / đề xuất /
     quyết định của lượt, `pending_outcome` (gồm `nearest` — tool `decide_pending`
     đưa chúng cho model), lựa chọn của phiên chờ, giờ mở / đóng cửa, giờ khách
-    vừa nói."""
+    vừa nói, giờ tiệm hết bận (khối bối cảnh đưa nó khi tiệm đang bận)."""
     moments: list[Optional[Moment]] = [
         snapshot.pending.at if snapshot.pending else None,
         snapshot.unannounced.at if snapshot.unannounced else None,
@@ -269,6 +270,10 @@ def _valid_clocks(snapshot: TurnSnapshot, turn_facts: list[TurnFact],
     clocks |= clocks_of_hhmm(snapshot.shop_hours.open_time)
     clocks |= clocks_of_hhmm(snapshot.shop_hours.close_time)
     clocks |= customer_clocks(question)
+    status = snapshot.shop_status
+    if status.is_busy and status.busy_until is not None:
+        local = to_local(status.busy_until)
+        clocks.add(clock_of_24h(local.hour, local.minute))
     return clocks
 
 
@@ -290,8 +295,28 @@ async def build_turn_results(
     """
     catalog = ServiceCatalogService(db)
     candidate_ids = _turn_service_ids(snapshot, turn_facts, pending_outcome)
-    services = _service_items(candidate_ids, await _services_by_id(catalog, candidate_ids),
-                              turn_facts)
+    return turn_results_from(
+        snapshot=snapshot, turn_facts=turn_facts, pending_outcome=pending_outcome,
+        turn_id=turn_id, turn_kind=turn_kind, question=question,
+        previous_replies=previous_replies, pending_decided=pending_decided,
+        catalog_services=await _services_by_id(catalog, candidate_ids),
+        shop_service_names=[service.name for service in await catalog.list()],
+        shop_phone=settings.shop_phone or None,
+    )
+
+
+def turn_results_from(
+    *, snapshot: TurnSnapshot, turn_facts: list[TurnFact],
+    pending_outcome: Optional[PendingOutcome], turn_id: str, turn_kind: Literal["typed", "button"],
+    question: str, previous_replies: list[str], pending_decided: bool,
+    catalog_services: dict[str, Service], shop_service_names: list[str],
+    shop_phone: Optional[str],
+) -> TurnResults:
+    """Phần không đọc DB của `build_turn_results`: `catalog_services` là các
+    dịch vụ đã tra được theo id (thừa id không sao — chỉ dịch vụ của lượt được
+    đọc). Test dựng `TurnResults` không cần DB qua hàm này."""
+    candidate_ids = _turn_service_ids(snapshot, turn_facts, pending_outcome)
+    services = _service_items(candidate_ids, catalog_services, turn_facts)
     return TurnResults(
         snapshot=snapshot,
         turn_facts=list(turn_facts),
@@ -300,9 +325,9 @@ async def build_turn_results(
         turn_kind=turn_kind,
         services=services,
         turn_service_ids=[service_id for service_id in candidate_ids if service_id in services],
-        shop_service_names=[service.name for service in await catalog.list()],
+        shop_service_names=list(shop_service_names),
         valid_clocks=_valid_clocks(snapshot, turn_facts, pending_outcome, question),
-        shop_phone=settings.shop_phone or None,
+        shop_phone=shop_phone,
         previous_replies=list(previous_replies),
         pending_undecided=(turn_kind == "typed" and snapshot.pending is not None
                            and not pending_decided),
