@@ -282,12 +282,14 @@ def test_scan_money_reads_million_forms(text, expected):
 - Consumes: Tasks 4–7.
 - Produces:
   - `async def reply_inputs_for(db, holder: SnapshotHolder, state, context) -> tuple[TurnResults, ReplyPlan]` in `reply_guard.py`, used by `ContextMiddleware` and `ReplyGuardMiddleware`.
-  - Context block section: `PLAN_HEADER = "Reply plan (JSON):"` followed by `json.dumps(plan.to_json(), ensure_ascii=False)`; omitted when `plan.is_empty()`.
+  - Context block (owner 14/11: keep JSON, wrap in tags): the rendered context lines inside `<context>\n…\n</context>`, then, unless `plan.is_empty()`, `<reply_plan>\n{json.dumps(plan.to_json(), ensure_ascii=False, indent=2)}\n</reply_plan>`. Constants `CONTEXT_TAG = "context"`, `PLAN_TAG = "reply_plan"`.
   - Rewrite hint: a `HumanMessage` (marked `GUARD_HINT_MARK`) whose content is `json.dumps({"rejected": codes, "missing": verdict.missing, "hint": " ".join(HINTS[c] for c in codes)})`.
   - `HINTS` (English, one per code; `plan_missing`: "Tell every act and the ask in the Reply plan, with every time, price and service name in it."; `taken_mentioned`: "Do not mention the times in taken_told_by_code; the customer was already told."; `unknown_time`: "Mention only times from the context block."; `unknown_price`: "Mention only prices inside this turn's price ranges."; `wrong_service`: "Name only the services of this turn."; `missing_phone`: "Give the shop phone number from the failed act."; `missing_question`: "End with the question of the Reply plan: whether they agree to the proposal, which offered time they choose, or the ask fields."; the rest reuse today's `_CODE_HINTS` text for that code).
 
 - [ ] **Step 1: Write the failing tests**
-  - `test_context_block_shows_the_plan_json` (middleware): taken + options → the context SystemMessage contains `"Reply plan (JSON):"` and `"taken_told_by_code"`; no `"Reply facts"`.
+  - `test_context_block_shows_the_plan_json` (middleware): taken + options → the context SystemMessage contains `<context>` … `</context>` and `<reply_plan>` … `</reply_plan>`; no `"Reply facts"`.
+  - `test_reply_plan_tag_is_valid_json`: the text between `<reply_plan>` and `</reply_plan>` passes `json.loads` and equals `plan.to_json()`.
+  - `test_plan_json_copied_into_reply_never_reaches_customer`: the model replies with the whole plan JSON block twice → first verdict has `empty` (after `strip_tool_text`), a rewrite happens, final message is the template (`salon_source == "code"`) and contains no `{` or `taken_told_by_code`.
   - `test_pass_prepends_taken_sentence`: model reply "Còn trống 4 giờ hoặc 5 giờ chiều mai, chị chọn giờ nào ạ?" → final message `"Dạ 3 giờ chiều mai đã có khách rồi ạ. Còn trống …"`, `salon_source` not `"code"`.
   - `test_every_error_rewrites_once_then_template`: first reply has `plan_missing` → 2 model calls; the hint message is valid JSON with `"rejected": ["plan_missing"]`; second reply fails again → final is `templates.compose(plan, address)` with `salon_source == "code"`.
   - `test_rewrite_hides_tools_except_decide_pending_for_pending_undecided`.
@@ -316,17 +318,17 @@ def test_scan_money_reads_million_forms(text, expected):
 - Test: `tests/salon/test_prompts.py`
 
 **Interfaces:**
-- Consumes: `PLAN_HEADER` wording and the JSON keys of `ReplyPlan.to_json()`; tool `remember_address`.
+- Consumes: the `<context>` / `<reply_plan>` tags and the JSON keys of `ReplyPlan.to_json()` (Task 8); tool `remember_address`.
 
 - [ ] **Step 1: Write the failing tests** in `test_prompts.py`:
   - Delete `test_orchestrator_prompt_describes_segments`, `test_orchestrator_prompt_keeps_verbs_in_plain_segments`, `test_orchestrator_prompt_says_taken_times_are_not_offered`.
   - `test_orchestrator_prompt_has_no_segment_rules`: no `"segment"`, `"Reply facts"`, `"ref and role"`.
-  - `test_orchestrator_prompt_names_plan_keys`: contains `"Reply plan"`, `"taken_told_by_code"`, `"acts"`, `"ask"`, `"remember_address"`.
+  - `test_orchestrator_prompt_names_plan_keys`: contains `"<reply_plan>"`, `"<context>"`, `"taken_told_by_code"`, `"acts"`, `"ask"`, `"remember_address"`.
   - Existing: no Vietnamese characters.
 - [ ] **Step 2: Run** `tests/salon/test_prompts.py`. Expected FAIL.
 - [ ] **Step 3: Rewrite** the "What you receive" and "Writing the reply" sections; keep Tools / Services / Pending proposal / Waiting sessions. Required rules (English, own wording):
   - One message with several requests (booking, a price, opening hours…): call every agent it needs, independent agents in the same round, before replying; the reply covers every request. Facts already in the context block (opening hours, upcoming appointments) may be used directly.
-  - With a Reply plan: tell every act and the ask, with every time, price and service name in them, written the way the JSON writes them; add no other time, price or service.
+  - The context block is inside `<context>` (facts, the truth); the reply plan is the JSON inside `<reply_plan>` (what the reply must say). Read the JSON; never write JSON. With a reply plan: tell every act and the ask, with every time, price and service name in them, written the way the JSON writes them; add no other time, price or service.
   - Never mention a time listed in `taken_told_by_code`: the code tells the customer just before your reply; continue from there.
   - The `ask` lists fields: ask for all of them in one question.
   - `proposal` is not booked yet: ask whether they agree; say booked/moved/cancelled only for a `done` act.

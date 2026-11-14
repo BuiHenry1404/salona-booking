@@ -183,7 +183,11 @@ Hiện `scan_money` đọc sai "1,2 triệu" (ra 12 triệu) và "1 triệu 200 
 "không đụng `text_scan.py`"). Bên trong `ReplyPlan`, mỗi hành động
 vẫn giữ `ClockKey` và khoảng giá số để validator so.
 
-**JSON đưa cho model** nằm trong khối bối cảnh, dưới một nhãn tiếng Anh, ví dụ:
+**JSON đưa cho model** nằm trong khối bối cảnh *(chủ dự án 14/11, sau tra cứu định dạng: giữ dữ kiện
+dạng dòng chữ "Nhãn: giá trị" vì là dữ liệu phẳng và đỡ tốn token; plan giữ JSON vì có lồng nhau và
+ngắn; bọc hai phần bằng thẻ `<context>…</context>` và `<reply_plan>…</reply_plan>` theo khuyến nghị
+của Anthropic / OpenAI; test bảo đảm phần trong `<reply_plan>` luôn `json.loads` được, và khối JSON
+model lỡ chép vào câu không bao giờ tới khách)*, ví dụ:
 ```json
 {"taken_told_by_code": ["3 giờ chiều mai"],
  "acts": [{"act": "proposal", "kind": "book", "at": "4 giờ chiều mai", "services": ["Sơn gel"]},
