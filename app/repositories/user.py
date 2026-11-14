@@ -56,18 +56,19 @@ class UserRepository(BaseRepository[User]):
         return [User(**d) for d in docs]
 
     async def set_self_address(self, user_id: str, self_address: str) -> bool:
-        """Ghi `self_address` một LẦN DUY NHẤT — lọc `self_address: None` ngay
-        trong filter nên hai lượt ghi chồng nhau (lượt mới thay lượt cũ, cả
-        hai cùng thấy khách tự xưng) không bao giờ ghi đè nhau; giá trị khách
-        tự sửa tay qua admin cũng không bị bot viết lại.
+        """Ghi đè `self_address` — khách tự nói cách muốn được gọi lần nào
+        cũng thắng giá trị cũ (tool `remember_address`, spec "Xưng hô": khách
+        đổi cách xưng thì tool gọi lại). Không còn lọc "chỉ ghi khi `None`";
+        `seed_self_address_from_names` tự giữ idempotence bằng cách bỏ qua
+        khách đã có giá trị, không còn nhờ filter này.
         """
         if not ObjectId.is_valid(user_id):
             return False
         result = await self.collection.update_one(
-            {"_id": ObjectId(user_id), "self_address": None},
+            {"_id": ObjectId(user_id)},
             {"$set": {"self_address": self_address}},
         )
-        return result.modified_count == 1
+        return result.matched_count == 1
 
     async def set_staff_note(self, user_id: str, staff_note: Optional[str]) -> bool:
         """Admin ghi đè tự do — không có bẫy "chỉ ghi khi chưa có" ở đây."""
@@ -87,8 +88,10 @@ class UserRepository(BaseRepository[User]):
         trong `full_name` ("Cô Lan", "Bác Bảy") là thông tin ĐÃ BIẾT, không
         phải bot đoán — seed `self_address` từ đó cho khách chưa có giá trị.
         "Bác" không cho giới tính nên để trống, như `derive_address` vốn đã xử
-        lý. Idempotent: `set_self_address` chỉ ghi khi còn `None`, nên gọi lại
-        nhiều lần (mỗi lần khởi động app) không có tác dụng phụ.
+        lý. Idempotent: vòng lặp ở đây bỏ qua khách đã có `self_address` (dù
+        do migration lần trước hay admin sửa tay), nên gọi lại nhiều lần (mỗi
+        lần khởi động app) không có tác dụng phụ — `set_self_address` giờ ghi
+        đè tự do, idempotence không còn tới từ nó.
         """
         from app.core.vi_format import derive_address
 

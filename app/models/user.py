@@ -15,7 +15,7 @@ FULL_NAME_MAX = 60
 # cũng không được nuốt mất phần còn lại của khối.
 STAFF_NOTE_MAX = 200
 
-SelfAddress = Literal["anh", "chị"]
+SelfAddress = Literal["anh", "chị", "cô", "chú", "bác", "ông", "bà"]
 
 
 class User(BaseDocument):
@@ -40,9 +40,10 @@ class User(BaseDocument):
     role: Role = "user"
     is_active: bool = True
 
-    # Khách tự xưng "chị"/"anh" — do CODE đặt (regex `detect_self_address`
-    # trên câu khách, Task 13), không bao giờ suy từ tên. Chỉ ghi khi đang
-    # `None`; khách muốn đổi thì admin sửa tay qua REST, bot không tự đổi.
+    # Khách tự nói cách muốn được gọi — Orchestrator ghi qua tool
+    # `remember_address` (spec "Xưng hô"), không bao giờ suy từ tên hay giọng
+    # văn. Cho ghi đè: khách đổi cách xưng thì tool gọi lại và giá trị mới
+    # thắng.
     self_address: Optional[SelfAddress] = None
 
     # Admin gõ qua REST admin, hiện trong khối bối cảnh dưới dạng dữ liệu

@@ -49,6 +49,22 @@ class TestSelfAddressDefaultsToNone:
         assert a_user("Nguyễn Thị Lan").self_address is None
 
 
+class TestSetSelfAddressOverwrites:
+    """Task 3: `remember_address` gọi lại khi khách đổi cách xưng — repo phải
+    cho GHI ĐÈ (khác luật "chỉ ghi một lần" cũ)."""
+
+    async def test_set_self_address_overwrites(self, test_db):
+        repo = UserRepository(test_db)
+        user = await repo.create_user(phone="0911111111", hashed_password="x",
+                                      full_name="Lan", role="user")
+
+        assert await repo.set_self_address(str(user.id), "chị")
+        assert (await repo.get_by_id(str(user.id))).self_address == "chị"
+
+        assert await repo.set_self_address(str(user.id), "cô")
+        assert (await repo.get_by_id(str(user.id))).self_address == "cô"
+
+
 class TestSeedSelfAddressFromNames:
     """Migration một lần (Task 13, main.py lifespan): tiền tố admin gõ sẵn
     ("Cô Lan", "Bác Bảy") là thông tin ĐÃ BIẾT — seed `self_address` cho

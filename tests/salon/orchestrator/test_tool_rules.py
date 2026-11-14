@@ -30,6 +30,7 @@ from app.agents.salon.shared.schemas import AgentStatusFact, ServiceFact
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.clock import now_utc
 from app.models.waiting_session import SessionOption, SessionQuestion, WaitingSession
+from app.repositories.user import UserRepository
 from app.services.appointment import AppointmentService
 from app.services.proposal import ProposalService
 from app.services.waiting_session import WaitingSessionService
@@ -128,7 +129,8 @@ async def test_orchestrator_tool_schemas_do_not_change_between_turns(test_db):
     dumped_b = json.dumps(_schemas(tools_b), sort_keys=True)
     assert dumped_a == dumped_b
     names = {tool.name for tool in tools_a}
-    assert names == {"appointment_task", "shop_info_task", "service_task", "decide_pending"}
+    assert names == {"appointment_task", "shop_info_task", "service_task", "decide_pending",
+                     "remember_address"}
     assert names <= CONTROL_TOOLS
     for schema in _schemas(tools_a):
         params = schema["function"]["parameters"]
@@ -500,3 +502,23 @@ async def test_asks_price_on_a_price_list_marks_no_fact(test_db, monkeypatch):
     assert len(service_facts) >= 2
     assert all(fact["identified"] is False for fact in service_facts)
     assert all(fact["asked_price"] is False for fact in service_facts)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: `remember_address`
+# ---------------------------------------------------------------------------
+
+
+async def test_remember_address_rejects_unknown_form(test_db):
+    """`form` ngoài danh sách cố định (`anh, chị, cô, chú, bác, ông, bà`) — bot
+    luôn tự xưng "em" nên "em" không hợp lệ — bị `bad_args` chặn trước khi tool
+    chạy; DB không đổi."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = scripted([tool_call("remember_address", {"form": "em"}), AIMessage(content="Dạ")])
+
+    state, *_ = await _orchestrator_turn(test_db, user, model, question="gọi em cũng được")
+
+    [message] = _tool_messages(state)
+    assert _error_code(message) == "bad_args"
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address is None

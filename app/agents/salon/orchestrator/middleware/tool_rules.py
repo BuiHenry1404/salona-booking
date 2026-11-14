@@ -19,6 +19,11 @@ Thứ tự kiểm (dừng ở luật đầu tiên trượt):
 6. `retry_exhausted` — gọi lại agent đã `failed` hai lần trong lượt.
 7. `same_agent_twice_in_round` — hai call cùng agent con trong một vòng.
 
+`remember_address` (Task 3, spec "Xưng hô") không phải agent con nên không
+có mặt trong `_TASK_AGENTS`: mọi luật từ (2) tới (6) không áp cho nó, chỉ
+`bad_args` (1) và lưới `same_agent_twice_in_round` (7, vô hại — một lượt chỉ
+cần gọi nó một lần) còn hiệu lực.
+
 `service_unclear` / `service_required` (spec §4.1, §6.2) KHÔNG ở đây (Ruling
 R16): chúng chỉ áp cho đề xuất ĐẶT MỚI, nên nằm trong `propose_appointment` của
 agent Đặt lịch — xem lịch, huỷ, dời không bị chặn vì dịch vụ.

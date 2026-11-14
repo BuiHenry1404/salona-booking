@@ -409,8 +409,10 @@ async def test_tools_offered_follow_pending_state(test_db):
 
     await _turn(test_db, user, model, "thôi em", saver=InMemorySaver())
 
-    assert model.offered[0] == ["decide_pending", "service_task", "shop_info_task"]
-    assert model.offered[1] == ["appointment_task", "service_task", "shop_info_task"]
+    assert model.offered[0] == ["decide_pending", "remember_address", "service_task",
+                               "shop_info_task"]
+    assert model.offered[1] == ["appointment_task", "remember_address", "service_task",
+                               "shop_info_task"]
 
 
 async def test_context_after_approve_shows_the_new_appointment(test_db):
@@ -509,7 +511,8 @@ async def test_rewrite_turn_offers_no_tools(test_db):
 
     await _turn(test_db, user, claim_model, "chào em", saver=InMemorySaver())
 
-    assert claim_model.offered[0] == ["appointment_task", "service_task", "shop_info_task"]
+    assert claim_model.offered[0] == ["appointment_task", "remember_address", "service_task",
+                                     "shop_info_task"]
     assert claim_model.offered[1] == []
 
     # Mã `pending_undecided`: lần viết lại chỉ được gọi `decide_pending`.
@@ -519,7 +522,8 @@ async def test_rewrite_turn_offers_no_tools(test_db):
 
     await _turn(test_db, other, pending_model, "để em xem", saver=InMemorySaver())
 
-    assert pending_model.offered[0] == ["decide_pending", "service_task", "shop_info_task"]
+    assert pending_model.offered[0] == ["decide_pending", "remember_address", "service_task",
+                                       "shop_info_task"]
     assert pending_model.offered[1] == ["decide_pending"]
 
 

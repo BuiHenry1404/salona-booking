@@ -323,20 +323,42 @@ async def test_customer_text_is_one_line_and_capped_at_1000_chars(test_db, monke
     assert log["messages"][0]["content"] == expected
 
 
-async def test_typed_turn_seeds_self_address_once(test_db, monkeypatch):
-    """Ruling R13: khách tự xưng "chị" trong câu gõ → ghi `self_address` một lần."""
+async def test_remember_address_updates_the_address_line(test_db, monkeypatch):
+    """Task 3 (spec "Xưng hô"): Orchestrator gọi `remember_address` khi khách tự
+    nói cách xưng — tool ghi DB và `mark_stale`, nên lần gọi model kế trong
+    CÙNG lượt đã thấy dòng `Address` mới."""
     await default_hours(test_db)
     user = await a_user(test_db)
-    orchestrator(monkeypatch, [HOURS, plain("Dạ tiệm mở cả tuần ạ.")])
+    model = orchestrator(monkeypatch, [
+        tool_call("remember_address", {"form": "cô"}),
+        plain("Dạ tiệm mở cả tuần ạ."),
+    ])
 
-    completed(await turn(test_db, user, "chị muốn hỏi tiệm mở cửa mấy giờ"))
-    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "chị"
+    completed(await turn(test_db, user, "cô muốn hỏi tiệm mở cửa mấy giờ"))
 
-    completed(await turn(test_db, user, "anh muốn hỏi tiệm có mở chủ nhật không"))
-    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "chị"
+    assert len(model.calls) >= 2
+    second_call = model.calls[1]
+    # Hai SystemMessage mỗi lần gọi (`system_prompt` cố định + khối bối cảnh
+    # của lượt, `agent.py`) — khối bối cảnh mới mang dòng `Address`.
+    context_block = next(m for m in second_call
+                         if isinstance(m, SystemMessage) and "Address:" in m.content)
+    assert "Address: cô" in context_block.content
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address == "cô"
 
 
-async def test_button_turn_does_not_seed_self_address(test_db, monkeypatch):
+async def test_typed_turn_no_longer_guesses_address(test_db, monkeypatch):
+    """Code không còn đoán cách xưng từ câu khách gõ (Task 3): chỉ tool
+    `remember_address` mới ghi `self_address`."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    orchestrator(monkeypatch, [HOURS])
+
+    completed(await turn(test_db, user, "chị muốn làm móng"))
+
+    assert (await UserRepository(test_db).get_by_id(str(user.id))).self_address is None
+
+
+async def test_button_turn_does_not_call_the_model(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
     orchestrator(monkeypatch, [RuntimeError("the model must not be called")])

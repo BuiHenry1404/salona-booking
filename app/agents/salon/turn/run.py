@@ -68,10 +68,9 @@ from app.core.clock import now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
-from app.core.text import detect_self_address, normalize_for_match, single_line
+from app.core.text import normalize_for_match, single_line
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
-from app.repositories.user import UserRepository
 from app.services.conversation import ConversationService
 from app.services.conversation_thread import ConversationThreadService
 from app.services.proposal import ProposalService
@@ -499,23 +498,6 @@ async def _record(turn: _Turn, answer: _Answer, customer_text: str) -> None:
                      extra={**turn.ids, "error_type": type(exc).__name__})
 
 
-async def _seed_self_address(turn: _Turn, text: str) -> None:
-    """Khách CHƯA có `self_address` mà câu gõ chữ này tự xưng "chị"/"anh" → ghi
-    MỘT lần (CONTEXT.md "Xưng hô", Ruling R13). `set_self_address` tự lọc
-    `self_address: None` nên lượt chồng nhau / giá trị admin sửa tay không bị
-    ghi đè. Chỉ lượt gõ chữ — nút bấm không phải lời khách tự xưng. Lỗi chỉ
-    log id, không bao giờ log chữ khách."""
-    if turn.user.self_address is not None:
-        return
-    try:
-        self_address = detect_self_address(text)
-        if self_address:
-            await UserRepository(turn.db).set_self_address(str(turn.user.id), self_address)
-    except Exception as exc:
-        logger.warning("self_address_seed_failed",
-                       extra={**turn.ids, "error_type": type(exc).__name__})
-
-
 async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[UnannouncedDecision]) -> None:
     """Đánh dấu ĐÃ BÁO các quyết định câu khách vừa nhận đã nêu.
 
@@ -694,8 +676,6 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
 
         customer_text = BUTTON_LABELS[button.decision] if button is not None else text
         await _shielded(_record(turn, answer, customer_text))
-        if button is None:
-            await _shielded(_seed_self_address(turn, text))
         proposal = await _proposal_payload(db, user, turn.ids)
         progress.completed = True
         logger.info("turn_finished", extra={**turn.ids, "ended_by": answer.ended_by,

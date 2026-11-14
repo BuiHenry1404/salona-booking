@@ -10,7 +10,9 @@ canh, thêm tool mới thì thêm tên vào đây.
 """
 
 # Tool điều khiển của Orchestrator — luật tool và bộ lọc chữ dùng chung một tập.
-CONTROL_TOOLS = frozenset({"appointment_task", "shop_info_task", "service_task", "decide_pending"})
+CONTROL_TOOLS = frozenset({
+    "appointment_task", "shop_info_task", "service_task", "decide_pending", "remember_address",
+})
 
 SUBAGENT_TOOLS = frozenset({
     # dùng chung (subagents/time_tool.py)

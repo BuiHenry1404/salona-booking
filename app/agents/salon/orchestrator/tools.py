@@ -38,7 +38,8 @@ from app.agents.salon.subagents.service.agent import SERVICE
 from app.agents.salon.subagents.shop_info.agent import SHOP_INFO
 from app.agents.salon.turn.ledger import TurnLedger
 from app.core.logging import get_logger
-from app.models.user import User
+from app.models.user import SelfAddress, User
+from app.repositories.user import UserRepository
 
 logger = get_logger(__name__)
 
@@ -198,4 +199,26 @@ def make_orchestrator_tools(
             "turn_facts": [fact.model_dump(mode="json")],
         })
 
-    return [appointment_task, shop_info_task, service_task, decide_pending]
+    @tool
+    async def remember_address(
+        form: Annotated[SelfAddress, Field(
+            description="How the customer said they want to be addressed.")],
+        runtime: ToolRuntime[SalonContext, SalonState],
+    ) -> Command:
+        """Record how the customer wants to be addressed. Call it only when the customer
+        says this themselves (e.g. "cô muốn đặt...", "gọi bác là được") — never guess it
+        from their name or writing style. Call it again if they later ask to be addressed
+        differently."""
+        # Ghi vào DB (memory, sống qua mọi cuộc trò chuyện) VÀ lên chính `User`
+        # object `holder` đang giữ — `load_snapshot` không đọc lại user (chỉ
+        # nhận nó qua tham số), nên không sửa object này thì `mark_stale()`
+        # vẫn dựng lại bối cảnh với `self_address` cũ.
+        await UserRepository(db).set_self_address(str(user.id), form)
+        user.self_address = form
+        holder.mark_stale()
+        return Command(update={
+            "messages": [ToolMessage(content=json.dumps({"ok": True}),
+                                     name="remember_address", tool_call_id=runtime.tool_call_id)],
+        })
+
+    return [appointment_task, shop_info_task, service_task, decide_pending, remember_address]
