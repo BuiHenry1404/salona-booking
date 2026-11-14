@@ -92,10 +92,10 @@ async def test_ok_after_a_refused_proposal_opens_a_time_session(test_db, monkeyp
         command = await _run(test_db, user)
 
     summary = _summary(command)
-    assert (summary["status"], summary["question_field"]) == ("need_info", "time")
+    assert (summary["status"], summary["question_fields"]) == ("need_info", ["time"])
     assert summary["options"]
     session = (await _active(test_db, user))["appointment"]
-    assert session.question.field == "time"
+    assert session.question.fields == ["time"]
     assert [o.spoken for o in session.question.options] == summary["options"]
     assert any(log["event"] == "subagent_status_corrected" for log in logs)
 
@@ -112,7 +112,7 @@ async def test_availability_question_on_a_taken_time_opens_a_time_session(test_d
     command = await _run(test_db, user, request="Is 3pm tomorrow free?")
 
     assert _summary(command)["status"] == "need_info"
-    assert (await _active(test_db, user))["appointment"].question.field == "time"
+    assert (await _active(test_db, user))["appointment"].question.fields == ["time"]
 
 
 async def test_need_info_opens_a_session_with_code_extracted_options(test_db, monkeypatch):
@@ -131,7 +131,7 @@ async def test_need_info_opens_a_session_with_code_extracted_options(test_db, mo
     model = scripted([
         tool_call("find_free_slots", {"day": day, "around": "15:00"}),
         # Chữ model nêu giờ khác (14:00) — options vẫn chỉ lấy từ ToolMessage.
-        result(status="need_info", question_field="time",
+        result(status="need_info", question_fields=["time"],
                question_text="15:00 is taken. Ask: 14:00, 16:00 or 17:00?"),
     ])
     use_model(monkeypatch, model)
@@ -142,7 +142,7 @@ async def test_need_info_opens_a_session_with_code_extracted_options(test_db, mo
     assert [o.iso for o in session.question.options] == [
         moment(tomorrow_at(16))["iso"], moment(tomorrow_at(17))["iso"],
     ]
-    assert session.question.field == "time"
+    assert session.question.fields == ["time"]
     assert session.opened_turn_id == TURN_ID
     assert session.memory["offered"] == [moment(tomorrow_at(16)), moment(tomorrow_at(17))]
     assert session.memory["taken"] == [moment(tomorrow_at(15))]
@@ -157,9 +157,26 @@ async def test_need_info_opens_a_session_with_code_extracted_options(test_db, mo
     assert facts[-1] == {"kind": "agent_status", "agent": "appointment", "status": "need_info"}
     summary = _summary(command)
     assert summary["status"] == "need_info"
-    assert summary["question_field"] == "time"
+    assert summary["question_fields"] == ["time"]
     assert summary["options"] == [moment(tomorrow_at(16))["spoken"], moment(tomorrow_at(17))["spoken"]]
     assert "failed_calls" not in command.update
+
+
+async def test_session_keeps_every_asked_field(test_db, monkeypatch):
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    model = scripted([
+        result(status="need_info", question_fields=["day", "time"],
+               question_text="Which day and time?"),
+    ])
+    use_model(monkeypatch, model)
+
+    command = await _run(test_db, user)
+
+    session = (await _active(test_db, user))["appointment"]
+    assert session.question.fields == ["day", "time"]
+    summary = _summary(command)
+    assert summary["question_fields"] == ["day", "time"]
 
 
 async def test_continue_session_passes_memory_in_the_message(test_db, monkeypatch):
@@ -236,7 +253,7 @@ async def test_proposal_with_next_requests_keeps_the_session_open(test_db, monke
     command = await _run(test_db, user, request="Book 9am and 3pm tomorrow")
 
     session = (await _active(test_db, user))["appointment"]
-    assert session.question.field == "confirm"
+    assert session.question.fields == ["confirm"]
     assert session.memory["next_requests"] == [moment(tomorrow_at(15))]
     ttl = timedelta(minutes=settings.salon_session_ttl_minutes)
     assert before + ttl <= session.expires_at <= now_utc() + ttl
@@ -271,7 +288,7 @@ async def test_refused_second_propose_keeps_the_next_request(test_db, monkeypatc
     refused = [m for m in tool_json(model, "propose_appointment") if "error" in m]
     assert [m["error"] for m in refused] == ["one_proposal_per_call"]
     session = (await _active(test_db, user))["appointment"]
-    assert session.question.field == "confirm"
+    assert session.question.fields == ["confirm"]
     assert session.memory["next_requests"] == [moment(tomorrow_at(16))]
     assert command.update["proposals_created"] == 1
 
@@ -296,7 +313,7 @@ async def test_a_taken_next_request_is_dropped_from_the_session(test_db, monkeyp
     await _run(test_db, user, continue_session=True, request="Book the next requested time")
 
     session = (await _active(test_db, user))["appointment"]
-    assert session.question.field == "time"
+    assert session.question.fields == ["time"]
     assert session.memory["next_requests"] == []
 
 
@@ -344,7 +361,7 @@ async def test_new_task_replaces_the_waiting_session(test_db, monkeypatch):
     user = await a_user(test_db)
     await _open_session(test_db, user, task="Older task")
     model = scripted([
-        result(status="need_info", question_field="day", question_text="Which day?"),
+        result(status="need_info", question_fields=["day"], question_text="Which day?"),
     ])
     use_model(monkeypatch, model)
 
@@ -353,7 +370,7 @@ async def test_new_task_replaces_the_waiting_session(test_db, monkeypatch):
     assert "Session memory:" not in human_text(model)
     session = (await _active(test_db, user))["appointment"]
     assert session.task == "Customer wants another service"
-    assert session.question.field == "day"
+    assert session.question.fields == ["day"]
     assert session.question.options == []
     assert session.memory.get("offered") == []
     assert session.memory.get("taken") == []

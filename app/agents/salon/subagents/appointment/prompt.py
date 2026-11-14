@@ -46,10 +46,12 @@ Finish with SubagentResult:
 - ok: the task is done: a proposal was created, or the information asked for
   (free times, the customer's appointments) is in the tool results. If a time
   the customer asked about turned out taken and no proposal was created, the
-  result is never ok: finish need_info with question_field time.
-- need_info: exactly ONE missing piece must be asked from the customer. Set
-  question_field (day, week, time, part_of_day, service, which_appointment)
-  and a short English question_text for the Orchestrator naming the options
-  the tools returned.
+  result is never ok: finish need_info with question_fields ["time"].
+- need_info asks every missing piece of the request at once in
+  question_fields (day, week, time, part_of_day, service, which_appointment —
+  for example day and time when the customer said nothing about when; only
+  time when they gave the day). which_appointment and confirm are always
+  asked alone. Set a short English question_text for the Orchestrator naming
+  the options the tools returned.
 - failed: the task cannot be done; error_code is the tool's error code.
 """

@@ -24,7 +24,7 @@ Rules:
   need to repeat them.
 - Exactly one service fits what the customer said: finish ok.
 - Several services fit and the customer's words do not pick one: finish
-  need_info with question_field "service", naming the candidate services.
+  need_info with question_fields ["service"], naming the candidate services.
 - Answering your earlier question: call get_service for the service the
   customer picked from the candidates, then finish ok.
 - A general price question (no single service meant) is answered by the
@@ -35,8 +35,8 @@ Finish with SubagentResult:
 - ok: the service is identified, or the price question is answered by the
   tool results.
 - need_info: exactly ONE missing piece must be asked from the customer (which
-  service). Set question_field and a short English question_text for the
-  Orchestrator naming the candidates the tools returned.
+  service). Set question_fields ["service"] and a short English question_text
+  for the Orchestrator naming the candidates the tools returned.
 - failed: the task cannot be done (no service in the catalogue matches);
   error_code is the tool's error code, or service_not_found.
 """

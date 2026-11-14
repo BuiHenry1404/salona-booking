@@ -232,7 +232,7 @@ def need_info_15() -> list[AIMessage]:
     return [
         tool_call("parse_time", {"day_offset": 1, "hour": 3, "part_of_day": "chieu"}),
         tool_call("find_free_slots", {"day": DAY, "around": ISO15}),
-        result(status="need_info", question_field="time",
+        result(status="need_info", question_fields=["time"],
                question_text="3pm is taken; ask which free time the customer wants."),
     ]
 
@@ -1083,7 +1083,7 @@ async def test_named_but_unclear_service_is_asked_not_proposed(test_db, monkeypa
     ])
     sub = subagents(monkeypatch, [
         tool_call("search_services", {"query": "sơn móng"}),
-        result(status="need_info", question_field="service",
+        result(status="need_info", question_fields=["service"],
                question_text="Ask whether the customer wants regular polish or gel polish."),
         *propose_9_refused("service_unclear"),
     ])
@@ -1184,7 +1184,7 @@ async def test_cancel_while_a_service_session_waits(test_db, monkeypatch):
     ])
     subagents(monkeypatch, [
         tool_call("search_services", {"query": "sơn móng"}),
-        result(status="need_info", question_field="service", question_text="Regular or gel?"),
+        result(status="need_info", question_fields=["service"], question_text="Regular or gel?"),
         tool_call("propose_cancel", {"appointment_id": str(appt.id)}), result(status="ok"),
     ])
 

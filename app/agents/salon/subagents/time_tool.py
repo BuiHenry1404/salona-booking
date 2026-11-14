@@ -41,7 +41,7 @@ def period_from_customer(question: str, hour: int) -> Optional[str]:
 
 
 # `ParsedTime.missing` (chữ tiếng Việt, dữ liệu của timeparse) → mã tiếng Anh
-# cùng tên với `QuestionField` để agent con điền `question_field` không cần dịch.
+# cùng tên với `QuestionField` để agent con điền `question_fields` không cần dịch.
 _MISSING_CODES = {
     "giờ cụ thể": "time",
     "sáng hay chiều": "part_of_day",

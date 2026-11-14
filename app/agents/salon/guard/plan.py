@@ -304,7 +304,8 @@ def build_plan(
     if proposal is None:
         offer: list[Moment] = []
         from_nearest = False
-        if opened is not None and opened[1].question.field == "time" and opened[1].question.options:
+        if (opened is not None and opened[1].question.fields[0] == "time"
+                and opened[1].question.options):
             offer = _distinct(Moment(iso=o.iso, spoken=o.spoken) for o in opened[1].question.options)
             asks_session = opened[0]
         elif (pending_outcome is not None and pending_outcome.nearest
@@ -320,9 +321,10 @@ def build_plan(
             acts.append(PlanAct(kind="offer", sentence=sentence, clocks=_clocks(offer)))
 
     # -- 7. hỏi câu của phiên vừa mở ------------------------------------------------
-    if opened is not None and asks_session is None and opened[1].question.field in FIELD_QUESTION:
+    if (opened is not None and asks_session is None
+            and opened[1].question.fields[0] in FIELD_QUESTION):
         acts.append(PlanAct(kind="ask_field",
-                            sentence=FIELD_QUESTION[opened[1].question.field].format(address=address)))
+                            sentence=FIELD_QUESTION[opened[1].question.fields[0]].format(address=address)))
         asks_session = opened[0]
 
     # -- 8. báo giá (chỉ lượt không có hành động đặt lịch) -------------------------

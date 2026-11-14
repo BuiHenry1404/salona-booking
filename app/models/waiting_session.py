@@ -11,7 +11,7 @@ Mongo — phiên `closed` vẫn ở lại document để lần `open` sau ghi đ
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from app.models.base import BaseDocument
 
@@ -26,9 +26,19 @@ class SessionOption(BaseModel):
 class SessionQuestion(BaseModel):
     """Câu hỏi ngắn agent con gửi lên Orchestrator để hỏi khách tiếp."""
 
-    field: str
+    fields: list[str]
     options: list[SessionOption] = []
     text: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _old_document_had_one_field(cls, data: Any) -> Any:
+        """Phiên Mongo cũ còn `field: str` (trước khi hỏi gộp) — sống tối đa 10
+        phút nên không cần chuyển dữ liệu; đọc như một phần tử (quyết định 21)."""
+        if isinstance(data, dict) and "field" in data and "fields" not in data:
+            data = dict(data)
+            data["fields"] = [data.pop("field")]
+        return data
 
 
 class WaitingSession(BaseDocument):

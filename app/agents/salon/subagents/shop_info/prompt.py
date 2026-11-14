@@ -30,7 +30,7 @@ Rules:
 Finish with SubagentResult:
 - ok: the question is answered by the tool results.
 - need_info: exactly ONE missing piece must be asked from the customer (for
-  example which day they mean). Set question_field and a short English
+  example which day they mean). Set question_fields and a short English
   question_text for the Orchestrator naming the options the tools returned.
 - failed: the task cannot be done; error_code is the tool's error code.
 """

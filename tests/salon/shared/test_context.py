@@ -335,6 +335,29 @@ async def test_times_in_context_block_use_vn_local_offset(test_db):
     assert "+07:00" in sessions_block
 
 
+def test_old_session_document_reads_as_one_field():
+    assert SessionQuestion.model_validate({"field": "time", "text": "x"}).fields == ["time"]
+
+
+async def test_context_lists_session_fields(test_db):
+    user = await _make_user(test_db)
+    waiting = WaitingSessionService(test_db)
+    now = now_utc()
+    question = SessionQuestion(fields=["day", "time"], options=[], text="Ngày nào, mấy giờ ạ?")
+    await waiting.open(WaitingSession(
+        user_id=str(user.id), agent="appointment", task="book", memory={}, question=question,
+        asked_at=now, expires_at=now + timedelta(minutes=10), opened_turn_id="t1",
+    ))
+
+    snapshot = await _snapshot(test_db, user)
+    text = render_context(
+        snapshot, audience="orchestrator", turn_facts=[], memory_text=None, now=now_utc(),
+    )
+
+    sessions_block = text.split("Waiting sessions:", 1)[1].split("\n\n", 1)[0]
+    assert "fields=day,time" in sessions_block
+
+
 async def test_snapshot_lists_only_active_sessions(test_db):
     user = await _make_user(test_db)
     waiting = WaitingSessionService(test_db)

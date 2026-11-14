@@ -156,7 +156,7 @@ def print_state(state: Dict[str, Any]) -> None:
     if sessions:
         for agent, session in sessions.items():
             print(f"     - phiên chờ [{agent}]: việc={session.task!r} "
-                  f"thiếu trường={session.question.field!r} "
+                  f"thiếu trường={session.question.fields!r} "
                   f"hết hạn={to_local(session.expires_at).isoformat()}")
     else:
         print("     - phiên chờ      : không có")

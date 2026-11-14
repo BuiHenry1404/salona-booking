@@ -82,8 +82,8 @@ class SubagentResult(BaseModel):
     status: Literal["ok", "need_info", "failed"] = Field(
         description="ok: task done. need_info: one piece must be asked from the customer. "
                     "failed: the task cannot be done.")
-    question_field: Optional[QuestionField] = Field(
-        description="With need_info: the ONE piece to ask for.")
+    question_fields: list[QuestionField] = Field(
+        description="With need_info: every piece to ask for, all at once.")
     question_text: Optional[str] = Field(
         description="With need_info: a short note for the Orchestrator (English) saying what "
                     "to ask; mention only times taken from tool results.")
@@ -92,8 +92,8 @@ class SubagentResult(BaseModel):
 
     @model_validator(mode="after")
     def _need_info_names_its_question(self) -> "SubagentResult":
-        if self.status == "need_info" and (self.question_field is None or not self.question_text):
-            raise ValueError("need_info requires question_field and question_text")
+        if self.status == "need_info" and (not self.question_fields or not self.question_text):
+            raise ValueError("need_info requires question_fields and question_text")
         return self
 
 
@@ -175,7 +175,7 @@ def render_session(session: WaitingSession) -> str:
     lines = [
         "Session memory:",
         f"- original task: {session.task}",
-        f"- waiting for: {session.question.field}, options={options}",
+        f"- waiting for: {','.join(session.question.fields)}, options={options}",
     ]
     for key in sorted(session.memory):
         lines.append(f"- {key}: {_render_value(session.memory[key])}")
@@ -269,7 +269,7 @@ async def _invoke(make_agent: Callable[[], Awaitable[Any]], message: HumanMessag
     return (None if error else output), list(latest["messages"]), error
 
 
-def _session(ctx: RunContext, spec: SubagentSpec, extracted: Extracted, *, field: str,
+def _session(ctx: RunContext, spec: SubagentSpec, extracted: Extracted, *, fields: list[str],
              options: list[Moment], text: str) -> WaitingSession:
     now = now_utc()
     return WaitingSession(
@@ -279,7 +279,7 @@ def _session(ctx: RunContext, spec: SubagentSpec, extracted: Extracted, *, field
         task=ctx.session.task if ctx.session is not None else ctx.request,
         memory=extracted.memory,
         question=SessionQuestion(
-            field=field, options=[SessionOption(**option.model_dump()) for option in options],
+            fields=fields, options=[SessionOption(**option.model_dump()) for option in options],
             text=text,
         ),
         asked_at=now,
@@ -293,14 +293,14 @@ async def _write_session(spec: SubagentSpec, ctx: RunContext, status: str,
     """Ghi phiên theo kết quả; trả True nếu đã ghi DB. `failed` giữ nguyên phiên cũ."""
     waiting = WaitingSessionService(ctx.db)
     if status == "need_info":
-        await waiting.open(_session(ctx, spec, extracted, field=result.question_field,
+        await waiting.open(_session(ctx, spec, extracted, fields=result.question_fields,
                                     options=extracted.options, text=result.question_text))
         return True
     if status == "ok":
         if extracted.memory.get("next_requests"):
             # Đề xuất lịch đầu của "hai lịch một tin" (spec §5.1): phiên vẫn
             # mở để giữ yêu cầu kế, chờ khách xác nhận đề xuất.
-            await waiting.open(_session(ctx, spec, extracted, field="confirm", options=[],
+            await waiting.open(_session(ctx, spec, extracted, fields=["confirm"], options=[],
                                         text=(result.question_text if result else None) or ""))
         else:
             await waiting.close(str(ctx.user.id), spec.name, reason="ok")
@@ -348,7 +348,7 @@ def _summary(spec: SubagentSpec, status: str, result: Optional[SubagentResult],
     return json.dumps({
         "agent": spec.name,
         "status": status,
-        "question_field": result.question_field if result else None,
+        "question_fields": result.question_fields if result else None,
         "question_text": result.question_text if result else None,
         "error_code": error,
         "options": [option.spoken for option in extracted.options] if status == "need_info" else [],

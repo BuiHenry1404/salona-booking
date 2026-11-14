@@ -62,7 +62,7 @@ def use_model(monkeypatch, model) -> None:
 
 def result(**fields) -> AIMessage:
     """Lời gọi `SubagentResult` cuối (ToolStrategy, tên tool = tên class)."""
-    fields.setdefault("question_field", None)
+    fields.setdefault("question_fields", [])
     fields.setdefault("question_text", None)
     fields.setdefault("error_code", None)
     return tool_call("SubagentResult", fields)

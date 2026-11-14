@@ -368,7 +368,7 @@ def _render_sessions(snapshot: TurnSnapshot) -> str:
     for agent, session in snapshot.sessions.items():
         options = ", ".join(option.spoken for option in session.question.options) or "none"
         lines.append(
-            f"- {agent}: field={session.question.field}, options=[{options}], "
+            f"- {agent}: fields={','.join(session.question.fields)}, options=[{options}], "
             f"expires {to_local(session.expires_at).isoformat()}"
         )
     return "\n".join(lines)

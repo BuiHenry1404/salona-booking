@@ -115,7 +115,7 @@ async def test_ambiguous_service_opens_a_session(test_db, monkeypatch):
     user = await a_user(test_db)
     model = scripted([
         tool_call("search_services", {"query": "sơn móng"}),
-        result(status="need_info", question_field="service",
+        result(status="need_info", question_fields=["service"],
                question_text="Ask whether the customer wants regular polish or gel polish."),
     ])
     use_model(monkeypatch, model)
@@ -126,7 +126,7 @@ async def test_ambiguous_service_opens_a_session(test_db, monkeypatch):
     assert [(f["service_id"], f["identified"]) for f in _service_facts(command)] == [
         ("nail-son-thuong", False), ("nail-son-gel", False)]
     session = (await WaitingSessionService(test_db).active(str(user.id), now=now_utc()))["service"]
-    assert session.question.field == "service"
+    assert session.question.fields == ["service"]
     assert session.memory == {"candidates": ["nail-son-thuong", "nail-son-gel"], "service_ids": []}
 
 
@@ -135,7 +135,7 @@ async def test_answering_the_session_pins_the_service(test_db, monkeypatch):
     user = await a_user(test_db)
     use_model(monkeypatch, scripted([
         tool_call("search_services", {"query": "sơn móng"}),
-        result(status="need_info", question_field="service", question_text="Regular or gel?"),
+        result(status="need_info", question_fields=["service"], question_text="Regular or gel?"),
         tool_call("get_service", {"service_id": "nail-son-gel"}),
         result(status="ok"),
     ]))
@@ -183,7 +183,7 @@ async def test_single_match_is_identified_only_when_ok(test_db, monkeypatch):
     user = await a_user(test_db)
     use_model(monkeypatch, scripted([
         tool_call("search_services", {"query": "nhuộm"}),
-        result(status="need_info", question_field="service", question_text="Which colour?"),
+        result(status="need_info", question_fields=["service"], question_text="Which colour?"),
     ]))
 
     command = await _run(test_db, user, question="nhuộm tóc")

@@ -235,7 +235,7 @@ def reconcile_appointment(result: SubagentResult, extracted: Extracted) -> Subag
         return result
     return result.model_copy(update={
         "status": "need_info",
-        "question_field": "time",
+        "question_fields": ["time"],
         "question_text": TAKEN_ASK_OFFERED if extracted.options else TAKEN_ASK_OTHER,
     })
 

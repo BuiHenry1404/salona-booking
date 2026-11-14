@@ -202,7 +202,7 @@ async def test_move_does_not_call_its_own_time_taken(test_db, monkeypatch):
         tool_call("find_free_slots", {"day": tomorrow_at(15).date().isoformat(),
                                       "around": tomorrow_at(15, 15).isoformat(),
                                       "replaces_appointment_id": str(appt.id)}),
-        result(status="need_info", question_field="time", question_text="Which time?"),
+        result(status="need_info", question_fields=["time"], question_text="Which time?"),
     ])
     use_model(monkeypatch, model)
 
@@ -222,7 +222,7 @@ async def test_own_time_is_yours_not_taken(test_db, monkeypatch):
     model = scripted([
         tool_call("find_free_slots", {"day": tomorrow_at(15).date().isoformat(),
                                       "around": "15:30"}),
-        result(status="need_info", question_field="time", question_text="Another time?"),
+        result(status="need_info", question_fields=["time"], question_text="Another time?"),
     ])
     use_model(monkeypatch, model)
 
@@ -360,9 +360,24 @@ FREE = Moment(iso="2026-11-12T16:00:00+07:00", spoken="Thứ Năm 12/11, 4 giờ
 
 
 def _result(status="ok", **fields) -> SubagentResult:
-    return SubagentResult(status=status, question_field=fields.get("question_field"),
+    return SubagentResult(status=status, question_fields=fields.get("question_fields", []),
                           question_text=fields.get("question_text"),
                           error_code=fields.get("error_code"))
+
+
+def test_need_info_accepts_several_fields():
+    SubagentResult(status="need_info", question_fields=["day", "time"],
+                   question_text="Which day and time?", error_code=None)
+    with pytest.raises(ValueError):
+        SubagentResult(status="need_info", question_fields=[],
+                       question_text="Which day and time?", error_code=None)
+
+
+def test_taken_without_proposal_asks_time():
+    # agent.py ~237: code-made need_info must ask for exactly ["time"].
+    extracted = Extracted(facts=[TimeFact(role="taken", moment=TAKEN)], options=[])
+    fixed = reconcile_appointment(_result(), extracted)
+    assert fixed.question_fields == ["time"]
 
 
 def test_ok_with_a_taken_time_and_no_proposal_becomes_need_info():
@@ -371,8 +386,8 @@ def test_ok_with_a_taken_time_and_no_proposal_becomes_need_info():
                                  TimeFact(role="taken", moment=TAKEN),
                                  TimeFact(role="free", moment=FREE)], options=[FREE])
     fixed = reconcile_appointment(_result(), extracted)
-    assert (fixed.status, fixed.question_field, fixed.question_text) == (
-        "need_info", "time", TAKEN_ASK_OFFERED)
+    assert (fixed.status, fixed.question_fields, fixed.question_text) == (
+        "need_info", ["time"], TAKEN_ASK_OFFERED)
 
 
 def test_taken_time_without_free_options_asks_for_another_time():
@@ -393,7 +408,7 @@ def test_ok_without_a_taken_time_stays_ok():
 
 
 @pytest.mark.parametrize("given", [
-    _result("need_info", question_field="day", question_text="Ask which day."),
+    _result("need_info", question_fields=["day"], question_text="Ask which day."),
     _result("failed", error_code="service_required"),
 ])
 def test_reconcile_leaves_need_info_and_failed_alone(given):

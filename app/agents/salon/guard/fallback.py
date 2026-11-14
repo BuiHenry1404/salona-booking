@@ -67,7 +67,7 @@ APPOINTMENTS_REPLY = "Dạ {address} có lịch hẹn {times} ạ."
 HOURS_REPLY = "Dạ tiệm mở cửa từ {open} đến {close} ạ."
 BUSY_REPLY = "Dạ tiệm đang bận tới {at} ạ."
 
-# Câu hỏi của phiên chờ vừa mở, theo `SessionQuestion.field` (7 field của
+# Câu hỏi của phiên chờ vừa mở, theo `SessionQuestion.fields[0]` (7 field của
 # `shared/schemas.py::QuestionField`). Field lạ -> `GENERIC_FALLBACK`.
 FIELD_QUESTION = {
     "day": "Dạ {address} muốn ngày nào ạ?",
