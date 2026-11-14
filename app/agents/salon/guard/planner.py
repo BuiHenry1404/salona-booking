@@ -305,14 +305,20 @@ def build_plan(results: TurnResults) -> ReplyPlan:
         if opened is not None and "time" in opened[1].question.fields:
             offer = _session_options(opened[1])[:_OFFER_CAP]
             offered_session = bool(offer)
-        if not offer:
+        # `failed.nearest` đã mời các giờ gần nhất — không mời thêm giờ trống
+        # (kế hoạch cũ: mời `nearest` HOẶC giờ trống, không cả hai).
+        nearest_offered = any(act.act == "failed" and act.fields["nearest"]
+                              for act in planner.acts)
+        if not offer and not nearest_offered:
             offer = _times(results, "free")[:_OFFER_CAP]
         if offer:
             planner.add("offer", {"times": [label(m) for m in offer]}, moments=offer)
     ask: Optional[PlanAsk] = None
     if opened is not None:
         agent, session = opened
-        if offered_session:
+        if offered_session or (proposal is not None and session.question.fields == ["confirm"]):
+            # Đề xuất đã hỏi "đồng ý không" — không hỏi xác nhận lần hai; phiên
+            # vẫn giữ mở (R12), không thì yêu cầu đang xếp hàng bị mất.
             asked_session = agent
         else:
             fields = [f for f in session.question.fields if f in _QUESTION_FIELDS]

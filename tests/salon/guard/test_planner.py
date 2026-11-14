@@ -47,6 +47,13 @@ def test_cancel_proposal_has_no_services():
     assert _plan("cancel_proposal").acts[0].service_names == []
 
 
+def test_proposal_with_confirm_session_asks_once():
+    plan = _plan("proposal_with_confirm_session")
+    assert plan.to_json() == {"taken_told_by_code": [], "acts": [_PROPOSAL], "ask": None}
+    assert plan.ask is None
+    assert plan.asked_session == "appointment"
+
+
 def test_offer_at_most_three():
     assert _json("five_free") == {
         "taken_told_by_code": [],
@@ -116,6 +123,12 @@ def test_failed_phone_rule():
     ]
     assert plan.phone == SHOP_PHONE
     assert plan.announce_turn_ids() == [TURN_ID, "turn-0"]
+
+
+def test_failed_nearest_drops_free_offer():
+    assert _json("failed_nearest_with_free")["acts"] == [
+        {"act": "failed", "at": "3 giờ chiều mai",
+         "nearest": ["4 giờ chiều mai", "5 giờ chiều mai"], "phone": None}]
 
 
 def test_released():

@@ -53,6 +53,9 @@ RESULTS: dict[str, TurnResults] = {
                     time_fact("free", at(17)), time_fact("free", at(18))]),
     "cancel_proposal": turn_results(
         turn_facts=[proposal_fact(at(16), kind="cancel", service_ids=[GEL.id])]),
+    "proposal_with_confirm_session": turn_results(
+        snapshot=a_snapshot(sessions=_opened(fields=["confirm"])),
+        turn_facts=[proposal_fact(at(16), service_ids=[GEL.id])]),
     "five_free": turn_results(
         turn_facts=[time_fact("free", at(hour)) for hour in (9, 10, 11, 13, 14)]),
     "asked_price_on_booking": turn_results(
@@ -69,6 +72,10 @@ RESULTS: dict[str, TurnResults] = {
     "r0_other_turn": turn_results(snapshot=a_snapshot(unannounced=r0(at(11)))),
     "failed_no_nearest": turn_results(**_failed()),
     "failed_with_nearest": turn_results(**_failed(nearest=[at(16), at(17)])),
+    "failed_nearest_with_free": turn_results(
+        **{**_failed(nearest=[at(16), at(17)]),
+           "turn_facts": [decision_fact(at(15), outcome="failed"),
+                          time_fact("free", at(16)), time_fact("free", at(17))]}),
     "failed_twice": turn_results(
         snapshot=a_snapshot(unannounced=r0(at(11), outcome="failed")), **_failed()),
     "released": turn_results(turn_facts=[decision_fact(at(11), outcome="rejected")],
