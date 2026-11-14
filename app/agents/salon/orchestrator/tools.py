@@ -129,9 +129,12 @@ def make_orchestrator_tools(
         if asks_price:
             # Code không đoán ý khách từ chữ (bẫy 21), nhưng Orchestrator hiểu ý
             # khách — đánh dấu để kế hoạch báo giá dù lượt có đặt lịch hay không
-            # (spec "Bổ sung: asks_price").
+            # (spec "Bổ sung: asks_price"). Chỉ đánh dấu dịch vụ khách NÊU
+            # (`identified`) — khách hỏi bảng giá (nhiều dịch vụ chỉ được liệt
+            # kê, không chốt) không bắt kế hoạch báo giá từng dịch vụ liệt kê
+            # (quyết định của controller).
             for fact in command.update.get("turn_facts", []):
-                if fact.get("kind") == "service":
+                if fact.get("kind") == "service" and fact.get("identified"):
                     fact["asked_price"] = True
         return command
 

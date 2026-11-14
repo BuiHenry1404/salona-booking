@@ -472,3 +472,31 @@ async def test_service_task_marks_asked_price_facts(test_db, monkeypatch, asks_p
     service_facts = [fact for fact in state["turn_facts"] if fact["kind"] == "service"]
     assert service_facts
     assert all(fact["asked_price"] is asks_price for fact in service_facts)
+
+
+async def test_asks_price_on_a_price_list_marks_no_fact(test_db, monkeypatch):
+    """Controller ruling: a real customer asking for the price list also makes the
+    Orchestrator set `asks_price=True`. Marking `asked_price` must still only ever
+    land on the service the customer NAMED (`identified`), never on listed
+    candidates — otherwise the plan would force a price act for every listed
+    service (spec "Bổ sung: asks_price")."""
+    await default_hours(test_db)
+    await seed_services(test_db)
+    user = await a_user(test_db)
+    use_model(monkeypatch, scripted([
+        tool_call("list_services", {"category": "toc"}), result(status="ok"),
+    ]))
+    model = scripted([
+        tool_call("service_task", {"request": "Hair price list.", "continue_session": False,
+                                   "asks_price": True}),
+        AIMessage(content="Dạ"),
+    ])
+
+    state, *_ = await _orchestrator_turn(test_db, user, model, question="bảng giá làm tóc")
+
+    [message] = _tool_messages(state)
+    assert message.status != "error"
+    service_facts = [fact for fact in state["turn_facts"] if fact["kind"] == "service"]
+    assert len(service_facts) >= 2
+    assert all(fact["identified"] is False for fact in service_facts)
+    assert all(fact["asked_price"] is False for fact in service_facts)

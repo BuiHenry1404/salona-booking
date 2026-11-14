@@ -904,7 +904,7 @@ OFFER_9 = reply("Dạ vâng, em giữ chỗ ", cite("held", S9, find=S9_CLOCK),
                 " cho chị Lan, chị Lan đồng ý không ạ?")
 DYE_PRICE = {"request": "Price of hair dyeing.", "continue_session": False, "asks_price": True}
 DYE = {"request": "Hair dyeing.", "continue_session": False, "asks_price": False}
-HAIR_LIST = {"request": "Hair price list.", "continue_session": False, "asks_price": False}
+HAIR_LIST = {"request": "Hair price list.", "continue_session": False, "asks_price": True}
 CANCEL_10_TEXT = f"Dạ em sẽ huỷ lịch {S10} cho chị Lan, chị Lan đồng ý không ạ?"
 CANCEL_10 = reply("Dạ em sẽ huỷ lịch ", cite("held", S10, find=S10_CLOCK),
                   " cho chị Lan, chị Lan đồng ý không ạ?")
