@@ -84,13 +84,10 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
     dùng nhãn ngắn và tên dịch vụ, `PendingOutcome.service_ids`.
   - **Task 2:** xong, qua review (commit `7fe0e1e..0002ac5`). Gồm `check_reply`, `MEANING_CODES`,
     các mã `plan_missing` / `unknown_time` / `unknown_price` / `wrong_service` / `taken_offered`.
-  - **Task 2b (`asks_price` trên `service_task`):** commit `bfbd2a8`. Sau đó có một sửa
-    **chưa commit** (lúc viết file này agent đang chạy test để commit): `asked_price` chỉ gắn cho
-    dịch vụ `identified`, và `HAIR_LIST` đặt lại `asks_price: true`, trong `orchestrator/tools.py`,
-    `tests/salon/orchestrator/test_tool_rules.py`, `tests/salon/turn/test_run.py`. Phiên sau:
-    1. kiểm `git status` / `git log`;
-    2. nếu chưa commit thì chạy toàn bộ pytest rồi commit;
-    3. sau đó **review Task 2b**.
+  - **Task 2b (`asks_price` trên `service_task`):** đã làm xong (commit `bfbd2a8` và `48d154e`;
+    `asked_price` chỉ gắn cho dịch vụ `identified`). Toàn bộ test: 1127 đạt, chỉ hỏng test có sẵn.
+    **Chưa review.** Phiên sau bắt đầu bằng **review Task 2b** (gói diff `34f06ce..48d154e`, bỏ qua
+    commit tài liệu `136f069`).
   - **Còn lại:**
     - Task 3: nối vào Orchestrator, **gỡ mức C** (`segments.py`, `check_structured`, JSON
       `response_format`, công cụ test `reply` / `cite`), đánh dấu "đã báo" theo kế hoạch.
@@ -119,7 +116,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 
 ### Làm tiếp sau khi mở phiên mới
 1. Đọc sổ `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md` và `git log --oneline -10`.
-   Hoàn tất commit Task 2b nếu còn dở, review Task 2b, rồi chạy Task 3 → 6 theo
+   Review Task 2b, rồi chạy Task 3 → 6 theo
    `superpowers:subagent-driven-development`.
 2. Review cuối cả đợt (model mạnh nhất), sửa Critical / Important trong một đợt.
 3. **Hỏi chủ dự án** rồi chạy thật kịch bản A và B:
