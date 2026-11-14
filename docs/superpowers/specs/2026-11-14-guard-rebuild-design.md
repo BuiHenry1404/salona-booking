@@ -83,9 +83,11 @@ mang sang những mục được nhắc tên ở đây (bộ đo độ chính x�
 - LLM chấm. Bị loại theo quyết định 5.
 
 **Cách xây:**
-- **Đập một lần.** Chủ dự án chọn. Xoá phần guard cũ và viết lại trong một đợt, chấp nhận test đỏ
-  giữa đợt và diff lớn.
-- Xây song song rồi chuyển. Bị loại theo lựa chọn của chủ dự án.
+- **Đập một lần.** Chủ dự án chọn: viết lại toàn bộ, không sửa dần file cũ, không code cầu nối.
+  *Điều chỉnh sau review plan (chủ dự án đồng ý 14/11):* `tests/conftest.py` import `main`, nên xoá
+  guard cũ trước thì pytest không chạy được test nào. Vì vậy các file mới được viết **cạnh** file cũ
+  (tên mới, không import file cũ, không sửa file cũ); một task chuyển mọi chỗ gọi và **xoá cùng
+  lúc** toàn bộ guard cũ và mức C. Test xanh ở mọi task.
 - Sửa dần trên file cũ. Bị loại: mang theo cấu trúc chồng lớp.
 
 ## Thiết kế
@@ -360,8 +362,7 @@ tất cả **viết lại 1 lần**:
 - Tên kiểu dữ liệu, tên hàm, chia task.
 - Lời nhắc ngắn theo mã (`hint`), nhãn tiếng Anh của khối JSON trong bối cảnh.
 - Cách gộp nhiều giờ kín thành một câu báo.
-- Đập một lần: giữa đợt, test của phần cũ được phép đỏ. Cuối đợt toàn bộ backend phải xanh
-  (trừ test hỏng sẵn).
+- Mỗi task: toàn bộ backend xanh (trừ test hỏng sẵn).
 
 ## Tiêu chí xong
 
