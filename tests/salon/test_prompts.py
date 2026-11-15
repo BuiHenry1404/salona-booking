@@ -274,3 +274,20 @@ def test_orchestrator_prompt_lets_the_customer_drop_a_request():
     flat = _flat(ORCHESTRATOR_PROMPT)
     assert ("When the customer drops a request (for example \"never mind\" or \"let me "
             "think\"), acknowledge it and do not ask that waiting question again.") in flat
+
+
+def test_orchestrator_prompt_continues_a_booking_after_a_service_answer():
+    """Residual 3, P10 (live): the service question was answered; the earlier
+    booking request with its time must go on in the same turn."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert ("When the customer answers a service question and an earlier message in this "
+            "conversation asked to book with a time, call appointment_task in that same turn "
+            "with the now-identified service and that time") in flat
+    assert "never compute the date yourself" in flat
+
+
+def test_orchestrator_prompt_lets_the_plan_ask_win_over_a_dropped_request():
+    """Residual 3, P8 precedence: the guard enforces the plan's `ask`."""
+    waiting = _section(ORCHESTRATOR_PROMPT, "Waiting sessions:")
+    assert ("The reply plan wins: if its `ask` still carries that question, ask it "
+            "briefly.") in waiting
