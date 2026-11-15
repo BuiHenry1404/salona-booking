@@ -63,10 +63,20 @@
     "id": "toc-cat-nu",
     "category": "toc",
     "name": "Cắt tóc nữ",
-    "aliases": ["cắt tóc"],
+    "aliases": ["cắt tóc cho nữ"],
     "price_min": 100000,
     "price_max": 150000,
     "duration_minutes": 45,
+    "active": true
+  },
+  {
+    "id": "toc-cat-nam",
+    "category": "toc",
+    "name": "Cắt tóc nam",
+    "aliases": ["cắt tóc cho nam"],
+    "price_min": 60000,
+    "price_max": 100000,
+    "duration_minutes": 30,
     "active": true
   },
   {

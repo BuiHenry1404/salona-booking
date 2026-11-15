@@ -179,3 +179,16 @@ def test_orchestrator_prompt_lets_the_customers_own_form_of_address_win():
     flat = _flat(ORCHESTRATOR_PROMPT)
     assert ("When the customer refers to themselves with a form of address different from the "
             "Address line, their own words win: call remember_address with that form") in flat
+
+
+def test_service_prompt_identifies_only_a_full_name_match():
+    """Live try 15/11 (L4a): "cat toc" is only part of "Cat toc nu" — the agent
+    asks whether that is the service instead of picking it (no gender guess
+    in code)."""
+    from app.agents.salon.subagents.service.prompt import SERVICE_PROMPT
+
+    flat = _flat(SERVICE_PROMPT)
+    assert ("Identify a service (finish ok) only when the customer's words name its whole "
+            "catalogue name, or the customer confirmed that service") in flat
+    assert ("When the customer's words match only part of a service name, finish need_info "
+            "with question_fields [\"service\"], asking whether they want that service") in flat

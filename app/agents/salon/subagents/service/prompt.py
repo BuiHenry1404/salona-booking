@@ -22,7 +22,13 @@ Rules:
 - Prices are ranges in VND (price_min to price_max); durations are minutes.
   The code passes them to the Orchestrator from the catalogue, so you do not
   need to repeat them.
-- Exactly one service fits what the customer said: finish ok.
+- Identify a service (finish ok) only when the customer's words name its whole
+  catalogue name, or the customer confirmed that service (for example by
+  answering your earlier question).
+- When the customer's words match only part of a service name, finish
+  need_info with question_fields ["service"], asking whether they want that
+  service (for example the customer says "haircut" and the catalogue has
+  "women's haircut"). Never pick a service by guessing who the customer is.
 - Several services fit and the customer's words do not pick one: finish
   need_info with question_fields ["service"], naming the candidate services.
 - Answering your earlier question: call get_service for the service the
@@ -32,8 +38,8 @@ Rules:
 - Use at most 4 tool rounds, then finish.
 
 Finish with SubagentResult:
-- ok: the service is identified, or the price question is answered by the
-  tool results.
+- ok: the service is identified (its whole name, or confirmed), or the price
+  question is answered by the tool results.
 - need_info: exactly ONE missing piece must be asked from the customer (which
   service). Set question_fields ["service"] and a short English question_text
   for the Orchestrator naming the candidates the tools returned.

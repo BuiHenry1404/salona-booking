@@ -69,6 +69,10 @@ async def test_price_range_sums(test_db):
     ("nhuộm tóc", ["toc-nhuom"]),
     ("NHUỘM", ["toc-nhuom"]),
     ("xăm", []),
+    # Live try 15/11 (L4b): "cắt tóc" names neither haircut in full.
+    ("cắt tóc", ["toc-cat-nu", "toc-cat-nam"]),
+    ("cắt tóc nam", ["toc-cat-nam"]),
+    ("cắt tóc nữ", ["toc-cat-nu"]),
 ])
 async def test_search_table(test_db, text, ids):
     catalog = await _seeded(test_db)
@@ -101,4 +105,4 @@ async def test_seed_is_idempotent(test_db):
     await _seeded(test_db)
     second_count = await test_db["services"].count_documents({})
 
-    assert first_count == second_count == 10
+    assert first_count == second_count == 11
