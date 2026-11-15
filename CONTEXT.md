@@ -101,7 +101,8 @@ dừng ở Task 2b: chủ dự án đổi hướng sang JSON, plan đó coi như
      đã xoá — thay bằng tool này.
 - **Bộ đo độ chính xác** (mang từ spec 13/11, câu thật từ các lần chạy + câu sai đã biết): sau đợt
   thêm `machine_time`, **0/27 câu `ok` bị chặn nhầm, 0/17 câu `bad` bị lọt**; sau đợt sửa cuối 15/11
-  (`repeat` chỉ khi kế hoạch rỗng, thêm câu của lần thử 15/11): **0/30 `ok`, 0/17 `bad`**.
+  (`repeat` chỉ khi kế hoạch rỗng, thêm câu của lần thử 15/11, hỏi lại phiên chờ của lượt trước):
+  **0/30 `ok` bị chặn nhầm, 0/18 `bad` bị lọt** (2/2 `accepted_leak`).
 - **Quyết định chủ dự án 14/11** (đừng mở lại):
   - giữ JSON trong khối bối cảnh (không đổi JSON sang dòng chữ "Nhãn: giá trị"), bọc thẻ
     `<context>`/`<reply_plan>` theo khuyến nghị Anthropic/OpenAI;
