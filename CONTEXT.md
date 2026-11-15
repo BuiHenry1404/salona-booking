@@ -100,7 +100,8 @@ dừng ở Task 2b: chủ dự án đổi hướng sang JSON, plan đó coi như
      xưng. `detect_self_address` (quét chữ khách bằng regex) và `_seed_self_address` trong `run.py`
      đã xoá — thay bằng tool này.
 - **Bộ đo độ chính xác** (mang từ spec 13/11, câu thật từ các lần chạy + câu sai đã biết): sau đợt
-  thêm `machine_time`, **0/27 câu `ok` bị chặn nhầm, 0/17 câu `bad` bị lọt**.
+  thêm `machine_time`, **0/27 câu `ok` bị chặn nhầm, 0/17 câu `bad` bị lọt**; sau đợt sửa cuối 15/11
+  (`repeat` chỉ khi kế hoạch rỗng, thêm câu của lần thử 15/11): **0/30 `ok`, 0/17 `bad`**.
 - **Quyết định chủ dự án 14/11** (đừng mở lại):
   - giữ JSON trong khối bối cảnh (không đổi JSON sang dòng chữ "Nhãn: giá trị"), bọc thẻ
     `<context>`/`<reply_plan>` theo khuyến nghị Anthropic/OpenAI;
@@ -137,12 +138,13 @@ dừng ở Task 2b: chủ dự án đổi hướng sang JSON, plan đó coi như
 
 - **R5** agent Đặt lịch có thêm tool `remember_next_request(iso)` để ghi rõ yêu cầu lịch kế ("3h và
   4h"), iso phải trùng kết quả `parse_time`; code không đoán "A hoặc B" thành hai lịch.
-- **R8/R9** guard: lịch sắp tới của khách được "bảo lãnh" cho câu "đã đặt X" chỉ khi giờ X không xuất
-  hiện ở nguồn dữ kiện nào khác của lượt (guard chỉ so giờ, không so ngày).
+- ~~**R8/R9** guard "bảo lãnh" lịch sắp tới cho câu "đã đặt X"~~ — **đã xoá** cùng `claim` trong đợt
+  dựng lại guard 14/11 (validator chỉ dùng dữ kiện, không đọc nghĩa câu).
 - **R11** nén lịch sử: trigger AND `{tokens ≥ salon_summary_trigger_tokens, messages ≥ keep + 20}` để
   không tóm tắt lại ở mỗi lần gọi model; config kiểm `keep ≥ 2*tool + model + 2`.
 - **R12** câu mẫu hỏi câu của phiên nào thì giữ phiên đó mở (không đóng như các phiên khác của lượt).
-- **R13** `run_turn` ghi `users.self_address` từ câu khách tự xưng (lượt gõ chữ) — gói cũ có, plan sót.
+- ~~**R13** `run_turn` ghi `users.self_address` từ câu khách tự xưng~~ — **đã thay** (14/11): chỉ tool
+  Orchestrator `remember_address` ghi `self_address`; code không quét chữ khách.
 - **R14** lượt bấm nút có lịch kế bị cắt ngang thì bỏ đánh dấu "đã báo" để R0 báo lại.
 - **R16** dịch vụ: chỉ dịch vụ khách **thật sự chọn** (`ServiceFact.identified`) mới là "đã biết"; luật
   `service_unclear` / `service_required` kiểm trong `propose_appointment` **chỉ cho lịch mới** — dời /
@@ -254,14 +256,19 @@ dừng ở Task 2b: chủ dự án đổi hướng sang JSON, plan đó coi như
 ## Xưng hô — chốt 2026-08-23, siết 2026-09-19
 
 **Lễ tân xưng "em", gọi khách "anh"/"chị".** Cách gọi do **code** quyết, theo thứ tự:
-`users.self_address` (khách tự xưng) → tiền tố tên admin gõ (`derive_address`: cô/chị/bà→chị,
-chú/anh/ông→anh) → **"anh chị"**. Không hỏi model, không đoán từ tên đầy đủ ("Nguyễn Thị Lan").
+`users.self_address` (khách tự xưng) → tiền tố tên admin gõ (`derive_address`, từ 15/11: tiền tố
+anh/chị/cô/chú/bác/ông/bà giữ đúng cách gọi đó, "Cô Lan" → "cô Lan"; lúc khởi động seed các khách
+chưa có `self_address` và một migration một lần đổi "anh"/"chị" cũ của tên "Cô …", "Chú …"… sang
+đúng tiền tố) → **"anh chị"**. Không hỏi model, không đoán từ tên đầy đủ ("Nguyễn Thị Lan").
 Từ 14/11, `users.self_address` được ghi bằng tool Orchestrator `remember_address(form)`, chỉ gọi khi
 **khách tự nói** cách xưng của mình (`detect_self_address` quét regex cũ đã xoá) — mô hình vẫn không
-được đoán, chỉ ghi lại lời khách tự xưng.
+được đoán, chỉ ghi lại lời khách tự xưng. Khách tự xưng khác dòng `Address` thì lời khách thắng
+(prompt bảo gọi `remember_address`).
 
-**Không dùng "con", "cô", "chú", "bác" ở bất kỳ đâu khách thấy** — prompt, câu lỗi, câu hết phiên,
-chuỗi frontend. "con" chỉ đi với cô/chú/bác; ghép với anh/chị là sai tiếng Việt.
+**Không viết sẵn "con", "cô", "chú", "bác" ở bất kỳ đâu khách thấy** — prompt, câu lỗi, câu hết
+phiên, chuỗi frontend. "con" chỉ đi với cô/chú/bác; ghép với anh/chị là sai tiếng Việt. Cô/chú/bác/
+ông/bà chỉ tới khách qua dòng `Address` (khách tự xưng hoặc tiền tố admin gõ), không bao giờ là chữ
+cố định.
 
 **Tên không cho biết giới tính thì nói đúng "anh chị" — cấm đoán.** Từng chạy thật: cùng một khách bị
 gọi "Chị ơi" hai lượt đầu rồi "Anh chị ơi" từ lượt 3. Hàng rào: `tests/test_prompts.py`.

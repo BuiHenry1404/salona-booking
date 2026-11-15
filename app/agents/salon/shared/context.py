@@ -64,14 +64,16 @@ def _display_name(user: User) -> str:
 
 def address_phrase(user: User) -> str:
     """Cách gọi khách, theo đúng thứ tự CONTEXT.md mục Xưng hô:
-    `user.self_address` (khách tự xưng, do code ghi — Task 13) thắng tất cả;
-    không có thì suy từ tiền tố `full_name` admin gõ (`derive_address`:
-    cô/chị/bà -> chị, chú/anh/ông -> anh); hết hai nấc đó mới tới "anh chị".
+    `user.self_address` thắng tất cả — Orchestrator ghi nó bằng tool
+    `remember_address` khi khách TỰ NÓI cách xưng (code không quét chữ khách),
+    hoặc seed lúc khởi động từ tiền tố tên admin gõ; không có thì suy từ tiền
+    tố `full_name` (`derive_address`: anh/chị/cô/chú/bác/ông/bà giữ đúng cách
+    gọi đó); hết hai nấc đó mới tới "anh chị".
 
     Không đoán giới tính từ một tên đầy đủ không tiền tố ("Nguyễn Thị Lan"
     -> "anh chị", không phải "chị Lan") — đúng ca `test_address_phrase_
     defaults_to_anh_chi`. Tiền tố CÓ nhận ra ("Cô Lan") mới ghép tên, ra
-    "chị Lan" — đúng ca "ghi rõ ra chị Lan" của task brief.
+    "cô Lan".
     """
     if user.self_address:
         return f"{user.self_address} {_display_name(user)}"
