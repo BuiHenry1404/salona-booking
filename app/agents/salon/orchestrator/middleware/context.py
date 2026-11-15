@@ -84,10 +84,17 @@ def history_for_model(messages: list[BaseMessage]) -> list[BaseMessage]:
     return [_labelled(message) for message in kept]
 
 
+def _untagged(text: str) -> str:
+    """Bỏ "<" và ">" khỏi các dòng bối cảnh (review F6): tên khách, ghi chú
+    tiệm, memory dài hạn là chữ khách / admin gõ — không được giả một ranh giới
+    `</context>` / `<reply_plan>`. Các dòng code dựng không dùng hai ký tự này."""
+    return text.replace("<", "").replace(">", "")
+
+
 def context_block(context_lines: str, plan: ReplyPlan) -> str:
     """Khối bối cảnh gửi model: `<context>` các dòng bối cảnh `</context>`, rồi
     (trừ khi kế hoạch rỗng) `<reply_plan>` JSON kế hoạch `</reply_plan>`."""
-    block = f"<{CONTEXT_TAG}>\n{context_lines}\n</{CONTEXT_TAG}>"
+    block = f"<{CONTEXT_TAG}>\n{_untagged(context_lines)}\n</{CONTEXT_TAG}>"
     if plan.is_empty():
         return block
     plan_json = json.dumps(plan.to_json(), ensure_ascii=False, indent=2)

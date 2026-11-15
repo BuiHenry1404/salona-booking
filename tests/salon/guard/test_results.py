@@ -6,7 +6,7 @@ from datetime import date, datetime
 from app.agents.salon.guard.clocks import is_known
 from app.agents.salon.guard.results import short_label, spoken_price
 from app.agents.salon.shared.text_scan import scan_money
-from app.core.clock import TZ
+from app.core.clock import TZ, to_local
 from app.core.config import settings
 from app.models.shop import ShopStatusView
 from tests.salon.guard.builders import (
@@ -86,6 +86,21 @@ async def test_valid_clocks_include_context_and_customer_times(test_db):
                          (17, 0), (15, 0)]:
         assert _knows(results, hour, minute), (hour, minute)
     assert not _knows(results, 12, 15)
+
+
+async def test_valid_clocks_include_today_now_and_expiry_clocks(test_db):
+    """Review F7: the context block shows `Today: … HH:MM` and the `expires`
+    times of the pending proposal and the waiting sessions."""
+    pending = pending_at(at(11))
+    session = a_session(options=[at(13, 30)])
+    snapshot = a_snapshot(pending=pending, sessions={"appointment": session})
+    snapshot = snapshot.model_copy(update={
+        "now_local": datetime(TODAY.year, TODAY.month, TODAY.day, 14, 37, tzinfo=TZ)})
+    results = await results_for(test_db, snapshot=snapshot)
+    assert _knows(results, 14, 37)
+    for expires in (pending.expires_at, session.expires_at):
+        local = to_local(expires)
+        assert _knows(results, local.hour, local.minute), expires
 
 
 async def test_valid_clocks_include_busy_until(test_db):

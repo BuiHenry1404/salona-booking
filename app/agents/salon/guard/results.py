@@ -248,7 +248,9 @@ def _valid_clocks(snapshot: TurnSnapshot, turn_facts: list[TurnFact],
     """Mọi giờ có thật của lượt: đề xuất chờ, lịch sắp tới, R0, giờ / đề xuất /
     quyết định của lượt, `pending_outcome` (gồm `nearest` — tool `decide_pending`
     đưa chúng cho model), lựa chọn của phiên chờ, giờ mở / đóng cửa, giờ khách
-    vừa nói, giờ tiệm hết bận (khối bối cảnh đưa nó khi tiệm đang bận)."""
+    vừa nói, giờ tiệm hết bận (khối bối cảnh đưa nó khi tiệm đang bận), giờ
+    của dòng `Today: … HH:MM` và giờ `expires` của đề xuất chờ / phiên chờ
+    (review F7: khối bối cảnh đưa chúng cho model)."""
     moments: list[Optional[Moment]] = [
         snapshot.pending.at if snapshot.pending else None,
         snapshot.unannounced.at if snapshot.unannounced else None,
@@ -270,9 +272,15 @@ def _valid_clocks(snapshot: TurnSnapshot, turn_facts: list[TurnFact],
     clocks |= clocks_of_hhmm(snapshot.shop_hours.open_time)
     clocks |= clocks_of_hhmm(snapshot.shop_hours.close_time)
     clocks |= customer_clocks(question)
+    instants = [snapshot.now_local,
+                *(session.expires_at for session in snapshot.sessions.values())]
+    if snapshot.pending is not None:
+        instants.append(snapshot.pending.expires_at)
     status = snapshot.shop_status
     if status.is_busy and status.busy_until is not None:
-        local = to_local(status.busy_until)
+        instants.append(status.busy_until)
+    for instant in instants:
+        local = to_local(instant)
         clocks.add(clock_of_24h(local.hour, local.minute))
     return clocks
 

@@ -239,7 +239,10 @@ def validate(text: str, plan: ReplyPlan, results: TurnResults, *,
         found.add("empty")
     if _has_foreign_script(text):
         found.add("foreign_script")
-    if _repeats(text, results.previous_replies):
+    # Chỉ khi kế hoạch rỗng (live try 15/11, L1): câu nói đúng kế hoạch của
+    # lượt (vd `done` ngay sau câu đề xuất của lượt trước) mang cùng khung câu
+    # và cùng chữ số nhưng là thông tin mới.
+    if plan.is_empty() and _repeats(text, results.previous_replies):
         found.add("repeat")
 
     return Verdict(text=text, codes=[code for code in CODES if code in found], missing=missing)

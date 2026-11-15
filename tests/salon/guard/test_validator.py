@@ -14,6 +14,8 @@ from tests.salon.guard.builders import (
     TODAY,
     a_snapshot,
     at,
+    decision_fact,
+    outcome,
     pending_at,
     proposal_fact,
     service_fact,
@@ -222,6 +224,28 @@ def test_repeat():
     # Older than the last 2 replies: not a repeat.
     results = turn_results(previous=[previous, "Dạ chào chị.", "Dạ vâng ạ."])
     assert _codes(previous, results) == []
+
+
+def test_repeat_only_when_the_plan_is_empty():
+    """Live try 15/11 (L1): a correct `done` reply after the proposal reply of
+    the turn before shares its frame and its digits — `repeat` must not block
+    a reply that tells the plan."""
+    proposal_reply = ("Dạ chị Lan, em đã giữ lịch Sơn gel 3 giờ chiều mai cho chị rồi ạ. "
+                      "Chị đồng ý chốt lịch này không ạ?")
+    done_reply = "Dạ chị Lan, em đã chốt lịch Sơn gel 3 giờ chiều mai cho chị rồi ạ."
+    results = turn_results(turn_facts=[decision_fact(at(15))],
+                           pending_outcome=outcome(at(15), service_ids=[GEL.id]),
+                           pending_decided=True, previous=[proposal_reply])
+    assert not build_plan(results).is_empty()
+    assert _codes(done_reply, results) == []
+    # On an empty plan the same frame is still a repeat.
+    greeting = "Dạ em chào chị Lan, chị cần em hỗ trợ gì không ạ?"
+    assert _codes(greeting, turn_results(previous=[greeting])) == ["repeat"]
+
+
+def test_taken_clock_at_shop_open_allows_the_hours_answer():
+    text = "Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ. Còn trống 9 giờ sáng mai, chị chọn giờ nào ạ?"
+    assert _codes(text, RESULTS["taken_at_shop_open"]) == []
 
 
 def test_bad_tool_call_first():

@@ -18,6 +18,7 @@ Chỉ import `results.py` và `planner.py` trong `guard/`.
 """
 from __future__ import annotations
 
+import unicodedata
 from datetime import date
 from typing import Optional, Sequence
 
@@ -158,6 +159,36 @@ def taken_sentence(plan: ReplyPlan, address: str) -> str:
     if not plan.taken:
         return ""
     return _capitalized(TAKEN_REPLY.format(at=_spoken_list(plan.taken, "và")))
+
+
+# Tiếng mở đầu câu báo kín ("Dạ") — chữ model mở bằng đúng tiếng này thì bỏ
+# đi khi ghép sau câu báo kín (review F9), lấy từ chính câu mẫu, không lặp chữ.
+_TAKEN_LEAD = TAKEN_REPLY.split()[0]
+
+
+def _without_lead(text: str) -> str:
+    """Bỏ tiếng `_TAKEN_LEAD` mở đầu `text` (không phân biệt hoa thường, đứng
+    riêng một từ) cùng dấu phẩy / khoảng trắng theo sau, viết hoa chữ kế tiếp.
+    Không mở bằng tiếng đó, hay bỏ xong không còn chữ nào: giữ nguyên."""
+    stripped = unicodedata.normalize("NFC", text.lstrip())
+    head = stripped[:len(_TAKEN_LEAD)]
+    rest = stripped[len(_TAKEN_LEAD):]
+    if head.lower() != _TAKEN_LEAD.lower() or (rest and rest[0].isalnum()):
+        return text
+    rest = rest.lstrip(" ,")
+    if not rest:
+        return text
+    return rest[:1].upper() + rest[1:]
+
+
+def with_taken(plan: ReplyPlan, address: str, text: str) -> str:
+    """Câu gửi khách khi chữ model đạt: câu báo kín của code + chữ model. Có câu
+    báo kín thì tiếng "Dạ" mở đầu chữ model bị bỏ, để không thành "Dạ … ạ.
+    Dạ …" (review F9)."""
+    taken = taken_sentence(plan, address)
+    if not taken:
+        return text
+    return f"{taken} {_without_lead(text)}".strip()
 
 
 def _act_sentence(act: PlanAct, *, address: str, is_also_failed: bool) -> str:

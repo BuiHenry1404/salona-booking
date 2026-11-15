@@ -1,12 +1,13 @@
 {
-  "about": "Guard accuracy set (spec 2026-11-14 'Bo do do chinh xac'). Bot replies only, from .superpowers/sdd live runs 2-5; customer name normalised to the fixture's 'Lan'. Turn facts rebuilt by hand in minimal form. See tests/salon/guard/test_accuracy.py for the schema.",
+  "about": "Guard accuracy set (spec 2026-11-14 'Bo do do chinh xac'). Bot replies only, from .superpowers/sdd live runs 2-5 and the live try of 15/11 (live-6); cases with a 'note' saying 'Constructed' are written for the final fix wave, not taken from a run; customer name normalised to the fixture's 'Lan'. Turn facts rebuilt by hand in minimal form. See tests/salon/guard/test_accuracy.py for the schema.",
   "max_false_blocks": 0,
   "run_days": {
     "live-2": "2026-11-11",
     "live-3": "2026-11-11",
     "live-4": "2026-11-11",
     "live-5-A": "2026-11-13",
-    "live-5-B": "2026-11-13"
+    "live-5-B": "2026-11-13",
+    "live-6": "2026-11-15"
   },
   "catalog": [
     {"id": "nail-son-thuong", "category": "nail", "name": "Sơn thường", "price_min": 50000, "price_max": 80000, "duration_minutes": 30},
@@ -273,6 +274,7 @@
       "run": "live-4",
       "reply": "Dạ chị Lan, em đã giữ chỗ sơn gel vào Thứ Năm 12/11, 5 giờ chiều rồi ạ. Chị đồng ý để em đặt lịch cho chị nhé?",
       "turn": {
+        "known_services": ["nail-son-gel"],
         "proposal": {"at": "+1 17:00", "services": ["toc-cat-nu"]},
         "session": {"fields": ["time"], "options": ["+1 14:00", "+1 17:00", "+1 18:00"]},
         "upcoming": [{"at": "+1 11:00", "services": ["nail-son-gel"]}]
@@ -484,6 +486,42 @@
         "upcoming": [{"at": "+1 13:00", "services": ["toc-cat-nu"]}]
       },
       "label": "ok"
+    },
+    {
+      "id": "live6-done-after-proposal-reply",
+      "run": "live-6",
+      "reply": "Dạ chị Lan, em đã chốt lịch Sơn gel 3 giờ chiều mai cho chị rồi ạ.",
+      "turn": {
+        "decision": {"outcome": "approved", "at": "+1 15:00", "services": ["nail-son-gel"]},
+        "upcoming": [{"at": "+1 15:00", "services": ["nail-son-gel"]}],
+        "previous_replies": ["Dạ chị Lan, em giữ lịch Sơn gel vào 3 giờ chiều mai rồi ạ. Chị đồng ý chốt lịch này không ạ?"]
+      },
+      "label": "ok",
+      "note": "Live try 15/11 (customer 'Tám', normalised to 'Lan'): the done reply after the proposal reply shares its frame and digits; the old repeat check blocked it although it tells the done act (owner finding L1: repeat applies only to an empty plan)."
+    },
+    {
+      "id": "fix-taken-time-offer",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, còn trống 1 giờ chiều, 2 giờ chiều hoặc 4 giờ chiều mai, chị chọn giờ nào ạ?",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"}, {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 16:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"], "opened_this_turn": true}
+      },
+      "label": "ok",
+      "note": "Constructed (final fix wave F11): the reply the plan asks for on a taken-time turn; the code tells the taken time, the model offers the session's free times without repeating it."
+    },
+    {
+      "id": "fix-earlier-service-in-proposal",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, em giữ chỗ cắt tóc nữ vào Thứ Năm 12/11, 5 giờ chiều ạ. Chị đồng ý để em đặt lịch nhé?",
+      "turn": {
+        "known_services": ["toc-cat-nu"],
+        "proposal": {"at": "+1 17:00", "services": ["toc-cat-nu"]},
+        "session": {"fields": ["time"], "options": ["+1 14:00", "+1 17:00", "+1 18:00"]}
+      },
+      "label": "ok",
+      "note": "Constructed (final fix wave F11): the service was identified in an earlier turn (known_services) and no service agent ran this turn; naming it passes because this turn's proposal carries it."
     }
   ]
 }

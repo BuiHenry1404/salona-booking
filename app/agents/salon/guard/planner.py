@@ -20,7 +20,7 @@ from typing import Any, Iterable, Literal, Optional, get_args
 
 from pydantic import BaseModel
 
-from app.agents.salon.guard.clocks import clocks_of_spoken
+from app.agents.salon.guard.clocks import clocks_of_hhmm, clocks_of_spoken
 from app.agents.salon.guard.results import (
     FAILED_OUTCOMES,
     RELEASED_OUTCOMES,
@@ -346,10 +346,21 @@ def build_plan(results: TurnResults) -> ReplyPlan:
 
     # -- hours / busy ------------------------------------------------------------
     shop_open, shop_close = _times(results, "shop_open"), _times(results, "shop_close")
+    hours = snapshot.shop_hours
+    hours_clocks = [key[:2] for hhmm in (hours.open_time, hours.close_time)
+                    for key in clocks_of_hhmm(hhmm)]
     if shop_open and shop_close:
         planner.add("hours", {"open": _clock_phrase(shop_open[0]),
                               "close": _clock_phrase(shop_close[0])},
                     moments=[shop_open[0], shop_close[0]])
+    elif len(hours_clocks) == 2 and set(_clocks(taken)) & set(hours_clocks):
+        # Giờ kín trùng giờ mở / đóng cửa (review F3): câu nêu giờ mở cửa từ
+        # khối bối cảnh không được thành `taken_mentioned` — hành động `hours`
+        # (giờ trong `snapshot.shop_hours`) làm giờ đó thành giờ phải nói.
+        planner.acts.append(PlanAct(
+            act="hours", fields={"open": format_vi_hhmm(hours.open_time),
+                                 "close": format_vi_hhmm(hours.close_time)},
+            clocks=list(dict.fromkeys(hours_clocks))))
     busy_until = _times(results, "busy_until")
     if busy_until:
         planner.add("busy", {"until": label(busy_until[0])}, moments=[busy_until[0]])

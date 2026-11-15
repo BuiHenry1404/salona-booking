@@ -91,6 +91,10 @@ RESULTS: dict[str, TurnResults] = {
         snapshot=a_snapshot(
             upcoming=[appointment_at(at(9), "a-1"), appointment_at(at(14), "a-2")],
             sessions=_opened(fields=["which_appointment"], options=[at(9), at(14)]))),
+    # Giờ kín trùng giờ mở cửa (review F3): câu nêu giờ mở cửa từ khối bối
+    # cảnh không được bị `taken_mentioned` — kế hoạch có hành động `hours`.
+    "taken_at_shop_open": turn_results(
+        turn_facts=[time_fact("taken", at(8)), time_fact("free", at(9))]),
     "hours": turn_results(turn_facts=[time_fact("shop_open", at(8)),
                                       time_fact("shop_close", at(20))]),
     "busy": turn_results(turn_facts=[time_fact("busy_until", at(16, 30, day=TODAY))]),

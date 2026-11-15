@@ -22,6 +22,9 @@ turn's facts rebuilt by hand in minimal form, run through `build_plan` +
   `address`  the context block's address (default "chị Lan")
   `customer_times` ["HH:MM"] — times the customer just said (only the times
              are kept, spoken by `format_vi_hhmm`; never the customer's text)
+  `known_services` [id]   — services identified in EARLIER turns of the
+             conversation (`snapshot.known_services`; not this turn's services)
+  `previous_replies` [str] — the bot's earlier replies (for `repeat`)
 Times are "+D HH:MM": D days after the run's `today` (`run_days`); spoken
 like the live runs ("Thứ Năm 12/11, 3 giờ chiều"). Services are ids of
 `catalog` (the live runs' catalogue, `data/mock/services.json`).
@@ -112,13 +115,15 @@ def results_of(case: dict) -> TurnResults:
         pending=(None if pending is None
                  else pending_at(m(pending["at"]), kind=pending.get("kind", "book"),
                                  service_ids=pending.get("services", []))),
-        unannounced=None, sessions=sessions, known_services=[],
+        unannounced=None, sessions=sessions,
+        known_services=[service_fact(CATALOG[sid], identified=True)
+                        for sid in turn.get("known_services", [])],
     )
     return turn_results_from(
         snapshot=snapshot, turn_facts=facts, pending_outcome=pending_outcome, turn_id=TURN_ID,
         turn_kind="typed",
         question=" ".join(format_vi_hhmm(t) for t in turn.get("customer_times", [])),
-        previous_replies=[],
+        previous_replies=list(turn.get("previous_replies", [])),
         pending_decided="decision" in turn, catalog_services=CATALOG,
         shop_service_names=[service.name for service in CATALOG.values()],
         shop_phone=SHOP_PHONE,

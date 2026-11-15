@@ -6,8 +6,9 @@ ReplyGuardMiddleware"; docs/architech-agent.md luật 4-5).
 thường. Dữ kiện đối chiếu do code dựng (`reply_inputs_for` → `TurnResults` +
 `ReplyPlan`), không tin chữ model; `validator.validate` kiểm chữ model.
 
-- Đạt → câu báo kín của code (`templates.taken_sentence`) + chữ model (đã qua
-  `strip_tool_text`) thay câu gốc, và ghi `announced_turn_ids =
+- Đạt → câu báo kín của code + chữ model (đã qua `strip_tool_text`;
+  `templates.with_taken` bỏ tiếng "Dạ" mở đầu chữ model khi có câu báo kín)
+  thay câu gốc, và ghi `announced_turn_ids =
   plan.announce_turn_ids()`; lời nhắc của lần viết lại (nếu có) bị xoá.
 - Sai lần đầu → **xoá câu bị loại khỏi state** (model không được thấy lại câu
   sai của chính nó — bẫy 17), thêm lời nhắc JSON tiếng Anh (mã, hành động
@@ -33,7 +34,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.salon.guard.planner import ReplyPlan, build_plan
 from app.agents.salon.guard.results import TurnResults, build_turn_results
-from app.agents.salon.guard.templates import compose, taken_sentence
+from app.agents.salon.guard.templates import compose, with_taken
 from app.agents.salon.guard.validator import Verdict, validate
 from app.agents.salon.orchestrator.middleware.turns import (
     GUARD_HINT_MARK,
@@ -137,7 +138,7 @@ class ReplyGuardMiddleware(AgentMiddleware[SalonState, SalonContext]):
 
         if not codes:
             # Câu báo kín do code ghép SAU khi kiểm (validator không thấy nó).
-            text = f"{taken_sentence(plan, address)} {verdict.text}".strip()
+            text = with_taken(plan, address, verdict.text)
             return {
                 "messages": [*hints, reply.model_copy(update={"content": text})],
                 "announced_turn_ids": plan.announce_turn_ids(),

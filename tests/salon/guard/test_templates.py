@@ -11,6 +11,7 @@ from app.agents.salon.guard.templates import (
     button_reply,
     compose,
     taken_sentence,
+    with_taken,
 )
 from app.agents.salon.shared.text_scan import split_sentences
 from tests.salon.guard.builders import TODAY, at, outcome
@@ -30,6 +31,26 @@ def test_compose_prefixes_taken():
         "Dạ còn trống 4 giờ chiều mai hoặc 5 giờ chiều mai, "
         f"{ADDRESS} chọn giờ nào ạ?"
     )
+
+
+def test_with_taken_drops_the_model_text_leading_da():
+    """Review F9: the code's taken sentence + a model text starting with "Dạ"
+    must not read "Dạ … ạ. Dạ …"."""
+    plan = _plan("taken_with_session_offer")
+    taken = "Dạ 3 giờ chiều mai đã có khách rồi ạ."
+    assert with_taken(plan, ADDRESS, "Dạ chị Lan, còn trống 4 giờ chiều mai ạ?") == (
+        f"{taken} Chị Lan, còn trống 4 giờ chiều mai ạ?")
+    assert with_taken(plan, ADDRESS, "Dạ, còn trống 4 giờ chiều mai ạ?") == (
+        f"{taken} Còn trống 4 giờ chiều mai ạ?")
+    assert with_taken(plan, ADDRESS, "dạ vâng, còn trống 4 giờ chiều mai ạ?") == (
+        f"{taken} Vâng, còn trống 4 giờ chiều mai ạ?")
+    # Not the word "Dạ" (a longer word), or no other text: kept as is.
+    assert with_taken(plan, ADDRESS, "Dạo này còn trống 4 giờ ạ?") == (
+        f"{taken} Dạo này còn trống 4 giờ ạ?")
+    assert with_taken(plan, ADDRESS, "Còn trống 4 giờ chiều mai ạ?") == (
+        f"{taken} Còn trống 4 giờ chiều mai ạ?")
+    # No taken sentence: the model text is untouched.
+    assert with_taken(_plan("greeting"), ADDRESS, "Dạ chào chị ạ.") == "Dạ chào chị ạ."
 
 
 def test_field_question_combines_fields():

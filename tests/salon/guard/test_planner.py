@@ -174,6 +174,20 @@ def test_hours_busy_appointments():
         "2 giờ chiều mai"]}]
 
 
+def test_taken_clock_at_shop_open_adds_hours_act():
+    plan = _plan("taken_at_shop_open")
+    assert plan.to_json() == {
+        "taken_told_by_code": ["8 giờ sáng mai"],
+        "acts": [{"act": "offer", "times": ["9 giờ sáng mai"]},
+                 {"act": "hours", "open": "8 giờ sáng", "close": "7 giờ tối"}],
+        "ask": None,
+    }
+    assert plan.taken_clocks == [(8, 0)]
+    assert plan.act_clocks() == {(9, 0), (8, 0), (19, 0)}
+    # Không giờ kín nào trùng giờ mở / đóng cửa: không thêm `hours`.
+    assert [act.act for act in _plan("taken_with_session_offer").acts] == ["offer"]
+
+
 def test_button_turn_has_no_decision_act():
     plan = _plan("button_turn")
     assert plan.to_json() == {"taken_told_by_code": [], "acts": [], "ask": None}
