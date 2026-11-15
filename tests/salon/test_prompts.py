@@ -92,6 +92,17 @@ def test_orchestrator_prompt_has_no_segment_rules():
 
 def test_orchestrator_prompt_names_plan_keys():
     flat = _flat(ORCHESTRATOR_PROMPT)
-    for token in ("<reply_plan>", "<context>", "taken_told_by_code", "acts", "ask",
+    for token in ("<reply_plan>", "<context>", "taken_told_by_code", "`acts`", "`ask`",
                   "remember_address"):
         assert token in flat, token
+
+
+def test_orchestrator_prompt_allows_context_facts_beyond_the_plan():
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert "in neither the reply plan nor the context block" in flat
+
+
+def test_orchestrator_prompt_asks_which_offered_time_suits():
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert "`offer`" in flat
+    assert "ask the customer which one suits them" in flat
