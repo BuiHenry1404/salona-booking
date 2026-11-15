@@ -25,6 +25,7 @@ turn's facts rebuilt by hand in minimal form, run through `build_plan` +
   `known_services` [id]   — services identified in EARLIER turns of the
              conversation (`snapshot.known_services`; not this turn's services)
   `previous_replies` [str] — the bot's earlier replies (for `repeat`)
+  `agents` [name]          — subagents that ran this turn (`AgentStatusFact`)
 Times are "+D HH:MM": D days after the run's `today` (`run_days`); spoken
 like the live runs ("Thứ Năm 12/11, 3 giờ chiều"). Services are ids of
 `catalog` (the live runs' catalogue, `data/mock/services.json`).
@@ -40,7 +41,7 @@ from app.agents.salon.guard.planner import build_plan
 from app.agents.salon.guard.results import TurnResults, turn_results_from
 from app.agents.salon.guard.validator import CODES, validate
 from app.agents.salon.shared.context import CustomerView, TurnSnapshot
-from app.agents.salon.shared.schemas import Moment
+from app.agents.salon.shared.schemas import AgentStatusFact, Moment
 from app.core.clock import TZ
 from app.core.vi_format import format_vi_datetime, format_vi_hhmm
 from app.models.service import Service
@@ -83,6 +84,7 @@ def results_of(case: dict) -> TurnResults:
     facts += [service_fact(CATALOG[s["id"]], identified=s.get("identified", False),
                            asked_price=s.get("asked_price", False))
               for s in turn.get("services", [])]
+    facts += [AgentStatusFact(agent=agent, status="ok") for agent in turn.get("agents", [])]
     pending_outcome = None
     if "proposal" in turn:
         p = turn["proposal"]

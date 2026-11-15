@@ -193,13 +193,17 @@ _REASK_AGENTS = ("appointment", "service")
 
 def _earlier_session(results: TurnResults) -> Optional[tuple[str, WaitingSession]]:
     """Phiên chờ mở ở một lượt TRƯỚC, còn chờ, còn hạn, mà agent của nó không
-    chạy trong lượt này — khách nói chuyện khác thì câu hỏi của phiên vẫn phải
-    hỏi lại (live 15/11). Có đề xuất chờ thì không (luật `decide_pending` /
-    `clarify` quyết)."""
+    chạy trong lượt này, trong khi MỘT agent khác đã chạy — khách hỏi chuyện
+    khác thì câu hỏi của phiên vẫn phải hỏi lại (live 15/11). Chưa agent nào
+    chạy (lần gọi model đầu của lượt, khách đang trả lời phiên, hay khách
+    "để suy nghĩ đã") thì không: model tự làm tiếp hay bỏ phiên (residual 2,
+    P1). Có đề xuất chờ thì không (luật `decide_pending` / `clarify` quyết)."""
     snapshot = results.snapshot
     if snapshot.pending is not None:
         return None
     ran = {fact.agent for fact in results.turn_facts if isinstance(fact, AgentStatusFact)}
+    if not ran:
+        return None
     for agent in _REASK_AGENTS:
         session = snapshot.sessions.get(agent)
         if (session is not None and session.status == "waiting"
@@ -352,7 +356,12 @@ def build_plan(results: TurnResults) -> ReplyPlan:
                 asked_session = agent
 
     # -- ask lại phiên chờ của lượt trước (residual R4) -----------------------
-    if proposal is None and ask is None and not any(act.act == "offer" for act in planner.acts):
+    # Không khi kế hoạch đã có câu hỏi / tin chính của nó: `offer`, `done`, hay
+    # `failed` mời giờ gần nhất (residual 2, P2: không hai câu hỏi một câu).
+    asks_already = any(act.act in ("offer", "done")
+                       or (act.act == "failed" and act.fields["nearest"])
+                       for act in planner.acts)
+    if proposal is None and ask is None and not asks_already:
         waiting = _earlier_session(results)
         if waiting is not None:
             agent, session = waiting

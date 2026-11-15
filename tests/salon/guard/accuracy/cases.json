@@ -404,6 +404,7 @@
       "run": "live-5-B",
       "reply": "Dạ, sơn gel 120.000đ-180.000đ ạ.",
       "turn": {
+        "agents": ["service"],
         "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
         "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
       },
@@ -530,6 +531,7 @@
       "run": "live-5-B",
       "reply": "Dạ, sơn gel giá 120 đến 180 nghìn ạ. Chị muốn 8 giờ sáng, 11 giờ sáng hay 12 giờ trưa mai ạ?",
       "turn": {
+        "agents": ["service"],
         "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
         "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
       },

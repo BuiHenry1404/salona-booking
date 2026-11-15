@@ -16,6 +16,7 @@ from tests.salon.guard.builders import (
     a_snapshot,
     at,
     decision_fact,
+    outcome,
     pending_at,
     proposal_fact,
     time_fact,
@@ -198,6 +199,7 @@ def test_taken_clock_at_shop_open_adds_no_hours_act():
     assert all(act.act != "hours" for act in plan.acts)
 
 
+_SHOP_RAN = AgentStatusFact(agent="shop_info", status="ok")
 _REASK = {"fields": ["time"], "options": ["1 giờ chiều mai", "2 giờ chiều mai", "4 giờ chiều mai"]}
 
 
@@ -209,11 +211,38 @@ def test_waiting_session_from_earlier_turn_is_asked_again():
     # Appointment is preferred over a service session; a service session alone is asked.
     service = a_session(agent="service", fields=["service"])
     both = turn_results(snapshot=a_snapshot(
-        sessions={**_earlier_time_session(), "service": service}))
+        sessions={**_earlier_time_session(), "service": service}), turn_facts=[_SHOP_RAN])
     assert build_plan(both).asked_session == "appointment"
-    alone = build_plan(turn_results(snapshot=a_snapshot(sessions={"service": service})))
+    alone = build_plan(turn_results(snapshot=a_snapshot(sessions={"service": service}),
+                                    turn_facts=[_SHOP_RAN]))
     assert alone.to_json()["ask"] == {"fields": ["service"], "options": []}
     assert alone.asked_session == "service"
+
+
+def test_waiting_session_not_reasked_when_no_agent_ran():
+    """Residual 2, P1: on a turn where no subagent ran (the first model call of
+    any turn, the customer answering the session, or "let me think"), the
+    plan does not re-ask — the model continues or drops the session."""
+    plan = build_plan(turn_results(snapshot=a_snapshot(sessions=_earlier_time_session())))
+    assert plan.ask is None and plan.asked_session is None
+    assert plan.is_empty()
+
+
+def test_waiting_session_not_reasked_after_done_or_failed_with_nearest():
+    """Residual 2, P2: a `done` act, or a `failed` act offering nearest times,
+    already carries the reply's question / news — no second question."""
+    sessions = _earlier_time_session()
+    done = build_plan(turn_results(
+        snapshot=a_snapshot(sessions=sessions),
+        turn_facts=[decision_fact(at(16)), _SHOP_RAN],
+        pending_outcome=outcome(at(16), service_ids=[GEL.id])))
+    assert [act.act for act in done.acts] == ["done"] and done.ask is None
+    failed = build_plan(turn_results(
+        snapshot=a_snapshot(sessions=sessions),
+        turn_facts=[decision_fact(at(15), outcome="failed"), _SHOP_RAN],
+        pending_outcome=outcome(at(15), outcome="failed", nearest=[at(16)]),
+        shop_phone=SHOP_PHONE))
+    assert failed.acts[0].fields["nearest"] and failed.ask is None
 
 
 def test_waiting_session_not_reasked_when_plan_has_a_question():
@@ -233,14 +262,14 @@ def test_waiting_session_not_reasked_when_plan_has_a_question():
     # A `confirm` session only holds a queued request for a proposal; with no
     # pending proposal there is nothing to confirm.
     confirm = build_plan(turn_results(snapshot=a_snapshot(
-        sessions={"appointment": a_session(fields=["confirm"])})))
+        sessions={"appointment": a_session(fields=["confirm"])}), turn_facts=[_SHOP_RAN]))
     assert confirm.ask is None and confirm.asked_session is None
 
 
 def test_waiting_session_not_reasked_with_pending_proposal():
     plan = build_plan(turn_results(
         snapshot=a_snapshot(pending=pending_at(at(11)), sessions=_earlier_time_session()),
-        turn_facts=[decision_fact(at(11), outcome="kept")], pending_decided=True))
+        turn_facts=[decision_fact(at(11), outcome="kept"), _SHOP_RAN], pending_decided=True))
     assert plan.ask is None and plan.asked_session is None
 
 
