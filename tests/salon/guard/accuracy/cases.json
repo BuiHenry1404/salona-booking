@@ -1,0 +1,477 @@
+{
+  "about": "Guard accuracy set (spec 2026-11-14 'Bo do do chinh xac'). Bot replies only, from .superpowers/sdd live runs 2-5; customer name normalised to the fixture's 'Lan'. Turn facts rebuilt by hand in minimal form. See tests/salon/guard/test_accuracy.py for the schema.",
+  "max_false_blocks": 0,
+  "run_days": {
+    "live-2": "2026-11-11",
+    "live-3": "2026-11-11",
+    "live-4": "2026-11-11",
+    "live-5-A": "2026-11-13",
+    "live-5-B": "2026-11-13"
+  },
+  "catalog": [
+    {"id": "nail-son-thuong", "category": "nail", "name": "Sơn thường", "price_min": 50000, "price_max": 80000, "duration_minutes": 30},
+    {"id": "nail-son-gel", "category": "nail", "name": "Sơn gel", "price_min": 120000, "price_max": 180000, "duration_minutes": 45},
+    {"id": "nail-up-bot", "category": "nail", "name": "Úp móng / đắp bột", "price_min": 250000, "price_max": 400000, "duration_minutes": 90},
+    {"id": "nail-cat-da", "category": "nail", "name": "Cắt da, sửa móng", "price_min": 40000, "price_max": 40000, "duration_minutes": 30},
+    {"id": "nail-chan-spa", "category": "nail", "name": "Chăm sóc móng chân", "price_min": 150000, "price_max": 150000, "duration_minutes": 60},
+    {"id": "toc-goi-say", "category": "toc", "name": "Gội sấy", "price_min": 50000, "price_max": 70000, "duration_minutes": 30},
+    {"id": "toc-cat-nu", "category": "toc", "name": "Cắt tóc nữ", "price_min": 100000, "price_max": 150000, "duration_minutes": 45},
+    {"id": "toc-nhuom", "category": "toc", "name": "Nhuộm", "price_min": 350000, "price_max": 700000, "duration_minutes": 120},
+    {"id": "toc-uon", "category": "toc", "name": "Uốn", "price_min": 450000, "price_max": 900000, "duration_minutes": 150},
+    {"id": "toc-hap-dau", "category": "toc", "name": "Hấp dầu, phục hồi", "price_min": 150000, "price_max": 250000, "duration_minutes": 60}
+  ],
+  "cases": [
+    {
+      "id": "live2-t1-greeting",
+      "run": "live-2",
+      "reply": "Dạ em chào chị Lan ạ, em rất vui được đón chị lần đầu. Chị cần em hỗ trợ làm tóc hay làm móng ạ?",
+      "turn": {},
+      "label": "ok"
+    },
+    {
+      "id": "live2-t2-taken-time-as-proposal",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, em đã tìm được giờ **Thứ Năm 12/11, 3 giờ chiều** cho sơn gel rồi ạ.  \nChị đồng ý giờ này nhé?",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"},
+                  {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 16:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned"]
+    },
+    {
+      "id": "live2-t3-hours",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, tiệm mình mở từ **8 giờ sáng đến 7 giờ tối** ạ.",
+      "turn": {"times": [{"role": "shop_open", "at": "+0 08:00"}, {"role": "shop_close", "at": "+0 19:00"}]},
+      "label": "ok"
+    },
+    {
+      "id": "live2-t3-hours-wrong-address",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, tiệm mình mở từ **8 giờ sáng đến 7 giờ tối** ạ.",
+      "turn": {
+        "address": "cô Lan",
+        "times": [{"role": "shop_open", "at": "+0 08:00"}, {"role": "shop_close", "at": "+0 19:00"}]
+      },
+      "label": "accepted_leak",
+      "note": "Live 2's customer account is named 'Cô Lan'; under the new address rule (admin-typed prefix) the context says 'cô Lan', but the reply says 'chị Lan'. The spec accepts that the validator cannot see a wrong form of address."
+    },
+    {
+      "id": "live2-t4-proposal",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, em đã giữ giờ **Thứ Năm 12/11, 4 giờ chiều** cho sơn gel rồi ạ. Chị đồng ý giờ này nhé?",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live2-t4-booked-claim-on-proposal",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, em đã đổi sang **Thứ Năm 12/11, 4 giờ chiều** cho sơn gel rồi ạ. Chị đồng ý giờ này nhé?",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "accepted_leak",
+      "note": "Adapted from live 2 turn 4's rejected reply (old guard code 'claim'): 'cho sơn gel' added so the only fault left is the done-claim ('đã đổi sang') on a time that is only a proposal. The spec accepts this leak (the time is valid)."
+    },
+    {
+      "id": "live2-t6-price",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, nhuộm tóc giá khoảng **350.000đ đến 700.000đ** ạ.",
+      "turn": {"services": [{"id": "toc-nhuom", "identified": true, "asked_price": true}],
+               "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live2-t7-proposal-with-upcoming",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, em đã giữ giờ **Thứ Năm 12/11, 9 giờ sáng** cho **nhuộm tóc** rồi ạ. Chị đồng ý giờ này nhé?",
+      "turn": {
+        "services": [{"id": "toc-nhuom", "identified": true}],
+        "proposal": {"at": "+1 09:00", "services": ["toc-nhuom"]},
+        "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live2-t8-done-without-service",
+      "run": "live-2",
+      "reply": "Dạ em đã đặt xong Thứ Năm 12/11, 9 giờ sáng cho chị Lan ạ.",
+      "turn": {
+        "decision": {"outcome": "approved", "at": "+1 09:00", "services": ["toc-nhuom"]},
+        "upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "bad",
+      "codes": ["plan_missing"],
+      "reason": "Accepted by the old guard, but the spec's plan_missing requires every service name of a done act ('Nhuộm') in the reply; the reply omits it, so it is wrong under the new contract (unit test test_plan_missing_service_name)."
+    },
+    {
+      "id": "live2-t9-thanks",
+      "run": "live-2",
+      "reply": "Dạ em cảm ơn chị Lan ạ, hẹn chị mai mình đến tiệm nhé.",
+      "turn": {"upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live2-t10-appointments",
+      "run": "live-2",
+      "reply": "Dạ chị Lan, lịch hẹn của chị là **Thứ Năm 12/11, 9 giờ sáng** và **Thứ Năm 12/11, 4 giờ chiều** ạ.",
+      "turn": {
+        "times": [{"role": "appointment", "at": "+1 09:00"}, {"role": "appointment", "at": "+1 16:00"}],
+        "upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live3-t1-greeting",
+      "run": "live-3",
+      "reply": "Dạ em chào chị Lan ạ, rất vui được đón chị lần đầu qua tiệm. Chị cần em hỗ trợ gì cứ nhắn em nhé.",
+      "turn": {},
+      "label": "ok"
+    },
+    {
+      "id": "live3-t2-taken-repeated-no-question",
+      "run": "live-3",
+      "reply": "Dạ chị Lan ơi, lúc Thứ Năm 12/11, 3 giờ chiều đã có người đặt rồi ạ. Chị chọn giúp em 1 giờ chiều, 2 giờ chiều, hoặc 4 giờ chiều nhé.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"},
+                  {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 16:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned", "missing_question"],
+      "reason": "The code now announces the taken time itself; the model repeating it is taken_mentioned, and the offer ends without '?'."
+    },
+    {
+      "id": "live3-t4-proposal-no-question",
+      "run": "live-3",
+      "reply": "Dạ chị Lan, em đã giữ chỗ Thứ Năm 12/11, 4 giờ chiều cho chị sơn gel rồi ạ. Chị xác nhận giúp em là mình đồng ý đặt giờ này nhé.",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "bad",
+      "codes": ["missing_question"]
+    },
+    {
+      "id": "live3-t4-proposal",
+      "run": "live-3",
+      "reply": "Dạ chị Lan, em đã tạo đề xuất đặt sơn gel vào Thứ Năm 12/11, 4 giờ chiều ạ. Chị đồng ý để em chốt lịch nhé?",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live3-t6-price",
+      "run": "live-3",
+      "reply": "Dạ chị Lan, nhuộm tóc giá từ 350.000đ đến 700.000đ ạ.",
+      "turn": {"services": [{"id": "toc-nhuom", "identified": true, "asked_price": true}],
+               "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live3-t7-proposal-identified-service",
+      "run": "live-3",
+      "reply": "Dạ chị Lan, em đã tạo đề xuất đặt nhuộm tóc vào Thứ Năm 12/11, 9 giờ sáng ạ. Chị đồng ý để em chốt lịch nhé?",
+      "turn": {
+        "services": [{"id": "toc-nhuom", "identified": true}],
+        "proposal": {"at": "+1 09:00", "services": ["toc-nhuom"]},
+        "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live3-t9-thanks",
+      "run": "live-3",
+      "reply": "Dạ em cảm ơn chị Lan ạ, có gì chị nhắn em nhé.",
+      "turn": {"upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live3-t10-appointments-with-count",
+      "run": "live-3",
+      "reply": "Dạ chị Lan, chị có 2 lịch hẹn: Thứ Năm 12/11, 9 giờ sáng và Thứ Năm 12/11, 4 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "appointment", "at": "+1 09:00"}, {"role": "appointment", "at": "+1 16:00"}],
+        "upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live4-t1-greeting",
+      "run": "live-4",
+      "reply": "Dạ em chào chị Lan ạ. Chị muốn làm tóc hay làm móng, em giúp chị ngay nhé.",
+      "turn": {},
+      "label": "ok"
+    },
+    {
+      "id": "live4-t2-taken-repeated-no-question",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, em chưa đặt được lúc Thứ Năm 12/11, 9 giờ sáng vì giờ đó đã có khách rồi ạ. Chị chọn giúp em một giờ khác: Thứ Năm 12/11, 8 giờ sáng, 11 giờ sáng, hoặc 12 giờ trưa nhé.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 09:00"}, {"role": "free", "at": "+1 08:00"},
+                  {"role": "free", "at": "+1 11:00"}, {"role": "free", "at": "+1 12:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned", "missing_question"]
+    },
+    {
+      "id": "live4-t3-armenian-letters",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, sơn gel bên em giá từ 120.000đ đến 180.000đ ạ. Եթե chị muốn, em đặt giúp chị giờ khác nhé.",
+      "turn": {
+        "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
+      },
+      "label": "bad",
+      "codes": ["foreign_script"]
+    },
+    {
+      "id": "live4-t4-proposal",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, em đã giữ chỗ làm sơn gel vào Thứ Năm 12/11, 11 giờ sáng rồi ạ. Chị đồng ý để em đặt lịch cho chị nhé?",
+      "turn": {
+        "proposal": {"at": "+1 11:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live4-t6-open-on-sunday",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, Chủ Nhật 15/11 tiệm mở cửa bình thường ạ. Nếu chị muốn, em xem giúp giờ phù hợp cho chị.",
+      "turn": {"upcoming": [{"at": "+1 11:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live4-t7-taken-repeated-no-question",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, giờ Thứ Năm 12/11, 4 giờ chiều đã có khách rồi ạ. Chị chọn giúp em một giờ trống: Thứ Năm 12/11, 2 giờ chiều, 5 giờ chiều, hoặc 6 giờ tối nhé.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 16:00"}, {"role": "free", "at": "+1 14:00"},
+                  {"role": "free", "at": "+1 17:00"}, {"role": "free", "at": "+1 18:00"}],
+        "services": [{"id": "toc-cat-nu", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 14:00", "+1 17:00", "+1 18:00"], "opened_this_turn": true},
+        "upcoming": [{"at": "+1 11:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned", "missing_question"]
+    },
+    {
+      "id": "live4-t8-wrong-service",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, em đã giữ chỗ sơn gel vào Thứ Năm 12/11, 5 giờ chiều rồi ạ. Chị đồng ý để em đặt lịch cho chị nhé?",
+      "turn": {
+        "proposal": {"at": "+1 17:00", "services": ["toc-cat-nu"]},
+        "session": {"fields": ["time"], "options": ["+1 14:00", "+1 17:00", "+1 18:00"]},
+        "upcoming": [{"at": "+1 11:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "bad",
+      "codes": ["wrong_service", "plan_missing"]
+    },
+    {
+      "id": "live4-t10-appointments",
+      "run": "live-4",
+      "reply": "Dạ chị Lan, chị có 2 lịch: Thứ Năm 12/11, 11 giờ sáng và Thứ Năm 12/11, 5 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "appointment", "at": "+1 11:00"}, {"role": "appointment", "at": "+1 17:00"}],
+        "upcoming": [{"at": "+1 11:00", "services": ["nail-son-gel"]}, {"at": "+1 17:00", "services": ["toc-cat-nu"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t1-greeting",
+      "run": "live-5-A",
+      "reply": "Dạ em chào chị Lan, chị mới ghé lần đầu ạ. Chị cần em hỗ trợ gì cho chị không ạ?",
+      "turn": {},
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t2-taken-repeated",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, giờ 3 giờ chiều đã kín rồi ạ. Chị chọn giúp em một trong các giờ 1 giờ chiều, 2 giờ chiều hoặc 4 giờ chiều nhé?",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"},
+                  {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 16:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned"]
+    },
+    {
+      "id": "live5a-t3-hours-half-said",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, tiệm mình 7 giờ tối ạ.",
+      "turn": {"times": [{"role": "shop_open", "at": "+0 08:00"}, {"role": "shop_close", "at": "+0 19:00"}],
+               "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}},
+      "label": "bad",
+      "codes": ["plan_missing"],
+      "reason": "The hours act needs both the opening (8 giờ sáng) and closing time; the reply drops the opening time."
+    },
+    {
+      "id": "live5a-t4-proposal-no-service-no-question",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, em đã giữ lịch Thứ Bảy 14/11, 4 giờ chiều, chị xác nhận giúp em nhé.",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "bad",
+      "codes": ["plan_missing", "missing_question"]
+    },
+    {
+      "id": "live5a-t4-proposal",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, em đã giữ lịch Thứ Bảy 14/11, 4 giờ chiều cho sơn gel. Chị đồng ý giúp em nhé?",
+      "turn": {
+        "proposal": {"at": "+1 16:00", "services": ["nail-son-gel"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 16:00"]}
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t6-price-with-dash",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, nhuộm giá 350.000đ-700.000đ ạ.",
+      "turn": {"services": [{"id": "toc-nhuom", "identified": true, "asked_price": true}],
+               "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t7-proposal",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, em đã giữ lịch Thứ Bảy 14/11, 9 giờ sáng cho nhuộm. Chị đồng ý giúp em nhé?",
+      "turn": {
+        "services": [{"id": "toc-nhuom", "identified": true}],
+        "proposal": {"at": "+1 09:00", "services": ["toc-nhuom"]},
+        "upcoming": [{"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t9-thanks",
+      "run": "live-5-A",
+      "reply": "Dạ em cảm ơn chị Lan ạ. Khi nào cần em hỗ trợ tiếp chị cứ nhắn em nhé.",
+      "turn": {"upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]},
+      "label": "ok"
+    },
+    {
+      "id": "live5a-t10-appointments",
+      "run": "live-5-A",
+      "reply": "Dạ chị Lan, chị có lịch vào Thứ Bảy 14/11, 9 giờ sáng và Thứ Bảy 14/11, 4 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "appointment", "at": "+1 09:00"}, {"role": "appointment", "at": "+1 16:00"}],
+        "upcoming": [{"at": "+1 09:00", "services": ["toc-nhuom"]}, {"at": "+1 16:00", "services": ["nail-son-gel"]}]
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live5b-t1-greeting-with-context-hours",
+      "run": "live-5-B",
+      "reply": "Chào chị Lan ạ, em chào mừng chị đến tiệm. Tiệm mình mở 8 giờ sáng đến 7 giờ tối.",
+      "turn": {},
+      "label": "ok"
+    },
+    {
+      "id": "live5b-t2-taken-repeated-no-question",
+      "run": "live-5-B",
+      "reply": "Thứ Bảy 14/11, 9 giờ sáng đã có khách đặt rồi chị ạ. Chị chọn giúp em Thứ Bảy 14/11, 8 giờ sáng, Thứ Bảy 14/11, 11 giờ sáng hoặc Thứ Bảy 14/11, 12 giờ trưa.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 09:00"}, {"role": "free", "at": "+1 08:00"},
+                  {"role": "free", "at": "+1 11:00"}, {"role": "free", "at": "+1 12:00"}],
+        "services": [{"id": "nail-son-gel", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned", "missing_question"]
+    },
+    {
+      "id": "live5b-t3-price-short",
+      "run": "live-5-B",
+      "reply": "Dạ, sơn gel 120.000đ-180.000đ ạ.",
+      "turn": {
+        "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
+      },
+      "label": "ok"
+    },
+    {
+      "id": "live5b-t6-open-on-sunday-with-hours",
+      "run": "live-5-B",
+      "reply": "Dạ có chị Lan ạ, chủ nhật tiệm vẫn mở từ 8 giờ sáng đến 7 giờ tối.",
+      "turn": {"times": [{"role": "shop_open", "at": "+0 08:00"}, {"role": "shop_close", "at": "+0 19:00"}]},
+      "label": "ok"
+    },
+    {
+      "id": "live5b-t7-offers-the-taken-time",
+      "run": "live-5-B",
+      "reply": "Dạ chị chọn giúp em Thứ Bảy 14/11, 3 giờ chiều nhé. Chị chọn giúp em Thứ Bảy 14/11, 1 giờ chiều, Thứ Bảy 14/11, 2 giờ chiều hoặc Thứ Bảy 14/11, 5 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"},
+                  {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 17:00"}],
+        "services": [{"id": "toc-cat-nu", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 17:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["taken_mentioned"]
+    },
+    {
+      "id": "live5b-t7-offer-no-question",
+      "run": "live-5-B",
+      "reply": "Dạ chị chọn giúp em Thứ Bảy 14/11, 1 giờ chiều, Thứ Bảy 14/11, 2 giờ chiều hoặc Thứ Bảy 14/11, 5 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "taken", "at": "+1 15:00"}, {"role": "free", "at": "+1 13:00"},
+                  {"role": "free", "at": "+1 14:00"}, {"role": "free", "at": "+1 17:00"}],
+        "services": [{"id": "toc-cat-nu", "identified": true}],
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 17:00"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["missing_question"]
+    },
+    {
+      "id": "live5b-t8-proposal-no-question",
+      "run": "live-5-B",
+      "reply": "Dạ chị Lan ạ, em đã giữ Thứ Bảy 14/11, 1 giờ chiều cho cắt tóc nữ. Chị xác nhận giúp em nhé.",
+      "turn": {
+        "proposal": {"at": "+1 13:00", "services": ["toc-cat-nu"]},
+        "session": {"fields": ["time"], "options": ["+1 13:00", "+1 14:00", "+1 17:00"]}
+      },
+      "label": "bad",
+      "codes": ["missing_question"]
+    },
+    {
+      "id": "live5b-t9-done-without-service",
+      "run": "live-5-B",
+      "reply": "Dạ em đã đặt xong cho chị Lan Thứ Bảy 14/11, 1 giờ chiều ạ.",
+      "turn": {
+        "decision": {"outcome": "approved", "at": "+1 13:00", "services": ["toc-cat-nu"]},
+        "upcoming": [{"at": "+1 13:00", "services": ["toc-cat-nu"]}]
+      },
+      "label": "bad",
+      "codes": ["plan_missing"],
+      "reason": "Same as live2-t8-done-without-service: the done act's service ('Cắt tóc nữ') is missing from the reply."
+    },
+    {
+      "id": "live5b-t10-one-appointment",
+      "run": "live-5-B",
+      "reply": "Chị Lan ơi, chị có 1 lịch hẹn vào Thứ Bảy 14/11, 1 giờ chiều ạ.",
+      "turn": {
+        "times": [{"role": "appointment", "at": "+1 13:00"}],
+        "upcoming": [{"at": "+1 13:00", "services": ["toc-cat-nu"]}]
+      },
+      "label": "ok"
+    }
+  ]
+}
