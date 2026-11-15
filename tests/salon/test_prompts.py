@@ -83,18 +83,15 @@ def test_appointment_prompt_never_reports_a_taken_time_as_ok():
     assert "turned out taken and no proposal was created, the result is never ok" in flat
 
 
-def test_orchestrator_prompt_describes_segments():
+def test_orchestrator_prompt_has_no_segment_rules():
     flat = _flat(ORCHESTRATOR_PROMPT)
-    assert "Reply facts list" in flat and "its own segment" in flat
-    assert "Copy every time and date exactly" not in flat
-    assert "inside a segment's text" in flat
+    assert "segment" not in flat
+    assert "Reply facts" not in flat
+    assert "ref and role" not in flat
 
 
-def test_orchestrator_prompt_keeps_verbs_in_plain_segments():
-    assert "Plain segments keep the rest of the sentence whole" in _flat(ORCHESTRATOR_PROMPT)
-
-
-def test_orchestrator_prompt_says_taken_times_are_not_offered():
+def test_orchestrator_prompt_names_plan_keys():
     flat = _flat(ORCHESTRATOR_PROMPT)
-    assert "allows taken is already booked by another customer" in flat
-    assert "cite only Reply facts that allow offer" in flat
+    for token in ("<reply_plan>", "<context>", "taken_told_by_code", "acts", "ask",
+                  "remember_address"):
+        assert token in flat, token
