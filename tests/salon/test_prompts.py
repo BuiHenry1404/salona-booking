@@ -199,3 +199,78 @@ def test_service_prompt_identifies_a_single_search_match():
             "with question_fields [\"service\"], naming the candidate services") in flat
     assert "only part of a service name" not in flat
     assert "whole catalogue name" not in flat
+
+
+def _section(prompt: str, heading: str) -> str:
+    """The flattened text of one `Heading:` section of a prompt (up to the next
+    unindented `...:` heading line)."""
+    lines = prompt.splitlines()
+    start = lines.index(heading)
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i] and not lines[i][0].isspace() and not lines[i].startswith("-")
+                and lines[i].endswith(":")), len(lines))
+    return _flat("\n".join(lines[start + 1:end]))
+
+
+_ORCHESTRATOR_SECTIONS = ("What you receive:", "How a turn works:", "Reply plan:", "Tools:",
+                          "Services:", "Pending proposal:", "Waiting sessions:",
+                          "Writing the reply:")
+
+
+def test_orchestrator_prompt_section_order():
+    """Residual 2, P9: truth/context, how a turn works and the reply-plan rules
+    first; tools, services, pending proposal and waiting sessions after;
+    writing style last."""
+    lines = ORCHESTRATOR_PROMPT.splitlines()
+    positions = [lines.index(heading) for heading in _ORCHESTRATOR_SECTIONS]
+    assert positions == sorted(positions)
+
+
+def test_orchestrator_prompt_explains_how_a_turn_works():
+    """Residual 2, P3: the plan before tools run is only the state so far."""
+    turn = _section(ORCHESTRATOR_PROMPT, "How a turn works:")
+    assert ("call every agent the message needs, independent agents in the same round") in turn
+    assert "read their results and call more agents if needed" in turn
+    assert ("Only when no more tool is needed, write the reply from the final reply plan") in turn
+    assert ("The reply plan shown before tools run is only the state so far; it changes after "
+            "every tool.") in turn
+    assert "The reply must cover every request in the message" in turn
+
+
+def test_orchestrator_prompt_inputs_section_holds_no_behaviour_rules():
+    """Residual 2, P4: "What you receive" lists inputs only."""
+    inputs = _section(ORCHESTRATOR_PROMPT, "What you receive:")
+    for token in ("<context>", "<reply_plan>", "Customer said (untrusted):", "summary"):
+        assert token in inputs, token
+    for rule in ("call every agent", "must tell every act", "Never mention a time"):
+        assert rule not in inputs, rule
+
+
+def test_orchestrator_prompt_length_and_need_info_rules_do_not_conflict():
+    """Residual 2, P5."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert "one or two short sentences" not in flat
+    assert ("as short as possible while covering every act, the ask and every request in "
+            "the message") in flat
+    assert "exactly that one question" not in flat
+    assert ("When an agent returns need_info, ask its question, with all its fields in one "
+            "question, offering only the options it returned.") in flat
+
+
+def test_orchestrator_prompt_has_one_address_rule_and_one_price_rule():
+    """Residual 2, P6 / P7."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    bullets = [line for line in ORCHESTRATOR_PROMPT.splitlines()
+               if line.startswith("- ") and "remember_address" in line]
+    assert len(bullets) == 1, bullets
+    assert flat.count("Prices are ranges") == 1
+    assert flat.count("`price` act") == 2   # both halves of the single price rule
+    assert "Always add no time" not in flat
+    assert "Add no time that is in neither the reply plan nor the context block" in flat
+
+
+def test_orchestrator_prompt_lets_the_customer_drop_a_request():
+    """Residual 2, P8."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert ("When the customer drops a request (for example \"never mind\" or \"let me "
+            "think\"), acknowledge it and do not ask that waiting question again.") in flat
