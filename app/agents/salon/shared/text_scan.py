@@ -6,12 +6,11 @@ kiện cần cho gói `salon` mới, kèm các hàm phụ riêng tư chúng cầ
 `names_a_clock`, `padded*`, `has_phrase`, `unaccented_words`, `cased_words`)
 phục vụ resolver của pipeline cũ, không mang sang.
 """
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from app.core.text import strip_diacritics
 
 _SENTENCE_PUNCT = frozenset(".!?…")
-_CLAUSE_PUNCT = frozenset(";.!?…\n")
 
 _DAY_OFFSET_PHRASES: Tuple[Tuple[str, int], ...] = (
     ("hôm nay", 0),
@@ -127,68 +126,6 @@ def split_sentences(text: str) -> List[str]:
         if tail:
             out.append(tail)
     return out
-
-
-def _comma_before_digit(text: str, idx: int) -> bool:
-    """Dấu phẩy tại `idx` đứng trước chữ số (vd `'Thứ Tư 21/10, 9 giờ sáng'`)."""
-    j = idx + 1
-    n = len(text)
-    while j < n and text[j] in (" ", "\t"):
-        j += 1
-    return j < n and text[j].isdigit()
-
-
-def _inside_number(text: str, idx: int) -> bool:
-    """Dấu `.`/`,` tại `idx` kẹp giữa hai chữ số là dấu ngăn hàng nghìn / thập
-    phân (`'350.000đ'`, `'1,5'`), không phải dấu ngắt mệnh đề."""
-    return (text[idx] in ".," and 0 < idx < len(text) - 1
-            and text[idx - 1].isdigit() and text[idx + 1].isdigit())
-
-
-def split_clauses(text: str, *, break_words: Sequence[str] = (),
-                  preserve_date_comma: bool = True) -> List[str]:
-    """Tách mệnh đề theo dấu câu và các từ nối `break_words` (không dùng regex)."""
-    s = text or ""
-    if not s.strip():
-        return []
-    buf: List[str] = []
-    chunks: List[str] = []
-    for idx, ch in enumerate(s):
-        if _inside_number(s, idx):
-            buf.append(ch)
-        elif ch in _CLAUSE_PUNCT or (ch == "," and not (preserve_date_comma and _comma_before_digit(s, idx))):
-            piece = "".join(buf).strip()
-            if piece:
-                chunks.append(piece)
-            buf = []
-        else:
-            buf.append(ch)
-    tail = "".join(buf).strip()
-    if tail:
-        chunks.append(tail)
-
-    if not break_words:
-        return chunks
-
-    lowered_breaks = {bw.lower() for bw in break_words}
-    final: List[str] = []
-    for chunk in chunks:
-        # Tách thêm tại từ nối đứng độc lập (cách bởi khoảng trắng)
-        tokens_raw = chunk.split()
-        cur: List[str] = []
-        for tok in tokens_raw:
-            core = "".join(c for c in tok if c.isalnum()).lower()
-            if core in lowered_breaks:
-                part = " ".join(cur).strip()
-                if part:
-                    final.append(part)
-                cur = []
-            else:
-                cur.append(tok)
-        rest = " ".join(cur).strip()
-        if rest:
-            final.append(rest)
-    return final
 
 
 def scan_spoken_clocks(text: str) -> List[Tuple[int, int, Optional[str]]]:

@@ -7,7 +7,6 @@ from app.agents.salon.shared.text_scan import (
     scan_spoken_clocks,
     scan_times,
     scan_weekdays,
-    split_clauses,
     split_sentences,
     words,
 )
@@ -22,23 +21,13 @@ def test_digits_in_collects_ascii_digit_runs():
     assert digits_in("không có số nào") == []
 
 
-def test_split_sentences_and_clauses_preserve_date_commas():
+def test_split_sentences_preserves_date_commas():
     text = "Em đang giữ Thứ Tư 21/10, 9 giờ sáng. Còn 2 giờ chiều em chưa giữ ạ!"
     sents = split_sentences(text)
     assert sents == [
         "Em đang giữ Thứ Tư 21/10, 9 giờ sáng.",
         "Còn 2 giờ chiều em chưa giữ ạ!",
     ]
-    clauses = split_clauses(
-        "Thứ Tư 21/10, 9 giờ sáng, còn 2 giờ chiều thì sao", break_words=("còn",)
-    )
-    assert clauses == ["Thứ Tư 21/10, 9 giờ sáng", "2 giờ chiều thì sao"]
-
-
-def test_split_clauses_keeps_thousands_separator_inside_a_number():
-    # Live run 1 (11/11): "350.000đ" bị cắt thành "350" | "000đ" → guard đọc ra 0đ.
-    assert split_clauses("giá từ 350.000đ đến 700.000đ ạ") == ["giá từ 350.000đ đến 700.000đ ạ"]
-    assert split_clauses("uốn 1.200.000đ. Nhuộm 350,000đ") == ["uốn 1.200.000đ", "Nhuộm 350,000đ"]
 
 
 def test_scan_spoken_clocks_and_scan_times():

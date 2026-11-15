@@ -159,12 +159,6 @@ async def thread_messages(db, user, saver=None) -> list[BaseMessage]:
     return list(found.checkpoint["channel_values"]["messages"])
 
 
-async def thread_channel_values(db, user, saver=None) -> dict:
-    saver = saver or checkpoint.get_checkpointer()
-    found = await saver.aget_tuple({"configurable": {"thread_id": await latest_thread_id(db, user)}})
-    return dict(found.checkpoint["channel_values"])
-
-
 def assert_valid_thread(messages: list[BaseMessage]) -> None:
     _check_history(messages)
 
