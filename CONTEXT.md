@@ -6,7 +6,7 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 
 | Cần gì | Đọc file |
 |---|---|
-| Đang làm gì, làm tiếp gì | Mục **Trạng thái** ngay dưới + spec [`docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md`](docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md) + sổ `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md` |
+| Đang làm gì, làm tiếp gì | Mục **Trạng thái** ngay dưới + spec [`docs/superpowers/specs/2026-11-14-guard-rebuild-design.md`](docs/superpowers/specs/2026-11-14-guard-rebuild-design.md) + plan [`docs/superpowers/plans/2026-11-14-guard-rebuild.md`](docs/superpowers/plans/2026-11-14-guard-rebuild.md) (+ sổ `.superpowers/sdd/2026-11-14-guard-rebuild/progress.md`, git-ignored, xoá sau khi review cuối xong) |
 | Kiến trúc đích của tầng agent | [`docs/architech-agent.md`](docs/architech-agent.md) — thắng spec / plan khi lệch; `AGENTS.md` đã xoá (09/11) |
 | Gõ lệnh gì | [`RUNBOOK.md`](RUNBOOK.md) |
 | Lên prod cần gì | [`PROD_CHECKLIST.md`](PROD_CHECKLIST.md) |
