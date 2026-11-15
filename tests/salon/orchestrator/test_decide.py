@@ -18,7 +18,7 @@ from app.services.auth import AuthService
 from app.services.proposal import PROPOSAL_MAX_AGE_MINUTES, ProposalService
 
 
-async def a_user(db, phone="0912345678", name="Cô Lan"):
+async def a_user(db, phone="0912345678", name="Chị Lan"):
     return await AuthService(db).create_user(phone, "matkhau123", name)
 
 

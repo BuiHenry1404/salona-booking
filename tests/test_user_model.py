@@ -1,3 +1,6 @@
+import pytest
+
+from app.core.vi_format import derive_address
 from app.models.user import STAFF_NOTE_MAX, User
 from app.repositories.user import UserRepository
 
@@ -82,16 +85,21 @@ class TestSeedSelfAddressFromNames:
                                                  full_name="Nguyễn Thị Lan", role="user")
         already_corrected = await repo.create_user(phone="0955555555", hashed_password="x",
                                                     full_name="Cô Mai", role="user")
+        chi_ha = await repo.create_user(phone="0966666666", hashed_password="x",
+                                        full_name="Chị Hà", role="user")
         await repo.set_self_address(str(already_corrected.id), "anh")  # admin đã sửa tay
 
         seeded = await repo.seed_self_address_from_names()
 
-        assert seeded == 2  # chỉ cô Lan và chú Hùng — bác Bảy mơ hồ, còn lại không tiền tố
-        assert (await repo.get_by_id(str(co_lan.id))).self_address == "chị"
-        assert (await repo.get_by_id(str(chu_hung.id))).self_address == "anh"
-        assert (await repo.get_by_id(str(bac_bay.id))).self_address is None
+        # Live try 15/11 (L3b): tiền tố admin gõ là đúng cách gọi đó — cô / chú /
+        # bác giữ nguyên, không còn đổi thành chị / anh; không tiền tố thì trống.
+        assert seeded == 4
+        assert (await repo.get_by_id(str(co_lan.id))).self_address == "cô"
+        assert (await repo.get_by_id(str(chu_hung.id))).self_address == "chú"
+        assert (await repo.get_by_id(str(bac_bay.id))).self_address == "bác"
+        assert (await repo.get_by_id(str(chi_ha.id))).self_address == "chị"
         assert (await repo.get_by_id(str(full_name_only.id))).self_address is None
-        # Giá trị admin đã sửa tay không bị migration ghi đè.
+        # Giá trị admin đã sửa tay không bị seed ghi đè.
         assert (await repo.get_by_id(str(already_corrected.id))).self_address == "anh"
 
     async def test_running_twice_is_a_no_op_the_second_time(self, test_db):
@@ -100,3 +108,72 @@ class TestSeedSelfAddressFromNames:
                                full_name="Cô Lan", role="user")
         await repo.seed_self_address_from_names()
         assert await repo.seed_self_address_from_names() == 0
+
+
+class TestDeriveAddress:
+    """Live try 15/11 (L3b): tiền tố admin gõ cho ĐÚNG cách gọi đó (`SelfAddress`
+    giờ có cô / chú / bác / ông / bà); không tiền tố, hay tiền tố "em", vẫn là
+    "anh chị" (quyết định 8: không đoán)."""
+
+    @pytest.mark.parametrize("full_name, expected", [
+        ("Cô Lan", ("cô", "Lan")),
+        ("chú Hùng", ("chú", "Hùng")),
+        ("Bác Bảy", ("bác", "Bảy")),
+        ("Ông Năm", ("ông", "Năm")),
+        ("Bà Tư", ("bà", "Tư")),
+        ("Chị Hà", ("chị", "Hà")),
+        ("Anh Minh", ("anh", "Minh")),
+        ("Em Vy", ("anh chị", "Vy")),
+        ("Nguyễn Thị Lan", ("anh chị", "")),
+        ("Cô", ("anh chị", "")),
+        (None, ("anh chị", "")),
+    ])
+    def test_prefix_gives_that_form(self, full_name, expected):
+        assert derive_address(full_name) == expected
+
+
+class TestHonorificSelfAddressMigration:
+    """Live try 15/11 (L3c): khách đã được seed "chị" / "anh" từ tiền tố cô / chú /
+    bác / ông / bà (luật cũ) được đổi sang đúng tiền tố — MỘT lần."""
+
+    async def test_old_seeded_forms_take_the_prefix_once(self, test_db):
+        repo = UserRepository(test_db)
+
+        async def user(phone, name, form):
+            created = await repo.create_user(phone=phone, hashed_password="x",
+                                             full_name=name, role="user")
+            if form is not None:
+                await repo.set_self_address(str(created.id), form)
+            return str(created.id)
+
+        changed = {
+            await user("0911111111", "Cô Lan", "chị"): "cô",
+            await user("0922222222", "Chú Hùng", "anh"): "chú",
+            await user("0933333333", "bác Bảy", "anh"): "bác",
+            await user("0944444444", "Ông Năm", "anh"): "ông",
+            await user("0955555555", "Bà Tư", "chị"): "bà",
+        }
+        kept = {
+            await user("0966666666", "Chị Hà", "chị"): "chị",
+            await user("0977777777", "Cô Hoa", "cô"): "cô",
+            await user("0988888888", "Nguyễn Văn Ba", "anh"): "anh",
+            await user("0999999999", "Cô Mai", None): None,
+        }
+
+        assert await repo.migrate_honorific_self_address() == 5
+
+        for user_id, form in {**changed, **kept}.items():
+            assert (await repo.get_by_id(user_id)).self_address == form, user_id
+
+    async def test_runs_only_once(self, test_db):
+        repo = UserRepository(test_db)
+        created = await repo.create_user(phone="0911111111", hashed_password="x",
+                                         full_name="Cô Lan", role="user")
+        await repo.set_self_address(str(created.id), "chị")
+        assert await repo.migrate_honorific_self_address() == 1
+        # Khách tự nói lại "gọi chị" sau migration (remember_address): lần khởi
+        # động sau không được đổi ngược.
+        await repo.set_self_address(str(created.id), "chị")
+
+        assert await repo.migrate_honorific_self_address() == 0
+        assert (await repo.get_by_id(str(created.id))).self_address == "chị"

@@ -9,6 +9,12 @@ from app.core.phone import InvalidPhoneError, normalize_phone
 from app.models.user import Role, User
 from app.repositories.base import BaseRepository
 
+# Dấu các migration một lần đã chạy (`{"_id": tên}`).
+_MIGRATIONS = "migrations"
+_HONORIFIC_MIGRATION = "self_address_honorific_prefix"
+# Tiền tố tên mà luật seed cũ đổi sang "anh" / "chị" (hoặc bỏ trống).
+_HONORIFIC_PREFIXES = frozenset({"cô", "chú", "bác", "ông", "bà"})
+
 
 class UserRepository(BaseRepository[User]):
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -84,14 +90,14 @@ class UserRepository(BaseRepository[User]):
         return result.matched_count == 1
 
     async def seed_self_address_from_names(self) -> int:
-        """Migration một lần (lúc khởi động, Task 13): tiền tố admin gõ sẵn
-        trong `full_name` ("Cô Lan", "Bác Bảy") là thông tin ĐÃ BIẾT, không
-        phải bot đoán — seed `self_address` từ đó cho khách chưa có giá trị.
-        "Bác" không cho giới tính nên để trống, như `derive_address` vốn đã xử
-        lý. Idempotent: vòng lặp ở đây bỏ qua khách đã có `self_address` (dù
-        do migration lần trước hay admin sửa tay), nên gọi lại nhiều lần (mỗi
-        lần khởi động app) không có tác dụng phụ — `set_self_address` giờ ghi
-        đè tự do, idempotence không còn tới từ nó.
+        """Migration lúc khởi động (Task 13): tiền tố admin gõ sẵn trong
+        `full_name` ("Cô Lan", "Bác Bảy") là thông tin ĐÃ BIẾT, không phải bot
+        đoán — seed `self_address` từ đó (đúng cách gọi của tiền tố, live try
+        15/11 L3b) cho khách chưa có giá trị. Không tiền tố thì để trống.
+        Idempotent: vòng lặp ở đây bỏ qua khách đã có `self_address` (dù do
+        migration lần trước hay admin sửa tay), nên gọi lại nhiều lần (mỗi lần
+        khởi động app) không có tác dụng phụ — `set_self_address` giờ ghi đè
+        tự do, idempotence không còn tới từ nó.
         """
         from app.core.vi_format import derive_address
 
@@ -100,7 +106,35 @@ class UserRepository(BaseRepository[User]):
             if user.self_address is not None:
                 continue
             address, _ = derive_address(user.full_name)
-            if address in ("anh", "chị"):
+            if address != "anh chị":
                 if await self.set_self_address(str(user.id), address):
                     seeded += 1
         return seeded
+
+    async def migrate_honorific_self_address(self) -> int:
+        """Migration MỘT lần lúc khởi động (live try 15/11, L3c): luật seed cũ
+        đổi tiền tố cô / bà thành "chị", chú / ông thành "anh" (và bác thành
+        trống). Khách có tiền tố tên thuộc {cô, chú, bác, ông, bà} mà
+        `self_address` còn là "anh" / "chị" được đổi sang đúng tiền tố.
+
+        Chỉ chạy một lần (dấu `_id` trong collection `migrations`): sau đó khách
+        tự nói lại "gọi chị" (`remember_address`) thì lần khởi động sau không
+        đổi ngược. Trả số khách đã đổi (0 khi đã chạy rồi)."""
+        migrations = self.collection.database[_MIGRATIONS]
+        if await migrations.find_one({"_id": _HONORIFIC_MIGRATION}) is not None:
+            return 0
+        changed = 0
+        cursor = self.collection.find({"self_address": {"$in": ["anh", "chị"]}},
+                                      {"full_name": 1, "self_address": 1})
+        async for doc in cursor:
+            parts = (doc.get("full_name") or "").split()
+            prefix = parts[0].lower() if len(parts) >= 2 else ""
+            if prefix in _HONORIFIC_PREFIXES:
+                result = await self.collection.update_one(
+                    {"_id": doc["_id"], "self_address": doc["self_address"]},
+                    {"$set": {"self_address": prefix}},
+                )
+                changed += result.modified_count
+        await migrations.update_one({"_id": _HONORIFIC_MIGRATION},
+                                    {"$setOnInsert": {"changed": changed}}, upsert=True)
+        return changed

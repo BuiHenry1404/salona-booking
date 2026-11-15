@@ -58,12 +58,14 @@ def format_vi_datetime(dt) -> str:
             f"{_clock_phrase(local.hour, local.minute)}")
 
 
-# Tiền tố xưng hô nào cũng phải CẮT khỏi tên (prompt cấm nói cô/chú/bác),
-# nhưng chỉ một số cho biết giới tính để suy ra "anh" hay "chị".
+# Tiền tố xưng hô nào cũng phải CẮT khỏi tên. Tiền tố là một cách gọi khách
+# (`SelfAddress`: anh / chị / cô / chú / bác / ông / bà) thì giữ ĐÚNG cách gọi
+# đó (live try 15/11, L3b) — admin gõ "Cô Lan" là muốn gọi "cô", không phải
+# "chị". "em" không phải cách bot gọi khách (bot tự xưng "em") -> "anh chị".
 _HONORIFICS = {"cô", "chị", "bà", "chú", "anh", "ông", "bác", "em"}
-_GENDERED = {
-    "cô": "chị", "chị": "chị", "bà": "chị",
-    "chú": "anh", "anh": "anh", "ông": "anh",
+_ADDRESS_OF_PREFIX = {
+    "anh": "anh", "chị": "chị", "cô": "cô", "chú": "chú",
+    "bác": "bác", "ông": "ông", "bà": "bà",
 }
 
 
@@ -71,11 +73,11 @@ def derive_address(full_name: Optional[str]) -> tuple[str, str]:
     """Suy cách gọi khách từ tên. Trả (cách_gọi, tên_đã_bỏ_tiền_tố).
 
     13/13 khách trong DB có full_name mang sẵn tiền tố ("Cô Lan", "Bác Bảy").
-    Đó là tín hiệu giới tính DUY NHẤT đang có — User model không có trường
-    giới tính — nên map nó thay vì vứt đi. "Bác" không cho biết giới nên lùi
-    về "anh chị", trùng với fallback vốn có ở confirm.py.
+    Đó là thông tin admin gõ, không phải bot đoán: tiền tố là cách gọi đó
+    ("Cô Lan" -> "cô"). Không tiền tố (hay "em") thì "anh chị" — không bao
+    giờ đoán từ một tên đầy đủ (quyết định 8).
     """
     parts = (full_name or "").split()
     if len(parts) >= 2 and parts[0].lower() in _HONORIFICS:
-        return _GENDERED.get(parts[0].lower(), "anh chị"), " ".join(parts[1:])
+        return _ADDRESS_OF_PREFIX.get(parts[0].lower(), "anh chị"), " ".join(parts[1:])
     return "anh chị", ""

@@ -120,10 +120,12 @@ async def test_address_phrase_defaults_to_anh_chi(test_db):
 
 
 async def test_address_phrase_uses_name_prefix_when_present(test_db):
-    """Tên admin gõ CÓ tiền tố xưng hô ("Cô Lan") -> suy ra "chị Lan" (ca
-    "ghi rõ ra chị Lan" của task brief)."""
-    user = await _make_user(test_db, full_name="Cô Lan")
+    """Tên admin gõ CÓ tiền tố xưng hô -> đúng cách gọi đó: "Chị Lan" -> "chị
+    Lan", "Cô Lan" -> "cô Lan" (live try 15/11, L3b)."""
+    user = await _make_user(test_db, full_name="Chị Lan")
     assert address_phrase(user) == "chị Lan"
+    user = await _make_user(test_db, full_name="Cô Lan")
+    assert address_phrase(user) == "cô Lan"
 
 
 async def test_address_phrase_self_address_wins(test_db):

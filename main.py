@@ -47,8 +47,13 @@ async def lifespan(app: FastAPI):
         # chị" một lúc, không đáng sập cả app vì nó.
         try:
             from app.repositories.user import UserRepository
-            seeded = await UserRepository(app.state.db).seed_self_address_from_names()
+            users = UserRepository(app.state.db)
+            seeded = await users.seed_self_address_from_names()
             logger.info("self_address_seed_done", seeded=seeded)
+            # Một lần (live try 15/11): "chị" / "anh" cũ của khách tên "Cô …",
+            # "Chú …"… thành đúng tiền tố. Chỉ log số khách, không chữ khách.
+            migrated = await users.migrate_honorific_self_address()
+            logger.info("self_address_honorific_migration_done", migrated=migrated)
         except Exception as e:
             logger.warning("self_address_seed_failed", error=str(e))
 
