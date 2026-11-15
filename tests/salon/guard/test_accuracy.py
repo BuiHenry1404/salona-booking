@@ -20,6 +20,8 @@ turn's facts rebuilt by hand in minimal form, run through `build_plan` +
   `upcoming` [{"at", "services"?}]       — the customer's upcoming appointments
   `session`  {"fields", "options"?, "opened_this_turn"?} — appointment session
   `address`  the context block's address (default "chị Lan")
+  `customer_times` ["HH:MM"] — times the customer just said (only the times
+             are kept, spoken by `format_vi_hhmm`; never the customer's text)
 Times are "+D HH:MM": D days after the run's `today` (`run_days`); spoken
 like the live runs ("Thứ Năm 12/11, 3 giờ chiều"). Services are ids of
 `catalog` (the live runs' catalogue, `data/mock/services.json`).
@@ -37,7 +39,7 @@ from app.agents.salon.guard.validator import CODES, validate
 from app.agents.salon.shared.context import CustomerView, TurnSnapshot
 from app.agents.salon.shared.schemas import Moment
 from app.core.clock import TZ
-from app.core.vi_format import format_vi_datetime
+from app.core.vi_format import format_vi_datetime, format_vi_hhmm
 from app.models.service import Service
 from app.models.shop import ShopHours, ShopStatusView
 from tests.salon.guard.builders import (
@@ -114,7 +116,9 @@ def results_of(case: dict) -> TurnResults:
     )
     return turn_results_from(
         snapshot=snapshot, turn_facts=facts, pending_outcome=pending_outcome, turn_id=TURN_ID,
-        turn_kind="typed", question="", previous_replies=[],
+        turn_kind="typed",
+        question=" ".join(format_vi_hhmm(t) for t in turn.get("customer_times", [])),
+        previous_replies=[],
         pending_decided="decision" in turn, catalog_services=CATALOG,
         shop_service_names=[service.name for service in CATALOG.values()],
         shop_phone=SHOP_PHONE,

@@ -408,6 +408,18 @@
       "label": "ok"
     },
     {
+      "id": "live5b-t4-machine-time",
+      "run": "live-5-B",
+      "reply": "08:00 Chị cho em xin buổi nào ạ?",
+      "turn": {
+        "customer_times": ["08:00"],
+        "session": {"fields": ["part_of_day"], "opened_this_turn": true}
+      },
+      "label": "bad",
+      "codes": ["machine_time"],
+      "reason": "8:00 is a valid time (the customer said it), but '08:00' is machine form; the plan writes spoken times only (controller ruling, code machine_time)."
+    },
+    {
       "id": "live5b-t6-open-on-sunday-with-hours",
       "run": "live-5-B",
       "reply": "Dạ có chị Lan ạ, chủ nhật tiệm vẫn mở từ 8 giờ sáng đến 7 giờ tối.",

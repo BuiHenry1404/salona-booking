@@ -26,7 +26,7 @@ from app.core.text import normalize_for_match
 
 # Mọi mã vi phạm — thứ tự cố định dùng để sắp `Verdict.codes`.
 CODES = ("bad_tool_call", "pending_undecided", "plan_missing", "unknown_time", "unknown_price",
-         "wrong_service", "taken_mentioned", "missing_question", "missing_phone",
+         "wrong_service", "taken_mentioned", "machine_time", "missing_question", "missing_phone",
          "phone_not_allowed", "empty", "foreign_script", "repeat")
 
 REPEAT_RATIO = 0.85
@@ -121,6 +121,33 @@ def _foreign_names(text_words: list[str], names: Sequence[str], allowed: Sequenc
     return list(dict.fromkeys(found))
 
 
+_ASCII_DIGITS = "0123456789"  # `str.isdigit` nhận cả "²", mà `int("²")` lỗi
+
+
+def _digit_run(text: str, start: int, step: int) -> str:
+    """Dãy chữ số liền nhau bắt đầu ở `start`, đi theo `step` (1 sang phải, -1
+    sang trái), theo thứ tự đọc."""
+    found: list[str] = []
+    i = start
+    while 0 <= i < len(text) and text[i] in _ASCII_DIGITS:
+        found.append(text[i])
+        i += step
+    return "".join(found if step > 0 else reversed(found))
+
+
+def _has_machine_time(text: str) -> bool:
+    """Giờ viết kiểu máy: 1–2 chữ số, ":", đúng 2 chữ số, giờ 0..23 và phút
+    0..59 ("08:00", "15:00", cả phần giờ của ISO "2026-11-15T15:00"). "1:2" (tỉ
+    lệ), "3:125", "123:45", "25:00" không phải giờ. Quét ký tự, không regex."""
+    for i, ch in enumerate(text):
+        if ch != ":":
+            continue
+        hour, minute = _digit_run(text, i - 1, -1), _digit_run(text, i + 1, 1)
+        if 1 <= len(hour) <= 2 and len(minute) == 2 and int(hour) <= 23 and int(minute) <= 59:
+            return True
+    return False
+
+
 def _phone_digits(phone: Optional[str]) -> str:
     return "".join(digits_in(phone or ""))
 
@@ -192,6 +219,8 @@ def validate(text: str, plan: ReplyPlan, results: TurnResults, *,
     act_clocks = plan.act_clocks()
     if any(_says(said, clock) for clock in plan.taken_clocks if clock not in act_clocks):
         found.add("taken_mentioned")
+    if _has_machine_time(text):
+        found.add("machine_time")
 
     asks = plan.ask is not None or any(act.act in ("proposal", "offer") for act in plan.acts)
     if asks and "?" not in text:

@@ -201,6 +201,20 @@ def test_foreign_script():
     assert _codes("Dạ chị Լան cần gì ạ?", RESULTS["greeting"]) == ["foreign_script"]
 
 
+def test_machine_time():
+    greeting = RESULTS["greeting"]
+    # Live run 5-B turn 4: 8:00 is a valid time, but written in machine form.
+    assert _codes("08:00 Chị cho em xin buổi nào ạ?", greeting) == ["machine_time"]
+    assert "machine_time" in _codes("Dạ tiệm mở tới 19:00 ạ.", greeting)
+    assert "machine_time" in _codes("Dạ lịch của chị lúc 2026-11-10T08:00 ạ.", greeting)
+    assert "machine_time" in _codes("Dạ lịch lúc 2026-11-10T08:00:00+07:00 ạ.", greeting)
+    assert _codes("Dạ 8 giờ sáng ạ.", greeting) == []
+    assert "machine_time" not in _codes("Dạ tỉ lệ 1:2 ạ.", greeting)
+    assert "machine_time" not in _codes("Dạ tỉ số 3:125 ạ.", greeting)
+    assert "machine_time" not in _codes("Dạ mã 25:00 ạ.", greeting)
+    assert "machine_time" not in _codes("Dạ mã 123:45 ạ.", greeting)
+
+
 def test_repeat():
     previous = "Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ."
     results = turn_results(previous=["Dạ chào chị.", previous])
