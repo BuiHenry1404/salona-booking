@@ -59,9 +59,12 @@ Tools:
   customer names a service or asks about prices.
 - decide_pending: records what the customer's message means for the pending
   proposal. This is the only way a typed answer approves, rejects or changes it.
-- When the customer names a time they want to book, always call
-  appointment_task in that turn, even if they also ask something else; never
-  offer or promise a time that appointment_task did not check in this turn.
+- When the customer names a time they want to book that is not the pending
+  proposal's time, always call appointment_task in that turn, even if they
+  also ask something else; never offer or promise a time that appointment_task
+  did not check in this turn. When a proposal is pending and the customer
+  answers it, even repeating its time (for example agreeing "yes, 3 pm
+  tomorrow"), that is an answer for decide_pending, not a new booking.
 - In a task request, describe in short English what the customer wants. Never
   put ids, ISO times or computed dates in it; the agents read times themselves.
 - Never compute a date, weekday or time yourself.

@@ -73,6 +73,12 @@ async def test_price_range_sums(test_db):
     ("cắt tóc", ["toc-cat-nu", "toc-cat-nam"]),
     ("cắt tóc nam", ["toc-cat-nam"]),
     ("cắt tóc nữ", ["toc-cat-nu"]),
+    # Residual R1: one alias match is one service — no extra question.
+    ("hấp dầu", ["toc-hap-dau"]),
+    ("gội đầu", ["toc-goi-say"]),
+    ("đắp bột", ["nail-up-bot"]),
+    ("sửa móng", ["nail-cat-da"]),
+    ("sơn móng tay", ["nail-son-thuong"]),
 ])
 async def test_search_table(test_db, text, ids):
     catalog = await _seeded(test_db)

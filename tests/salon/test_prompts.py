@@ -167,11 +167,17 @@ def test_orchestrator_prompt_limits_services_and_prices_to_plan_and_tool_results
 
 
 def test_orchestrator_prompt_checks_every_named_time_with_appointment_task():
-    """Live try 15/11 (L2): a time the customer names is checked this turn."""
+    """Live try 15/11 (L2, scoped by residual R2): a new time the customer names
+    is checked this turn; answering the pending proposal (even repeating its
+    time) is for decide_pending, not a new booking."""
     flat = _flat(ORCHESTRATOR_PROMPT)
-    assert ("When the customer names a time they want to book, always call appointment_task "
-            "in that turn, even if they also ask something else") in flat
+    assert ("When the customer names a time they want to book that is not the pending "
+            "proposal's time, always call appointment_task in that turn, even if they also "
+            "ask something else") in flat
     assert "never offer or promise a time that appointment_task did not check in this turn" in flat
+    assert ("When a proposal is pending and the customer answers it, even repeating its time "
+            "(for example agreeing \"yes, 3 pm tomorrow\"), that is an answer for "
+            "decide_pending, not a new booking.") in flat
 
 
 def test_orchestrator_prompt_lets_the_customers_own_form_of_address_win():
@@ -181,14 +187,15 @@ def test_orchestrator_prompt_lets_the_customers_own_form_of_address_win():
             "Address line, their own words win: call remember_address with that form") in flat
 
 
-def test_service_prompt_identifies_only_a_full_name_match():
-    """Live try 15/11 (L4a): "cat toc" is only part of "Cat toc nu" — the agent
-    asks whether that is the service instead of picking it (no gender guess
-    in code)."""
+def test_service_prompt_identifies_a_single_search_match():
+    """Residual R1 (supersedes L4a): one service found (by name or alias) is
+    identified; only several or none cost the customer a question."""
     from app.agents.salon.subagents.service.prompt import SERVICE_PROMPT
 
     flat = _flat(SERVICE_PROMPT)
-    assert ("Identify a service (finish ok) only when the customer's words name its whole "
-            "catalogue name, or the customer confirmed that service") in flat
-    assert ("When the customer's words match only part of a service name, finish need_info "
-            "with question_fields [\"service\"], asking whether they want that service") in flat
+    assert ("A search that returns exactly one service (matched by its name or by an alias) "
+            "identifies it: finish ok.") in flat
+    assert ("Several services fit and the customer's words do not pick one: finish need_info "
+            "with question_fields [\"service\"], naming the candidate services") in flat
+    assert "only part of a service name" not in flat
+    assert "whole catalogue name" not in flat
