@@ -1,11 +1,11 @@
 """Tên tool kỹ thuật của gói — một nguồn duy nhất cho mọi nơi cần biết chúng:
 luật tool của Orchestrator (`orchestrator/tools.py` re-export `CONTROL_TOOLS`)
-và bộ lọc chữ của guard (`guard/checks.py::strip_tool_text`, xoá tên tool lọt
-vào câu tới khách). Ở `shared/` vì `guard/` không được import `orchestrator/`
+và bộ lọc chữ của guard (`guard/validator.py::strip_tool_text`, xoá tên tool
+lọt vào câu tới khách). Ở `shared/` vì `guard/` không được import `orchestrator/`
 (luật phụ thuộc của gói).
 
 `SUBAGENT_TOOLS` phải phủ mọi tool agent con dựng ra —
-`tests/salon/guard/test_checks.py::test_tool_name_set_covers_every_subagent_tool`
+`tests/salon/guard/test_validator.py::test_tool_name_set_covers_every_subagent_tool`
 canh, thêm tool mới thì thêm tên vào đây.
 """
 

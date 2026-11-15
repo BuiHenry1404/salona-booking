@@ -39,9 +39,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.state import CompiledStateGraph
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.salon.guard.catalog import short_label
-from app.agents.salon.guard.facts import ReplyFacts, build_reply_facts
-from app.agents.salon.guard.fallback import BUTTON_STALE_REPLY, button_reply, fallback_reply
+from app.agents.salon.guard.planner import ReplyPlan, build_plan
+from app.agents.salon.guard.results import TurnResults, build_turn_results
+from app.agents.salon.guard.templates import BUTTON_STALE_REPLY, button_reply, compose
 from app.agents.salon.memory.long_term import consolidate_memory
 from app.agents.salon.memory.store import get_store
 from app.agents.salon.orchestrator.agent import build_orchestrator, recursion_limit
@@ -55,20 +55,14 @@ from app.agents.salon.orchestrator.state import (
     read_pending_outcome,
 )
 from app.agents.salon.shared.context import SnapshotHolder
-from app.agents.salon.shared.schemas import (
-    Moment,
-    PendingOutcome,
-    ProposalFact,
-    TurnFact,
-    UnannouncedDecision,
-)
+from app.agents.salon.shared.schemas import PendingOutcome, ProposalFact, TurnFact
 from app.agents.salon.turn.events import AgentEvent, tool_event
 from app.agents.salon.turn.ledger import EndedBy, TurnLedger
 from app.core.clock import now_ms, now_utc, to_local
 from app.core.config import settings
 from app.core.langfuse import get_callbacks, get_trace_metadata
 from app.core.logging import get_logger
-from app.core.text import normalize_for_match, single_line
+from app.core.text import single_line
 from app.core.vi_format import format_vi_datetime
 from app.models.user import User
 from app.services.conversation import ConversationService
@@ -115,8 +109,9 @@ class _Answer:
     source: Literal["llm", "code"]
     ended_by: EndedBy
     facts: list[TurnFact] = field(default_factory=list)
-    # `turn_id` trong sổ lượt mà câu của MODEL đã báo (guard ghi
-    # `announced_turn_ids` khi nhận câu); câu mẫu code để rỗng (spec level C §5).
+    # `turn_id` trong sổ lượt mà câu khách nhận đã báo: `plan.announce_turn_ids()`
+    # (guard ghi `announced_turn_ids` cho câu model lẫn câu mẫu; câu mẫu của
+    # `run.py` tự dựng kế hoạch), hoặc lượt nút bấm mà câu báo của nó đã nêu.
     announced: list[str] = field(default_factory=list)
 
 
@@ -303,7 +298,8 @@ async def _final_answer(turn: _Turn, opener: HumanMessage) -> _Answer:
     code = reply.additional_kwargs.get("salon_source") == "code"
     same = _same_turn(state, turn.turn_id)
     facts = read_facts(state) if same else []
-    announced = list(state.get("announced_turn_ids", [])) if same and not code else []
+    # Câu model lẫn câu mẫu của guard: guard ghi `plan.announce_turn_ids()`.
+    announced = list(state.get("announced_turn_ids", [])) if same else []
     return _Answer(reply.text, "code" if code else "llm", "fallback" if code else "answer", facts,
                    announced)
 
@@ -319,18 +315,21 @@ def _log_failure(turn: _Turn, exc: Exception) -> None:
         logger.error("orchestrator_failed", extra=extra, exc_info=True)
 
 
-async def _reply_facts(turn: _Turn, state: dict, facts: list[TurnFact],
-                       decision: Optional[PendingOutcome], question: str) -> ReplyFacts:
-    """Dữ kiện câu mẫu từ state đã lưu + ledger, bối cảnh đọc lại (DB có thể vừa đổi)."""
+async def _reply_inputs(turn: _Turn, state: dict, facts: list[TurnFact],
+                        decision: Optional[PendingOutcome],
+                        question: str) -> tuple[TurnResults, ReplyPlan]:
+    """Dữ kiện + kế hoạch của câu mẫu từ state đã lưu + ledger, bối cảnh đọc lại
+    (DB có thể vừa đổi)."""
     same = _same_turn(state, turn.turn_id)
     turn.holder.mark_stale()
-    return await build_reply_facts(
+    results = await build_turn_results(
         turn.db, snapshot=await turn.holder.current(), turn_facts=facts, turn_id=turn.turn_id,
         turn_kind=turn.kind,
         pending_outcome=(read_pending_outcome(state) if same else None) or decision,
         question=question, previous_replies=previous_replies(list(state.get("messages", []))),
         pending_decided=bool(state.get("pending_decided")) if same else decision is not None,
     )
+    return results, build_plan(results)
 
 
 async def _write_code_reply(turn: _Turn, messages: list[BaseMessage], opener: HumanMessage,
@@ -347,11 +346,7 @@ async def _write_code_reply(turn: _Turn, messages: list[BaseMessage], opener: Hu
     else:
         updates.append(opener)
     updates.append(AIMessage(content=text, additional_kwargs=dict(CODE_SOURCE)))
-    # Finding 5: xoá luôn `structured_response` — model node có thể đã ghi nó
-    # trước khi guard ném lỗi (ví dụ `check_structured` lỗi sau một JSON hợp
-    # lệ), và không nhánh nào khác dọn lại khoá này cho lượt rơi về câu mẫu.
-    await turn.agent.aupdate_state(
-        turn.config, {"messages": updates, "structured_response": None}, as_node="model")
+    await turn.agent.aupdate_state(turn.config, {"messages": updates}, as_node="model")
 
 
 async def _fallback(turn: _Turn, opener: HumanMessage, *, question: str,
@@ -365,11 +360,12 @@ async def _fallback(turn: _Turn, opener: HumanMessage, *, question: str,
     decision = record.decision if record is not None else None
     if not (limit or facts or decision is not None):
         return None
-    reply_facts = await _reply_facts(turn, state, facts, decision, question)
-    text = fallback_reply(reply_facts)
-    await _close_sessions(turn.db, turn.ids, reason="fallback", keep=reply_facts.asked_session)
+    results, plan = await _reply_inputs(turn, state, facts, decision, question)
+    text = compose(plan, results.address)
+    await _close_sessions(turn.db, turn.ids, reason="fallback", keep=plan.asked_session)
     await _shielded(_write_code_reply(turn, messages, opener, text))
-    return _Answer(text, "code", "limit" if limit else "fallback", facts)
+    return _Answer(text, "code", "limit" if limit else "fallback", facts,
+                   plan.announce_turn_ids())
 
 
 # ---------------------------------------------------------------------------
@@ -430,13 +426,16 @@ async def _continue_next(turn: _Turn, button: ButtonReply, outcome: PendingOutco
     state = await _state(turn)
     facts = read_facts(state) if _same_turn(state, turn.turn_id) else []
     text = reply
+    announced: list[str] = []
     if any(isinstance(fact, ProposalFact) for fact in facts):
         # Lượt đã tạo đề xuất mới (nút sẽ hiện) — câu phải hỏi khách về nó.
         record = await turn.ledger.record(turn.turn_id)
         decision = record.decision if record is not None else None
-        text = f"{reply} {fallback_reply(await _reply_facts(turn, state, facts, decision, ''))}"
+        results, plan = await _reply_inputs(turn, state, facts, decision, "")
+        text = f"{reply} {compose(plan, results.address)}"
+        announced = plan.announce_turn_ids()
     await _shielded(_write_code_reply(turn, list(state.get("messages", [])), opener, text))
-    box.answer = _Answer(text, "code", "button", facts)
+    box.answer = _Answer(text, "code", "button", facts, announced)
 
 
 async def _button_turn(turn: _Turn, button: ButtonReply, box: _Box) -> AsyncIterator[AgentEvent]:
@@ -470,7 +469,9 @@ async def _button_turn(turn: _Turn, button: ButtonReply, box: _Box) -> AsyncIter
 
     note = button_note(outcome, reply, pressed=button.decision, continue_next=False)
     await _shielded(_write_button_thread(turn, note, reply))
-    box.answer = _Answer(reply, "code", "button")
+    # `button_reply` đã nêu quyết định duyệt / thất bại của chính lượt này (R0).
+    told = [turn.turn_id] if outcome.outcome in ("approved", "failed") else []
+    box.answer = _Answer(reply, "code", "button", announced=told)
 
 
 # ---------------------------------------------------------------------------
@@ -498,38 +499,13 @@ async def _record(turn: _Turn, answer: _Answer, customer_text: str) -> None:
                      extra={**turn.ids, "error_type": type(exc).__name__})
 
 
-async def _mark_announced(turn: _Turn, answer: _Answer, r0: Optional[UnannouncedDecision]) -> None:
-    """Đánh dấu ĐÃ BÁO các quyết định câu khách vừa nhận đã nêu.
-
-    - Câu của model (`source == "llm"`): đúng các `turn_id` guard ghi khi nhận
-      câu (`answer.announced` — quyết định / R0 được trích dẫn với vai trò
-      booked / moved / cancelled / failed), dù câu nói giờ ngắn gọn.
-    - Câu mẫu code: không có đoạn trích dẫn nhưng luôn nêu giờ của quyết định
-      bằng nhãn câu mẫu (`short_label`: "3 giờ chiều mai"; ngày khác là
-      nguyên `spoken`) — so nhãn đó với giờ của quyết định của lượt và của R0.
-      (Cầu tạm: Task 3 của plan-guided reply thay bằng `announce_turn_ids`
-      của kế hoạch.)"""
-    today = to_local(turn.asked_at).date()
-
-    def said_in(moment: Moment, said: str) -> bool:
-        return (normalize_for_match(short_label(moment, today)) in said
-                or normalize_for_match(moment.spoken) in said)
-
+async def _mark_announced(turn: _Turn, answer: _Answer) -> None:
+    """Đánh dấu ĐÃ BÁO các quyết định câu khách vừa nhận đã nêu: đúng
+    `answer.announced` (`plan.announce_turn_ids()` của câu model / câu mẫu, hay
+    lượt nút bấm mà câu báo của nó đã nêu)."""
     try:
-        if answer.source == "llm":
-            for turn_id in answer.announced:
-                await turn.ledger.mark_announced(turn_id)
-            return
-        said = normalize_for_match(answer.text)
-        record = await turn.ledger.record(turn.turn_id)
-        decision = record.decision if record is not None else None
-        if (decision is not None and not record.announced
-                and decision.outcome in ("approved", "failed")
-                and said_in(decision.at, said)):
-            await turn.ledger.mark_announced(turn.turn_id)
-        if (r0 is not None and r0.turn_id != turn.turn_id
-                and said_in(r0.at, said)):
-            await turn.ledger.mark_announced(r0.turn_id)
+        for turn_id in answer.announced:
+            await turn.ledger.mark_announced(turn_id)
     except Exception as exc:
         logger.warning("mark_announced_failed", extra={**turn.ids, "error_type": type(exc).__name__})
 
@@ -645,9 +621,6 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         await ledger.start(turn_id=turn_id, user_id=progress.user_id, thread_id=thread_id,
                            asked_at=asked_at, kind=kind)
         holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=thread_id, services=ledger)
-        # Quyết định chưa báo từ lượt trước (R0) — đọc ở đầu lượt, trước khi
-        # quyết định của lượt này (nếu có) thành "mới nhất".
-        r0 = (await holder.current()).unannounced
         agent = build_orchestrator(db, user, holder)
         turn = _Turn(
             db=db, user=user, turn_id=turn_id, thread_id=thread_id, asked_at=asked_at,
@@ -681,7 +654,7 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         logger.info("turn_finished", extra={**turn.ids, "ended_by": answer.ended_by,
                                             "answer_source": answer.source})
         yield AgentEvent("complete", {"answer": answer.text, "proposal": proposal})
-        await _shielded(_mark_announced(turn, answer, r0))
+        await _shielded(_mark_announced(turn, answer))
     except Exception as exc:
         logger.error("agent_turn_failed", extra={**progress.ids(), "error_type": type(exc).__name__},
                      exc_info=True)

@@ -199,3 +199,20 @@ def test_json_has_no_clock_digits():
         json.loads(text)
         assert not re.search(r"\d:\d", text), (name, text)
         assert not re.search(r"\d{4}-\d{2}-\d{2}", text), (name, text)
+
+
+def test_old_guard_is_gone_and_turn_decisions_has_one_copy():
+    """Task 8: the old guard (catalog, facts, plan, checks, fallback, segments)
+    is deleted, so `planner._turn_decisions` is the only copy of the old
+    `catalog.turn_decisions`."""
+    import importlib.util
+    from pathlib import Path
+
+    from app.agents.salon.guard import planner
+
+    for name in ("catalog", "facts", "plan", "checks", "fallback", "segments"):
+        assert importlib.util.find_spec(f"app.agents.salon.guard.{name}") is None, name
+    package = Path(planner.__file__).parent.parent
+    copies = [path for path in package.rglob("*.py") if "def _turn_decisions" in path.read_text(
+        encoding="utf-8") or "def turn_decisions" in path.read_text(encoding="utf-8")]
+    assert copies == [Path(planner.__file__)]

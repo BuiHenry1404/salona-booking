@@ -508,21 +508,19 @@ class TestCompleteProposalContract:
         from app.agents.salon.orchestrator import middleware as middleware_pkg
         from app.core.clock import now_utc, to_local
         from app.services.proposal import ProposalService
-        from tests.fakes import cite, reply, scripted, tool_call
+        from tests.fakes import scripted, tool_call
         from tests.salon.subagents import (a_user, default_hours, moment, result,
                                            tomorrow_at, use_model)
 
         iso15, s15 = moment(tomorrow_at(15))["iso"], moment(tomorrow_at(15))["spoken"]
-        # Nhãn ngắn do code dựng cho mốc "mai" (`catalog.short_label`, live run 5
+        # Nhãn ngắn do code dựng cho mốc "mai" (`results.short_label`, live run 5
         # fix) — khác `s15` (ngày đầy đủ), dùng riêng cho `when_spoken` dưới.
         s15_short = "3 giờ chiều mai"
-        # Câu trả lời cuối là JSON các đoạn trích dẫn (level C); khách nhận chữ đã ghép.
+        # Câu trả lời cuối của Orchestrator là chữ thường.
         offer_text = f"Dạ vâng, em giữ chỗ {s15_short} cho chị Lan, chị Lan đồng ý không ạ?"
-        offer = reply("Dạ vâng, em giữ chỗ ", cite("held", s15_short),
-                      " cho chị Lan, chị Lan đồng ý không ạ?")
+        offer = AIMessage(offer_text)
         hours_text = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
-        hours = reply("Dạ tiệm mở cửa từ ", cite("hours", "8 giờ sáng"), " tới ",
-                      cite("hours", "7 giờ tối"), " ạ.")
+        hours = AIMessage(hours_text)
         orchestrator = scripted([
             # Lượt 1: giao agent Đặt lịch → đề xuất 15:00.
             tool_call("appointment_task", {"request": "Book tomorrow at 3pm.",

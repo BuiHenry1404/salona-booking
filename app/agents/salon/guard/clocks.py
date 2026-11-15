@@ -1,5 +1,5 @@
-"""Giờ-trong-ngày dùng chung cho `guard/` (Task 1, tách khỏi `facts.py` để
-`catalog.py` dùng lại không phải import cả `facts.py`).
+"""Giờ-trong-ngày dùng chung cho `guard/` (`results.py`, `planner.py`,
+`validator.py`).
 
 Giờ so theo GIÁ TRỊ TRONG NGÀY, không theo nhãn buổi (review Task 12 #6):
 dữ kiện là `ClockKey = (giờ 0..23, phút, nhãn buổi không dấu)` — vd 15:00 ->

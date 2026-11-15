@@ -256,3 +256,30 @@ def test_template_body_passes_validator():
                 else templates.compose(plan, results.address))
         verdict = validate(text, plan, results)
         assert verdict.codes == [], f"{name}: {text!r} -> {verdict.codes} {verdict.missing}"
+
+
+# -- tool-name canary (moved from test_checks.py, Task 8) ----------------------
+
+
+async def test_tool_name_set_covers_every_subagent_tool(test_db):
+    """Tập tên dùng chung trong `shared/` phải phủ mọi tool agent con dựng ra
+    — thêm tool mà quên tập này thì tên tool lọt tới khách."""
+    from app.agents.salon.orchestrator import tools as orchestrator_tools
+    from app.agents.salon.shared.tool_names import CONTROL_TOOLS, SUBAGENT_TOOLS
+    from app.agents.salon.subagents.appointment.agent import APPOINTMENT
+    from app.agents.salon.subagents.dispatch import RunContext
+    from app.agents.salon.subagents.dispatch import tools_for
+    from app.agents.salon.subagents.service.agent import SERVICE
+    from app.agents.salon.subagents.shop_info.agent import SHOP_INFO
+    from tests.salon.subagents import a_holder, a_user, seed_mock_catalogue
+
+    await seed_mock_catalogue(test_db)    # có dịch vụ thì `get_service` mới được dựng
+    user = await a_user(test_db)
+    ctx = RunContext(db=test_db, user=user, snapshot=await a_holder(test_db, user).current(),
+                     session=None, request="", question="", turn_id="turn-1", service_ids=[],
+                     allow_propose=True)
+    names = {t.name for spec in (APPOINTMENT, SHOP_INFO, SERVICE)
+             for t in await tools_for(spec, ctx)}
+    assert {"search_services", "get_service", "list_services"} <= names
+    assert names <= SUBAGENT_TOOLS
+    assert orchestrator_tools.CONTROL_TOOLS is CONTROL_TOOLS

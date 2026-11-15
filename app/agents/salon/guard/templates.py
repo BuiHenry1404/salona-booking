@@ -5,8 +5,9 @@ lời khi model thất bại hai lần (`taken_sentence` + `body`, hoặc
 code tự biết (model không nhắc); `button_reply` là câu của lượt bấm nút
 (không gọi model).
 
-Giữ nguyên giọng các câu hiện có trong `guard/fallback.py` (không import file
-đó — nó sẽ bị xoá ở Task 8; các hằng chép lại y nguyên ở đây).
+Giữ nguyên giọng các câu mẫu cũ (`guard/fallback.py`, đã xoá ở Task 8). Mọi
+câu `taken_sentence` / `body` / `compose` / `button_reply` trả đều viết hoa
+chữ đầu mỗi câu (`{address}` có thể mở câu: "Chị Lan ơi, …").
 
 `{at}` / các nhãn giờ trong `body` là nhãn nói đã có sẵn trong trường của
 `PlanAct` (`short_label`, hoặc `Moment.spoken` với ngày khác hôm nay / mai) —
@@ -156,7 +157,7 @@ def taken_sentence(plan: ReplyPlan, address: str) -> str:
     giờ kín gộp một câu bằng "và". `""` khi kế hoạch không báo giờ kín nào."""
     if not plan.taken:
         return ""
-    return TAKEN_REPLY.format(at=_spoken_list(plan.taken, "và"))
+    return _capitalized(TAKEN_REPLY.format(at=_spoken_list(plan.taken, "và")))
 
 
 def _act_sentence(act: PlanAct, *, address: str, is_also_failed: bool) -> str:
@@ -215,14 +216,14 @@ def body(plan: ReplyPlan, address: str) -> str:
             failed_seen += 1
     if plan.ask is not None:
         parts.append(_ask_sentence(plan.ask, address=address))
-    return " ".join(parts)
+    return _capitalized(" ".join(parts))
 
 
 def compose(plan: ReplyPlan, address: str) -> str:
     """Câu trả lời khi model thất bại hai lần: `taken_sentence` + `body`, hay
     `GENERIC_FALLBACK` khi kế hoạch rỗng (không có gì để nói)."""
     if plan.is_empty():
-        return GENERIC_FALLBACK.format(address=address)
+        return _capitalized(GENERIC_FALLBACK.format(address=address))
     return " ".join(part for part in (taken_sentence(plan, address), body(plan, address)) if part)
 
 

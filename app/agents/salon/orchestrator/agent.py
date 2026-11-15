@@ -10,21 +10,18 @@ context của gói (`state.py`), checkpointer dùng chung (thread =
 khối bối cảnh của lượt do `ContextMiddleware` chèn thành SystemMessage THỨ HAI
 ở mỗi lần gọi model (CONTEXT.md bẫy 8-9).
 
-Câu trả lời cuối là JSON các đoạn trích dẫn (spec level C §1): `reply_format()`
-gắn `REPLY_SCHEMA` bằng `ProviderStrategy(strict=True)` tường minh — schema cố
-định ở mọi lần gọi (prompt cache), không `ToolStrategy` (câu cuối sẽ thành tool
-call kèm ToolMessage giả), không schema trần (factory tự chọn chiến lược).
+Câu trả lời cuối là chữ thường — không `response_format` (spec guard rebuild,
+mục "LLM (Orchestrator)"); `ReplyGuardMiddleware` kiểm nó với kế hoạch câu
+trả lời.
 """
 from __future__ import annotations
 
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ProviderStrategy
 from langgraph.graph.state import CompiledStateGraph
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.checkpoint import get_checkpointer
 from app.agents.llm import build_chat_model
-from app.agents.salon.guard.segments import REPLY_SCHEMA
 from app.agents.salon.memory.store import get_store
 from app.agents.salon.orchestrator.middleware import orchestrator_middleware
 from app.agents.salon.orchestrator.prompt import ORCHESTRATOR_PROMPT
@@ -33,12 +30,6 @@ from app.agents.salon.orchestrator.tools import make_orchestrator_tools
 from app.agents.salon.shared.context import SnapshotHolder
 from app.core.config import settings
 from app.models.user import User
-
-
-def reply_format() -> ProviderStrategy:
-    """Định dạng câu trả lời cuối: JSON strict theo `REPLY_SCHEMA`. Guard đọc
-    `reply.text` (không đọc `structured_response`)."""
-    return ProviderStrategy(schema=REPLY_SCHEMA, strict=True)
 
 
 def build_orchestrator(db: AsyncIOMotorDatabase, user: User,
@@ -55,7 +46,6 @@ def build_orchestrator(db: AsyncIOMotorDatabase, user: User,
         middleware=orchestrator_middleware(db, user, holder, store),
         state_schema=SalonState,
         context_schema=SalonContext,
-        response_format=reply_format(),
         checkpointer=get_checkpointer(),
         store=store,
         name="orchestrator",

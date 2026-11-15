@@ -10,9 +10,6 @@ Hôm nay của snapshot là 09/11/2026; mọi `at(...)` mặc định nằm ở 
 
 Mặc định là một lượt gõ chữ bình thường; mọi helper nhận tham số khoá để các
 task sau đổi từng phần.
-
-Tách khỏi `tests/salon/guard/__init__.py` vì file đó còn import guard cũ
-tới Task 8.
 """
 from __future__ import annotations
 

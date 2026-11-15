@@ -75,9 +75,9 @@ class SalonState(AgentState):
     pending_outcome: NotRequired[Optional[dict]]
     decide_calls: NotRequired[int]
     guard_rewrites: NotRequired[int]
-    # `turn_id` trong sổ lượt mà câu trả lời được guard NHẬN đã báo (trích dẫn
-    # quyết định / R0 với vai trò booked / moved / cancelled / failed) —
-    # `run_turn` đọc để `mark_announced` (spec level C §5).
+    # `turn_id` trong sổ lượt mà câu guard gửi (câu model được nhận hoặc câu
+    # mẫu) đã báo — `plan.announce_turn_ids()`; `run_turn` đọc để
+    # `mark_announced`.
     announced_turn_ids: NotRequired[list[str]]
 
 
