@@ -50,6 +50,10 @@ _MONEY_UNITS = {
     "tr": 1_000_000,
 }
 _RANGE_WORDS = frozenset({"tới", "đến"})
+# Đơn vị giờ ("3 giờ", "3h", "3g") và "rưỡi" (nửa đơn vị: "3 giờ rưỡi", "1 triệu
+# rưỡi") — cùng bộ từ con số mà các hàm đọc giờ dưới đây vẫn dùng.
+_CLOCK_UNITS = ("giờ", "gio", "h", "g")
+_HALF_WORDS = ("rưỡi", "ruoi")
 
 
 def _tokenize_with_pipes(text: str, *, lower: bool = True,
@@ -160,7 +164,7 @@ def scan_spoken_clocks(text: str) -> List[Tuple[int, int, Optional[str]]]:
 
 def _split_attached_unit(tok: str) -> Optional[Tuple[int, str, Optional[int]]]:
     """Tách token dính kiểu `'15h'`, `'15h30'`, `'9g'`, `'3giờ'`."""
-    for unit in ("giờ", "gio", "h", "g"):
+    for unit in _CLOCK_UNITS:
         idx = tok.find(unit)
         if idx > 0:
             left, right = tok[:idx], tok[idx + len(unit):]
@@ -303,13 +307,14 @@ def scan_weekdays(text: str) -> List[int]:
 
 
 def _tokenize_money(text: str) -> List[Tuple[str, object, object]]:
-    """Tách `text` thành số (gộp dấu `.`/`,` ngăn hàng nghìn), chữ (thường) và dấu `-`.
+    """Tách `text` thành số (gộp dấu `.`/`,` ngăn hàng nghìn), chữ (thường), dấu
+    `-` và các dấu câu khác (`"punct"` — để "X triệu Y" không ghép Y qua dấu câu).
 
     Một số dạng `("num", value, frac)`: `value` là các nhóm chữ số gộp lại
-    (như trước). `frac` là `None`, trừ khi dấu phân cách cuối cùng là `,` và
-    nhóm chữ số sau nó không đủ 3 chữ số — khi đó `,` là dấu thập phân
-    (`"1,2"` → phần nguyên 1, phần thập phân "2"), không phải dấu ngăn hàng
-    nghìn, và `frac` giữ `(phần_nguyên, chuỗi_phần_thập_phân)`.
+    (như trước). `frac` là `None`, trừ khi nhóm chữ số sau dấu phân cách cuối
+    cùng (`,` hay `.`) không đủ 3 chữ số — khi đó dấu đó là dấu thập phân
+    (`"1,2"` / `"1.5"` → phần nguyên 1, phần thập phân "2" / "5"), không phải
+    dấu ngăn hàng nghìn, và `frac` giữ `(phần_nguyên, chuỗi_phần_thập_phân)`.
     """
     out: List[Tuple[str, object, object]] = []
     s = text or ""
@@ -337,7 +342,7 @@ def _tokenize_money(text: str) -> List[Tuple[str, object, object]]:
             groups.append("".join(cur))
             value = int("".join(groups))
             frac = None
-            if seps and seps[-1] == "," and len(groups[-1]) != 3:
+            if seps and len(groups[-1]) != 3:
                 whole = int("".join(groups[:-1])) if len(groups) > 1 else 0
                 frac = (whole, groups[-1])
             out.append(("num", value, frac))
@@ -354,6 +359,8 @@ def _tokenize_money(text: str) -> List[Tuple[str, object, object]]:
             out.append(("dash", None, None))
             i += 1
             continue
+        if not ch.isspace():
+            out.append(("punct", ch, None))
         i += 1
     return out
 
@@ -372,7 +379,9 @@ def scan_money(text: str) -> List[int]:
 
     Một số tiền = một số đứng ngay trước đơn vị trong
     `("k", "nghìn", "ngàn", "đ", "đồng", "triệu", "tr")` (dính liền hay cách
-    đều được). `"1 triệu 2"` / `"1tr2"` = 1 200 000. Trong khoảng
+    đều được). `"1 triệu 2"` / `"1tr2"` = 1 200 000; `"1 triệu rưỡi"`,
+    `"1.5 triệu"`, `"1,5 triệu"` = 1 500 000; `"1 triệu, 3 giờ"` = 1 000 000
+    (chữ số nói tắt không qua dấu câu và không phải giờ). Trong khoảng
     `"X tới/đến/- Y đơn_vị"`, số X lấy đơn vị của Y. Số không có đơn vị →
     không phải tiền.
     """
@@ -387,23 +396,32 @@ def scan_money(text: str) -> List[int]:
             continue
         j = i + 1
 
-        # "X triệu/tr Y" — Y là phần sau: nếu có đơn vị nghìn/ngàn/k đứng
-        # ngay sau Y thì Y là số đó theo đơn vị đó ("1 triệu 200 nghìn" =
-        # 1 200 000); nếu không và Y chỉ một chữ số thì Y là chữ số hàng
-        # trăm nghìn kiểu nói tắt ("1 triệu 2"/"1tr2" = 1 200 000).
-        if (j < n and tokens[j][0] == "word" and tokens[j][1] in ("triệu", "tr")
-                and j + 1 < n and tokens[j + 1][0] == "num"):
-            second = tokens[j + 1][1]
-            k = j + 2
-            if k < n and tokens[k][0] == "word" and tokens[k][1] in ("nghìn", "ngàn", "k"):
-                out.append(int(round(_decimal_value(tokens[i]) * 1_000_000 + second * 1_000)))
+        # "X triệu/tr Y" — Y là phần sau, đứng ngay sau "triệu" (không qua dấu
+        # câu): có đơn vị nghìn/ngàn/k ngay sau Y thì Y là số đó theo đơn vị
+        # đó ("1 triệu 200 nghìn" = 1 200 000); không thì Y một chữ số là chữ
+        # số hàng trăm nghìn kiểu nói tắt ("1 triệu 2"/"1tr2" = 1 200 000) —
+        # trừ khi Y là giờ ("1 triệu 3 giờ", "1 triệu 3h"). "X triệu rưỡi" =
+        # X triệu + 500 nghìn.
+        if j < n and tokens[j][0] == "word" and tokens[j][1] in ("triệu", "tr"):
+            base = _decimal_value(tokens[i]) * 1_000_000
+            k = j + 1
+            if k < n and tokens[k][0] == "word" and tokens[k][1] in _HALF_WORDS:
+                out.append(int(round(base + 500_000)))
                 i = k + 1
                 continue
-            if second < 10:
-                out.append(int(round(_decimal_value(tokens[i]) * 1_000_000 + second * 100_000)))
-                i = j + 2
-                continue
-            out.append(int(round(_decimal_value(tokens[i]) * 1_000_000)))
+            if k < n and tokens[k][0] == "num":
+                second = tokens[k][1]
+                after = tokens[k + 1] if k + 1 < n else None
+                after_word = after[1] if after is not None and after[0] == "word" else None
+                if after_word in ("nghìn", "ngàn", "k"):
+                    out.append(int(round(base + second * 1_000)))
+                    i = k + 2
+                    continue
+                if second < 10 and after_word not in _CLOCK_UNITS:
+                    out.append(int(round(base + second * 100_000)))
+                    i = k + 1
+                    continue
+            out.append(int(round(base)))
             i = j + 1
             continue
 

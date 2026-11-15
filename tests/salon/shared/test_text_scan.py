@@ -84,3 +84,23 @@ def test_scan_money_table(text, amounts):
 )
 def test_scan_money_reads_million_forms(text, expected):
     assert scan_money(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Review F4: the "X triệu Y" shorthand digit never crosses punctuation
+        # and is never a clock ("giờ" / "h" after Y).
+        ("giá 1 triệu, 3 giờ chiều", [1_000_000]),
+        ("giá 1 triệu 3 giờ chiều", [1_000_000]),
+        ("giá 1 triệu 3h chiều", [1_000_000]),
+        ("1 triệu. 2 người", [1_000_000]),
+        ("1 triệu rưỡi", [1_500_000]),
+        ("1.5 triệu", [1_500_000]),
+        ("1,5 triệu", [1_500_000]),
+        ("1 triệu 5", [1_500_000]),
+        ("1.200.000đ", [1_200_000]),
+    ],
+)
+def test_scan_money_million_shorthand_edges(text, expected):
+    assert scan_money(text) == expected
