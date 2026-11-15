@@ -208,6 +208,8 @@ OFFER_15_TEXT = f"Dạ vâng, em giữ chỗ {S15} cho chị Lan, chị Lan đ�
 OFFER_15 = AIMessage(OFFER_15_TEXT)
 HOURS_TEXT = "Dạ tiệm mở cửa từ 8 giờ sáng tới 7 giờ tối ạ."
 HOURS = AIMessage(HOURS_TEXT)
+# Giờ mở cửa + hỏi lại giờ của phiên chờ lượt trước (residual R4).
+HOURS_REASK_TEXT = f"{HOURS_TEXT} Chị Lan chọn 1 giờ, 2 giờ hay 4 giờ chiều mai ạ?"
 
 
 def need_info_15() -> list[AIMessage]:
@@ -379,7 +381,7 @@ async def test_session_continues_on_the_next_turn(test_db, monkeypatch):
     user = await a_user(test_db)
     orchestrator(monkeypatch, [
         tool_call("appointment_task", BOOK_15), ASK_OTHER_TIME,
-        tool_call("shop_info_task", SHOP), HOURS,
+        tool_call("shop_info_task", SHOP), AIMessage(HOURS_REASK_TEXT),
         tool_call("appointment_task", PICK_16), OFFER_16,
     ])
     sub = subagents(monkeypatch, need_info_15() + shop_hours() + propose_16_from_session())
@@ -388,8 +390,9 @@ async def test_session_continues_on_the_next_turn(test_db, monkeypatch):
     assert completed(first)["proposal"] is None
     assert "appointment" in await active_sessions(test_db, user)
 
+    # The time session of turn 1 still waits: the reply asks its question again (R4).
     second = await turn(test_db, user, "tiệm mở cửa mấy giờ vậy em")
-    assert completed(second)["answer"] == HOURS_TEXT
+    assert completed(second)["answer"] == HOURS_REASK_TEXT
     assert "appointment" in await active_sessions(test_db, user)
 
     third = await turn(test_db, user, "4 giờ đi")

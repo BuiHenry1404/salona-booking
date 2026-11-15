@@ -243,11 +243,6 @@ def test_repeat_only_when_the_plan_is_empty():
     assert _codes(greeting, turn_results(previous=[greeting])) == ["repeat"]
 
 
-def test_taken_clock_at_shop_open_allows_the_hours_answer():
-    text = "Dạ tiệm mở cửa từ 8 giờ sáng đến 7 giờ tối ạ. Còn trống 9 giờ sáng mai, chị chọn giờ nào ạ?"
-    assert _codes(text, RESULTS["taken_at_shop_open"]) == []
-
-
 def test_bad_tool_call_first():
     codes = _codes("", RESULTS["greeting"], invalid_tool_call=True)
     assert codes[0] == "bad_tool_call"

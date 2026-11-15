@@ -20,7 +20,7 @@ from typing import Any, Iterable, Literal, Optional, get_args
 
 from pydantic import BaseModel
 
-from app.agents.salon.guard.clocks import clocks_of_hhmm, clocks_of_spoken
+from app.agents.salon.guard.clocks import clocks_of_spoken
 from app.agents.salon.guard.results import (
     FAILED_OUTCOMES,
     RELEASED_OUTCOMES,
@@ -31,6 +31,7 @@ from app.agents.salon.guard.results import (
     spoken_price,
 )
 from app.agents.salon.shared.schemas import (
+    AgentStatusFact,
     DecisionFact,
     Moment,
     PendingOutcome,
@@ -186,6 +187,28 @@ def _opened_session(results: TurnResults) -> Optional[tuple[str, WaitingSession]
     return None
 
 
+# Phiên chờ của lượt trước được hỏi lại theo thứ tự này (residual R4).
+_REASK_AGENTS = ("appointment", "service")
+
+
+def _earlier_session(results: TurnResults) -> Optional[tuple[str, WaitingSession]]:
+    """Phiên chờ mở ở một lượt TRƯỚC, còn chờ, còn hạn, mà agent của nó không
+    chạy trong lượt này — khách nói chuyện khác thì câu hỏi của phiên vẫn phải
+    hỏi lại (live 15/11). Có đề xuất chờ thì không (luật `decide_pending` /
+    `clarify` quyết)."""
+    snapshot = results.snapshot
+    if snapshot.pending is not None:
+        return None
+    ran = {fact.agent for fact in results.turn_facts if isinstance(fact, AgentStatusFact)}
+    for agent in _REASK_AGENTS:
+        session = snapshot.sessions.get(agent)
+        if (session is not None and session.status == "waiting"
+                and session.opened_turn_id != results.turn_id and agent not in ran
+                and session.expires_at > snapshot.now_local):
+            return agent, session
+    return None
+
+
 def _session_options(session: WaitingSession) -> list[Moment]:
     return _distinct(Moment(iso=o.iso, spoken=o.spoken) for o in session.question.options)
 
@@ -328,6 +351,20 @@ def build_plan(results: TurnResults) -> ReplyPlan:
                               options=[label(m) for m in _session_options(session)])
                 asked_session = agent
 
+    # -- ask lại phiên chờ của lượt trước (residual R4) -----------------------
+    if proposal is None and ask is None and not any(act.act == "offer" for act in planner.acts):
+        waiting = _earlier_session(results)
+        if waiting is not None:
+            agent, session = waiting
+            # `confirm` hỏi về một đề xuất; không còn đề xuất chờ thì không có
+            # gì để xác nhận (phiên `confirm` chỉ giữ yêu cầu kế, spec §5.1).
+            fields = [f for f in session.question.fields
+                      if f in _QUESTION_FIELDS and f != "confirm"]
+            if fields:
+                ask = PlanAsk(fields=fields, agent=agent,
+                              options=[label(m) for m in _session_options(session)])
+                asked_session = agent
+
     # -- price -------------------------------------------------------------------
     taken = _times(results, "taken")
     booking = (taken or ask is not None
@@ -347,21 +384,10 @@ def build_plan(results: TurnResults) -> ReplyPlan:
 
     # -- hours / busy ------------------------------------------------------------
     shop_open, shop_close = _times(results, "shop_open"), _times(results, "shop_close")
-    hours = snapshot.shop_hours
-    hours_clocks = [key[:2] for hhmm in (hours.open_time, hours.close_time)
-                    for key in clocks_of_hhmm(hhmm)]
     if shop_open and shop_close:
         planner.add("hours", {"open": _clock_phrase(shop_open[0]),
                               "close": _clock_phrase(shop_close[0])},
                     moments=[shop_open[0], shop_close[0]])
-    elif len(hours_clocks) == 2 and set(_clocks(taken)) & set(hours_clocks):
-        # Giờ kín trùng giờ mở / đóng cửa (review F3): câu nêu giờ mở cửa từ
-        # khối bối cảnh không được thành `taken_mentioned` — hành động `hours`
-        # (giờ trong `snapshot.shop_hours`) làm giờ đó thành giờ phải nói.
-        planner.acts.append(PlanAct(
-            act="hours", fields={"open": format_vi_hhmm(hours.open_time),
-                                 "close": format_vi_hhmm(hours.close_time)},
-            clocks=list(dict.fromkeys(hours_clocks))))
     busy_until = _times(results, "busy_until")
     if busy_until:
         planner.add("busy", {"until": label(busy_until[0])}, moments=[busy_until[0]])

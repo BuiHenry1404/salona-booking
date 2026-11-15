@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.agents.salon.guard.planner import ReplyPlan, build_plan
 from app.agents.salon.guard.results import TurnResults
+from app.agents.salon.shared.schemas import AgentStatusFact
 from tests.salon.guard.builders import (
     CAT,
     GEL,
@@ -38,6 +39,11 @@ def _failed(*, nearest=()) -> dict:
     return {"turn_facts": [decision_fact(at(15), outcome="failed")],
             "pending_outcome": outcome(at(15), outcome="failed", nearest=nearest),
             "shop_phone": SHOP_PHONE}
+
+
+def _earlier_time_session(**kwargs):
+    """Phiên Đặt lịch hỏi giờ, mở ở lượt TRƯỚC (`turn-0`)."""
+    return {"appointment": a_session(options=[at(13), at(14), at(16)], **kwargs)}
 
 
 _DONE = {"turn_facts": [decision_fact(at(16))],
@@ -91,8 +97,8 @@ RESULTS: dict[str, TurnResults] = {
         snapshot=a_snapshot(
             upcoming=[appointment_at(at(9), "a-1"), appointment_at(at(14), "a-2")],
             sessions=_opened(fields=["which_appointment"], options=[at(9), at(14)]))),
-    # Giờ kín trùng giờ mở cửa (review F3): câu nêu giờ mở cửa từ khối bối
-    # cảnh không được bị `taken_mentioned` — kế hoạch có hành động `hours`.
+    # Giờ kín trùng giờ mở cửa: kế hoạch KHÔNG thêm `hours` (residual R3 bỏ
+    # luật F3 — nó bắt câu giờ mở cửa khách không hỏi ở lượt giờ đầu ngày).
     "taken_at_shop_open": turn_results(
         turn_facts=[time_fact("taken", at(8)), time_fact("free", at(9))]),
     "hours": turn_results(turn_facts=[time_fact("shop_open", at(8)),
@@ -102,6 +108,11 @@ RESULTS: dict[str, TurnResults] = {
         turn_facts=[time_fact("appointment", at(hour)) for hour in (9, 10, 11, 13, 14, 15)]),
     "button_turn": turn_results(turn_kind="button", **_DONE),
     "greeting": turn_results(),
+    # Live 15/11 (residual R4): lượt 1 mở phiên hỏi giờ; lượt 2 khách chỉ nói
+    # dịch vụ, chỉ agent Dịch vụ chạy — kế hoạch hỏi lại giờ của phiên cũ.
+    "earlier_session_reasked": turn_results(
+        snapshot=a_snapshot(sessions=_earlier_time_session()),
+        turn_facts=[service_fact(CAT, identified=True), AgentStatusFact(agent="service", status="ok")]),
 }
 
 PLAN_CASES: list[tuple[str, TurnResults, ReplyPlan]] = [

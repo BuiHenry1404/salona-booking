@@ -407,7 +407,9 @@
         "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
         "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
       },
-      "label": "ok"
+      "label": "bad",
+      "codes": ["missing_question"],
+      "reason": "The time session opened in turn 2 is still waiting and only the services agent ran this turn: the plan asks its question again (residual R4, live 15/11). The reply gives the price but never asks the time again."
     },
     {
       "id": "live5b-t4-machine-time",
@@ -522,6 +524,17 @@
       },
       "label": "ok",
       "note": "Constructed (final fix wave F11): the service was identified in an earlier turn (known_services) and no service agent ran this turn; naming it passes because this turn's proposal carries it."
+    },
+    {
+      "id": "fix-price-then-reask-time",
+      "run": "live-5-B",
+      "reply": "Dạ, sơn gel giá 120 đến 180 nghìn ạ. Chị muốn 8 giờ sáng, 11 giờ sáng hay 12 giờ trưa mai ạ?",
+      "turn": {
+        "services": [{"id": "nail-son-gel", "identified": true, "asked_price": true}],
+        "session": {"fields": ["time"], "options": ["+1 08:00", "+1 11:00", "+1 12:00"]}
+      },
+      "label": "ok",
+      "note": "Constructed (residual R4): the live5b-t3 turn answered with the price and the waiting time question asked again."
     }
   ]
 }

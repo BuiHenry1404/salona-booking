@@ -8,8 +8,20 @@ import json
 import re
 
 from app.agents.salon.guard.planner import build_plan
-from tests.salon.guard.builders import TURN_ID
-from tests.salon.guard.plan_cases import PLAN_CASES, RESULTS, SHOP_PHONE
+from app.agents.salon.shared.schemas import AgentStatusFact
+from tests.salon.guard.builders import (
+    GEL,
+    TURN_ID,
+    a_session,
+    a_snapshot,
+    at,
+    decision_fact,
+    pending_at,
+    proposal_fact,
+    time_fact,
+    turn_results,
+)
+from tests.salon.guard.plan_cases import PLAN_CASES, RESULTS, SHOP_PHONE, _earlier_time_session
 
 
 def _plan(name: str):
@@ -174,18 +186,62 @@ def test_hours_busy_appointments():
         "2 giờ chiều mai"]}]
 
 
-def test_taken_clock_at_shop_open_adds_hours_act():
+def test_taken_clock_at_shop_open_adds_no_hours_act():
+    """Residual R3: a taken first slot (= opening time) does not force an
+    hours sentence the customer did not ask for."""
     plan = _plan("taken_at_shop_open")
     assert plan.to_json() == {
         "taken_told_by_code": ["8 giờ sáng mai"],
-        "acts": [{"act": "offer", "times": ["9 giờ sáng mai"]},
-                 {"act": "hours", "open": "8 giờ sáng", "close": "7 giờ tối"}],
+        "acts": [{"act": "offer", "times": ["9 giờ sáng mai"]}],
         "ask": None,
     }
-    assert plan.taken_clocks == [(8, 0)]
-    assert plan.act_clocks() == {(9, 0), (8, 0), (19, 0)}
-    # Không giờ kín nào trùng giờ mở / đóng cửa: không thêm `hours`.
-    assert [act.act for act in _plan("taken_with_session_offer").acts] == ["offer"]
+    assert all(act.act != "hours" for act in plan.acts)
+
+
+_REASK = {"fields": ["time"], "options": ["1 giờ chiều mai", "2 giờ chiều mai", "4 giờ chiều mai"]}
+
+
+def test_waiting_session_from_earlier_turn_is_asked_again():
+    plan = _plan("earlier_session_reasked")
+    assert plan.to_json() == {"taken_told_by_code": [], "acts": [], "ask": _REASK}
+    assert plan.asked_session == "appointment"
+    assert plan.ask is not None and plan.ask.agent == "appointment"
+    # Appointment is preferred over a service session; a service session alone is asked.
+    service = a_session(agent="service", fields=["service"])
+    both = turn_results(snapshot=a_snapshot(
+        sessions={**_earlier_time_session(), "service": service}))
+    assert build_plan(both).asked_session == "appointment"
+    alone = build_plan(turn_results(snapshot=a_snapshot(sessions={"service": service})))
+    assert alone.to_json()["ask"] == {"fields": ["service"], "options": []}
+    assert alone.asked_session == "service"
+
+
+def test_waiting_session_not_reasked_when_plan_has_a_question():
+    proposal = build_plan(turn_results(
+        snapshot=a_snapshot(sessions=_earlier_time_session()),
+        turn_facts=[proposal_fact(at(16), service_ids=[GEL.id])]))
+    assert proposal.ask is None and proposal.asked_session is None
+    offer = build_plan(turn_results(
+        snapshot=a_snapshot(sessions=_earlier_time_session()),
+        turn_facts=[time_fact("free", at(9))]))
+    assert offer.ask is None and [act.act for act in offer.acts] == ["offer"]
+    # Its agent ran this turn (and kept or closed the session): not re-asked by the plan.
+    ran = build_plan(turn_results(
+        snapshot=a_snapshot(sessions=_earlier_time_session()),
+        turn_facts=[AgentStatusFact(agent="appointment", status="ok")]))
+    assert ran.ask is None
+    # A `confirm` session only holds a queued request for a proposal; with no
+    # pending proposal there is nothing to confirm.
+    confirm = build_plan(turn_results(snapshot=a_snapshot(
+        sessions={"appointment": a_session(fields=["confirm"])})))
+    assert confirm.ask is None and confirm.asked_session is None
+
+
+def test_waiting_session_not_reasked_with_pending_proposal():
+    plan = build_plan(turn_results(
+        snapshot=a_snapshot(pending=pending_at(at(11)), sessions=_earlier_time_session()),
+        turn_facts=[decision_fact(at(11), outcome="kept")], pending_decided=True))
+    assert plan.ask is None and plan.asked_session is None
 
 
 def test_button_turn_has_no_decision_act():
