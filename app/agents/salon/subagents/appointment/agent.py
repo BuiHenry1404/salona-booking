@@ -215,11 +215,13 @@ async def extract_appointment(messages: list[BaseMessage], ctx: RunContext) -> E
 
 
 # Ghi chú cho Orchestrator khi code hạ `ok` thành `need_info` (mục F1 spec
-# 2026-11-11): phát hiện kín thì phải báo khách trước rồi mới hỏi.
-TAKEN_ASK_OFFERED = ("The time the customer asked for is taken. Tell the customer, then ask "
-                     "which of the offered times they want.")
-TAKEN_ASK_OTHER = ("The time the customer asked for is taken. Tell the customer, then ask "
-                   "which other time they want.")
+# 2026-11-11): giờ khách hỏi bị kín. Câu báo kín do CODE ghép trước câu model
+# (`taken_told_by_code`, guard bắt `taken_mentioned`), nên ghi chú chỉ bảo
+# model hỏi giờ khác, không bảo nó báo khách (review F1).
+TAKEN_ASK_OFFERED = ("The time the customer asked for is taken; the code tells the customer. "
+                     "Ask which of the offered times they want.")
+TAKEN_ASK_OTHER = ("The time the customer asked for is taken; the code tells the customer. "
+                   "Ask which other time they want.")
 
 
 def reconcile_appointment(result: SubagentResult, extracted: Extracted) -> SubagentResult:

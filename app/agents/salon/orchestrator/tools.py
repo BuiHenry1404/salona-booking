@@ -206,9 +206,9 @@ def make_orchestrator_tools(
         runtime: ToolRuntime[SalonContext, SalonState],
     ) -> Command:
         """Record how the customer wants to be addressed. Call it only when the customer
-        says this themselves (e.g. "cô muốn đặt...", "gọi bác là được") — never guess it
-        from their name or writing style. Call it again if they later ask to be addressed
-        differently."""
+        says this themselves (for example they call themselves aunt when booking, or say
+        "just call me uncle") — never guess it from their name or writing style. Call it
+        again if they later ask to be addressed differently."""
         # Ghi vào DB (memory, sống qua mọi cuộc trò chuyện) VÀ lên chính `User`
         # object `holder` đang giữ — `load_snapshot` không đọc lại user (chỉ
         # nhận nó qua tham số), nên không sửa object này thì `mark_stale()`

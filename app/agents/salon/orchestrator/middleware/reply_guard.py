@@ -69,8 +69,8 @@ HINTS = {
     "wrong_service": "Name only the services of this turn.",
     "taken_mentioned": "Do not mention the times in taken_told_by_code; the customer was "
                        "already told.",
-    "machine_time": "Write times the way the reply plan writes them (for example 3 giờ chiều), "
-                    "never as 15:00 or a date-time code.",
+    "machine_time": "Write times the way the reply plan writes them (the spoken hour with the "
+                    "part of day), never as 15:00 or a date-time code.",
     "missing_question": "End with the question of the Reply plan: whether they agree to the "
                         "proposal, which offered time they choose, or the ask fields.",
     # `{phone}`: số tiệm của hành động `failed` (`plan.phone`).

@@ -106,3 +106,76 @@ def test_orchestrator_prompt_asks_which_offered_time_suits():
     flat = _flat(ORCHESTRATOR_PROMPT)
     assert "`offer`" in flat
     assert "ask the customer which one suits them" in flat
+
+
+def _descriptions(schema) -> list[str]:
+    """Every `description` string in a JSON schema (tool and field descriptions).
+    Enum VALUES (e.g. remember_address forms) are turn data, not descriptions."""
+    if isinstance(schema, dict):
+        found = [schema["description"]] if isinstance(schema.get("description"), str) else []
+        return found + [d for value in schema.values() for d in _descriptions(value)]
+    if isinstance(schema, list):
+        return [d for value in schema for d in _descriptions(value)]
+    return []
+
+
+def _accented(text: str) -> list[str]:
+    return sorted({ch for ch in text.lower() if ch in _VIETNAMESE})
+
+
+def test_orchestrator_tool_descriptions_are_english():
+    """Review F5: every Orchestrator tool description is model-facing text."""
+    from app.agents.salon.orchestrator.tools import make_orchestrator_tools
+
+    tools = make_orchestrator_tools(None, None, None)
+    assert {tool.name for tool in tools} >= {"appointment_task", "remember_address"}
+    for tool in tools:
+        texts = [tool.description, *_descriptions(tool.tool_call_schema.model_json_schema())]
+        for text in texts:
+            assert not _accented(text), (tool.name, text)
+
+
+def test_guard_hints_are_english():
+    """Review F5: every rewrite hint is model-facing text."""
+    from app.agents.salon.guard.validator import CODES
+    from app.agents.salon.orchestrator.middleware.reply_guard import HINTS
+
+    assert set(HINTS) == set(CODES)
+    for code, hint in HINTS.items():
+        assert not _accented(hint), (code, hint)
+
+
+def test_taken_notes_leave_the_taken_sentence_to_the_code():
+    """Review F1: the appointment notes to the Orchestrator must not ask it to
+    tell the customer about the taken time (the code does, `taken_mentioned`)."""
+    from app.agents.salon.subagents.appointment.agent import TAKEN_ASK_OFFERED, TAKEN_ASK_OTHER
+
+    for note in (TAKEN_ASK_OFFERED, TAKEN_ASK_OTHER):
+        assert "Tell the customer" not in note
+        assert "the code tells the customer" in note
+        assert not _accented(note)
+    assert TAKEN_ASK_OFFERED.endswith("Ask which of the offered times they want.")
+    assert TAKEN_ASK_OTHER.endswith("Ask which other time they want.")
+
+
+def test_orchestrator_prompt_limits_services_and_prices_to_plan_and_tool_results():
+    """Review F2: the validator allows only this turn's services and prices."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert ("name a service or price only if it is in the reply plan or this turn's tool "
+            "results (the `Facts this turn` lines)") in flat
+    assert "add no time, price or service that is in neither" not in flat
+
+
+def test_orchestrator_prompt_checks_every_named_time_with_appointment_task():
+    """Live try 15/11 (L2): a time the customer names is checked this turn."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert ("When the customer names a time they want to book, always call appointment_task "
+            "in that turn, even if they also ask something else") in flat
+    assert "never offer or promise a time that appointment_task did not check in this turn" in flat
+
+
+def test_orchestrator_prompt_lets_the_customers_own_form_of_address_win():
+    """Live try 15/11 (L3a): the customer's own self-reference beats the Address line."""
+    flat = _flat(ORCHESTRATOR_PROMPT)
+    assert ("When the customer refers to themselves with a form of address different from the "
+            "Address line, their own words win: call remember_address with that form") in flat
