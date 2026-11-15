@@ -620,7 +620,8 @@ async def _run_turn(db: AsyncIOMotorDatabase, user: User, question: "str | Butto
         kind: Literal["typed", "button"] = "button" if button is not None else "typed"
         await ledger.start(turn_id=turn_id, user_id=progress.user_id, thread_id=thread_id,
                            asked_at=asked_at, kind=kind)
-        holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=thread_id, services=ledger)
+        holder = SnapshotHolder(db, user, asked_at=asked_at, thread_id=thread_id, services=ledger,
+                                turn_id=turn_id)
         agent = build_orchestrator(db, user, holder)
         turn = _Turn(
             db=db, user=user, turn_id=turn_id, thread_id=thread_id, asked_at=asked_at,

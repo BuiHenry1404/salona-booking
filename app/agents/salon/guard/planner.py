@@ -241,9 +241,10 @@ def build_plan(results: TurnResults) -> ReplyPlan:
     snapshot = results.snapshot
     turn_id = results.turn_id
     decisions = _turn_decisions(results)
-    # R0 của CHÍNH lượt này: `decide_pending` ghi dòng sổ của lượt (chưa báo)
-    # và làm snapshot cũ, nên snapshot đọc lại thấy quyết định của lượt là "chưa
-    # báo" — câu của lượt đã báo nó, không báo lần hai.
+    # R0 của CHÍNH lượt này: `TurnLedger.unannounced` đã bỏ lượt đang chạy
+    # (review F8), nhưng snapshot dựng không có `turn_id` (test, công cụ) vẫn
+    # có thể thấy quyết định của lượt là "chưa báo" — câu của lượt đã báo nó,
+    # không báo lần hai.
     r0 = snapshot.unannounced
     if r0 is not None and r0.turn_id == turn_id:
         r0 = None

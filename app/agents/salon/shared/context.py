@@ -127,7 +127,12 @@ class LedgerReader(Protocol):
         """Chỉ dịch vụ đã chốt (`ServiceFact.identified`)."""
         ...
 
-    async def unannounced(self, user_id: str, *, today: date) -> Optional[UnannouncedDecision]: ...
+    async def unannounced(
+        self, user_id: str, *, now: datetime, exclude_turn_id: Optional[str] = None,
+    ) -> Optional[UnannouncedDecision]:
+        """Quyết định chưa báo trong 24 giờ trước `now`, bỏ qua lượt
+        `exclude_turn_id` (lượt đang chạy)."""
+        ...
 
 
 Audience = Literal["orchestrator", "appointment", "shop_info", "service"]
@@ -228,12 +233,15 @@ def _pending_view(proposal, *, now: datetime) -> Optional[PendingView]:
 
 async def load_snapshot(
     db: AsyncIOMotorDatabase, user: User, *, asked_at: datetime, thread_id: str,
-    services: LedgerReader,
+    services: LedgerReader, turn_id: Optional[str] = None,
 ) -> TurnSnapshot:
     """Đọc mọi nguồn sự thật của một lượt: lịch, đề xuất, giờ/trạng thái
     tiệm, phiên chờ, dịch vụ đã nhận ra ở lượt trước. Mỗi lần gọi là MỘT lần
     đọc DB mới — không cache ở đây (xem `SnapshotHolder` cho khớp lệnh "đọc
-    một lần cho cả lượt, đọc lại khi được báo DB vừa đổi")."""
+    một lần cho cả lượt, đọc lại khi được báo DB vừa đổi").
+
+    `turn_id` là lượt đang chạy: `unannounced` không bao giờ là quyết định của
+    chính lượt này (review F8)."""
     now_local = to_local(asked_at)
     today = now_local.date()
 
@@ -256,7 +264,7 @@ async def load_snapshot(
         # theo đồng hồ hiện tại (task brief), không theo mốc câu hỏi đã cũ.
         waiting.active(user_id, now=now_utc()),
         services.service_facts(thread_id=thread_id),
-        services.unannounced(user_id, today=today),
+        services.unannounced(user_id, now=asked_at, exclude_turn_id=turn_id),
     )
 
     upcoming_appts = upcoming_appts[:_MAX_UPCOMING]
@@ -463,9 +471,10 @@ class SnapshotHolder:
 
     def __init__(
         self, db: AsyncIOMotorDatabase, user: User, *, asked_at: datetime, thread_id: str,
-        services: LedgerReader,
+        services: LedgerReader, turn_id: Optional[str] = None,
     ) -> None:
         self._db = db
+        self._turn_id = turn_id
         self._user = user
         self._asked_at = asked_at
         self._thread_id = thread_id
@@ -481,7 +490,7 @@ class SnapshotHolder:
             generation = self._generation
             snapshot = await load_snapshot(
                 self._db, self._user, asked_at=self._asked_at, thread_id=self._thread_id,
-                services=self._services,
+                services=self._services, turn_id=self._turn_id,
             )
             if generation == self._generation:
                 self._snapshot = snapshot

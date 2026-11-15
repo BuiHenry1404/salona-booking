@@ -12,7 +12,7 @@ nguồn sự thật của hạn đề xuất (đó là `proposals.expires_at`).
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal, Optional, Sequence
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -36,6 +36,9 @@ LEDGER_COLLECTION = "salon_turns"
 EndedBy = Literal["answer", "fallback", "limit", "error", "stale_button", "button"]
 
 _FactAdapter = TypeAdapter(TurnFact)
+
+# R0 nhìn lại ngần này (review F8: thay cho "cùng ngày").
+_UNANNOUNCED_WINDOW = timedelta(hours=24)
 
 # Mỗi tiến trình chỉ tạo index một lần/DB (id(db) đủ phân biệt — test dùng
 # một kết nối Motor mới mỗi `test_db`, process thật chỉ có một db).
@@ -152,16 +155,23 @@ class TurnLedger:
         )
         _warn_if_missing(result, turn_id, "unmark_announced")
 
-    async def unannounced(self, user_id: str, *, today: date) -> UnannouncedDecision | None:
-        doc = await self._collection.find_one(
-            {
-                "user_id": user_id,
-                "day": today.isoformat(),
-                "decision.outcome": {"$in": ["approved", "failed"]},
-                "announced": False,
-            },
-            sort=[("asked_at", -1)],
-        )
+    async def unannounced(
+        self, user_id: str, *, now: datetime, exclude_turn_id: Optional[str] = None,
+    ) -> UnannouncedDecision | None:
+        """Quyết định duyệt / thất bại mới nhất chưa báo khách (R0), trong 24 giờ
+        trước `now` — không theo "cùng ngày": lượt sau sang ngày khác vẫn phải
+        báo (review F8). `exclude_turn_id` (lượt đang chạy) bị bỏ qua: quyết
+        định của chính lượt này do câu của lượt báo, và nó không được che một
+        quyết định cũ hơn chưa báo."""
+        query: dict = {
+            "user_id": user_id,
+            "asked_at": {"$gte": now - _UNANNOUNCED_WINDOW},
+            "decision.outcome": {"$in": ["approved", "failed"]},
+            "announced": False,
+        }
+        if exclude_turn_id is not None:
+            query["turn_id"] = {"$ne": exclude_turn_id}
+        doc = await self._collection.find_one(query, sort=[("asked_at", -1)])
         if doc is None:
             return None
         decision = PendingOutcome.model_validate(doc["decision"])

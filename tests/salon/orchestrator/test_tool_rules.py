@@ -51,7 +51,7 @@ class Ledger:
     async def service_facts(self, *, thread_id: str):
         return list(self.known)
 
-    async def unannounced(self, user_id: str, *, today):
+    async def unannounced(self, user_id: str, *, now, exclude_turn_id=None):
         return None
 
 

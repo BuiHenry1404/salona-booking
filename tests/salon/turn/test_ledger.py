@@ -4,7 +4,7 @@ với `turn_ledger` cũ. `TurnLedger` không biết gì về `User` thật: `use
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -16,7 +16,7 @@ from app.agents.salon.shared.schemas import (
     TimeFact,
 )
 from app.agents.salon.turn.ledger import LEDGER_COLLECTION, TurnLedger
-from app.core.clock import now_utc, to_local
+from app.core.clock import TZ, now_utc, to_local
 
 
 def _moment(hour: int = 9) -> Moment:
@@ -43,7 +43,7 @@ async def test_unannounced_returns_latest_unsaid_approval(test_db):
     )
     await ledger.set_decision(turn_id, outcome)
 
-    found = await ledger.unannounced(user_id, today=to_local(asked_at).date())
+    found = await ledger.unannounced(user_id, now=asked_at)
 
     assert found is not None
     assert found.turn_id == turn_id
@@ -68,12 +68,46 @@ async def test_unannounced_ignores_clarify_and_picks_latest(test_db):
         PendingOutcome(outcome="failed", proposal_id="p1", kind="move", at=_moment(), error="hết chỗ"),
     )
 
-    found = await ledger.unannounced(user_id, today=to_local(asked_at).date())
+    found = await ledger.unannounced(user_id, now=asked_at)
 
     assert found is not None
     assert found.turn_id == second_id
     assert found.outcome == "failed"
     assert found.error == "hết chỗ"
+
+
+async def test_unannounced_skips_the_current_turn(test_db):
+    """Review F8: this turn deciding its own proposal must not hide an older
+    decision that was never told."""
+    user_id = str(uuid.uuid4())
+    asked_at = now_utc()
+    ledger, older_id, _, _, _ = await _started(
+        test_db, user_id=user_id, asked_at=asked_at - timedelta(minutes=5))
+    await ledger.set_decision(
+        older_id, PendingOutcome(outcome="approved", proposal_id="p0", kind="book", at=_moment()))
+    _, current_id, _, _, _ = await _started(test_db, user_id=user_id, asked_at=asked_at)
+    await ledger.set_decision(
+        current_id, PendingOutcome(outcome="approved", proposal_id="p1", kind="book", at=_moment(10)))
+
+    assert (await ledger.unannounced(user_id, now=asked_at)).turn_id == current_id
+    found = await ledger.unannounced(user_id, now=asked_at, exclude_turn_id=current_id)
+    assert found is not None and found.turn_id == older_id
+
+
+async def test_unannounced_looks_back_24_hours_not_one_day(test_db):
+    """Review F8: the next turn on another day still tells the decision; a
+    decision older than 24 hours is not told any more."""
+    user_id = str(uuid.uuid4())
+    evening = datetime(2026, 11, 14, 22, 30, tzinfo=TZ)
+    ledger, turn_id, _, _, _ = await _started(test_db, user_id=user_id, asked_at=evening)
+    await ledger.set_decision(
+        turn_id, PendingOutcome(outcome="failed", proposal_id="p1", kind="book", at=_moment()))
+
+    next_morning = datetime(2026, 11, 15, 8, 0, tzinfo=TZ)
+    assert to_local(next_morning).date() != to_local(evening).date()
+    found = await ledger.unannounced(user_id, now=next_morning)
+    assert found is not None and found.turn_id == turn_id
+    assert await ledger.unannounced(user_id, now=evening + timedelta(hours=25)) is None
 
 
 async def test_mark_announced_clears_it(test_db):
@@ -84,7 +118,7 @@ async def test_mark_announced_clears_it(test_db):
 
     await ledger.mark_announced(turn_id)
 
-    found = await ledger.unannounced(user_id, today=to_local(asked_at).date())
+    found = await ledger.unannounced(user_id, now=asked_at)
     assert found is None
 
 
@@ -106,7 +140,7 @@ async def test_set_decision_inside_a_transaction_rolls_back_with_it(test_db):
     record = await ledger.record(turn_id)
     assert record is not None
     assert record.decision is None
-    assert await ledger.unannounced(user_id, today=to_local(asked_at).date()) is None
+    assert await ledger.unannounced(user_id, now=asked_at) is None
 
 
 async def test_record_roundtrips_facts(test_db):

@@ -93,7 +93,7 @@ class _Ledger:
     async def service_facts(self, *, thread_id: str):
         return self._facts
 
-    async def unannounced(self, user_id: str, *, today):
+    async def unannounced(self, user_id: str, *, now, exclude_turn_id=None):
         return self._unannounced
 
 

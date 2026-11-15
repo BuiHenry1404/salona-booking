@@ -1212,6 +1212,25 @@ async def seed_r0(db, user, hour: int = 15) -> str:
     return turn_id
 
 
+async def test_older_decision_is_told_when_this_turn_decides_its_own(test_db, monkeypatch):
+    """Review F8: this turn approving its own proposal (a new ledger decision)
+    must not hide the older decision nobody told the customer yet."""
+    await default_hours(test_db)
+    user = await a_user(test_db)
+    r0_turn = await seed_r0(test_db, user, hour=15)
+    await a_proposal(test_db, user, hour=9)
+    reply = "Dạ em đã đặt xong 9 giờ sáng mai và 3 giờ chiều mai cho chị Lan rồi ạ."
+    orchestrator(monkeypatch, [tool_call("decide_pending", APPROVE), AIMessage(reply)])
+
+    done = completed(await turn(test_db, user, "đồng ý em"))
+
+    assert done["answer"] == reply
+    rows = await ledger_rows(test_db, user)
+    assert rows[-1]["answer_source"] == "llm"
+    assert (await TurnLedger(test_db).record(r0_turn)).announced is True
+    assert (await TurnLedger(test_db).record(rows[-1]["turn_id"])).announced is True
+
+
 async def test_short_phrased_decision_is_marked_announced(test_db, monkeypatch):
     await default_hours(test_db)
     user = await a_user(test_db)
