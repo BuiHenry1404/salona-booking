@@ -1,5 +1,8 @@
 # Plan-Guided Reply Guard Implementation Plan
 
+> Superseded by `docs/superpowers/plans/2026-11-14-guard-rebuild.md` (Tasks 1–2b below kept in
+> history; Task 3 onward never ran under this plan).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the level C JSON-segment reply with a code-made reply plan. The model rewrites the plan's template in plain text, a plain-text guard checks it, and a meaning error sends the template.

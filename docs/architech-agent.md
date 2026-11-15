@@ -42,11 +42,11 @@ flowchart TD
     BR -->|"approved and a next request waits<br/>(two bookings in one message)"| D
     BR -->|otherwise| OUT
 
-    D -->|"no tool call = candidate final answer"| GD{"Guard (code), checks against turn facts + DB<br/>claims / times / prices / required facts /<br/>pending left undecided / pronoun / repeat"}
-    GD -->|pass| OUT["complete: answer + pending-proposal buttons"]
-    GD -->|"fail, 1st time"| RW["Remove the bad answer, add a hint<br/>rewrite with NO tools: text only, same facts<br/>(only decide_pending if the reason is pending left undecided)"]
+    D -->|"no tool call = candidate final answer"| GD{"Guard (code): results.py builds TurnResults from<br/>turn facts + DB, planner.py turns it into a JSON<br/>ReplyPlan (acts + ask), validator.py checks the<br/>model's text against the plan — plan_missing /<br/>unknown_time / unknown_price / wrong_service /<br/>taken_mentioned / machine_time / missing_question /<br/>pending_undecided / repeat / foreign_script / empty"}
+    GD -->|pass| OUT["complete: taken-told-by-code sentence + model text<br/>+ pending-proposal buttons"]
+    GD -->|"fail, 1st time"| RW["Remove the bad answer, add a JSON hint<br/>rewrite with NO tools: text only, same facts<br/>(only decide_pending if the reason is pending left undecided)"]
     RW --> GD
-    GD -->|"fail, 2nd time"| FB["Code fallback reply"]
+    GD -->|"fail, 2nd time"| FB["templates.py: code-written reply from the plan<br/>(or GENERIC_FALLBACK when the plan is empty)"]
     FB --> OUT
     STALE --> OUT
 
@@ -88,10 +88,25 @@ flowchart TD
    Orchestrator chạy tiếp, đề xuất lịch kế, và khách bấm nút lần nữa.
 4. **Có đề xuất chờ thì lượt phải quyết nó**: câu trả lời cuối mà đề xuất còn chưa quyết bị guard
    từ chối (`pending_undecided`); nhãn `none` hợp lệ khi khách nói chuyện khác.
-5. **Câu trả lời cuối luôn qua guard bằng code**, đối chiếu với dữ kiện code trích từ kết quả tool
-   và DB — không tin chữ model. Viết lại **một lần và không có tool** (không tra cứu lại, không tạo
-   đề xuất lại); vẫn sai thì câu mẫu code. Ngoại lệ: lý do bị loại là `pending_undecided` thì lần viết
-   lại chỉ được gọi `decide_pending`.
+5. **Câu trả lời cuối luôn qua guard bằng code** (`app/agents/salon/guard/`, xây lại 14/11 — spec
+   `docs/superpowers/specs/2026-11-14-guard-rebuild-design.md`), chia bốn file một chiều
+   (`results ← planner ← templates`, `results/planner ← validator`):
+   - `results.py` gom dữ kiện code biết của lượt (giờ, đề xuất, quyết định, phiên chờ, dịch vụ của
+     lượt, xưng hô…) thành `TurnResults`, đọc DB một lần mỗi lượt;
+   - `planner.py` biến `TurnResults` thành `ReplyPlan` (hành động `acts` đúng thứ tự, cộng `ask`),
+     gửi cho model dưới dạng JSON trong khối bối cảnh, bọc thẻ `<context>…</context>` /
+     `<reply_plan>…</reply_plan>`; mọi giờ là nhãn nói, mọi giá là chuỗi nói — không bao giờ "15:00"
+     hay số ISO;
+   - model viết câu trả lời bằng chữ thường, **một lần gọi**, dựa thẳng vào `acts`/`ask` của kế
+     hoạch;
+   - `validator.py` kiểm phần chữ của model bằng dữ kiện (không tin chữ model, không từ điển ngữ
+     pháp): đủ giờ/giá/dịch vụ bắt buộc, không giờ/giá lạ, không nhầm dịch vụ, không mời giờ kín,
+     không chép giờ kiểu máy ("08:00"/ISO — mã `machine_time`), có đề xuất chờ thì phải quyết
+     (`pending_undecided`), không lặp câu trước;
+   - sai lần đầu: xoá câu, viết lại **một lần, không tool** (trừ `decide_pending` khi lý do là
+     `pending_undecided`); sai lần hai: `templates.py` ghép câu mẫu từ kế hoạch (hoặc
+     `GENERIC_FALLBACK` khi kế hoạch rỗng). Giờ kín do code báo **trước** câu model, không qua
+     validator nên không bao giờ bị chặn nhầm.
 6. **Bối cảnh**: đọc DB một lần mỗi lượt, đọc lại sau mỗi tool làm DB đổi; tool không dùng được bị ẩn
    ở từng lần gọi model; mỗi agent con chỉ nhận phần bối cảnh nó cần.
 7. **Phiên chờ** giữ việc dở của agent con qua lượt (loại việc, dữ kiện đã thu, trường còn thiếu,

@@ -61,71 +61,69 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
     luận **lỗi sinh ra từ chính lớp guard mức C**, nên quyết **xây lại guard**.
   - Script và log các bản thử Azure: `.superpowers/sdd/2026-11-11-level-c/spike/`.
 
-### ĐANG LÀM — xây lại guard: "câu trả lời theo kế hoạch của code"
-- **Spec:** `docs/superpowers/specs/2026-11-13-plan-guided-reply-design.md`, gồm các mục "Quyết
-  định sau builder check", "Bộ đo độ chính xác của guard", "Bổ sung: `asks_price`".
-- **Plan:** `docs/superpowers/plans/2026-11-13-plan-guided-reply.md`.
-- **Sổ thực thi** (git-ignored, đọc trước tiên):
-  `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md`. Sổ ghi từng task, commit, các dòng
-  `Ruling:` và `minor (deferred)`.
-- Cách chạy: **subagent-driven** (`superpowers:subagent-driven-development`). Mỗi task có agent làm
-  và agent review; dùng lại các file trong thư mục sổ: `implementer-rules.md`,
-  `reviewer-instructions.md`, `rereview-instructions.md`, `global-constraints.md`.
-- **Ý tưởng:**
-  1. Sau khi tool chạy, code lập **kế hoạch câu** (`guard/plan.py`: các hành động kèm câu mẫu tiếng
-     Việt, nhãn giờ ngắn).
-  2. Model **viết lại bằng chữ thường**: một lần gọi, không JSON.
-  3. Guard kiểm bằng code (`check_reply`): đủ giờ, giá của kế hoạch; không giờ, giá lạ; không nhầm
-     dịch vụ; không mời giờ kín; không nhận vơ…
-  4. **Sai nghĩa** thì gửi câu mẫu ngay. **Sai câu chữ** thì viết lại 1 lần. `pending_undecided` luôn
-     được viết lại 1 lần (kèm tool `decide_pending`).
-- **Tiến độ:**
-  - **Task 1:** xong, qua review (commit `216e6f9..7fe0e1e`). Gồm `plan.py`, câu mẫu ở `fallback.py`
-    dùng nhãn ngắn và tên dịch vụ, `PendingOutcome.service_ids`.
-  - **Task 2:** xong, qua review (commit `7fe0e1e..0002ac5`). Gồm `check_reply`, `MEANING_CODES`,
-    các mã `plan_missing` / `unknown_time` / `unknown_price` / `wrong_service` / `taken_offered`.
-  - **Task 2b (`asks_price` trên `service_task`):** đã làm xong (commit `bfbd2a8` và `48d154e`;
-    `asked_price` chỉ gắn cho dịch vụ `identified`). Toàn bộ test: 1127 đạt, chỉ hỏng test có sẵn.
-    **Chưa review.** Phiên sau bắt đầu bằng **review Task 2b** (gói diff `34f06ce..48d154e`, bỏ qua
-    commit tài liệu `136f069`).
-  - **Còn lại:**
-    - Task 3: nối vào Orchestrator, **gỡ mức C** (`segments.py`, `check_structured`, JSON
-      `response_format`, công cụ test `reply` / `cite`), đánh dấu "đã báo" theo kế hoạch.
-    - Task 4: prompt.
-    - Task 5: bộ đo chặn nhầm / lọt từ câu thật.
-    - Task 6: tài liệu và chạy toàn bộ test.
-    - Rồi review cả nhánh bằng model mạnh nhất (gửi kèm danh sách `Ruling:` / `minor (deferred)`
-      trong sổ).
-  - Code mức C **vẫn còn** cho tới Task 3 (middleware còn dùng `check_structured`).
-- **Quyết định chủ dự án trong đợt này** (đừng mở lại):
-  - xây lại guard theo cách A (giữ `catalog.py` làm nguồn dữ kiện, bỏ JSON và nhãn tự khai);
-  - "cách 2": model viết lại câu mẫu, không gửi nguyên câu mẫu;
-  - mọi lượt có giờ / giá đều có kế hoạch;
-  - `asks_price` do Orchestrator đánh dấu (code không đoán ý khách, bẫy 21);
-  - có bộ đo độ chính xác guard;
-  - không LLM giám khảo chặn trực tiếp (nếu muốn thì dùng offline);
-  - chỉ so giờ:phút, không so ngày;
-  - guard viết lại bị ẩn tool (Azure nhận `tools: []` kèm JSON strict, đã thử).
-- **Ruling đáng nhớ** (chi tiết trong sổ):
-  - giá chỉ bắt buộc ở lượt không có việc đặt lịch, hoặc dịch vụ có `asked_price`;
-  - R0 trùng quyết định của lượt thì không báo hai lần;
-  - chỉ `clarify` mới hỏi lại đề xuất chờ;
-  - giờ trống tự tìm được mời tối đa 3;
-  - `_mark_announced` tạm khớp cả nhãn ngắn lẫn `spoken`, đợi Task 3 đổi sang id của kế hoạch;
-  - "có người lấy rồi" không tính là lời mời.
+### XONG 14/11 — xây lại guard lần hai: planner JSON → LLM → validator
+Đợt 13/11 ("câu trả lời theo kế hoạch của code", model viết lại bằng chữ thường, guard so câu chữ)
+dừng ở Task 2b: chủ dự án đổi hướng sang JSON, plan đó coi như **đã bị thay** (xem mục dưới).
 
-### Làm tiếp sau khi mở phiên mới
-1. Đọc sổ `.superpowers/sdd/2026-11-13-plan-guided-reply/progress.md` và `git log --oneline -10`.
-   Review Task 2b, rồi chạy Task 3 → 6 theo
-   `superpowers:subagent-driven-development`.
-2. Review cuối cả đợt (model mạnh nhất), sửa Critical / Important trong một đợt.
-3. **Hỏi chủ dự án** rồi chạy thật kịch bản A và B:
+- **Spec:** `docs/superpowers/specs/2026-11-14-guard-rebuild-design.md` — thắng khi lệch plan/sổ.
+- **Plan:** `docs/superpowers/plans/2026-11-14-guard-rebuild.md` (11 task, chạy
+  `superpowers:subagent-driven-development`).
+- **Sổ thực thi** (git-ignored): `.superpowers/sdd/2026-11-14-guard-rebuild/progress.md` — từng
+  task, commit, các dòng `Ruling:` và `minor (deferred)`.
+- **Đã xây** — `app/agents/salon/guard/`:
+  1. `results.py`: gom dữ kiện code biết của lượt (giờ, đề xuất, quyết định, phiên chờ, dịch vụ của
+     lượt, xưng hô, số điện thoại tiệm…) thành `TurnResults`, đọc DB một lần mỗi lượt.
+  2. `planner.py`: `TurnResults` → `ReplyPlan` (hành động `acts` đúng thứ tự: `failed` / `done` /
+     `released` / `proposal` / `offer` / `price` / `appointments` / `hours` / `busy`, cộng `ask` câu
+     hỏi phiên chờ). Mọi giờ là nhãn nói ("3 giờ chiều mai"), mọi giá là chuỗi nói ("120 đến 150
+     nghìn" / "1 triệu 2 đến 1 triệu 5") — không bao giờ "15:00" hay số ISO.
+  3. Khối bối cảnh bọc `<context>…</context>` và `<reply_plan>…</reply_plan>`; phần trong
+     `<reply_plan>` luôn là JSON `ReplyPlan.to_json()`. Model viết **một lần**, chữ thường, không
+     JSON, không `response_format` — mức C (`segments.py`, `check_structured`, `REPLY_SCHEMA`) đã
+     xoá hẳn.
+  4. `validator.py`: kiểm phần chữ của model bằng dữ kiện, **không từ điển ngữ pháp** — chỉ dùng bộ
+     từ số/giờ/tiền sẵn có ở `text_scan.py`/`clocks.py`. Các mã: `bad_tool_call`,
+     `pending_undecided`, `plan_missing`, `unknown_time`, `unknown_price`, `wrong_service`,
+     `taken_mentioned`, `missing_question`, `missing_phone`/`phone_not_allowed`, `empty`,
+     `foreign_script`, `repeat`, và **`machine_time`** (giờ viết kiểu máy "08:00" hay ISO lọt vào
+     câu — thêm sau khi chạy thật 5-B lượt 7 lọt qua validator cũ).
+  5. Sai lần đầu: xoá câu, viết lại **1 lần** (ẩn mọi tool trừ `decide_pending` khi có
+     `pending_undecided`). Sai lần hai: `templates.py` ghép câu mẫu (giữ giọng câu cũ của
+     `fallback.py`, đã xoá) + câu báo giờ kín do code ghép **sau khi** kiểm, nên không bao giờ dính
+     `taken_mentioned`/`unknown_time`.
+  6. Hỏi gộp: `SubagentResult.question_field` → `question_fields: list[QuestionField]`, agent con hỏi
+     mọi phần còn thiếu trong một câu (trừ `which_appointment`/`confirm`, luôn hỏi riêng).
+  7. Nhiều việc một tin: prompt nói gọi mọi agent cần trong một vòng rồi mới viết câu trả lời, phủ
+     mọi việc.
+  8. Xưng hô: tool mới của Orchestrator `remember_address(form)` ghi `users.self_address` khi **khách
+     tự nói** cách xưng của mình (không bao giờ đoán từ tên/giọng văn); gọi lại khi khách đổi cách
+     xưng. `detect_self_address` (quét chữ khách bằng regex) và `_seed_self_address` trong `run.py`
+     đã xoá — thay bằng tool này.
+- **Bộ đo độ chính xác** (mang từ spec 13/11, câu thật từ các lần chạy + câu sai đã biết): sau đợt
+  thêm `machine_time`, **0/27 câu `ok` bị chặn nhầm, 0/17 câu `bad` bị lọt**.
+- **Quyết định chủ dự án 14/11** (đừng mở lại):
+  - giữ JSON trong khối bối cảnh (không đổi JSON sang dòng chữ "Nhãn: giá trị"), bọc thẻ
+    `<context>`/`<reply_plan>` theo khuyến nghị Anthropic/OpenAI;
+  - validator chỉ dùng dữ kiện, bỏ hẳn mọi từ điển ngữ pháp (`TAKEN_MARKERS`, `OFFER_WORDS`,
+    `ENGLISH_FUNCTION_WORDS`, `claim`/R8-R9 "bảo lãnh", `pronoun`);
+  - giờ kín luôn do **code báo trước** câu model (`taken_told_by_code`), model không nhắc lại;
+  - mọi mã lỗi đều viết lại đúng 1 lần, sai lần hai thì câu mẫu;
+  - hỏi gộp nhiều trường một câu (`question_fields`);
+  - một tin nhiều việc thì trả lời phủ mọi việc trong một lượt;
+  - `remember_address` do Orchestrator tự gọi khi khách tự xưng, không đoán;
+  - thêm mã `machine_time` vào validator (ruling sau Task 10, xem sổ).
+- R13 (dòng cũ "`run_turn` ghi `users.self_address` từ câu khách tự xưng") **đã bị thay**: cơ chế đó
+  (`detect_self_address`) xoá, nay chỉ `remember_address` ghi `self_address`.
+
+### Làm tiếp
+1. Review cả nhánh bằng model mạnh nhất, sửa Critical / Important trong một đợt.
+2. **Hỏi chủ dự án** rồi chạy thật kịch bản A và B:
    - `PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py` (**xoá sạch DB dev**);
    - `PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py --keep-db` (giữ DB, khách mới, tự
      chọn giờ kín từ lịch khách khác).
 
-   Cần 2 lần đạt. Đọc transcript theo anti-goals; thêm câu mới vào bộ đo.
-4. `superpowers:finishing-a-development-branch` → **một** PR `feat/llm-orchestrator` → `henry/develop`.
+   Cần 2 lần đạt. Đọc transcript theo anti-goals; thêm câu mới vào bộ đo (`cases.json`).
+3. `superpowers:finishing-a-development-branch` → **một** PR `feat/llm-orchestrator` → `henry/develop`.
 
 ### Để sau
 - Đặt nhiều lịch một lần + giữ chỗ (đợt B). Spec cũ ở `git show
@@ -172,10 +170,12 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
   (`dispatch.py` + mỗi agent một thư mục `agent.py · tools.py · prompt.py`), `guard/`, `memory/`,
   `shared/` (không import thư mục nào khác); test xếp theo đúng cây `tests/salon/…`. Không import gì
   từ gói cũ. Mang sang duy nhất: `timeparse.py` (bỏ
-  phụ thuộc `tokens`, `part_of_day` thành enum) và 8 hàm quét dữ kiện của `tokens.py` vào
-  `text_scan.py` (`words`, `digits_in`, `split_sentences`, `split_clauses`, `scan_spoken_clocks`,
-  `scan_times`, `scan_day_offsets`, `scan_weekdays`) — chúng là code **kiểm lại** LLM (veto, guard,
-  lọc memory), Orchestrator suy luận không thay được. Gói mới 0 regex.
+  phụ thuộc `tokens`, `part_of_day` thành enum) và các hàm quét dữ kiện của `tokens.py` vào
+  `text_scan.py` (`words`, `digits_in`, `split_sentences`, `scan_spoken_clocks`,
+  `scan_times`, `scan_day_offsets`, `scan_weekdays`, cộng `scan_money` thêm sau) — chúng là code
+  **kiểm lại** LLM (veto, guard, lọc memory), Orchestrator suy luận không thay được. Gói mới 0 regex.
+  (`split_clauses` mang sang cùng đợt nhưng hết người gọi trong `app/` sau Task 8 của đợt guard
+  14/11 nên đã xoá — quyết định 21 "không dùng thì xoá".)
 - **Tool per agent** (`appointment_task`, `shop_info_task`, `service_task`, cộng `decide_pending`),
   ba tool giao việc dùng chung một hàm điều phối nội bộ. Không single dispatch, **không
   `create_deep_agent`** (kiến trúc = `create_agent` + mẫu Subagents + memory của LangGraph).
@@ -256,6 +256,9 @@ ký) đã xoá khỏi cây thư mục; xem lại bằng git: `git show 72c98fc:<
 **Lễ tân xưng "em", gọi khách "anh"/"chị".** Cách gọi do **code** quyết, theo thứ tự:
 `users.self_address` (khách tự xưng) → tiền tố tên admin gõ (`derive_address`: cô/chị/bà→chị,
 chú/anh/ông→anh) → **"anh chị"**. Không hỏi model, không đoán từ tên đầy đủ ("Nguyễn Thị Lan").
+Từ 14/11, `users.self_address` được ghi bằng tool Orchestrator `remember_address(form)`, chỉ gọi khi
+**khách tự nói** cách xưng của mình (`detect_self_address` quét regex cũ đã xoá) — mô hình vẫn không
+được đoán, chỉ ghi lại lời khách tự xưng.
 
 **Không dùng "con", "cô", "chú", "bác" ở bất kỳ đâu khách thấy** — prompt, câu lỗi, câu hết phiên,
 chuỗi frontend. "con" chỉ đi với cô/chú/bác; ghép với anh/chị là sai tiếng Việt.
