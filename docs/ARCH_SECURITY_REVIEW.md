@@ -2,7 +2,8 @@
 
 Review chỉ đọc code trên nhánh `fix/clock-and-dead-data` (commit `5e40064`).
 Không sửa code, không chạy test, không dựng app để khai thác thật.
-Review riêng phần agent LangGraph: [`AGENT_GRAPH_REVIEW.md`](AGENT_GRAPH_REVIEW.md).
+Review riêng phần agent LangGraph: `AGENT_GRAPH_REVIEW.md` — **đã xoá 06/11** (lỗi thời,
+owner quyết: luật từ khóa `is_affirmative`/`_NO`/`_YES` mà nó review không còn tồn tại).
 
 ## Cách làm
 

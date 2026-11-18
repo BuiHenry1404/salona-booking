@@ -22,11 +22,13 @@ import { MyAppointmentsScreen } from "./MyAppointmentsScreen";
 const appointment = {
   id: "a1",
   start_at: "2026-08-21T08:00:00Z",
+  end_at: "2026-08-21T09:00:00Z",
   duration_minutes: 60,
   note: "làm tóc",
   status: "booked",
   user_name: "Cô Lan",
   phone: "0912345678",
+  services: [],
 } as const;
 
 function mockApi(handlers: Record<string, () => unknown>) {

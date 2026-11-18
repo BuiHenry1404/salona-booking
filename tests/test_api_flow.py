@@ -15,13 +15,15 @@ async def _login(client, phone, password):
 
 
 @pytest.fixture
-async def admin_headers(async_client, test_db):
+async def admin_headers(async_client, test_db, clean_db):
+    await test_db["users"].delete_many({"phone": "0901234567"})
     await AuthService(test_db).create_user("0901234567", "chutiem123", "Chủ tiệm", role="admin")
     return await _login(async_client, "0901234567", "chutiem123")
 
 
 @pytest.fixture
-async def user_headers(async_client, test_db):
+async def user_headers(async_client, test_db, clean_db):
+    await test_db["users"].delete_many({"phone": "0912345678"})
     await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
     return await _login(async_client, "0912345678", "matkhau123")
 
@@ -121,6 +123,57 @@ async def test_booking_at_3am_returns_400(async_client, user_headers):
     assert resp.status_code == 400
 
 
+async def _seed_toc_nhuom(test_db):
+    from app.models.service import Service
+    from app.services.service_catalog import ServiceCatalogService
+
+    await ServiceCatalogService(test_db).upsert_many([
+        Service(
+            id="toc-nhuom", category="toc", name="Nhuộm",
+            aliases=["nhuộm tóc"], price_min=350000, price_max=700000,
+            duration_minutes=120,
+        ),
+    ])
+
+
+async def test_create_with_service_ids_returns_names_and_end(async_client, user_headers, test_db):
+    await _seed_toc_nhuom(test_db)
+    start = tomorrow_at(9)
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": start, "note": None, "service_ids": ["toc-nhuom"]},
+        headers=user_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["services"] == [{"id": "toc-nhuom", "name": "Nhuộm"}]
+    expected_end = datetime.fromisoformat(start) + timedelta(minutes=120)
+    assert datetime.fromisoformat(body["end_at"]) == expected_end
+
+
+async def test_create_without_service_ids_is_unchanged(async_client, user_headers, test_db):
+    from app.core.config import settings
+
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(10), "note": None},
+        headers=user_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["services"] == []
+    assert body["duration_minutes"] == settings.booking_slot_minutes
+
+
+async def test_unknown_service_id_is_400(async_client, user_headers):
+    resp = await async_client.post(
+        "/api/v1/appointments",
+        json={"start_at": tomorrow_at(11), "note": None, "service_ids": ["khong-ton-tai"]},
+        headers=user_headers,
+    )
+    assert resp.status_code == 400
+
+
 async def test_shop_status_flow(async_client, admin_headers, user_headers):
     free = await async_client.get("/api/v1/shop/status", headers=user_headers)
     assert free.json()["is_busy"] is False
@@ -162,6 +215,55 @@ async def test_mongo_down_returns_503_with_shop_phone(async_client, user_headers
     assert "0287654321" in body["detail"]
     assert body["shop_phone"] == "0287654321"
     assert "ServerSelection" not in body["detail"]
+
+
+async def test_mongo_down_message_addresses_customer_as_anh_chi(async_client, user_headers, monkeypatch):
+    """Câu 503 đi theo quy ước xưng hô: bot xưng "em", gọi khách "anh chị".
+
+    Không được xưng "con" hay gọi "cô chú" — dự án không đoán tuổi/giới khách.
+    """
+    import re
+
+    from pymongo.errors import ServerSelectionTimeoutError
+
+    from app.core.config import settings
+    from app.services.shop import ShopService
+
+    async def _die(self):
+        raise ServerSelectionTimeoutError("no primary available")
+
+    monkeypatch.setattr(ShopService, "get_status", _die)
+    monkeypatch.setattr(settings, "shop_phone", "0287654321")
+
+    resp = await async_client.get("/api/v1/shop/status", headers=user_headers)
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "Anh chị" in detail
+    assert "0287654321" in detail
+    assert "Cô chú" not in detail
+    assert not re.search(r"\bcon\b", detail, re.IGNORECASE)
+
+
+async def test_mongo_down_message_without_shop_phone_tells_customer_to_call_shop(
+    async_client, user_headers, monkeypatch
+):
+    """Thiếu SĐT trong .env thì câu không được ghép chữ "tiệm" làm số điện thoại."""
+    from pymongo.errors import ServerSelectionTimeoutError
+
+    from app.core.config import settings
+    from app.services.shop import ShopService
+
+    async def _die(self):
+        raise ServerSelectionTimeoutError("no primary available")
+
+    monkeypatch.setattr(ShopService, "get_status", _die)
+    monkeypatch.setattr(settings, "shop_phone", None)
+
+    resp = await async_client.get("/api/v1/shop/status", headers=user_headers)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == (
+        "Dạ máy của tiệm đang trục trặc ạ. Anh chị gọi điện cho tiệm giúp em nhé."
+    )
 
 
 async def test_creating_a_duplicate_phone_returns_409_not_503(async_client, admin_headers):

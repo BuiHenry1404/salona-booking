@@ -37,7 +37,7 @@ async def chat(token, message):
     sio = socketio.AsyncClient()
     events, answer, done = [], {"text": ""}, asyncio.Event()
 
-    for name in ("turn_started", "tool_started", "tool_finished", "token"):
+    for name in ("turn_started", "tool_started", "tool_finished", "token"):  # token: phải KHÔNG có
         sio.on(name, lambda data=None, n=name: events.append(n))
     @sio.on("complete")
     async def _(data): events.append("complete"); answer["text"] = data.get("answer", ""); done.set()
@@ -106,7 +106,7 @@ async def main():
         ev, ans = await chat(ut, "mai 3h chiều làm tóc được không con")
         check("có turn_started", "turn_started" in ev, ev)
         check("gọi tool", "tool_started" in ev, ev)
-        check("có stream token", "token" in ev, ev)
+        check("không stream token (câu chỉ tới qua complete)", "token" not in ev, ev)
         check("kết thúc bằng complete", ev[-1] == "complete", ev)
         check("CHƯA ghi lịch sau lượt 1",
               (await c.get(f"{API}/appointments/mine", headers=hdr(ut))).json() == [])
@@ -115,7 +115,6 @@ async def main():
         print("\n[6] Chat — lượt 2: xác nhận")
         ev, ans = await chat(ut, "ừ")
         check("không gọi tool nào", "tool_started" not in ev, ev)
-        check("không stream token (không gọi LLM)", "token" not in ev, ev)
         mine = (await c.get(f"{API}/appointments/mine", headers=hdr(ut))).json()
         check("ĐÃ ghi lịch sau khi 'ừ'", len(mine) == 1, mine)
         print(f"        AI: {ans}")

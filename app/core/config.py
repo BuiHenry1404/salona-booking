@@ -1,5 +1,5 @@
 from typing import Literal, Union, Optional
-from pydantic import SecretStr, field_validator, AnyUrl
+from pydantic import SecretStr, field_validator, model_validator, AnyUrl
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 # Chỉ tồn tại trong container (compose mount vào). Máy dev không có thì bỏ qua.
@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     # Prod chạy HTTPS thì BẮT BUỘC true. Dev chạy HTTP nên phải tắt được,
     # vì trình duyệt không gửi cookie Secure qua http://.
     cookie_secure: bool
-    api_key: SecretStr
     login_max_attempts: int
     login_window_seconds: int
 
@@ -35,7 +34,7 @@ class Settings(BaseSettings):
     log_level: str
 
     # LLM Configuration
-    llm_provider: Literal["openai", "azure", "anthropic", "gemini", "openai_compatible"]
+    llm_provider: Literal["openai", "azure", "openai_compatible"]
 
     # OpenAI-compatible — endpoint bất kỳ nói giao thức OpenAI: gateway tự dựng,
     # nhà cung cấp khác, hoặc gateway chạy local. URL/key/model chỉ đến từ .env,
@@ -55,14 +54,6 @@ class Settings(BaseSettings):
     openai_api_key: Optional[SecretStr] = None
     openai_model: str
 
-    # Anthropic
-    anthropic_api_key: Optional[SecretStr] = None
-    anthropic_model: str
-
-    # Gemini
-    gemini_api_key: Optional[SecretStr] = None
-    gemini_model: str
-
     # Booking
     booking_slot_minutes: int
     booking_max_per_hour: int
@@ -75,6 +66,24 @@ class Settings(BaseSettings):
     # tự xoá sau ngần này ngày. Chỉ là dọn rác: lịch sử model chỉ đọc trong ngày,
     # nhật ký hiển thị nằm ở `conversations`, không bị TTL này chạm tới.
     checkpoint_ttl_days: int = 7
+
+    # Orchestrator: timeout (giây) của vòng orchestrate, của một task.
+    orch_orchestrate_timeout_seconds: int = 110
+    orch_task_timeout_seconds: int = 40
+    # Orchestrator: trần số lượt gọi LLM mỗi khách mỗi giờ, và số ngày giữ sổ cái chi phí.
+    orch_llm_calls_per_user_per_hour: int = 150
+    orch_ledger_ttl_days: int = 7
+
+    # Gói agent mới (app/agents/salon/) — trần theo lượt, hết hạn phiên, tóm tắt
+    # hội thoại dài, và bộ nhớ dài hạn (spec §12, giá trị do plan chọn).
+    salon_model_calls_per_turn: int = 10
+    salon_tool_calls_per_turn: int = 12
+    salon_subagent_max_rounds: int = 4
+    salon_session_ttl_minutes: int = 10
+    salon_summary_trigger_tokens: int = 6000
+    salon_summary_keep_messages: int = 40
+    salon_memory_max_chars: int = 1200
+    salon_memory_timeout_seconds: int = 8
     timezone: str
 
     # SĐT tiệm — hiện lên khi máy chủ hỏng để khách còn gọi được người thật.
@@ -90,6 +99,10 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[SecretStr] = None
     telegram_admin_chat_ids: str
 
+    # Redis — dedupe tin nhắn (Task 10). Comment dòng thì tắt, dùng thẳng Mongo
+    # fallback — đường mặc định, không phải chế độ suy giảm.
+    redis_url: Optional[str] = None
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
@@ -98,6 +111,19 @@ class Settings(BaseSettings):
             origins = [origin.strip() for origin in v.split(",") if origin.strip()]
             return origins
         return v if isinstance(v, list) else [str(v)]
+
+    @model_validator(mode="after")
+    def _summary_keep_covers_a_turn(self):
+        """Ruling R11: `SummarizationMiddleware` giữ `salon_summary_keep_messages`
+        message cuối — phải nhiều hơn số message tối đa của một lượt (mỗi tool
+        call một AIMessage + một ToolMessage, mỗi lời gọi model một AIMessage,
+        câu khách + lời nhắc guard), không thì bản tóm tắt cắt vào lượt đang chạy."""
+        turn_max = 2 * self.salon_tool_calls_per_turn + self.salon_model_calls_per_turn + 2
+        if self.salon_summary_keep_messages < turn_max:
+            raise ValueError(
+                f"salon_summary_keep_messages={self.salon_summary_keep_messages} must be >= "
+                f"{turn_max} (2*salon_tool_calls_per_turn + salon_model_calls_per_turn + 2)")
+        return self
 
     # File sau thắng file trước: `.env` là gốc, `DOCKER_ENV_FILE` chỉ đè vài
     # khoá khác biệt trong container.

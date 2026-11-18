@@ -1,6 +1,6 @@
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi.testclient import TestClient
 
@@ -12,7 +12,9 @@ from app.infrastructure.database import ensure_indexes
 pytest_plugins = ("pytest_asyncio",)
 
 # Test database settings
-TEST_MONGO_URI = "mongodb://localhost:27017"
+# Replica set một node (docker-compose): `directConnection=true` bắt buộc —
+# thành viên khai báo `mongo:27017`, máy host không phân giải được tên đó.
+TEST_MONGO_URI = "mongodb://localhost:27017/?directConnection=true"
 TEST_DB_NAME = "chatbot_test_db"
 
 
@@ -50,7 +52,9 @@ def client(test_app):
 @pytest_asyncio.fixture
 async def async_client(test_app):
     """Create async test client."""
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app), base_url="http://test"
+    ) as ac:
         yield ac
 
 
@@ -58,7 +62,8 @@ async def async_client(test_app):
 async def clean_db(test_db):
     """Mỗi test bắt đầu từ DB trống nhưng đã có index."""
     for name in await test_db.list_collection_names():
-        await test_db[name].drop()
+        if not name.startswith("system."):
+            await test_db[name].delete_many({})
     await ensure_indexes(test_db)
     yield
 
@@ -79,3 +84,17 @@ def memory_checkpointer():
     checkpoint.set_checkpointer(saver)
     yield saver
     checkpoint.set_checkpointer(previous)
+
+
+@pytest.fixture(autouse=True)
+def memory_store():
+    """Graph trong test KHÔNG bao giờ ghi bộ nhớ dài hạn vào Mongo thật — như
+    `memory_checkpointer`, mỗi test nhận một `InMemoryStore` mới."""
+    from langgraph.store.memory import InMemoryStore
+
+    from app.agents.salon.memory import store as memory_store_module
+    previous = memory_store_module._store
+    store = InMemoryStore()
+    memory_store_module.set_store(store)
+    yield store
+    memory_store_module.set_store(previous)

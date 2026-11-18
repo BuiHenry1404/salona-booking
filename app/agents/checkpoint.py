@@ -8,9 +8,10 @@ Ba điều không được đổi:
 2. **`MongoClient` sync riêng.** `langgraph-checkpoint-mongodb==0.5.1` chỉ có
    `MongoDBSaver` (pymongo sync); bản async của nó chạy hàm sync trong thread
    executor. Motor của app không dùng lại được ở đây.
-3. **Serializer có allowlist.** State mang `ConversationSlots` (pydantic); để
-   mặc định thì thư viện cho giải mã MỌI kiểu (kèm cảnh báo). Chỉ mở đúng kiểu
-   của mình.
+3. **Serializer chặt.** State của graph chỉ mang dữ liệu JSON thuần (dict /
+   list / str / int) cùng message của LangChain; để mặc định thì thư viện cho
+   giải mã MỌI kiểu (kèm cảnh báo). Allowlist rỗng (`None`) = chỉ các kiểu an
+   toàn có sẵn của thư viện — kiểu pydantic lạ trong checkpoint bị chặn.
 
 TTL (`CHECKPOINT_TTL_DAYS`) chỉ là dọn rác. Hạn nghiệp vụ (10 phút của câu hỏi
 xác nhận, cắt theo ngày của lịch sử) nằm ở code đọc, không dựa vào TTL.
@@ -25,6 +26,7 @@ from pymongo import MongoClient
 from app.core.config import settings
 
 _checkpointer: Optional[BaseCheckpointSaver] = None
+_client: Optional[MongoClient] = None
 
 
 CHECKPOINT_COLLECTIONS = ("checkpoints", "checkpoint_writes")
@@ -50,17 +52,46 @@ def _sync_ttl(client: MongoClient, ttl: int) -> None:
                            index={"keyPattern": {"created_at": 1}, "expireAfterSeconds": ttl})
 
 
+def make_serde() -> JsonPlusSerializer:
+    """Serializer của dự án — không mở thêm kiểu nào ngoài các kiểu an toàn
+    của thư viện (state `salon` không mang object pydantic).
+
+    Tách khỏi `make_checkpointer` để test roundtrip (vd `SalonState`) dùng
+    được serializer thật mà không mở `MongoClient` — serde không chạm Mongo,
+    chỉ encode/decode bằng msgpack/json.
+    """
+    return JsonPlusSerializer(allowed_msgpack_modules=None)
+
+
+def get_sync_client() -> MongoClient:
+    """`MongoClient` đồng bộ DÙNG CHUNG cho cả tiến trình — checkpointer VÀ
+    store bộ nhớ dài hạn (Task 14, `memory/store.py::make_store`) đi qua MỘT
+    client, MỘT connection pool, thay vì mỗi nơi tự mở một cái tới cùng Mongo.
+    Tạo mới nếu chưa có — kể cả sau khi lifespan đã đóng client cũ lúc
+    shutdown (`main.py` đặt lại `None` sau `checkpointer.close()`, vì
+    `MongoClient` không dùng lại được sau `close()`)."""
+    global _client
+    if _client is None:
+        _client = MongoClient(str(settings.mongo_uri), tz_aware=True)
+    return _client
+
+
+def set_sync_client(client: Optional[MongoClient]) -> None:
+    """Cho lifespan (quên client đã đóng) và test. `None` = tạo mới ở lần
+    gọi `get_sync_client()` sau."""
+    global _client
+    _client = client
+
+
 def make_checkpointer(client: Optional[MongoClient] = None) -> MongoDBSaver:
-    client = client or MongoClient(str(settings.mongo_uri), tz_aware=True)
+    client = client or get_sync_client()
     ttl = settings.checkpoint_ttl_days * 86400
     _sync_ttl(client, ttl)
     return MongoDBSaver(
         client,
         db_name=settings.mongo_db_name,
         ttl=ttl,
-        serde=JsonPlusSerializer(
-            allowed_msgpack_modules=[("app.models.conversation", "ConversationSlots")]
-        ),
+        serde=make_serde(),
     )
 
 

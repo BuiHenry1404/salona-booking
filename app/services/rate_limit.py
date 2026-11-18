@@ -16,19 +16,20 @@ class RateLimitService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["rate_limits"]
 
-    async def hit(self, key: str, window_seconds: int = 3600) -> None:
-        """Ghi một dấu, không kiểm gì."""
+    async def hit(self, key: str, window_seconds: int = 3600, *, session=None) -> None:
+        """Ghi một dấu, không kiểm gì. `session`: dấu thuộc transaction của
+        caller — transaction abort thì dấu cũng mất (ghi lịch qua chat, Task 3.6)."""
         now = now_utc()
         await self.collection.insert_one({
             "key": key,
             "created_at": now,
             "expires_at": now + timedelta(seconds=window_seconds),
-        })
+        }, session=session)
 
-    async def _count(self, key: str, window_seconds: int) -> int:
+    async def _count(self, key: str, window_seconds: int, *, session=None) -> int:
         window_start = now_utc() - timedelta(seconds=window_seconds)
         return await self.collection.count_documents(
-            {"key": key, "created_at": {"$gte": window_start}}
+            {"key": key, "created_at": {"$gte": window_start}}, session=session
         )
 
     async def retry_after_seconds(self, key: str, limit: int, window_seconds: int) -> int:
@@ -58,7 +59,7 @@ class RateLimitService:
         remaining = docs[0]["created_at"] + timedelta(seconds=window_seconds) - now_utc()
         return max(int(remaining.total_seconds()) + 1, 1)
 
-    async def check(self, key: str, limit: int, window_seconds: int) -> None:
+    async def check(self, key: str, limit: int, window_seconds: int, *, session=None) -> None:
         """Kiểm mà KHÔNG ghi dấu — dùng cho đăng nhập.
 
         Đăng nhập phải chặn TRƯỚC khi so mật khẩu. Nếu chỉ đếm sau mỗi lần sai
@@ -67,10 +68,11 @@ class RateLimitService:
         không được tính vào hạn mức, nếu không người dùng thật đăng nhập nhiều
         lần trong ngày sẽ tự khoá mình.
         """
-        if await self._count(key, window_seconds) >= limit:
+        if await self._count(key, window_seconds, session=session) >= limit:
             raise RateLimitedError()
 
-    async def check_and_hit(self, key: str, limit: int = 5, window_seconds: int = 3600) -> None:
+    async def check_and_hit(self, key: str, limit: int = 5, window_seconds: int = 3600,
+                            *, session=None) -> None:
         """Ghi TRƯỚC rồi mới đếm — thứ tự này là cố ý.
 
         Đếm trước rồi ghi thì giữa hai thao tác có một await, và mọi request
@@ -84,6 +86,6 @@ class RateLimitService:
         burst sẽ khoá luôn người dùng thật đến hết cửa sổ. Với chức năng đổi
         mật khẩu thì chặn nhầm an toàn hơn cho lọt.
         """
-        await self.hit(key, window_seconds)
-        if await self._count(key, window_seconds) > limit:
+        await self.hit(key, window_seconds, session=session)
+        if await self._count(key, window_seconds, session=session) > limit:
             raise RateLimitedError()

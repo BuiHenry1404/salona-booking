@@ -62,8 +62,3 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     """Hash a password."""
     return pwd_context.hash(password)
-
-
-def verify_api_key(api_key: str) -> bool:
-    """Verify API key for internal services."""
-    return api_key == settings.api_key.get_secret_value() 

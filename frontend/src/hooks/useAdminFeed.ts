@@ -2,16 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { acquireSocket, releaseSocket } from "../lib/socket";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
-import type { AppointmentResponse } from "../lib/api";
+import type { AppointmentResponse, ServiceRef } from "../lib/api";
 
 /** Payload THẬT của sự kiện socket `appointment_created` (SocketNotifier
- * gửi 5 field này, KHÔNG có duration_minutes/status — đừng bịa thêm). */
+ * gửi 7 field này, KHÔNG có duration_minutes/status — đừng bịa thêm). */
 export interface AdminFeedItem {
   id: string;
   start_at: string;
+  end_at: string;
   user_name: string | null;
   phone: string | null;
   note: string | null;
+  services: ServiceRef[];
 }
 
 /** "2026-08-21" theo giờ Việt Nam — khớp format `date` của route

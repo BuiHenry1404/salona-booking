@@ -34,3 +34,24 @@ def test_shell_environment_cannot_override_the_env_file(monkeypatch):
 
     assert fresh.app_name != "bi-shell-de-len"
     assert fresh.azure_openai_endpoint != "https://khong-phai-cai-nay"
+
+
+def test_orchestrator_settings_have_defaults():
+    # Kiểm mặc định của TRƯỜNG (như test_optional_integrations_default_to_none), không đọc .env máy đang chạy
+    from app.core.config import Settings
+    d = {name: f.default for name, f in Settings.model_fields.items() if name.startswith("orch_")}
+    assert d == {"orch_orchestrate_timeout_seconds": 110,
+                 "orch_task_timeout_seconds": 40, "orch_llm_calls_per_user_per_hour": 150, "orch_ledger_ttl_days": 7}
+
+
+def test_summary_keep_must_cover_one_whole_turn():
+    """Ruling R11: phần giữ của `SummarizationMiddleware` phải lớn hơn số message
+    tối đa của một lượt, không thì bản tóm tắt cắt vào lượt đang chạy."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match="salon_summary_keep_messages"):
+        Settings(salon_summary_keep_messages=10)
+    assert Settings(salon_summary_keep_messages=36).salon_summary_keep_messages == 36

@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "../components/BottomNav";
 import { BotAvatar } from "../components/BotAvatar";
+import { ConfirmButtons } from "../components/ConfirmButtons";
 import { MessageBubble } from "../components/MessageBubble";
 import { ShopStatusCard } from "../components/ShopStatusCard";
 import { ToolProgress } from "../components/ToolProgress";
@@ -13,7 +14,7 @@ import { useSpeechInput } from "../hooks/useSpeechInput";
 import "./ChatScreen.css";
 
 /**
- * Màn hình chính: thẻ trạng thái tiệm, khung chat streaming, ô nhập có mic.
+ * Màn hình chính: thẻ trạng thái tiệm, khung chat, ô nhập có mic.
  * Chỉ VẼ — mọi logic dòng chở (queue offline, stream token, canonical
  * complete, tool state) đã nằm trong `useAgentStream`.
  */
@@ -23,11 +24,19 @@ export function ChatScreen() {
   const shopPhone = import.meta.env.VITE_SHOP_PHONE ?? "";
   // `connected` không destruct — offline đã đủ cho UI, destruct mà không dùng
   // thì noUnusedLocals của tsc bắt.
-  const { messages, steps, phase, offline, failed, send } = useAgentStream();
+  const { messages, steps, phase, offline, failed, proposal, send, confirm } = useAgentStream();
   const { status, loading } = useShopStatus();
   const { fullName } = useAuth();
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Đồng hồ riêng để tự "hết hạn" nút Đồng ý/Không mà không cần server đẩy
+  // sự kiện mới — khách im lặng quá lâu thì nút phải mờ đi tại chỗ.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+  const proposalExpired = proposal ? now > Date.parse(proposal.expiresAt) : false;
   // Transcript NỐI THÊM vào ô nhập (không gửi ngay) — khách muốn xem lại và
   // sửa trước khi gửi. Nối tại ranh giới bằng đúng MỘT khoảng trắng: bỏ
   // whitespace thừa ở đuôi draft, trim transcript phòng thủ, draft toàn
@@ -69,11 +78,6 @@ export function ChatScreen() {
     sendDraft();
   }
 
-  // Caret chỉ thuộc về tin CUỐI CÙNG của toàn timeline khi nó là bot đang
-  // stream — không phải "bot cuối bất kể phía sau còn user". Khách nhắn thêm
-  // giữa chừng thì bot cũ phải ngừng nhấp nháy, mắt họ đang ở tin mới nhất.
-  const lastMessageId = messages[messages.length - 1]?.id;
-
   return (
     <div className="chat">
       <header className="chat__head">
@@ -112,11 +116,22 @@ export function ChatScreen() {
             role={m.role}
             text={m.text}
             pending={m.pending}
-            streaming={phase === "answering" && m.role === "bot" && m.id === lastMessageId}
           />
         ))}
 
         <ToolProgress steps={steps} />
+
+        {/* CHỈ đề xuất GẦN NHẤT mới có nút, và chỉ khi không còn lượt nào
+            đang chạy — bấm xong `confirm()` xoá proposal ngay nên không có
+            chuyện bấm đúp gửi hai lần. */}
+        {proposal && phase === "idle" && (
+          <ConfirmButtons
+            proposal={proposal}
+            onConfirm={confirm}
+            expired={proposalExpired}
+            disabled={offline}
+          />
+        )}
 
         {phase === "thinking" && (
           // role="status" + chữ ẩn: người dùng trình đọc màn hình cũng biết

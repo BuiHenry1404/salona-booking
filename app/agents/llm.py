@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
@@ -7,7 +7,7 @@ from app.core.config import settings
 SUPPORTED_CHAT_PROVIDERS = ("azure", "openai", "openai_compatible")
 
 # Trần mỗi lần gọi LLM (A-04: A không có, Azure treo là lượt treo theo). Các
-# node có `wait_for` 8 giây riêng (rewrite, phrase, classify, timeparse — bẫy
+# node có `wait_for` 8 giây riêng (rewrite, phrase, analyze, timeparse — bẫy
 # #10) vẫn giữ trần của mình; con số này là lưới cuối cho mọi lần gọi.
 LLM_TIMEOUT_SECONDS = 20
 
@@ -23,12 +23,26 @@ def _limits(timeout: float, max_retries: Optional[int]) -> dict:
     return limits
 
 
+def model_kwargs(temperature: float, streaming: bool, timeout: float,
+                 max_retries: Optional[int],
+                 reasoning_effort: Optional[Literal["none", "low", "medium", "high"]]) -> dict:
+    """Kwargs chung cho mọi provider. Bật `reasoning_effort` thì BỎ `temperature`:
+    deployment gpt-5.4-mini trả 400 nếu gửi cả hai cùng lúc."""
+    kwargs: dict = {"streaming": streaming, **_limits(timeout, max_retries)}
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+    else:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def build_chat_model(
     tags: Optional[List[str]] = None,
     temperature: float = 0.0,
     streaming: bool = True,
     timeout: float = LLM_TIMEOUT_SECONDS,
     max_retries: Optional[int] = None,
+    reasoning_effort: Optional[Literal["none", "low", "medium", "high"]] = None,
 ):
     """Model cho một node cụ thể, theo `LLM_PROVIDER` trong .env.
 
@@ -40,16 +54,21 @@ def build_chat_model(
     lời — parser thời gian ở task 4b là một. Không có gì để hiện dần cho khách xem.
 
     `max_retries=None` giữ retry mặc định của SDK (như A) cho rewrite,
-    phrase, timeparse, classify — cả bốn bọc `wait_for` 8 giây nên retry SDK
+    phrase, timeparse, analyze — cả bốn bọc `wait_for` 8 giây nên retry SDK
     không kéo dài được bước. Supervisor truyền 1 và cũng bọc `wait_for` 8 giây
     (review M4 I-1). Model agent truyền 0: ở đó
     `ModelRetryMiddleware` thử lại đúng một lần — SDK thử thêm nữa là nhân số
     lần gọi lên và vượt trần thời gian lượt (F11).
 
+    `reasoning_effort` bật reasoning cho deployment gpt-5.4-mini (các bộ phân
+    loại: supervisor, analyze, timeparse). Có giá trị thì KHÔNG gửi
+    `temperature` — Azure trả 400 nếu gửi cả hai.
+
     Thiếu cấu hình thì ném lỗi nêu đúng TÊN BIẾN còn thiếu — không bao giờ kèm
     giá trị secret.
     """
     provider = settings.llm_provider
+    kw = model_kwargs(temperature, streaming, timeout, max_retries, reasoning_effort)
 
     if provider == "azure":
         missing = [
@@ -66,10 +85,8 @@ def build_chat_model(
             api_key=settings.azure_openai_api_key.get_secret_value(),
             azure_deployment=settings.azure_openai_deployment or settings.azure_openai_model,
             api_version=settings.azure_openai_api_version,
-            temperature=temperature,
             tags=tags or [],
-            streaming=streaming,
-            **_limits(timeout, max_retries),
+            **kw,
         )
 
     if provider in ("openai_compatible", "openai"):
@@ -99,10 +116,8 @@ def build_chat_model(
             model=model,
             api_key=api_key.get_secret_value(),
             base_url=base_url,
-            temperature=temperature,
             tags=tags or [],
-            streaming=streaming,
-            **_limits(timeout, max_retries),
+            **kw,
         )
 
     raise RuntimeError(

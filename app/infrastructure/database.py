@@ -94,6 +94,28 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db["rate_limits"].create_index("expires_at", expireAfterSeconds=0)
     await db["rate_limits"].create_index([("key", 1), ("created_at", 1)])
 
+    # Dedupe tin nhắn (Task 10, fallback Mongo khi không có Redis). Unique theo
+    # cặp để một message_id lặp lại của CÙNG khách mới bị chặn — khách khác
+    # dùng trùng uuid (không nên xảy ra, nhưng không loại trừ) không đụng nhau.
+    # TTL 24h dọn rác, không phải cơ chế chống trùng (đó là unique index).
+    await db["message_inbox"].create_index(
+        [("user_id", 1), ("message_id", 1)], unique=True
+    )
+    await db["message_inbox"].create_index("expires_at", expireAfterSeconds=0)
+
+    # Danh mục dịch vụ: `id` là khoá nghiệp vụ dùng để upsert và tra cứu
+    # (không phải `_id` của Mongo); `active` tách riêng để lọc tra cứu nhanh.
+    await db["services"].create_index("id", unique=True)
+    await db["services"].create_index("active")
+
+    # Phiên chờ của agent con (spec §5): mỗi khách tối đa một phiên cho mỗi
+    # agent — mở phiên mới cùng agent ghi đè phiên cũ (upsert theo khoá này).
+    await db["waiting_sessions"].create_index([("user_id", 1), ("agent", 1)], unique=True)
+
+    # Cuộc trò chuyện = thread của Orchestrator (spec §3.4): tra cuộc mới nhất
+    # của một khách để quyết định dùng tiếp hay mở cuộc mới.
+    await db["conversation_threads"].create_index([("user_id", 1), ("started_at", 1)])
+
 
 async def create_mongodb_connection(uri: str = None, db_name: str = None) -> MongoDatabase:
     """Create and initialize a MongoDB connection."""

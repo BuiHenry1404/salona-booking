@@ -6,13 +6,16 @@ message nó nhận (`calls`) cùng kwargs lúc bind (`bind_kwargs`). Phần tử
 - `AIMessage`: trả thẳng;
 - `Exception`: ném ra (giả Azure lỗi);
 - `Hang(seconds, then)`: ngủ `seconds` giây rồi trả `then` (giả Azure treo —
-  Task 2.4 cần một lượt chạy chồng lên lượt đang treo).
+  Task 2.4 cần một lượt chạy chồng lên lượt đang treo);
+- callable: gọi với lô message lúc đó, trả phần tử như trên (vd câu dựng từ
+  khối bối cảnh của lần gọi).
 """
 import asyncio
 import json
 import time
 from dataclasses import dataclass
 from typing import Any, List, Optional
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -26,6 +29,30 @@ class Hang:
     then: Optional[Any] = None
 
 
+class ScriptedStructured:
+    def __init__(self, parent: "ScriptedChatModel", schema: Any):
+        self.parent = parent
+        self.schema = schema
+
+    def invoke(self, messages, *args, **kwargs):
+        return self._parse(self.parent._next(messages))
+
+    async def ainvoke(self, messages, *args, **kwargs):
+        return self._parse(await self.parent._anext(messages))
+
+    def _parse(self, reply: Any):
+        if isinstance(reply, self.schema):
+            return reply
+        if isinstance(reply, dict):
+            return self.schema(**reply)
+        if isinstance(reply, AIMessage):
+            try:
+                return self.schema.model_validate_json(reply.content)
+            except Exception:
+                pass
+        return reply
+
+
 class ScriptedChatModel(BaseChatModel):
     """Trả lần lượt các AIMessage dựng sẵn; ghi lại mọi lô message và kwargs bind."""
     replies: List[Any]
@@ -36,6 +63,9 @@ class ScriptedChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "scripted"
+
+    def with_structured_output(self, schema, **kwargs):
+        return ScriptedStructured(self, schema)
 
     def bind_tools(self, tools, **kwargs):
         self.bound_tools = tools
@@ -54,6 +84,10 @@ class ScriptedChatModel(BaseChatModel):
     def _settle(reply):
         if isinstance(reply, Exception):
             raise reply
+        if isinstance(reply, AIMessage):
+            # Bản sao: langchain gán `id` cho message model trả — một hằng
+            # `AIMessage` dùng lại ở lượt khác không được mang id cũ.
+            return reply.model_copy(deep=True)
         return reply
 
     def _next(self, messages):
@@ -61,6 +95,8 @@ class ScriptedChatModel(BaseChatModel):
         if isinstance(reply, Hang):
             time.sleep(reply.seconds)
             reply = reply.then if reply.then is not None else AIMessage(content="")
+        if callable(reply) and not isinstance(reply, AIMessage):
+            reply = reply(messages)
         return self._settle(reply)
 
     async def _anext(self, messages):
@@ -68,6 +104,8 @@ class ScriptedChatModel(BaseChatModel):
         if isinstance(reply, Hang):
             await asyncio.sleep(reply.seconds)
             reply = reply.then if reply.then is not None else AIMessage(content="")
+        if callable(reply) and not isinstance(reply, AIMessage):
+            reply = reply(messages)
         return self._settle(reply)
 
     def _generate(self, messages, stop=None, run_manager=None, **kw):
@@ -91,5 +129,18 @@ def scripted(replies, tags=("respond",)):
     return ScriptedChatModel(replies=list(replies), calls=[], bind_kwargs=[], tags=list(tags))
 
 
-def tool_call(name, args, id="c1"):
-    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id}])
+def tool_call(name: str, args: dict, id: Optional[str] = None) -> AIMessage:
+    """Một AIMessage với đúng một tool call. `id` mặc định duy nhất mỗi lần gọi
+    (không bao giờ lặp lại giữa các lần gọi) — khác bản cũ `id="c1"` cố định."""
+    if id is None:
+        id = uuid4().hex
+    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id, "type": "tool_call"}])
+
+
+def tool_calls(*pairs: tuple) -> AIMessage:
+    """Nhiều tool call trong MỘT AIMessage — dùng để test chuỗi parallel/serial."""
+    calls = [
+        {"name": name, "args": args, "id": uuid4().hex, "type": "tool_call"}
+        for name, args in pairs
+    ]
+    return AIMessage(content="", tool_calls=calls)

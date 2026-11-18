@@ -11,14 +11,14 @@ from app.services.shop import ShopService
 from app.telegram.client import (MAIN_KEYBOARD, admin_chat_ids,
                                  duration_keyboard)
 
-from app.agents.booking_graph.context import format_vi_datetime
+from app.core.vi_format import format_vi_datetime
 
 logger = get_logger(__name__)
 
 GREETING = (
     "Dạ chào chủ tiệm. Bấm nút bên dưới để xem lịch hoặc đổi trạng thái bận rảnh ạ."
 )
-NUDGE = "Dạ chủ tiệm bấm một trong bốn nút bên dưới giúp con ạ."
+NUDGE = "Dạ chủ tiệm bấm một trong bốn nút bên dưới giúp em ạ."
 
 
 class TelegramHandlers:

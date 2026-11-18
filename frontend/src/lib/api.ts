@@ -41,23 +41,35 @@ interface TokenResponse {
   role: Role;
 }
 
+/** Dịch vụ của một lịch — chỉ id + tên (backend: ServiceRef trong
+ * app/services/appointment.py, dùng chung bởi AppointmentResponse và payload
+ * Socket.IO `appointment_created`). */
+export interface ServiceRef {
+  id: string;
+  name: string;
+}
+
 /** Contract của GET /api/v1/appointments/mine và POST /api/v1/appointments
  * (backend: AppointmentResponse trong app/api/v1/schemas.py). */
 export interface AppointmentResponse {
   id: string;
   start_at: string; // ISO datetime
+  end_at: string; // ISO datetime — giờ xong, mốc không phải khoảng
   duration_minutes: number;
   note: string | null;
   status: "booked" | "cancelled";
   user_name: string | null;
   phone: string | null;
+  services: ServiceRef[];
 }
 
-/** POST /api/v1/appointments — for_user_id chỉ admin được điền (đặt lịch hộ). */
+/** POST /api/v1/appointments — for_user_id chỉ admin được điền (đặt lịch hộ);
+ * service_ids không truyền (hoặc rỗng) giữ hành vi cũ (thời lượng mặc định). */
 export interface AppointmentCreateRequest {
   start_at: string;
   note: string | null;
   for_user_id?: string;
+  service_ids?: string[];
 }
 
 /** Contract của GET /api/v1/admin/stats/customers-by-month

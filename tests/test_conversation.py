@@ -1,77 +1,33 @@
-import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.core.clock import now_utc, to_local
-from app.models.conversation import ConversationState
 from app.services.conversation import ConversationService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_append_then_read_history(test_db):
+async def test_append_then_read_back_today(test_db):
     svc = ConversationService(test_db)
     await svc.append("u1", "user", "mai 3h chiều được không")
     await svc.append("u1", "assistant", "dạ được ạ")
 
-    history = await svc.history("u1")
-    assert [(m.role, m.content) for m in history] == [
+    today = to_local(now_utc()).date()
+    assert [(m.role, m.content) for m in await svc.messages_on("u1", today)] == [
         ("user", "mai 3h chiều được không"),
         ("assistant", "dạ được ạ"),
     ]
 
 
-async def test_history_is_isolated_per_user(test_db):
+async def test_append_uses_the_given_created_at(test_db):
     svc = ConversationService(test_db)
-    await svc.append("u1", "user", "của u1")
-    assert await svc.history("u2") == []
-
-
-async def test_history_is_trimmed_to_the_token_budget(test_db):
-    svc = ConversationService(test_db)
-    for i in range(200):
-        await svc.append("u1", "user", "câu nói khá dài để tốn token " * 5)
-
-    history = await svc.history("u1", token_budget=200)
-    assert 0 < len(history) < 200
-
-
-async def test_history_keeps_the_most_recent_messages(test_db):
-    svc = ConversationService(test_db)
-    for i in range(50):
-        await svc.append("u1", "user", f"tin nhắn số {i} " * 10)
-
-    history = await svc.history("u1", token_budget=200)
-    assert "tin nhắn số 49" in history[-1].content
-
-
-async def test_history_drops_messages_from_previous_days(test_db):
-    svc = ConversationService(test_db)
-    await svc.append("u1", "user", "chuyện của ba tuần trước")
-    await svc.append("u1", "user", "hôm nay muốn đặt lịch")
-    stale = now_utc() - timedelta(days=21)
-    await test_db["conversations"].update_one(
-        {"user_id": "u1"}, {"$set": {"messages.0.created_at": stale}}
-    )
-
-    history = await svc.history("u1")
-    assert [m.content for m in history] == ["hôm nay muốn đặt lịch"]
-
-
-async def test_history_keeps_the_last_half_hour_across_midnight(test_db):
-    """Khách nhắn 23:58, AI hỏi xác nhận, khách đáp "ừ" lúc 00:01 — câu "ừ"
-    không được mất ngữ cảnh chỉ vì đồng hồ sang ngày."""
-    svc = ConversationService(test_db)
-    await svc.append("u1", "assistant", "3 giờ chiều Thứ Năm đúng không cô?")
-    await svc.append("u1", "user", "ừ")
-    just_before_midnight = now_utc() - timedelta(minutes=5)
-    await test_db["conversations"].update_one(
-        {"user_id": "u1"}, {"$set": {"messages.0.created_at": just_before_midnight}}
-    )
-
-    history = await svc.history("u1")
-    assert len(history) == 2
+    at = datetime(2026, 10, 17, 1, 2, 3, 456000, tzinfo=timezone.utc)
+    await svc.append("u1", "user", "chào", created_at=at)
+    await svc.append("u1", "assistant", "dạ")
+    msgs = await svc._all_messages("u1")
+    assert msgs[0].created_at == at
+    assert msgs[1].created_at != at
 
 
 async def test_list_days_groups_by_vietnam_local_day(test_db):
@@ -140,160 +96,25 @@ async def test_messages_on_a_day_is_not_trimmed_by_token_budget(test_db):
 
 async def test_new_conversation_documents_carry_no_pending_flag(test_db):
     """M3: cờ chờ xác nhận chuyển sang `proposals`; document mới không mang nó."""
-    await ConversationService(test_db).get_or_create("u1")
+    await ConversationService(test_db).append("u1", "user", "chào")
     doc = await test_db["conversations"].find_one({"user_id": "u1"})
-    assert "pending_confirmation" not in doc
-    assert not hasattr(ConversationService, "set_pending")
-    assert not hasattr(ConversationService, "get_pending")
+    assert "pending_confirmation" not in doc and "state" not in doc
 
 
-async def test_an_old_document_with_a_pending_flag_still_loads(test_db):
-    await test_db["conversations"].insert_one(
-        {"user_id": "u1", "messages": [], "pending_confirmation": {"start_at": "x"}})
-    conv = await ConversationService(test_db).get_or_create("u1")
-    assert conv.user_id == "u1"
-
-
-async def test_history_never_starts_with_an_orphaned_answer(test_db):
-    """Cắt theo ngân sách đi từ tin mới nhất lùi về, nên chỗ cắt có thể rơi
-    giữa một cặp và giữ lại câu trả lời mà bỏ mất câu hỏi sinh ra nó.
-
-    Model đọc một câu đáp không có câu hỏi thì mất mạch — đó đúng là điều
-    04-agent.md:99 cấm.
-
-    Số học phải CHỐT CHẶT, không được để may rủi: giữ được số tin CHẴN thì
-    tin cũ nhất tình cờ là `user` và test xanh cả khi chưa sửa gì. Mỗi tin
-    dài đúng 30 ký tự -> cost = 30 // CHARS_PER_TOKEN = 10. Ngân sách 50 giữ
-    đúng 5 tin — số LẺ — nên tin cũ nhất chắc chắn là `assistant`.
-    """
+async def test_an_old_document_with_legacy_fields_still_shows(test_db):
+    """Document cũ còn `pending_confirmation` / `state` (bản nén của gói agent
+    cũ, xoá ở Task 16) vẫn hiện bình thường trên màn lịch sử."""
+    await test_db["conversations"].insert_one({
+        "user_id": "u1",
+        "messages": [{"role": "user", "content": "chào", "created_at": now_utc()}],
+        "pending_confirmation": {"start_at": "x"},
+        "state": {"day": now_utc(), "covers_until": now_utc(), "summary": ["x"],
+                  "slots": {"intent": "book"}, "queued": [], "failures": 0},
+    })
     svc = ConversationService(test_db)
-    for _ in range(10):
-        await svc.append("u1", "user", "u" * 30)
-        await svc.append("u1", "assistant", "a" * 30)
-
-    history = await svc.history("u1", token_budget=50)
-
-    assert history, "ngân sách 50 token phải đủ cho ít nhất một cặp"
-    assert history[0].role == "user", [m.role for m in history]
-    # Bỏ đúng một tin mồ côi, không bỏ cả cặp còn lành.
-    assert len(history) == 4
-
-
-async def test_history_keeps_whole_pairs_when_the_budget_is_tiny(test_db):
-    """Ngân sách nhỏ tới mức chỉ đủ một tin: thà trả rỗng còn hơn trả một
-    câu đáp mồ côi.
-
-    Vòng lặp luôn giữ tin mới nhất dù vượt ngân sách (`and kept` chỉ chặn từ
-    tin thứ hai), nên chưa sửa thì hàm trả về đúng một `assistant` mồ côi.
-    """
-    svc = ConversationService(test_db)
-    await svc.append("u1", "user", "u" * 30)
-    await svc.append("u1", "assistant", "a" * 30)
-
-    assert await svc.history("u1", token_budget=1) == []
-
-
-async def test_a_truncated_window_of_three_still_drops_the_orphan(test_db):
-    """Ca mà luật đếm-độ-dài bỏ lọt: cắt còn ĐÚNG BA tin, tin đầu là câu đáp
-    mồ côi thật. Số học: mỗi tin 30 ký tự -> cost 10; budget 35 giữ 3 tin."""
-    svc = ConversationService(test_db)
-    for _ in range(3):
-        await svc.append("u1", "user", "u" * 30)
-        await svc.append("u1", "assistant", "a" * 30)
-
-    history = await svc.history("u1", token_budget=35)
-
-    assert [m.role for m in history] == ["user", "assistant"]
-
-
-def _state(covers_until, summary=("Khách muốn làm tóc.",), day=None, failures=0):
-    return ConversationState(day=day or to_local(now_utc()).date(), covers_until=covers_until,
-                  summary=list(summary), failures=failures)
-
-
-class TestStateStorage:
-    async def test_round_trip_for_today(self, test_db):
-        svc = ConversationService(test_db)
-        await svc.append("u1", "user", "x")
-        await svc.set_state("u1", _state(now_utc()))
-        got = await svc.get_state("u1")
-        assert got.summary == ["Khách muốn làm tóc."]
-
-    async def test_yesterdays_state_is_invisible(self, test_db):
-        svc = ConversationService(test_db)
-        await svc.set_state("u1", _state(now_utc(), day=date(2000, 1, 1)))
-        assert await svc.get_state("u1") is None
-
-    async def test_no_state_is_none(self, test_db):
-        assert await ConversationService(test_db).get_state("u1") is None
-
-    async def test_bump_failures_increments(self, test_db):
-        svc = ConversationService(test_db)
-        await svc.set_state("u1", _state(now_utc()))
-        await svc.bump_state_failures("u1")
-        await svc.bump_state_failures("u1")
-        assert (await svc.get_state("u1")).failures == 2
-
-    async def test_bump_failures_without_state_creates_an_empty_one(self, test_db):
-        svc = ConversationService(test_db)
-        await svc.bump_state_failures("u1")
-        got = await svc.get_state("u1")
-        assert got.failures == 1 and got.summary == []
-        assert got.covers_until == datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-class TestContextWindow:
-    """Tin đã nén (<= covers_until) không đi nguyên văn nữa — chỗ tiết kiệm token."""
-
-    async def _seed(self, svc, n):
-        for i in range(n):
-            await svc.append("u1", "user", f"hỏi {i}")
-            await svc.append("u1", "assistant", f"đáp {i}")
-            # Mongo lưu `created_at` với độ chính xác mili giây; append liên
-            # tiếp trong vòng lặp có thể trùng mốc, làm bộ lọc `after` (so
-            # sánh nghiêm ngặt) sai — chờ một chút để mỗi tin có mốc riêng.
-            await asyncio.sleep(0.002)
-        return await svc._all_messages("u1")
-
-    async def test_without_state_returns_everything_like_history(self, test_db):
-        svc = ConversationService(test_db)
-        await self._seed(svc, 3)
-        summary, slots, msgs = await svc.context_window("u1")
-        assert summary == []
-        assert [m.content for m in msgs] == [m.content for m in await svc.history("u1")]
-
-    async def test_messages_covered_by_the_state_are_dropped(self, test_db):
-        svc = ConversationService(test_db)
-        all_msgs = await self._seed(svc, 5)
-        cut = all_msgs[3].created_at            # nén tới hết tin thứ 4
-        await svc.set_state("u1", _state(cut, summary=["Khách hỏi 0 và 1."]))
-
-        summary, slots, msgs = await svc.context_window("u1")
-        assert summary == ["Khách hỏi 0 và 1."]
-        assert [m.content for m in msgs] == [m.content for m in all_msgs[4:]]
-
-    async def test_yesterdays_state_does_not_cut_todays_messages(self, test_db):
-        svc = ConversationService(test_db)
-        all_msgs = await self._seed(svc, 2)
-        await svc.set_state("u1", _state(all_msgs[-1].created_at, day=date(2000, 1, 1)))
-        summary, slots, msgs = await svc.context_window("u1")
-        assert summary == [] and len(msgs) == 4
-
-    async def test_history_after_filters_strictly_greater(self, test_db):
-        svc = ConversationService(test_db)
-        all_msgs = await self._seed(svc, 2)
-        kept = await svc.history("u1", after=all_msgs[1].created_at)
-        assert [m.content for m in kept] == [m.content for m in all_msgs[2:]]
-
-    async def test_session_messages_untrimmed_unlike_history_with_tiny_budget(self, test_db):
-        svc = ConversationService(test_db)
-        all_msgs = await self._seed(svc, 5)
-
-        session = await svc.session_messages("u1")
-        assert [m.content for m in session] == [m.content for m in all_msgs]
-
-        trimmed = await svc.history("u1", token_budget=1)
-        assert len(trimmed) < len(all_msgs)
+    today = to_local(now_utc()).date()
+    assert [m.content for m in await svc.messages_on("u1", today)] == ["chào"]
+    assert [d.preview for d in await svc.list_days("u1")] == ["chào"]
 
 
 class TestMessageSource:

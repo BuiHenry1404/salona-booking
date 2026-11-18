@@ -1,16 +1,6 @@
 from datetime import datetime, timezone
 
-from app.core.clock import TZ, month_key, month_window_bounds, recent_month_keys
-
-
-def test_month_key_uses_vietnam_timezone():
-    # 2026-08-31T18:00Z = 2026-09-01 01:00 giờ VN -> đã sang tháng 9.
-    assert month_key(datetime(2026, 8, 31, 18, 0, tzinfo=timezone.utc)) == "2026-09"
-
-
-def test_month_key_before_vn_midnight_stays_in_previous_month():
-    # 2026-08-31T16:00Z = 2026-08-31 23:00 giờ VN -> vẫn tháng 8.
-    assert month_key(datetime(2026, 8, 31, 16, 0, tzinfo=timezone.utc)) == "2026-08"
+from app.core.clock import TZ, month_window_bounds, recent_month_keys
 
 
 def test_recent_month_keys_returns_twelve_chronological_months():

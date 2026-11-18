@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Sequence
 
 from fastapi import APIRouter, Depends, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -15,11 +16,12 @@ from app.services.auth import AuthService
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 
-def _to_response(appt: Appointment) -> AppointmentResponse:
-    return AppointmentResponse(
-        id=str(appt.id), start_at=appt.start_at, duration_minutes=appt.duration_minutes,
-        note=appt.note, status=appt.status, user_name=appt.user_name, phone=appt.phone,
-    )
+async def _to_responses(
+    svc: AppointmentService, appointments: Sequence[Appointment]
+) -> list[AppointmentResponse]:
+    """Mỏng — toàn bộ việc tra tên dịch vụ / tính giờ xong nằm trong
+    `AppointmentService.describe`, router chỉ đổi hình sang schema REST."""
+    return [AppointmentResponse(**detail.model_dump()) for detail in await svc.describe(appointments)]
 
 
 @router.post("", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
@@ -42,15 +44,21 @@ async def create_appointment(
         if not booking_for:
             raise NotFoundError("Không tìm thấy khách này")
 
-    appt = await AppointmentService(db).create(booking_for, payload.start_at, payload.note, created_via)
-    return _to_response(appt)
+    svc = AppointmentService(db)
+    appt = await svc.create(
+        booking_for, payload.start_at, payload.note, created_via,
+        service_ids=payload.service_ids,
+    )
+    [response] = await _to_responses(svc, [appt])
+    return response
 
 
 @router.get("/mine", response_model=list[AppointmentResponse])
 async def my_appointments(
     user: User = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    return [_to_response(a) for a in await AppointmentService(db).upcoming_for(user)]
+    svc = AppointmentService(db)
+    return await _to_responses(svc, await svc.upcoming_for(user))
 
 
 @router.delete("/{appointment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -66,7 +74,8 @@ async def cancel_appointment(
 async def day_schedule(
     day: date, _: User = Depends(require_admin), db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    return [_to_response(a) for a in await AppointmentService(db).day_schedule(day)]
+    svc = AppointmentService(db)
+    return await _to_responses(svc, await svc.day_schedule(day))
 
 
 @router.get("/free-slots/{day}", response_model=FreeSlotsResponse)

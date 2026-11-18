@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
+import pytest_asyncio
 
 from app.core.clock import TZ
 from app.repositories.appointment import AppointmentRepository
@@ -17,14 +18,16 @@ async def _login(client, phone, password):
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
-@pytest.fixture
-async def admin_headers(async_client, test_db):
+@pytest_asyncio.fixture
+async def admin_headers(async_client, test_db, clean_db):
+    await test_db["users"].delete_many({"phone": "0901234567"})
     await AuthService(test_db).create_user("0901234567", "chutiem123", "Chủ tiệm", role="admin")
     return await _login(async_client, "0901234567", "chutiem123")
 
 
-@pytest.fixture
-async def user_headers(async_client, test_db):
+@pytest_asyncio.fixture
+async def user_headers(async_client, test_db, clean_db):
+    await test_db["users"].delete_many({"phone": "0912345678"})
     await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
     return await _login(async_client, "0912345678", "matkhau123")
 

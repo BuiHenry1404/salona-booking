@@ -1,4 +1,4 @@
-from app.core.text import single_line
+from app.core.text import single_line, strip_diacritics
 
 
 class TestSingleLine:
@@ -28,3 +28,13 @@ class TestSingleLine:
 
     def test_an_ordinary_value_is_untouched(self):
         assert single_line("làm tóc", 80) == "làm tóc"
+
+
+class TestStripDiacritics:
+    """Dời từ `tests/test_reply_veto.py` ở Task 6.3 (M6-cutover): `strip_diacritics`
+    sống ở `app/core/text.py`, không riêng của một gói agent nào."""
+
+    def test_strip_diacritics_handles_d_bar(self):
+        assert strip_diacritics("Đúng rồi đó") == "Dung roi do"
+        assert strip_diacritics("") == ""
+        assert strip_diacritics(None) == ""

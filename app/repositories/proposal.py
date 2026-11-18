@@ -1,11 +1,11 @@
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-from app.core.clock import now_utc
+from app.core.clock import local_day_bounds, now_utc, to_local
 from app.models.proposal import Proposal
 from app.repositories.base import BaseRepository
 
@@ -16,7 +16,8 @@ def _oid(proposal_id: str) -> Optional[ObjectId]:
 
 class ProposalRepository(BaseRepository[Proposal]):
     """Mọi lệnh đổi trạng thái đều có ĐIỀU KIỆN trạng thái cũ trong câu lọc —
-    nguyên tử trên một document, không cần transaction (mongo standalone)."""
+    nguyên tử trên một document. `session` (tuỳ chọn): chạy trong transaction
+    của caller (`decide.apply_decision`, Task 3.6); None = như cũ."""
 
     def __init__(self, db: AsyncIOMotorDatabase):
         super().__init__(db, Proposal, "proposals")
@@ -41,15 +42,16 @@ class ProposalRepository(BaseRepository[Proposal]):
                                              sort=[("created_at", -1)])
         return Proposal(**doc) if doc else None
 
-    async def get_owned(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
+    async def get_owned(self, user_id: str, proposal_id: str, *,
+                        session=None) -> Optional[Proposal]:
         oid = _oid(proposal_id)
         if oid is None:
             return None
-        doc = await self.collection.find_one({"_id": oid, "user_id": user_id})
+        doc = await self.collection.find_one({"_id": oid, "user_id": user_id}, session=session)
         return Proposal(**doc) if doc else None
 
     async def claim(self, user_id: str, proposal_id: str, *, now: datetime,
-                    turn_at: datetime) -> Optional[Proposal]:
+                    turn_at: datetime, session=None) -> Optional[Proposal]:
         """pending → approving, chỉ khi: đúng chủ, còn hạn, và tạo TRƯỚC lượt duyệt.
         Hai lần duyệt chạy chồng thì đúng một lần claim được."""
         oid = _oid(proposal_id)
@@ -60,12 +62,13 @@ class ProposalRepository(BaseRepository[Proposal]):
              "expires_at": {"$gt": now}, "created_at": {"$lt": turn_at}},
             {"$set": {"status": "approving", "approving_at": now}},
             return_document=ReturnDocument.AFTER,
+            session=session,
         )
         return Proposal(**doc) if doc else None
 
     async def transition(self, proposal_id, from_status: str, to_status: str,
                          extra: Optional[Dict[str, Any]] = None,
-                         match: Optional[Dict[str, Any]] = None) -> bool:
+                         match: Optional[Dict[str, Any]] = None, *, session=None) -> bool:
         oid = proposal_id if isinstance(proposal_id, ObjectId) else _oid(proposal_id)
         if oid is None:
             return False
@@ -74,10 +77,31 @@ class ProposalRepository(BaseRepository[Proposal]):
             # `updated_at` = lúc đổi trạng thái: khối bối cảnh dùng nó để biết
             # khách KHÔNG chốt từ khi nào (dòng "[declined: …]", lỗi live 3/6).
             {"$set": {"status": to_status, "updated_at": now_utc(), **(extra or {})}},
+            session=session,
         )
         return result.modified_count == 1
 
-    async def increment_unclear(self, user_id: str, proposal_id: str) -> Optional[Proposal]:
+    async def closed_earlier_today(self, user_id: str, before: datetime) -> List[Proposal]:
+        """Task 15 review: đề xuất của khách CÙNG NGÀY giờ VN với `before` (đề
+        xuất vừa được duyệt), TẠO TRƯỚC nó, và đã ĐÓNG mà khách KHÔNG chốt
+        (`rejected`/`superseded`/`expired` — không tính `approved`/`failed`/
+        `approving`/`pending`). `confirm.py` suy `confirm_fact["context"]` từ
+        danh sách này: có cái START_AT KHÁC đề xuất vừa duyệt → khách đã đổi
+        giờ ("changed_time"); có cái nào đó dù giờ không đổi → khách từng nói
+        không/bỏ dở trước khi chốt ("after_decline").
+
+        Thay cho `has_superseded_today_before` cũ (review: chỉ nhìn
+        `superseded` thì bỏ sót trường hợp phổ biến hơn — khách bị VETO
+        "giờ khác" đóng đề xuất cũ thành `rejected`, không phải `superseded`)."""
+        start, _ = local_day_bounds(to_local(before).date())
+        cursor = self.collection.find({
+            "user_id": user_id, "status": {"$in": ["rejected", "superseded", "expired"]},
+            "created_at": {"$gte": start, "$lt": before},
+        })
+        return [Proposal(**doc) async for doc in cursor]
+
+    async def increment_unclear(self, user_id: str, proposal_id: str, *,
+                                session=None) -> Optional[Proposal]:
         oid = _oid(proposal_id)
         if oid is None:
             return None
@@ -85,5 +109,6 @@ class ProposalRepository(BaseRepository[Proposal]):
             {"_id": oid, "user_id": user_id, "status": "pending"},
             {"$inc": {"unclear_count": 1}},
             return_document=ReturnDocument.AFTER,
+            session=session,
         )
         return Proposal(**doc) if doc else None

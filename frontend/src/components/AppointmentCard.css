@@ -30,6 +30,14 @@
   font-size: 19px;
   margin-top: var(--s1);
 }
+.appt__services {
+  font-size: 19px;
+  margin-top: var(--s1);
+}
+.appt__end {
+  font-size: 19px;
+  margin-top: var(--s1);
+}
 /* Tên + SĐT khách cho chủ tiệm — SĐT là thứ chủ tiệm cần đọc nhanh nhất. */
 .appt__who {
   font-size: 18px;

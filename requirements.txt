@@ -1,5 +1,5 @@
 # FastAPI and core dependencies
-fastapi==0.104.1
+fastapi==0.116.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
@@ -10,13 +10,16 @@ bcrypt==4.0.1  # passlib 1.7.4 incompatibility: bcrypt 5.x breaks backend detect
 motor==3.7.1
 pymongo==4.19.0
 
+# Dedupe tin nhắn (Task 10) — tuỳ chọn, chỉ dùng khi REDIS_URL được cấu hình
+redis==5.2.1
+
 # Validation and serialization
 pydantic>=2.9,<3  # langchain-core cần >=2.7; giữ trần major
 pydantic-settings==2.1.0
 email-validator==2.1.0
 
 # HTTP client
-httpx==0.25.2
+httpx==0.28.1
 
 # JSON response optimization
 orjson>=3.9.10
@@ -47,6 +50,7 @@ python-socketio[asyncio]>=5.13.0
 langgraph==1.2.16
 langgraph-checkpoint==4.3.0
 langgraph-checkpoint-mongodb==0.5.1
+langgraph-store-mongodb==0.4.0
 langchain-openai==1.7.2
 langchain-core==1.6.12
 # langfuse.langchain import chính gói `langchain`, không chỉ langchain-core.

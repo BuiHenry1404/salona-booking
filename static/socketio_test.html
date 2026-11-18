@@ -16,9 +16,8 @@
 
   socket.on("connected", (d) => log(`● đã kết nối: ${d.full_name}`));
   socket.on("turn_started", () => log("… con đang đọc"));
-  socket.on("tool_started", (d) => log(`… đang chạy ${d.name}`));
+  socket.on("tool_started", (d) => log(`… ${d.label} (${d.name})`));
   socket.on("tool_finished", (d) => log(`✓ xong ${d.name} (ok=${d.ok})`));
-  socket.on("token", (d) => log(`token: ${JSON.stringify(d.text)}`));
   socket.on("complete", (d) => log(`■ ${d.answer}`));
   socket.on("error", (d) => log(`✗ ${d.message}`));
   socket.on("shop_status_changed", (d) => log(`⟳ trạng thái tiệm: ${JSON.stringify(d)}`));

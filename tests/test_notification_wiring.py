@@ -7,6 +7,7 @@ Chỉ thao tác THÀNH CÔNG mới tỏa tin; các đường đi ngược hoặc
 from datetime import datetime
 
 import pytest
+import pytest_asyncio
 
 from app.core.clock import TZ
 from app.core.errors import NotFoundError, SlotTakenError
@@ -129,27 +130,6 @@ async def test_cancelling_twice_fires_only_once(test_db, spy):
     assert spy.events == [("cancelled", appt.id)]
 
 
-async def test_broken_notifier_does_not_break_booking(test_db):
-    """NotificationService nuốt lỗi kênh — đặt lịch vẫn phải thành công."""
-    notifications.register(BrokenNotifier())
-
-    appt = await AppointmentService(test_db).create(
-        make_user(), future_local(15), note=None
-    )
-    assert appt.status == "booked"
-
-
-async def test_broken_notifier_does_not_break_cancelling(test_db):
-    svc = AppointmentService(test_db)
-    user = make_user()
-    appt = await svc.create(user, future_local(15), note=None)
-    notifications.clear()
-    notifications.register(BrokenNotifier())
-
-    await svc.cancel(user, str(appt.id))
-    assert await svc.upcoming_for(user) == []
-
-
 # ---------------------------------------------------------------------------
 # Router shop: POST /busy và POST /free tỏa tin sau khi đổi trạng thái thành công
 # ---------------------------------------------------------------------------
@@ -163,21 +143,22 @@ async def _login(client, phone, password):
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
-@pytest.fixture
-async def admin_headers(async_client, test_db):
+@pytest_asyncio.fixture
+async def admin_headers(async_client, test_db, clean_db):
+    await test_db["users"].delete_many({"phone": "0901234567"})
     await AuthService(test_db).create_user(
         "0901234567", "chutiem123", "Chủ tiệm", role="admin"
     )
     return await _login(async_client, "0901234567", "chutiem123")
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def user_headers(async_client, test_db):
     await AuthService(test_db).create_user("0912345678", "matkhau123", "Cô Lan")
     return await _login(async_client, "0912345678", "matkhau123")
 
 
-async def test_set_busy_fires_status_changed(async_client, admin_headers, spy):
+async def _busy_fires_status_changed(async_client, admin_headers, spy):
     resp = await async_client.post(
         "/api/v1/shop/busy", json={"minutes": 30}, headers=admin_headers
     )
@@ -187,7 +168,7 @@ async def test_set_busy_fires_status_changed(async_client, admin_headers, spy):
     assert spy.events == [("status", True)]
 
 
-async def test_set_free_fires_status_changed(async_client, admin_headers, spy):
+async def _free_fires_status_changed(async_client, admin_headers, spy):
     await async_client.post(
         "/api/v1/shop/busy", json={"minutes": 30}, headers=admin_headers
     )
@@ -198,6 +179,15 @@ async def test_set_free_fires_status_changed(async_client, admin_headers, spy):
     assert resp.json()["is_busy"] is False
 
     assert spy.events == [("status", False)]
+
+
+@pytest.mark.parametrize(
+    "action",
+    [_busy_fires_status_changed, _free_fires_status_changed],
+    ids=["set_busy", "set_free"],
+)
+async def test_shop_status_change_fires_status_changed(action, async_client, admin_headers, spy):
+    await action(async_client, admin_headers, spy)
 
 
 async def test_reading_status_fires_nothing(async_client, user_headers, spy):
@@ -218,7 +208,28 @@ async def test_forbidden_busy_call_fires_nothing(async_client, user_headers, spy
     assert spy.events == []
 
 
-async def test_broken_notifier_does_not_break_set_busy(async_client, admin_headers):
+async def _broken_notifier_booking(test_db, async_client, admin_headers):
+    """NotificationService nuốt lỗi kênh — đặt lịch vẫn phải thành công."""
+    notifications.register(BrokenNotifier())
+
+    appt = await AppointmentService(test_db).create(
+        make_user(), future_local(15), note=None
+    )
+    assert appt.status == "booked"
+
+
+async def _broken_notifier_cancelling(test_db, async_client, admin_headers):
+    svc = AppointmentService(test_db)
+    user = make_user()
+    appt = await svc.create(user, future_local(15), note=None)
+    notifications.clear()
+    notifications.register(BrokenNotifier())
+
+    await svc.cancel(user, str(appt.id))
+    assert await svc.upcoming_for(user) == []
+
+
+async def _broken_notifier_set_busy(test_db, async_client, admin_headers):
     notifications.register(BrokenNotifier())
 
     resp = await async_client.post(
@@ -228,9 +239,24 @@ async def test_broken_notifier_does_not_break_set_busy(async_client, admin_heade
     assert resp.json()["is_busy"] is True
 
 
-async def test_broken_notifier_does_not_break_set_free(async_client, admin_headers):
+async def _broken_notifier_set_free(test_db, async_client, admin_headers):
     notifications.register(BrokenNotifier())
 
     resp = await async_client.post("/api/v1/shop/free", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["is_busy"] is False
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        _broken_notifier_booking,
+        _broken_notifier_cancelling,
+        _broken_notifier_set_busy,
+        _broken_notifier_set_free,
+    ],
+    ids=["booking", "cancelling", "set_busy", "set_free"],
+)
+async def test_broken_notifier_does_not_break_business(action, test_db, async_client, admin_headers):
+    """NotificationService nuốt lỗi kênh ở mọi đường gọi — nghiệp vụ vẫn thành công."""
+    await action(test_db, async_client, admin_headers)

@@ -40,18 +40,54 @@ async def lifespan(app: FastAPI):
         from app.infrastructure.database import ensure_indexes
         await ensure_indexes(app.state.db)
 
+        # Migration một lần, idempotent (Task 13): tiền tố admin gõ sẵn trong
+        # full_name ("Cô Lan") là thông tin ĐÃ BIẾT → seed self_address cho
+        # khách chưa có giá trị, để address_phrase không phải đợi khách tự
+        # xưng lại từ đầu. Không fail-hard: thiếu seed chỉ làm bot gọi "anh
+        # chị" một lúc, không đáng sập cả app vì nó.
+        try:
+            from app.repositories.user import UserRepository
+            users = UserRepository(app.state.db)
+            seeded = await users.seed_self_address_from_names()
+            logger.info("self_address_seed_done", seeded=seeded)
+            # Một lần (live try 15/11): "chị" / "anh" cũ của khách tên "Cô …",
+            # "Chú …"… thành đúng tiền tố. Chỉ log số khách, không chữ khách.
+            migrated = await users.migrate_honorific_self_address()
+            logger.info("self_address_honorific_migration_done", migrated=migrated)
+        except Exception as e:
+            logger.warning("self_address_seed_failed", error=str(e))
+
         # Checkpointer (lịch sử model theo thread) — cùng DB, cùng fail-hard:
         # thiếu nó thì mọi lượt chat đều hỏng, chạy tiếp chỉ giấu lỗi.
         from app.agents.checkpoint import make_checkpointer, set_checkpointer
         app.state.checkpointer = make_checkpointer()
         set_checkpointer(app.state.checkpointer)
 
+        # Store bộ nhớ dài hạn (Task 14, spec §3.5) — cùng DB, cùng `MongoClient`
+        # của checkpointer (`get_sync_client()`); hàm dựng của `MongoDBStore` tự
+        # tạo index unique `(namespace_str, key)`, không có bước `setup()` riêng.
+        # Cùng fail-hard với checkpointer: thiếu nó thì bộ nhớ dài hạn im lặng
+        # mất, chạy tiếp chỉ giấu lỗi.
+        from app.agents.salon.memory.store import make_store, set_store
+        app.state.memory_store = make_store()
+        set_store(app.state.memory_store)
+
         logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
-        
+
     except Exception as e:
         logger.error("Failed to initialize database", error=str(e))
         raise
-    
+
+    # Redis tuỳ chọn (Task 10, dedupe tin nhắn) — KHÔNG fail-hard như Mongo.
+    # Không cấu hình REDIS_URL thì bỏ qua hẳn; cấu hình mà ping lỗi thì chỉ
+    # warning, app chạy tiếp bằng Mongo fallback (MessageDedupe tự xử lý).
+    from app.infrastructure.redis import ping_redis
+    if settings.redis_url:
+        if await ping_redis():
+            logger.info("Redis connected", url=settings.redis_url)
+        else:
+            logger.warning("Redis unavailable at startup, falling back to Mongo dedupe")
+
     # Initialize Socket.IO service (cũng không fail-hard, cùng lý do)
     app.state.socketio_service = None
     try:
@@ -84,7 +120,7 @@ async def lifespan(app: FastAPI):
 
     notifications.clear()
     if app.state.socketio_service is not None:
-        notifications.register(SocketNotifier(app.state.socketio_service))
+        notifications.register(SocketNotifier(app.state.socketio_service, app.state.db))
 
     # Kênh Telegram của chỗ tỏa tin — chỉ đăng ký khi có token. Thiếu token thì
     # app chạy bình thường, không bot, không kênh Telegram rác. Phải đăng ký
@@ -92,7 +128,7 @@ async def lifespan(app: FastAPI):
     from app.telegram.client import TelegramClient, is_configured as telegram_is_configured
     from app.telegram.notify import TelegramNotifier
     if telegram_is_configured():
-        notifications.register(TelegramNotifier(TelegramClient()))
+        notifications.register(TelegramNotifier(TelegramClient(), app.state.db))
         logger.info("Telegram notifier registered")
 
     # Bot Telegram — long polling chạy như asyncio task trong lifespan, chỉ bật
@@ -121,11 +157,21 @@ async def lifespan(app: FastAPI):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
 
+    if getattr(app.state, 'memory_store', None) is not None:
+        from app.agents.salon.memory.store import set_store
+        set_store(None)
+        app.state.memory_store = None
+
     if getattr(app.state, 'checkpointer', None) is not None:
-        from app.agents.checkpoint import set_checkpointer
+        from app.agents.checkpoint import set_checkpointer, set_sync_client
         set_checkpointer(None)
         app.state.checkpointer.close()
         app.state.checkpointer = None
+        # `checkpointer.close()` vừa đóng MongoClient dùng chung (checkpointer
+        # VÀ store bộ nhớ dài hạn) — pymongo không cho dùng lại một client đã
+        # đóng, nên lần khởi động kế tiếp của lifespan (test chạy nhiều app
+        # trong cùng tiến trình) phải tạo client mới, không phải client cũ.
+        set_sync_client(None)
 
     # Shutdown database connection
     if hasattr(app.state, 'mongo_db'):
@@ -169,15 +215,23 @@ async def mongo_error_handler(request: Request, exc: PyMongoError):
 
     Cạm bẫy: `DuplicateKeyError` cũng là lớp con của `PyMongoError`. Repository
     đã bắt nó và đổi thành `SlotTakenError`, nên trùng giờ vẫn ra 409. Chỗ ghi
-    Mongo mới nào quên bắt sẽ khiến khách thấy "máy của tiệm đang hỏng" trong
+    Mongo mới nào quên bắt sẽ khiến khách thấy "máy của tiệm đang trục trặc" trong
     khi thật ra chỉ là trùng giờ.
     """
     logger.exception("mongo_unavailable", path=request.url.path)
-    phone = settings.shop_phone or "tiệm"
+    # Xưng "em", gọi khách "anh chị" (không đoán tuổi/giới). Thiếu SĐT trong .env
+    # thì không ghép chữ "tiệm" làm số điện thoại.
+    if settings.shop_phone:
+        detail = (
+            "Dạ máy của tiệm đang trục trặc ạ. "
+            f"Anh chị gọi giúp em số {settings.shop_phone} nhé."
+        )
+    else:
+        detail = "Dạ máy của tiệm đang trục trặc ạ. Anh chị gọi điện cho tiệm giúp em nhé."
     return JSONResponse(
         status_code=503,
         content={
-            "detail": f"Máy của tiệm đang hỏng ạ. Cô chú gọi giúp con số {phone} nhé.",
+            "detail": detail,
             "shop_phone": settings.shop_phone,
         },
     )

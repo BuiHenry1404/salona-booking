@@ -6,7 +6,7 @@ toàn bộ ra file txt để đọc lại bằng mắt.
 
 Đây là công cụ kiểm tay, KHÔNG phải test tự động: nó không assert gì cả. Mục
 đích là đọc xem câu trả lời của AI có tự nhiên không, nên nó ghi cả sự kiện
-tool để biết câu nào do LLM sinh và câu nào do code trả thẳng.
+tool (kèm nhãn khách thấy) để biết máy đã làm gì trước mỗi câu.
 """
 import argparse
 import asyncio
@@ -128,17 +128,13 @@ async def main() -> None:
     token = login(args.phone, args.password)
     sio = socketio.AsyncClient()
 
-    # Mỗi lượt gom vào đây rồi mới ghi, để token stream nối lại thành câu.
+    # Mỗi lượt gom vào đây rồi mới ghi.
     turn: dict = {}
     done = asyncio.Event()
 
-    @sio.on("token")
-    async def _token(data):
-        turn.setdefault("tokens", []).append(data.get("text", ""))
-
     @sio.on("tool_started")
     async def _tool_started(data):
-        turn.setdefault("tools", []).append(f"-> {data.get('name')}")
+        turn.setdefault("tools", []).append(f"-> {data.get('name')} ({data.get('label')})")
 
     @sio.on("tool_finished")
     async def _tool_finished(data):
@@ -177,7 +173,6 @@ async def main() -> None:
                 turn["error"] = "(quá 90 giây không thấy trả lời)"
             elapsed = time.monotonic() - started
 
-            streamed = "".join(turn.get("tokens", []))
             answer = turn.get("answer", "")
             lines += [
                 f"===== LƯỢT {i} ({elapsed:.1f}s) =====",
@@ -187,9 +182,6 @@ async def main() -> None:
                 lines.append("TOOL  : " + " | ".join(turn["tools"]))
             else:
                 lines.append("TOOL  : (không gọi tool nào)")
-            # Streamed rỗng mà answer có chữ = câu này KHÔNG do LLM stream ra,
-            # tức là code trả thẳng. Đây là thứ cần soi.
-            lines.append(f"STREAM: {'(rỗng — câu trả lời không đi qua LLM)' if not streamed else repr(streamed[:200])}")
             lines.append(f"BOT   : {answer or turn.get('error', '(không có)')}")
             lines.append("")
             total += 1

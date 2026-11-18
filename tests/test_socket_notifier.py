@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.models.appointment import Appointment
+from app.models.service import Service
 from app.models.shop import ShopStatusView
-from app.services.notifications import Notifier
+from app.services.service_catalog import ServiceCatalogService
 from app.services.socket_notifier import SocketNotifier
 
 
@@ -51,15 +52,40 @@ async def test_created_goes_to_admins_with_full_payload():
             {
                 "id": APPT_ID,
                 "start_at": "2026-08-07T08:30:00+00:00",
+                "end_at": "2026-08-07T09:30:00+00:00",
                 "user_name": "Cô Lan",
                 "phone": "0912345678",
                 "note": "làm tóc",
+                "services": [],
             },
         )
     ]
 
 
-async def test_cancelled_goes_to_admins_with_minimal_payload():
+async def test_created_with_services_includes_names_when_db_given(test_db):
+    """Có `db` thì payload kèm tên dịch vụ (Task 3) — không có `db` vẫn phát
+    được, chỉ `services` rỗng (hai test trên, SocketNotifier(spy) không `db`)."""
+    await ServiceCatalogService(test_db).upsert_many([
+        Service(
+            id="toc-nhuom", category="toc", name="Nhuộm",
+            aliases=["nhuộm tóc"], price_min=350000, price_max=700000,
+            duration_minutes=120,
+        ),
+    ])
+    spy = SpySocketIO()
+
+    await SocketNotifier(spy, test_db).appointment_created(
+        an_appointment(service_ids=["toc-nhuom"], duration_minutes=120)
+    )
+
+    _, data = spy.admin_emits[0]
+    assert data["services"] == [{"id": "toc-nhuom", "name": "Nhuộm"}]
+    assert data["end_at"] == "2026-08-07T10:30:00+00:00"
+
+
+async def test_cancelled_goes_to_admins_with_same_shape_as_created():
+    """Ruling chủ dự án: appointment_created và appointment_cancelled mang
+    MỘT hình lịch — cả hai đều có end_at/services, không phải hai hình rời."""
     spy = SpySocketIO()
 
     await SocketNotifier(spy).appointment_cancelled(an_appointment())
@@ -71,9 +97,30 @@ async def test_cancelled_goes_to_admins_with_minimal_payload():
             {
                 "id": APPT_ID,
                 "start_at": "2026-08-07T08:30:00+00:00",
+                "end_at": "2026-08-07T09:30:00+00:00",
+                "services": [],
             },
         )
     ]
+
+
+async def test_cancelled_with_services_includes_names_when_db_given(test_db):
+    await ServiceCatalogService(test_db).upsert_many([
+        Service(
+            id="toc-nhuom", category="toc", name="Nhuộm",
+            aliases=["nhuộm tóc"], price_min=350000, price_max=700000,
+            duration_minutes=120,
+        ),
+    ])
+    spy = SpySocketIO()
+
+    await SocketNotifier(spy, test_db).appointment_cancelled(
+        an_appointment(service_ids=["toc-nhuom"], duration_minutes=120)
+    )
+
+    _, data = spy.admin_emits[0]
+    assert data["services"] == [{"id": "toc-nhuom", "name": "Nhuộm"}]
+    assert data["end_at"] == "2026-08-07T10:30:00+00:00"
 
 
 async def test_optional_appointment_fields_stay_in_payload():
@@ -126,7 +173,3 @@ async def test_free_status_broadcasts_nulls():
             {"is_busy": False, "busy_until": None, "minutes_left": None},
         )
     ]
-
-
-def test_socket_notifier_implements_notifier_protocol():
-    assert isinstance(SocketNotifier(SpySocketIO()), Notifier)

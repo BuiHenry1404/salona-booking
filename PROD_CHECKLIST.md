@@ -1,6 +1,7 @@
 # Lên prod — việc cần làm
 
-Danh sách này gom từ `REPO_AUDIT.md` (mục P1–P3) và mục "Chưa có" trong
+Danh sách này gom từ `REPO_AUDIT.md` (mục P1–P3; file đã xoá 08/11, xem
+`git show 72c98fc:REPO_AUDIT.md`) và mục "Chưa có" trong
 `CONTEXT.md`. Cách chạy nằm ở [`RUNBOOK.md`](RUNBOOK.md).
 
 Cập nhật: 2026-08-23
@@ -110,7 +111,6 @@ hết hạn.
 - [ ] REL-06 — log path thay vì full URL (query string đang vào log ở mức INFO)
 - [ ] Đặt lại mật khẩu admin qua Telegram — xem
       `docs/superpowers/specs/2026-08-15-admin-password-reset-telegram-design.md`
-      (`NOTE.md` ghi đường dẫn cũ `specs/…`, không còn đúng)
 - [ ] Avatar chatbot — mockup đang trỏ `ai-avatar.jpg` không có trong git
 
 ---

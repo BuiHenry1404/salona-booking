@@ -18,7 +18,17 @@ uv pip install -r requirements.txt
 cp .env.example .env                     # rồi điền, xem mục 3
 docker compose up -d mongo
 PYTHONPATH=. .venv/bin/python scripts/seed_dev_users.py
+PYTHONPATH=. .venv/bin/python scripts/seed_services.py
 ```
+
+`requirements.txt` là nguồn phụ thuộc thật. `bcrypt` ghim ở **4.0.1**: passlib 1.7.4 hỏng với bcrypt 5.x,
+đừng nâng.
+
+`scripts/seed_services.py` nạp danh mục dịch vụ (collection `services`, mock —
+file Excel thật chủ dự án gửi sau) cho agent **Dịch vụ & giá** và cho
+`ProposalService` tính thời lượng lịch theo dịch vụ. Idempotent (upsert theo
+`id`), chạy lại an toàn; dữ liệu sai (vd. `duration_minutes` không phải bội số
+15) thoát mã khác 0 và KHÔNG ghi gì.
 
 ## 3. Cấu hình
 
@@ -29,6 +39,28 @@ dụng là hiểu nhầm phổ biến nhất ở đây.
 `config.py` không có giá trị mặc định nào — thiếu một khoá bắt buộc thì app không
 khởi động, kèm tên trường bị thiếu. Thêm thiết lập mới phải sửa cả `config.py`,
 `.env.example` và `.env`.
+
+### Mongo: replica set một node (bắt buộc)
+
+`apply_decision` ghi lịch và `salon_turns` trong **một transaction Mongo**
+(CONTEXT.md quyết định 4) — transaction chỉ chạy trên replica set, standalone
+sẽ lỗi `Transaction numbers are only allowed on a replica set member or mongos`.
+Compose chạy `mongod --replSet rs0`; healthcheck tự `rs.initiate` lần đầu (đã
+khởi tạo thì bỏ qua) với thành viên `mongo:27017`, healthy = đã là PRIMARY.
+
+Chuỗi kết nối **phải** kèm `directConnection=true` — máy host không phân giải
+được tên `mongo`, thiếu tham số này thì driver đi khám phá thành viên rồi treo
+tới `ServerSelectionTimeoutError` ("Could not reach any servers in [('mongo', 27017)]"):
+
+| Nơi | `MONGO_URI` |
+|---|---|
+| `.env` (máy host: uvicorn dev, script) | `mongodb://localhost:27017/?directConnection=true` |
+| `.env.docker` (container `app`) | `mongodb://mongo:27017/?directConnection=true` |
+| `tests/conftest.py` | `TEST_MONGO_URI` đã kèm sẵn |
+
+Máy đang có container Mongo standalone cũ: `docker compose up -d --wait mongo`
+tạo lại container với cấu hình mới (volume `mongo_data` giữ nguyên dữ liệu),
+rồi kiểm: `docker compose exec mongo mongosh --quiet --eval "rs.status().ok"` → `1`.
 
 Bốn khoá Azure hay điền sai:
 
@@ -106,21 +138,36 @@ Sai mật khẩu 10 lần trong 15 phút là khoá tạm theo SĐT và IP — l�
 
 ## 6. Thử chat
 
+Chat của khách chạy qua gói `app/agents/salon/` (`run_turn` / `ButtonReply`,
+`app/services/socketio_service.py`). Không còn sự kiện `token`: mọi câu tới
+khách chỉ qua `complete`, sau khi qua guard bằng code.
+
 Mở http://localhost:8000/static/socketio_test.html, dán `access_token`, rồi trong
 console:
 
 ```js
-say("mai 3h chiều làm tóc được không con")   // hỏi lại xác nhận, CHƯA đặt lịch
-say("ừ")                                      // giờ mới ghi lịch
-say("cháu bán bảo hiểm không")                // bị từ chối lịch sự
+say("mai 3h chiều làm tóc được không")   // hỏi lại xác nhận, CHƯA đặt lịch
+say("ừ")                                 // giờ mới ghi lịch
+say("chị bán bảo hiểm không")            // bị từ chối lịch sự
 ```
 
-Đúng thì lượt 1 hiện `tool_started parse_time` → `propose_appointment` → nhiều
-`token` → `complete`, mà `GET /api/v1/appointments/mine` vẫn rỗng. Lượt 2 không có
-tool nào: run_turn resume node `confirm` đang chờ (interrupt), lưới code + bộ phân
-loại (tag `classify`, không stream) quyết đồng ý, `ProposalService.approve` ghi lịch,
-`phrase` viết câu chốt — và lịch xuất hiện. Đề xuất nằm ở collection `proposals`
-(`status` pending → approved/rejected/expired/superseded/failed).
+Đúng thì lượt 1 phát `turn_started` → `tool_started`/`tool_finished` (mỗi sự
+kiện kèm `name` kỹ thuật + `label` tiếng Việt cho khách, vd
+`{"name": "appointment_task", "label": "Đang xem lịch hẹn…"}`) → đúng MỘT
+`complete {"answer", "proposal"}` (`proposal` khác `None` khi có đề xuất đang
+chờ: `{"id", "kind", "expires_at", "when_spoken"}` để frontend hiện nút Đồng
+ý/Không) — mà `GET /api/v1/appointments/mine` vẫn rỗng. Đề xuất nằm ở
+collection `proposals` (`status` pending → approved/rejected/expired/
+superseded/failed); `salon/` không dùng `interrupt()` — hai lượt chat vẫn là
+hai turn độc lập, phiên chờ nằm ở Mongo (`waiting_sessions`), không ở state
+graph (docs/architech-agent.md luật 7).
+
+Lượt 2 (gõ "ừ") không có tool nào: Decision Gate (`veto`) đọc nhãn
+`decide_pending` của Orchestrator, `apply_decision` ghi lịch qua
+`ProposalService.approve`, Orchestrator viết câu chốt — qua guard rồi mới tới
+khách. Bấm nút Đồng ý/Không trên frontend đi bằng sự kiện `confirm_proposal`
+(không phải `send_message`): đường này là API bằng code, KHÔNG gọi model
+(docs/architech-agent.md luật 3) — nhanh và không tốn lời gọi LLM.
 
 ## 7. Test
 
@@ -129,8 +176,8 @@ docker compose up -d mongo
 .venv/bin/python -m pytest -q
 ```
 
-Cần Mongo ở `localhost:27017`; test dùng database riêng `chatbot_test_db` và tự dọn
-sau mỗi test.
+Cần Mongo ở `localhost:27017`, chạy replica set (mục 3); test dùng database riêng
+`chatbot_test_db` và tự dọn sau mỗi test.
 
 Kiểm đầu-cuối trên server đang chạy — HTTP + Socket.IO thật, gọi Azure thật,
 không mock gì (31 case: xác thực, phân quyền, bận/rảnh, đặt/huỷ lịch, hai lượt
@@ -147,6 +194,18 @@ nguyên văn hội thoại kèm tool đã gọi:
 
 ```bash
 PYTHONPATH=. .venv/bin/python scripts/chat_scenarios.py
+```
+
+Kịch bản 10 lượt riêng cho gói `app/agents/salon/` (Task 18–19 của đợt dựng lại
+agent) — tự xoá sạch dữ liệu, seed user + danh mục dịch vụ, tạo sẵn một lịch
+chặn 15:00 ngày mai rồi gọi thẳng `run_turn`/`ButtonReply` (không qua HTTP),
+in câu bot, nguồn câu (llm/code, đọc từ `salon_turns`), thời gian chạy và
+trạng thái Mongo sau mỗi lượt. Gọi Azure thật — **hỏi chủ dự án trước khi
+chạy** (CONTEXT.md quyết định 7):
+
+```bash
+docker compose up -d mongo
+PYTHONPATH=. .venv/bin/python scripts/test_live_10_turns.py
 ```
 
 Nhóm test gọi Azure thật bị loại khỏi lần chạy mặc định (`-m "not llm"` trong
@@ -172,141 +231,160 @@ docker compose -f docker-compose.langfuse.yml up -d
 Tắt: `docker compose -f docker-compose.langfuse.yml down` (stack này nặng: Postgres
 + ClickHouse + Redis + MinIO + web + worker).
 
-## 8b. Kiểm state (nén hội thoại trong phiên)
+## 8b. Kiểm phiên chờ và cuộc trò chuyện (gói `salon/`)
 
-Xem `ConversationState` (`summary` + `slots`) hiện có của một khách:
+Gói mới không còn `ConversationState` (`summary`/`slots` nén theo ngưỡng
+token) — việc dở của agent con qua lượt nằm ở collection Mongo
+`waiting_sessions` (qua `WaitingSessionService`), KHÔNG trong state của
+graph; lịch sử chat dài được nén bằng `SummarizationMiddleware` của
+LangChain (ngắn hạn, trong checkpointer theo thread), không phải một bước
+nén riêng của dự án.
+
+Xem phiên chờ đang mở của một khách (mỗi khách tối đa một phiên mỗi agent
+con — Đặt lịch / Thông tin tiệm / Dịch vụ & giá — hết hạn
+`salon_session_ttl_minutes` phút tính từ câu hỏi gần nhất, kiểm bằng code lúc
+đọc, không phải TTL Mongo):
 
 ```bash
 docker compose exec -T mongo mongosh salon_booking --quiet --eval \
-  'var u=db.users.findOne({phone:"<SĐT>"}); printjson(db.conversations.findOne({user_id:String(u._id)},{state:1}))'
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.waiting_sessions.find({user_id:String(u._id), status:"waiting"}).forEach(printjson)'
 ```
 
-Log cần theo dõi (cả năm đều log qua `structlog`, không ném lỗi ra khách):
+Xem cuộc trò chuyện hiện tại (`conversation_threads`, một cuộc mỗi ngày VN —
+mục Chốt cứng "Phiên hội thoại" ở `CONTEXT.md`):
 
-- `state_compacted` — nén thành công, kèm số bullet, số tin đã nén, và có
-  sinh được slots hay không.
-- `state_skipped` — cầu chì đã bật (3 lần hỏng liên tiếp), bỏ qua tới hết ngày.
-- `state_empty` — model trả về 0 bullet hợp lệ; coi như hỏng, `covers_until`
-  KHÔNG advance, state cũ (nếu có) giữ nguyên, `failures` tăng.
-- `state_llm_failed` — lời gọi LLM lỗi hoặc timeout; `failures` tăng (bump cầu
-  chì), state cũ giữ nguyên.
-- `state_failed` — lỗi ngoài dự kiến, NGOÀI lời gọi LLM (vd. Mongo down);
-  không bump cầu chì.
-- `state_schedule_failed` — lên lịch nén nền thất bại sau khi lượt chat đã
-  trả lời khách xong; kèm `error_type`.
-- `state_slot_dropped` — **KHÔNG phải lỗi.** `sanitize_slots` bỏ đúng một
-  field slots do LLM gõ sai (vd. ngày không hợp lệ, ngày/giờ đã qua, id lịch
-  không có thật) — kèm tên field bị bỏ. Thấy log này là code đang lọc đúng
-  việc, không phải hệ thống hỏng.
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.conversation_threads.find({user_id:String(u._id)}).sort({created_at:-1}).limit(3).forEach(printjson)'
+```
 
-Trace Langfuse của lượt nén mang tag `state` (khác tag `respond` của lượt
-chat chính) — lọc theo tag đó để tách chi phí nén khỏi chi phí trả lời.
+Ledger một lượt (`salon_turns`, gói mới — khác `turn_ledger` của gói cũ đã
+xoá): mỗi lượt một bản ghi, có `facts` agent con trích, `decision` (nếu lượt
+có duyệt/từ chối đề xuất), `ended_by`, `answer_source` (`llm`/`code`):
 
-Ngưỡng nén mặc định `COMPACT_THRESHOLD_TOKENS = 800`
-(`app/services/conversation_state.py`) — kịch bản `dai` (16 lượt, câu ngắn)
-không luôn đủ để kích nén; muốn xác nhận luồng đầu-cuối nhanh thì hạ tạm
-ngưỡng (vd. 300), chạy lại, rồi **khôi phục về 800** trước khi commit bất cứ
-gì.
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.salon_turns.find({user_id:String(u._id)}).sort({asked_at:-1}).limit(5).forEach(printjson)'
+```
 
-## 8b'. Checkpointer (lịch sử model theo thread)
+Bộ nhớ dài hạn (`MongoDBStore`, namespace `("memories", user_id)`, 3 mục cố
+định `preferences`/`notes`/`last_visit`, tổng tối đa
+`salon_memory_max_chars` ký tự) nằm trong collection **`salon_memories`**
+của chính DB `MONGO_DB_NAME` (`app/agents/salon/memory/store.py::
+MEMORY_COLLECTION` — không phải collection mặc định `store` của thư viện);
+gom lại ở lượt đầu của một cuộc trò chuyện mới, log `memory_consolidate_failed`
+nếu lỗi/quá giờ (lượt vẫn chạy tiếp với bộ nhớ cũ).
+
+```bash
+docker compose exec -T mongo mongosh salon_booking --quiet --eval \
+  'var u=db.users.findOne({phone:"<SĐT>"}); db.salon_memories.find({namespace_str:"memories/"+String(u._id)}).forEach(printjson)'
+```
+
+Log cần theo dõi (qua `structlog`, không ném lỗi ra khách):
+
+- `turn_started` / `turn_finished` — mỗi lượt, kèm `user_id`/`turn_id`/
+  `thread_id`/`kind` (`typed`/`button`), `ended_by`, `answer_source`.
+- `turn_superseded` — khách nhắn lượt mới khi lượt cũ còn chạy (thường do
+  Azure treo) — lượt cũ bị huỷ êm, phiên nó mở bị đóng, không phát `error`.
+- `sessions_closed` — phiên chờ bị đóng trong lượt (quyết định xong, đổi
+  sang việc khác, hoặc lượt bị thay/lỗi), kèm `agents`/`reason`.
+- `memory_consolidate_failed` — bước gom bộ nhớ dài hạn lỗi/quá giờ
+  (`salon_memory_timeout_seconds`); không chặn lượt chat.
+
+## 8b'. Checkpointer (lịch sử model theo cuộc trò chuyện)
 
 Lịch sử model nằm trong hai collection của chính DB `MONGO_DB_NAME`
 (không phải DB `checkpointing_db` mặc định của thư viện):
 
-- `checkpoints` — state graph sau mỗi bước, theo `thread_id = <user_id>:<ngày VN>`.
+- `checkpoints` — state graph sau mỗi bước, theo `thread_id = conversation_id`
+  (id của bản ghi trong `conversation_threads` — một cuộc mỗi ngày VN).
 - `checkpoint_writes` — ghi tạm giữa các bước.
 
 Cả hai có index TTL trên `created_at`: tự xoá sau `CHECKPOINT_TTL_DAYS` ngày
 (mặc định 7, đặt trong `.env`). Đổi TTL rồi khởi động lại là đủ: lúc khởi động
 `make_checkpointer` sửa index TTL đang có bằng `collMod` (không xoá, không tạo
 lại index; thư viện tự làm thì Mongo ném "equivalent index already exists with
-different options" và app không lên). Xoá
-checkpoint chỉ mất lịch sử model của ngày đó — nhật ký chat hiển thị nằm ở
-`conversations`, không bị chạm.
+different options" và app không lên). Xoá checkpoint chỉ mất lịch sử model
+của cuộc đó — nhật ký chat hiển thị nằm ở `conversations`, không bị chạm;
+checkpoint KHÔNG phải nguồn sự thật cho lịch/đề xuất/phiên chờ (CONTEXT.md
+mục Chốt cứng "Checkpoint").
 
-Xem thread hôm nay của một khách:
+Xem các cuộc trò chuyện gần đây của một khách:
 
 ```bash
 docker compose exec -T mongo mongosh salon_booking --quiet --eval \
-  'var u=db.users.findOne({phone:"<SĐT>"}); db.checkpoints.find({thread_id:{$regex:"^"+String(u._id)+":"}},{thread_id:1,checkpoint_id:1,created_at:1}).sort({checkpoint_id:-1}).limit(5).forEach(printjson)'
+  'var u=db.users.findOne({phone:"<SĐT>"}); var ids=db.conversation_threads.find({user_id:String(u._id)}).sort({created_at:-1}).limit(3).toArray().map(t=>String(t._id)); db.checkpoints.find({thread_id:{$in:ids}},{thread_id:1,checkpoint_id:1}).sort({checkpoint_id:-1}).limit(5).forEach(printjson)'
 ```
 
 Dọn tay (vd. sau khi đổi cấu trúc state, hoặc reset dev):
 
 ```bash
-# Một khách
+# Một cuộc trò chuyện
 docker compose exec -T mongo mongosh salon_booking --quiet --eval \
-  'var p="^"+"<user_id>"+":"; db.checkpoints.deleteMany({thread_id:{$regex:p}}); db.checkpoint_writes.deleteMany({thread_id:{$regex:p}})'
+  'db.checkpoints.deleteMany({thread_id:"<conversation_id>"}); db.checkpoint_writes.deleteMany({thread_id:"<conversation_id>"})'
 # Toàn bộ
 docker compose exec -T mongo mongosh salon_booking --quiet --eval \
   'db.checkpoints.deleteMany({}); db.checkpoint_writes.deleteMany({})'
 ```
 
-Log `turn_superseded`: khách nhắn lượt mới khi lượt cũ còn chạy (thường do
-Azure treo) — lượt cũ bị huỷ êm, không phát `error`, không ghi `conversations`.
+## 8c. Kiểm tầng gác (guard của gói `salon/`)
 
-## 8c. Kiểm tầng gác (guard/rewrite/phrase)
+Câu trả lời cuối của Orchestrator (AIMessage không tool call) đi qua
+`ReplyGuardMiddleware.aafter_model` (`app/agents/salon/orchestrator/middleware/
+reply_guard.py`) ĐÚNG MỘT LẦN trước khi tới khách — luật kiểm thuần code,
+không LLM giám khảo (docs/architech-agent.md luật 4–5). Từ mức C, câu trả lời
+không còn là một đoạn chữ tự do mà là JSON mảng các đoạn trích dẫn
+(`REPLY_SCHEMA`, `app/agents/salon/guard/segments.py`): mỗi đoạn hoặc là chữ
+thường, hoặc trích một dữ kiện của lượt (`Reply facts`, các id `t1`/`s1`/`g1`/
+`c1`… do `build_catalog` đánh số — `app/agents/salon/guard/catalog.py`) bằng
+id + vai trò. `check_structured`
+(`app/agents/salon/guard/checks.py`) parse mảng đó (`parse_reply`), ráp lại
+thành một câu để log/hiển thị (`join_segments` + `strip_tool_text`), so từng
+đoạn có trích dẫn với dữ kiện lượt (`check_segments`) rồi chạy thêm các luật
+đọc trên chữ đã ráp (`check_text`). Mười bảy mã lỗi theo thứ tự cố định
+(`CHECK_CODES`): `bad_structure` (không parse được JSON, hoặc một đoạn có
+`ref`/`role` chỉ một trong hai), `unknown_ref` (trích một id không có trong
+`Reply facts`), `wrong_role` (đúng id nhưng sai vai trò, hay trích dịch vụ
+ngoài đề xuất đang giữ chỗ), `ref_mismatch` (chữ của đoạn không khớp dữ kiện
+đã trích — giờ/dịch vụ/giá khác), `unreferenced` (một đoạn chữ thường lại
+nêu giờ, tên dịch vụ hay giá mà không trích dẫn), `taken_not_told` (một
+đoạn trích giờ vai `taken` mà câu không nói giờ đó đã kín, hay lại mời khách
+chọn chính giờ đó — live run 5, turn 7), `empty`, `claim` (nhận vơ
+đã đặt/dời/huỷ/giữ không có thật), `missing_fact` (một dữ kiện BẮT BUỘC của
+lượt — `facts.required` — chưa được trích dẫn đúng id + vai trò; không còn
+so trên chữ như `unknown_time`/`unknown_price` cũ, đã bỏ), `missing_question`,
+`missing_phone`, `phone_not_allowed`, `pending_undecided` (đề xuất đang chờ
+chưa được quyết lượt này), `pronoun` (mục Xưng hô), `foreign_script` (lẫn
+chữ không phải Latin), `english` (một đoạn/câu tiếng Anh lộ ra, vd nguyên văn
+một dòng prompt), `repeat` (giống câu đáp gần đây —
+`REPEAT_RATIO`/`REPEAT_MIN_WORDS`/`REPEAT_LOOKBACK` ở `checks.py`).
+Log qua `structlog`, không ném lỗi ra khách:
 
-Mọi câu LLM đi qua guard đúng một lần trước khi ra khách — từ M4 là
-`GuardMiddleware` (`after_agent`) trong mỗi agent, luật ở `guard.apply_guard` (spec
-`docs/superpowers/specs/2026-09-14-natural-voice-guard-design.md`; xem bẫy #21
-ở `CONTEXT.md`). Log qua `structlog`, không ném lỗi ra khách:
+- `guard_rejected{codes}` — câu đầu tiên phạm một hay nhiều mã. Câu bị XOÁ
+  khỏi state (model không thấy lại câu sai của chính nó), guard thêm một
+  `HumanMessage` tiếng Anh nêu từng mã + điều cần sửa
+  (`guard_hint`/`_CODE_HINTS`), `jump_to: "model"` — Orchestrator viết lại
+  ĐÚNG MỘT LẦN, KHÔNG được gọi tool (trừ `decide_pending` nếu lý do là
+  `pending_undecided`).
+- `guard_violation{codes, closed_sessions}` — bản viết lại VẪN phạm. Guard
+  đóng mọi phiên chờ lượt này vừa mở (giữ phiên mà câu mẫu dưới đây hỏi lại,
+  Ruling R12) rồi trả câu mẫu CODE (`fallback_reply`, `salon_source: "code"`),
+  `jump_to: "end"` — không còn lần viết lại thứ hai.
+- Không log gì khi câu đạt ngay (chỉ xoá tên tool/khối JSON lọt vào câu bằng
+  `strip_tool_text` nếu có).
 
-- `guard_violation{codes}` — draft đầu tiên phạm một hay nhiều trong ba phép
-  kiểm tất định: `repeat` (giống câu đáp gần đây, xem `REPEAT_RATIO`/
-  `REPEAT_LOOKBACK` ở `guard.py`), `pronoun` (giọng "cô/chú/bác" hoặc đại từ
-  sai giới với `address` suy từ tên khách), `clock` (giờ viết bằng chữ hoặc
-  `HH:MM` thay vì "3 giờ chiều"). Gọi `rewrite_once` đúng một lần.
-- `guard_rewritten` — bản viết lại (LLM, tag `rewrite`, một lần, không stream)
-  qua hết mọi phép kiểm lại (cộng `content` — còn đủ mốc ngày-giờ/số của bản
-  gốc). Đây là câu được phát.
-- `guard_gave_up{codes}` — bản viết lại VẪN phạm (kể cả mất số liệu qua
-  `content_kept`). Guard trả **draft GỐC** (`answer_source="llm"`), không phát
-  bản rewrite hỏng — không có lần rewrite thứ hai.
-- `rewrite_failed{error,codes}` (ở `rewrite.py`) — lời gọi LLM viết lại lỗi
-  hoặc quá `REWRITE_TIMEOUT_SECONDS` (8s); `rewrite_once` trả None, guard thấy
-  lại đúng các `codes` cũ và thành `guard_gave_up`.
-- `phrase_fallback{codes}` — nhánh riêng cho câu chốt lịch sau `confirm`
-  (`_guard_phrase` trong `guard.py`): câu do `PhraseMiddleware` viết thiếu `when`
-  (mốc ngày-giờ từ DB), thiếu cách gọi khách (`address`), thiếu câu báo lỗi khi
-  đặt hỏng, hoặc phạm ba phép kiểm thường — dùng ngay câu cứng
-  `state["fallback"]`, không rewrite (đây là khoảnh khắc chốt lịch, sai số liệu
-  không được phép).
-- `guard_tool_name_stripped` — câu của agent có tên tool (`parse_time`, …) hay
-  nhóm ngoặc chứa định danh snake_case; guard xoá bằng code trước khi kiểm.
-  Phòng ngừa — A chưa lộ lần nào; thấy log này là prompt/model đổi, nên soi.
-- `agent_turn_timeout{seconds}` (ở `events.py`) — lượt quá `TURN_TIMEOUT_SECONDS`
-  (60s); khách nhận `error` "Máy đang bận…". Model agent lỗi sau 1 lần thử lại
-  (`ModelRetryMiddleware`) thì là `agent_turn_failed` với cùng câu.
-- `supervisor_failed{error, error_type}` (ở `supervisor.py`) — bước định tuyến
-  lỗi hoặc quá `SUPERVISOR_TIMEOUT_SECONDS` (8s, kể cả 1 lần thử lại SDK); lượt
-  đi tiếp vào `booking`. Thấy nhiều là Azure chậm — lượt vẫn trả lời.
-- `phrase_failed{error}` (ở `phrase.py`) — lời gọi LLM của `write_phrase` lỗi
-  hoặc quá `PHRASE_TIMEOUT_SECONDS` (8s); dùng thẳng `fallback`.
-- `anchor_ignored{anchor}` (ở `tools.py`) — tool gọi `apply_anchor` với neo
-  không hợp lệ (không parse được thành `datetime`), bỏ qua neo, hỏi lại khách
-  như trước khi có Task 3.
-- `anchor_bad_hour{partial_hour,partial_minute}` (ở `timeparse.py`) — LLM trả
-  `partial_hour`/`partial_minute` ngoài khoảng hợp lệ (không bị Pydantic chặn
-  vì chỉ là `int`); bỏ qua neo, trả nguyên candidate để khách vẫn được hỏi lại
-  thay vì tool ném `ValueError`.
+Guard chỉ xét DỮ KIỆN LƯỢT (`build_reply_facts`, `app/agents/salon/guard/
+facts.py`) dựng từ bối cảnh (DB đọc lại) + `turn_facts` agent con trích từ
+ToolMessage + quyết định đề xuất — không tin chữ model. Mã `bad_tool_call`
+cũng qua đường `guard_rejected`/`guard_violation` khi AIMessage có tool call
+hỏng (`invalid_tool_calls`).
 
-Đo thật 2026-09-14 (Task 6, 26 lượt LLM qua hai kịch bản `tu_nhien`+`dai`):
-đúng **1** `guard_violation` (`repeat`) → **1** `guard_gave_up` — rewrite chạy
-nhưng bản viết lại vẫn lặp nên bị guard trả về draft gốc; không log nào khác
-trong danh sách trên xuất hiện. Xem chi tiết ở Checkpoint Task 6 cuối
-`CONTEXT.md`.
-
-Kiểm bằng tay xem draft nào bị cờ `repeat` oan hay đúng (không gọi LLM, đọc
-transcript có sẵn):
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/probe_repeats.py [--ratio 0.85] [--min-words 6] FILE...
-```
-
-Mỗi file truyền vào phải đúng định dạng dòng `BOT   : ...` của
-`scripts/chat_e2e_transcript.py`; không truyền file nào thì nó tự nhặt hết
-`*.txt` ở gốc repo.
+Lỗi trần/ngân sách/timeout ở tầng cao hơn (hết `salon_model_calls_per_turn`,
+`salon_tool_calls_per_turn`, `orch_llm_calls_per_user_per_hour`,
+`orch_orchestrate_timeout_seconds`) không qua guard — `run_turn` bắt lỗi,
+đóng phiên chờ mở trong lượt, viết một câu mẫu code từ ledger (`fallback_reply`
+hoặc `TURN_ERROR_MESSAGE` nếu lượt chưa làm được gì), log
+`orchestrator_timeout`/`orchestrator_limit`/`orchestrator_failed`.
 
 ## 9. Trục trặc hay gặp
 
@@ -318,3 +396,5 @@ Mỗi file truyền vào phải đúng định dạng dòng `BOT   : ...` của
 | Mọi trace hiện 0đ | Chưa seed đơn giá model, xem mục 8. Đơn giá chỉ áp cho trace **mới** |
 | Test đỏ hàng loạt với `ServerSelectionTimeoutError` | Mongo chưa chạy, hoặc mongod chết vì hết file descriptor (compose đã set `nofile` 64000) |
 | `307` khi gọi health | Thiếu dấu `/` cuối |
+| `ServerSelectionTimeoutError` nhắc tới `('mongo', 27017)` | `MONGO_URI` thiếu `?directConnection=true` (mục 3) |
+| `Transaction numbers are only allowed on a replica set member` | Container Mongo còn là standalone cũ — `docker compose up -d --wait mongo` |

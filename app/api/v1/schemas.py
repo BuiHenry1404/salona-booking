@@ -3,6 +3,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.services.appointment import ServiceRef
+
 
 class LoginRequest(BaseModel):
     phone: str
@@ -34,6 +36,13 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=4)
 
 
+class SetStaffNoteRequest(BaseModel):
+    """`staff_note` của Task 13 — admin ghi, hiện trong khối bối cảnh dưới
+    dạng "Ghi chú tiệm: …". ≤200 ký tự khớp `STAFF_NOTE_MAX` của model."""
+
+    staff_note: str = Field(..., max_length=200)
+
+
 class UserResponse(BaseModel):
     id: str
     phone: str
@@ -47,16 +56,21 @@ class AppointmentCreateRequest(BaseModel):
     note: Optional[str] = None
     # Chỉ admin được điền — khách gửi lên sẽ bị từ chối 403 ở router.
     for_user_id: Optional[str] = None
+    # Dịch vụ của lịch này; không truyền (hoặc rỗng) giữ hành vi cũ —
+    # thời lượng mặc định `booking_slot_minutes` (app/services/appointment.py).
+    service_ids: Optional[List[str]] = None
 
 
 class AppointmentResponse(BaseModel):
     id: str
     start_at: datetime
+    end_at: datetime
     duration_minutes: int
     note: Optional[str] = None
     status: Literal["booked", "cancelled"]
     user_name: Optional[str] = None
     phone: Optional[str] = None
+    services: List[ServiceRef] = Field(default_factory=list)
 
 
 class MonthlyCustomerStat(BaseModel):
